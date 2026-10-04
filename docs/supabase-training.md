@@ -91,7 +91,7 @@ No DigitalOcean resources are required or created by this repository.
 
 ## Connect the web app
 
-In the existing Next.js Fez web app, configure:
+In the independent [Zils website](https://github.com/ooo-hq/zils-web), configure:
 
 ```dotenv
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co

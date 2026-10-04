@@ -49,6 +49,6 @@ These timings are diagnostic and do not affect rewards in this rubric.
 The measured Mac M4 Pro FP32 path took approximately **122 ms median / 180 ms
 p95 per question** on the latest 40-case run. Model loading is measured separately.
 This is not a Jev comparison. The competition selects downloadable weights;
-an application can keep its chosen Fez checkpoint resident without routing every
+an application can keep its chosen Zils checkpoint resident without routing every
 decision through the miner/validator network. CUDA kernels, serving precision,
 and batching need a separate, quality-checked benchmark on the target hardware.

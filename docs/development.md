@@ -32,7 +32,7 @@ establish model quality or GPU performance.
 
 ## Continuous integration
 
-[GitHub Actions](https://github.com/ooo-hq/fez/actions/workflows/checks.yml) runs
+[GitHub Actions](https://github.com/ooo-hq/zils/actions/workflows/checks.yml) runs
 lint/format checks and the full Python suite on pull requests and pushes to
 `main`. CI installs CPU PyTorch and runs model workers offline. When website
 source is present, a separate job checks JavaScript syntax, runs its tests, and

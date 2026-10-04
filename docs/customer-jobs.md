@@ -1,6 +1,6 @@
 # Customer decision jobs
 
-Fez can run a customer dataset through its existing approved-worker competition:
+Zils can run a customer dataset through its existing approved-worker competition:
 train candidates, calibrate each candidate and the starting checkpoint, compare
 their test results, and export a qualifying candidate. This is an experimental
 local workflow, not a hosted customer service or a published model release.

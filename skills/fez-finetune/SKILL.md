@@ -1,19 +1,19 @@
 ---
 name: fez-finetune
-description: Fine-tune a Fez decision-model candidate on a user's labelled data using Kev 0.8B, 4B, or 9B. Use for domain-specific yes/no decisions, classification, routing, or scoring, including calibration and comparison against the starting checkpoint. Supports optional serving; subnet participation is a separate workflow.
+description: Fine-tune a Zils decision-model candidate on a user's labelled data using Kev 0.8B, 4B, or 9B. Use for domain-specific yes/no decisions, classification, routing, or scoring, including calibration and comparison against the starting checkpoint. Supports optional serving; subnet participation is a separate workflow.
 ---
 
-# Fine-tune a Fez decision model
+# Fine-tune a Zils decision model
 
-Produce an experimental Fez candidate, calibrated probabilities, and a measured
+Produce an experimental Zils candidate, calibrated probabilities, and a measured
 comparison against its starting checkpoint. Reuse the pinned Kev training tools
 described in [the training workflow](references/training.md); this skill adds
-Fez's experiment and reporting requirements without maintaining a second trainer.
+Zils's experiment and reporting requirements without maintaining a second trainer.
 
-Fez builds on [Kev](https://github.com/jaredpalmer/kev). There is currently no
-published Fez checkpoint to download. By default, start from a released
+Zils builds on [Kev](https://github.com/jaredpalmer/kev). There is currently no
+published Zils checkpoint to download. By default, start from a released
 `jaredpalmer/kev-0.8b`, `jaredpalmer/kev-4b`, or `jaredpalmer/kev-9b` checkpoint.
-Call the output a **Fez candidate based on Kev**, not an official Fez release.
+Call the output a **Zils candidate based on Kev**, not an official Zils release.
 If the user supplies an existing candidate, preserve its provenance and compare
 against that exact parent. An adapter is tied to its base architecture: changing
 size starts a new lineage, not a continuation of the smaller adapter.
@@ -26,7 +26,7 @@ target size, available hardware, and execution location. For cloud work, resolve
 the data destination, spending limit, and timeout before uploading or launching.
 Existing authorization carries forward; installation alone starts no training.
 
-- **0.8B:** inexpensive smoke runs and the current Fez subnet architecture.
+- **0.8B:** inexpensive smoke runs and the current Zils subnet architecture.
 - **4B:** default for own-data experiments unless the user chose another size.
 - **9B:** supported by the upstream workflow; choose hardware for training and
   checkpoint loading, not just the final inference footprint. Never silently
@@ -66,7 +66,7 @@ development supports iteration, and the untouched test supports the final claim.
 
 Use the published Kev checkpoint as `--init-from`, with an immutable Hub revision,
 and retain its matching Qwen base and adapter/head dimensions. Continue an
-existing Fez candidate only through a supported checkpoint path. Keep replay and
+existing Zils candidate only through a supported checkpoint path. Keep replay and
 baseline evaluation enabled unless the experiment explicitly studies them.
 
 Follow the upstream tools for training, calibration, paired comparison, and the
@@ -94,7 +94,7 @@ Preserve the upstream report and write a concise `fez-report.md` beside it:
   unfavorable results. Thresholds selected on development need a frozen test
   check; reported coverage is not a promised production error rate.
 
-The upstream workflow's Brier aggregation differs from Fez's subnet
+The upstream workflow's Brier aggregation differs from Zils's subnet
 family-macro Brier skill. Label the metric actually computed; don't rename one
 as the other. A domain fine-tune does not establish general superiority to Kev
 or Jev, and public JevBench results are not an official leaderboard rank.
@@ -108,7 +108,7 @@ the training reference for those actions; preserve necessary artifacts first.
 
 This skill creates own-data candidates; it does not register miners, spend
 tokens on-chain, or change validator rules. The current
-[Fez validator](https://github.com/ooo-hq/fez/blob/main/fez/kev_runner.py) expects
+[Zils validator](https://github.com/ooo-hq/zils/blob/main/fez/kev_runner.py) expects
 the pinned 0.8B base, rank-16 LoRA, a 256-dimensional head, and FP32 weights.
 4B/9B candidates require a separate protocol/runtime update before admission.
 Even a 0.8B candidate must pass that validator's checks; this skill's report is

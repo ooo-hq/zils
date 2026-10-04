@@ -1,4 +1,4 @@
 interface:
-  display_name: "Fez Fine-tuning"
-  short_description: "Train and evaluate Fez candidates on your own data"
-  default_prompt: "Use $fez-finetune to train a Fez candidate on my labelled data and compare it with its starting checkpoint."
+  display_name: "Zils Fine-tuning"
+  short_description: "Train and evaluate Zils candidates on your own data"
+  default_prompt: "Use $fez-finetune to train a Zils candidate on my labelled data and compare it with its starting checkpoint."
