@@ -7,6 +7,7 @@ on **Bittensor testnet subnet 579**. No Fez model release has been published.
 
 | Task | Documentation |
 | --- | --- |
+| Serve typed decisions and bulk jobs | [Zils decision API](decision-api.md) |
 | Run a miner or validator | [Miner setup](mining.md), [testnet integration](testnet.md) |
 | Train on authorized business data | [Customer decision jobs](customer-jobs.md) |
 | Connect customer uploads to shared workers | [Supabase training queue](supabase-training.md) |

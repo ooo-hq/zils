@@ -47,6 +47,10 @@ def main():
                 "tests/sql/queue-bootstrap.sql",
                 "supabase/migrations/202609300001_training_jobs.sql",
                 "tests/sql/queue-assertions.sql",
+                "supabase/migrations/202610040001_decision_api.sql",
+                "tests/sql/api-assertions.sql",
+                "supabase/migrations/202610040002_decision_batches.sql",
+                "tests/sql/batch-assertions.sql",
             ):
                 result = subprocess.run(
                     [
@@ -66,8 +70,11 @@ def main():
                 )
                 if result.returncode:
                     raise RuntimeError(f"{source}:\n{result.stdout}\n{result.stderr}")
+            from tests.api_database import run
+
+            run([tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"])
             print(
-                "Queue migration, tenant/storage access, lease recovery and bounded retries passed."
+                "Training queue and decision API migrations, isolation, leases, credentials and admission passed."
             )
         finally:
             subprocess.run(

@@ -28,11 +28,11 @@ def render(value):
     )
 
 
-def _tree(value):
+def _tree(value, max_depth=MAX_DEPTH):
     pending = [(value, 0)]
     while pending:
         item, depth = pending.pop()
-        if depth > MAX_DEPTH:
+        if depth > max_depth:
             raise invalid()
         if isinstance(item, dict):
             if any(not isinstance(k, str) for k in item):
@@ -53,7 +53,7 @@ def _tree(value):
             raise invalid()
 
 
-def decode_body(raw, limit=MAX_BODY):
+def decode_body(raw, limit=MAX_BODY, max_depth=MAX_DEPTH):
     if len(raw) > limit:
         raise DecisionError(413, "body_too_large", "Request exceeds the body limit.")
 
@@ -74,7 +74,7 @@ def decode_body(raw, limit=MAX_BODY):
         raise DecisionError(
             400, "invalid_json", "Body must be valid UTF-8 JSON with unique keys."
         ) from None
-    _tree(result)
+    _tree(result, max_depth)
     return result
 
 

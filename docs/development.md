@@ -13,6 +13,7 @@ the testnet tests:
 uv pip install --python .venv-kev/bin/python \
   -r requirements/dev.txt -r requirements/model.txt \
   -r requirements/rehearsal.txt -r requirements/testnet.txt
+uv pip install --python .venv-kev/bin/python --no-deps -r requirements/jevk5-source.txt
 make check
 ```
 
@@ -36,7 +37,10 @@ establish model quality or GPU performance.
 lint/format checks and the full Python suite on pull requests and pushes to
 `main`. CI installs CPU PyTorch and runs model workers offline. When website
 source is present, a separate job checks JavaScript syntax, runs its tests, and
-builds the static site. Run the same website checks locally with
+builds the static site. Separate jobs exercise the training/API migrations and
+bulk worker in disposable PostgreSQL, and the official Python/JavaScript
+TypeSafe clients against the local gateway. See [API verification](decision-api.md#verification-and-measured-scope).
+Run the same website checks locally with
 `make check-website` using Node.js 22+ and npm.
 
 The workflow uses read-only repository permissions and pinned Action revisions.

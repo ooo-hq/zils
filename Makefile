@@ -1,7 +1,7 @@
 PYTHON ?= .venv-kev/bin/python
 PYTHON_SOURCES = fez miner scripts tests
 
-.PHONY: check lint format test check-website check-queue-db
+.PHONY: check lint format test check-website check-queue-db check-api
 
 check: lint test $(if $(wildcard website/package.json),check-website)
 
@@ -24,3 +24,6 @@ check-website:
 
 check-queue-db:
 	$(PYTHON) -m scripts.check_queue_db
+
+check-api:
+	$(PYTHON) -m unittest tests.test_decisions tests.test_decision_http tests.test_jev_server tests.test_api_store tests.test_api tests.test_batches -v

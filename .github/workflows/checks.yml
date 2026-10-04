@@ -47,20 +47,43 @@ jobs:
         run: >-
           uv pip install --system --torch-backend=cpu
           -r requirements/model.txt -r requirements/rehearsal.txt -r requirements/testnet.txt
+      - run: python -m pip install --no-deps -r requirements/jevk5-source.txt
       - run: make test PYTHON=python
 
   queue-database:
-    name: Training queue database
+    name: Training and decision API database
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements/api.txt
       - name: Install PostgreSQL
         run: sudo apt-get update && sudo apt-get install -y postgresql-16
       - name: Test migration and access control in a disposable cluster
         run: FEZ_PG_BIN=/usr/lib/postgresql/16/bin make check-queue-db PYTHON=python3
+
+  api-sdks:
+    name: TypeSafe SDK compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+      - run: python -m pip install -r requirements/api-test.txt
+      - run: npm install --prefix .private/api-sdk --no-audit --no-fund @typesafe-ai/sdk@0.6.0
+      - run: python -m scripts.check_api_sdks --js-module .private/api-sdk/node_modules/@typesafe-ai/sdk/dist/index.mjs
 
   website:
     name: Website checks
