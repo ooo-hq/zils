@@ -13,6 +13,52 @@ from tests.test_jobs import POLICY, examples
 
 
 class ModelTest(unittest.TestCase):
+    def test_compact_adapter_roundtrip_and_invalid_tensors(self):
+        import torch
+        from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
+        from safetensors.torch import load_file, save_file
+
+        from fez.jevk5 import load_adapter_weights, save_adapter_weights
+
+        model = get_peft_model(
+            torch.nn.Sequential(torch.nn.Linear(3, 2)),
+            LoraConfig(r=2, target_modules=["0"], bias="none"),
+        )
+        with torch.no_grad():
+            for name, parameter in model.named_parameters():
+                if "lora_" in name:
+                    parameter.uniform_(-0.2, 0.2)
+        original = {k: v.clone() for k, v in get_peft_model_state_dict(model).items()}
+        with tempfile.TemporaryDirectory() as tmp:
+            save_adapter_weights(model, tmp)
+            path = str(Path(tmp) / "adapter_model.safetensors")
+            compact = load_file(path)
+            self.assertEqual(set(compact), set(original))
+            self.assertTrue(all(v.dtype == torch.bfloat16 for v in compact.values()))
+            # Saving must not reduce the precision of the optimizer's live parameters.
+            self.assertTrue(all(v.dtype == torch.float32 for v in original.values()))
+            self.assertTrue(
+                all(
+                    torch.equal(v, original[k]) for k, v in get_peft_model_state_dict(model).items()
+                )
+            )
+            load_adapter_weights(model, tmp)
+            for key, value in get_peft_model_state_dict(model).items():
+                self.assertTrue(torch.equal(value, original[key].bfloat16().float()))
+            save_file(original, path)
+            load_adapter_weights(model, tmp)
+            for key, value in get_peft_model_state_dict(model).items():
+                self.assertTrue(torch.equal(value, original[key]))
+            key = next(iter(compact))
+            for invalid in (
+                torch.zeros_like(compact[key], dtype=torch.int32),
+                torch.full_like(compact[key], float("nan")),
+                torch.zeros(1),
+            ):
+                save_file({**compact, key: invalid}, path)
+                with self.assertRaisesRegex(ValueError, "tensors"):
+                    load_adapter_weights(model, tmp)
+
     def test_runner_imports_upstream_package_and_rejects_unsupported_device(self):
         with tempfile.TemporaryDirectory() as tmp:
             models.write_metadata(tmp, kind="base")

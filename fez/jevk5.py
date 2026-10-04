@@ -103,17 +103,36 @@ def validate_inputs(splits):
             encode(tokenizer, row["state"], row["question"])
 
 
+def save_adapter_weights(model, output):
+    import torch
+
+    # Keep FP32 optimizer parameters; serialize only LoRA tensors at inference precision.
+    state = {k: v.to(torch.bfloat16) for k, v in model.state_dict().items() if "lora_" in k}
+    model.save_pretrained(output, state_dict=state, safe_serialization=True)
+
+
+def load_adapter_weights(model, checkpoint):
+    import torch
+    from peft import get_peft_model_state_dict, set_peft_model_state_dict
+    from safetensors.torch import load_file
+
+    tensors = load_file(str(Path(checkpoint) / "adapter_model.safetensors"))
+    expected = get_peft_model_state_dict(model)
+    if set(tensors) != set(expected) or any(
+        tensors[k].shape != expected[k].shape
+        or tensors[k].dtype not in (torch.float32, torch.bfloat16)
+        or not torch.isfinite(tensors[k]).all()
+        for k in expected
+    ):
+        raise ValueError("adapter tensors differ from the pinned JevK5 recipe")
+    set_peft_model_state_dict(model, {k: v.to(expected[k].dtype) for k, v in tensors.items()})
+
+
 class DecisionModel:
     def __init__(self, checkpoint, device, train=False):
         import torch
         from jevk5 import JevK5
-        from peft import (
-            LoraConfig,
-            get_peft_model,
-            get_peft_model_state_dict,
-            set_peft_model_state_dict,
-        )
-        from safetensors.torch import load_file
+        from peft import LoraConfig, get_peft_model
 
         self.meta = models.metadata(checkpoint)
         if self.meta is None:
@@ -154,16 +173,7 @@ class DecisionModel:
                     raise ValueError("adapter architecture differs from the pinned JevK5 recipe")
                 # Never instantiate an architecture from a miner-supplied PEFT config.
                 # Only the exact tensor names/shapes of our own fixed LoRA are accepted.
-                tensors = load_file(str(Path(checkpoint) / "adapter_model.safetensors"))
-                expected = get_peft_model_state_dict(self.peft)
-                if set(tensors) != set(expected) or any(
-                    tensors[k].shape != expected[k].shape
-                    or tensors[k].dtype != expected[k].dtype
-                    or not torch.isfinite(tensors[k]).all()
-                    for k in expected
-                ):
-                    raise ValueError("adapter tensors differ from the pinned JevK5 recipe")
-                set_peft_model_state_dict(self.peft, tensors)
+                load_adapter_weights(self.peft, checkpoint)
         self.base.eval()
         if self.peft is not None:
             self.peft.eval()
@@ -253,7 +263,7 @@ def train(args):
             )
     model.base.gradient_checkpointing_disable()
     model.peft.eval()
-    model.peft.save_pretrained(output, safe_serialization=True)
+    save_adapter_weights(model.peft, output)
     config_path = output / "adapter_config.json"
     config = json.loads(config_path.read_text())
     config.update(
