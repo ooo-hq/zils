@@ -8,9 +8,13 @@ evaluate them, and trusted Zils servers run inference. The existing training
 queue does not automatically deploy an adapter into this API.
 
 The implementation has local HTTP, real PostgreSQL, official SDK, and RTX 4090
-runtime checks. It has not been deployed or verified against hosted Supabase
-Storage. There is no billing, measured service-level guarantee, automatic model
-promotion, or open-miner inference network. Onboarding is a separate service.
+runtime checks. A hosted staging check also verified key creation/revocation,
+real inference, private Supabase uploads, retry recovery, and account isolation.
+Its four-record synthetic bulk job completed three valid records and returned
+one expected validation error. This verifies the workflow, not customer model
+quality or production capacity. There is no billing, measured service-level
+guarantee, automatic model promotion, or open-miner inference network. Onboarding
+is a separate service.
 
 ## Request and credential contract
 
