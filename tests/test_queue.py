@@ -302,8 +302,21 @@ class QueueTest(unittest.TestCase):
             )
 
     def test_upload_claim_train_submit_evaluate_download(self):
+        from fez import models
+
+        self.queued_model_flow(models.KEV)
+
+    def test_jevk5_upload_train_calibrate_and_download(self):
+        from fez import models
+
+        with patch("fez.jevk5.validate_inputs"):
+            self.queued_model_flow(models.JEVK5)
+
+    def queued_model_flow(self, model):
         import torch
         from kev.checkpoint import Meta, write_meta
+
+        from fez import models
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -314,6 +327,9 @@ class QueueTest(unittest.TestCase):
             write_meta(
                 reference, Meta(base=fez.BASE, head={"fixture": torch.zeros(1)}, temperature=1.0)
             )
+            if model == models.JEVK5:
+                (reference / "head.pt").unlink()
+                models.write_metadata(reference, kind="base", temperature=1.22)
             worker = root / "fixture-python"
             import sys
 
@@ -325,20 +341,24 @@ assert 'SUPABASE_DB_URL' not in os.environ
 from pathlib import Path
 import torch
 from kev.checkpoint import Meta, read_meta, write_meta
+from fez import models
 if '-m' in sys.argv:
     out = Path(sys.argv[sys.argv.index('--out')+1]); out.mkdir()
     data = Path(sys.argv[sys.argv.index('--data')+1])
     assert all(set(json.loads(line))=={'state','questions'} for line in data.read_text().splitlines())
     (out/'adapter_config.json').write_text('{}')
     (out/'adapter_model.safetensors').write_text('trained')
-    write_meta(out, Meta(base='Qwen/Qwen3.5-0.8B-Base',head={'fixture':torch.ones(1)},temperature=1.0))
+    if 'fez.jevk5' in sys.argv:
+        models.write_metadata(out)
+    else:
+        write_meta(out, Meta(base='Qwen/Qwen3.5-0.8B-Base',head={'fixture':torch.ones(1)},temperature=1.0))
 else:
-    path = Path(sys.argv[sys.argv.index('--checkpoint')+1]); meta=read_meta(path)
-    p=0.9 if (path/'adapter_model.safetensors').read_text()=='trained' else 0.5
-    a,b=p**(1/meta.temperature),(1-p)**(1/meta.temperature)
+    path = Path(sys.argv[sys.argv.index('--checkpoint')+1]); temperature=models.temperature(path)
+    p=0.9 if (path/'adapter_model.safetensors').exists() and (path/'adapter_model.safetensors').read_text()=='trained' else 0.5
+    a,b=p**(1/temperature),(1-p)**(1/temperature)
     rows=json.load(sys.stdin)
     assert all(set(r)=={'id','state','question'} for r in rows)
-    print(json.dumps({'runtime':{'temperature':meta.temperature},'predictions':[
+    print(json.dumps({'runtime':{'temperature':temperature},'predictions':[
         {'id':r['id'],'elapsed_ms':1,'probabilities':{'true':a/(a+b),'false':b/(a+b)}} for r in rows]}))
 """
             )
@@ -348,7 +368,7 @@ else:
             store.tables["fez_training_workers"].append(
                 {"hotkey": key.ss58_address, "uid": 1, "enabled": True}
             )
-            service = coordinator.Service(store, "http://127.0.0.1:8910")
+            service = coordinator.Service(store, "http://127.0.0.1:8910", model)
             with (
                 server(store.handler()) as storage_url,
                 server(coordinator.handler(service, "https://fez.example")) as url,
@@ -398,6 +418,10 @@ else:
                 )
                 self.assertTrue(engine.tick())
                 self.assertEqual(service.job(job_id)["status"], "awaiting_approval")
+                self.assertEqual(service.job(job_id)["manifest"]["model"], models.spec(model))
+                self.assertEqual(
+                    requests.get(url + "/v1/config", timeout=5).json()["model"], models.spec(model)
+                )
                 client = Client(url, key)
                 self.assertIsNone(
                     client.call("claim")["assignment"], "no training data before operator approval"
@@ -406,6 +430,8 @@ else:
                     "fez_approve_training_job", {"p_job": job_id, "p_hotkeys": [key.ss58_address]}
                 )
                 assignment = client.call("claim")["assignment"]
+                self.assertEqual(assignment["model"], models.spec(model))
+                self.assertEqual(assignment["base_revision"], models.spec(model)["base_revision"])
                 self.assertEqual(set(assignment["training"]), {"url"})
                 self.assertNotIn("manifest", assignment)
                 self.assertNotIn("acceptance", assignment)
@@ -430,7 +456,7 @@ else:
                 ]
                 accepted = root / "accepted"
                 accepted.mkdir()
-                for name in fez.ARTIFACT_FILES:
+                for name in models.candidate_files(model):
                     cloud.download(downloads[name]["url"], accepted / name, fez.MAX_ARTIFACT_BYTES)
                 self.assertEqual(
                     fez.checkpoint_hash(accepted), result["result"]["delivery"]["sha256"]

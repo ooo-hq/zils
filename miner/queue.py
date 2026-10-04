@@ -11,7 +11,7 @@ import requests
 from bittensor_wallet import Keypair
 
 import fez
-from fez import protocol, queue_protocol
+from fez import models, protocol, queue_protocol
 from fez.cloud import MAX_DATA_BYTES, APIError, download, trusted_url, upload
 from fez.coordinator import identifier, lease_heartbeat
 from fez.runtime import digest, locked, prepare_base
@@ -55,7 +55,10 @@ def run_once(client, state, reference, runtime, device):
     auth = {"job_id": job_id, "lease_token": token}
     try:
         with lease_heartbeat(lambda: client.call("renew", auth)):
-            if assignment["base_revision"] != protocol.BASE_REVISION:
+            model = models.checkpoint_model(reference)
+            if assignment["base_revision"] != models.spec(model)["base_revision"] or assignment.get(
+                "model", models.spec(models.KEV)
+            ) != models.spec(model):
                 raise ValueError("job uses an unsupported base revision")
             if fez.checkpoint_hash(reference) != assignment["initial_sha256"]:
                 raise ValueError("job starting checkpoint differs from the installed reference")
@@ -91,7 +94,7 @@ def run_once(client, state, reference, runtime, device):
             job = {**config, "round_id": uuid.UUID(job_id).hex}
             entry = train_candidate(config, directory, job, runtime, device)
             urls = client.call("uploads", auth)["uploads"]
-            for name in fez.ARTIFACT_FILES:
+            for name in models.artifact_files(entry["checkpoint"]):
                 if not urls[name].get("uploaded"):
                     upload(
                         urls[name]["url"],
@@ -136,7 +139,7 @@ def main():
         state = Path(args.state)
         state.mkdir(mode=0o700, parents=True, exist_ok=True)
         if not args.no_download:
-            prepare_base()
+            prepare_base(models.checkpoint_model(args.reference))
         with locked(state / "queue-worker.lock"):
             while True:
                 try:

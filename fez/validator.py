@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 import fez
 
-from . import protocol as wire
+from . import models, protocol as wire
 from .runtime import digest, locked, run_child, signed, signing_key, verified
 
 
@@ -75,19 +75,13 @@ def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=
     if "job_id" in config:
         # Calibrate the reference on the same population as each candidate. A
         # published reference may already carry a temperature from another task.
-        from kev.checkpoint import read_meta, write_meta
-
         source = directory / "reference"
         entry = fez.submission(source, 0)
         if entry["sha256"] != config["initial_sha256"]:
             raise ValueError("job baseline checkpoint changed")
         raw = attempt / "baseline-raw"
         fez.stage(entry, raw)
-        meta = read_meta(raw)
-        meta.temperature = 1.0
-        (raw / "head.pt").chmod(0o600)
-        write_meta(raw, meta)
-        (raw / "head.pt").chmod(0o444)
+        models.set_temperature(raw, 1.0)
         calibration = evaluate(
             [fez.submission(raw, 0)], data / "calibration.jsonl", "baseline-calibration"
         )
@@ -152,7 +146,8 @@ def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=
                     "job_id": config["job_id"],
                     "job_sha256": config["job_sha256"],
                     "round_id": work.name,
-                    "base": fez.BASE,
+                    "model": models.spec(models.checkpoint_model(release)),
+                    "base": models.spec(models.checkpoint_model(release))["base"],
                     "base_revision": config["base_revision"],
                     "initial_sha256": config["initial_sha256"],
                     "submitted_sha256": registry[delivery["uid"]]["claim"]["sha256"],

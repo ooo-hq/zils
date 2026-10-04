@@ -7,7 +7,7 @@ from pathlib import Path
 
 import fez
 
-from . import benchmark, jobs
+from . import benchmark, jobs, models
 
 
 def fit(root, report, uid, checkpoint, destination):
@@ -26,11 +26,9 @@ def fit(root, report, uid, checkpoint, destination):
     if destination.exists():
         raise FileExistsError(f"checkpoint destination already exists: {destination}")
 
-    from kev.checkpoint import read_meta, write_meta
     from kev.metrics import fit_temperature, probabilities_at_temperature
 
-    meta = read_meta(checkpoint)
-    if meta.temperature != 1.0:
+    if models.temperature(checkpoint) != 1.0:
         raise ValueError("source checkpoint must have temperature 1.0")
     cases = benchmark.read_jsonl(Path(root) / "calibration.jsonl")
     predictions = {p["id"]: p for p in miner["predictions"]}
@@ -81,8 +79,7 @@ def fit(root, report, uid, checkpoint, destination):
             "temperature unexpectedly changed accuracy; inspect numerical ties before saving"
         )
     fez.stage(entry, destination)
-    meta.temperature = temperature
-    meta.extra["fez_temperature_fit"] = {
+    metadata = {
         k: result[k]
         for k in (
             "raw_checkpoint_sha256",
@@ -93,10 +90,7 @@ def fit(root, report, uid, checkpoint, destination):
             "method",
         )
     }
-    head = destination / "head.pt"
-    head.chmod(0o600)
-    write_meta(destination, meta)
-    head.chmod(0o444)
+    models.set_temperature(destination, temperature, metadata)
     result["checkpoint_sha256"] = fez.checkpoint_hash(destination)
     benchmark.write_private(
         destination / "calibration.json", json.dumps(result, indent=2, allow_nan=False) + "\n"

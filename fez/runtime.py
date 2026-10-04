@@ -16,7 +16,7 @@ from bittensor_wallet import Keypair
 
 import fez
 
-from . import ROOT, protocol as wire
+from . import ROOT, models, protocol as wire
 
 LIMIT = 64 * 1024
 
@@ -78,7 +78,12 @@ def run_child(command, log, device, timeout=3600):
         "PYTHONPATH": str(ROOT) + os.pathsep + os.environ.get("PYTHONPATH", ""),
     }
     # ponytail: one GPU job per user/device; add device-index locks only when multi-GPU hosts exist.
-    lock = Path(tempfile.gettempdir()) / f"fez-compute-{os.getuid()}-{device}.lock"
+    lock = Path(
+        os.environ.get(
+            "FEZ_COMPUTE_LOCK",
+            str(Path(tempfile.gettempdir()) / f"fez-compute-{os.getuid()}-{device}.lock"),
+        )
+    )
     with locked(lock, wait=True), Path(log).open("ab") as output:
         process = subprocess.Popen(
             command,
@@ -126,7 +131,11 @@ def request(config, path, message=None):
     return verified(json.loads(body), config["validator_hotkey"])
 
 
-def prepare_base():
+def prepare_base(model=models.KEV):
+    if model == models.JEVK5:
+        from .jevk5 import base_path
+
+        return base_path(download=True)
     from huggingface_hub import snapshot_download
     from huggingface_hub.errors import LocalEntryNotFoundError
 

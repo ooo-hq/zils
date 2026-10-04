@@ -19,7 +19,7 @@ from bittensor_wallet import Keypair
 
 import fez
 
-from . import benchmark, jobs, protocol, queue_protocol
+from . import benchmark, jobs, models, queue_protocol
 from .cloud import DATA_BUCKET, MAX_DATA_BYTES, MODEL_BUCKET, APIError, Supabase, trusted_url
 from .runtime import digest, locked
 
@@ -29,7 +29,9 @@ PUBLIC_FIELDS = ("id", "name", "status", "created_at", "updated_at", "error", "r
 
 
 def public_job(job):
-    return {name: job.get(name) for name in PUBLIC_FIELDS}
+    result = {name: job.get(name) for name in PUBLIC_FIELDS}
+    result["model"] = models.spec(models.job_model(job)) if job.get("job_sha256") else None
+    return result
 
 
 def identifier(value):
@@ -74,9 +76,10 @@ def lease_heartbeat(renew, interval=60):
 
 
 class Service:
-    def __init__(self, store, audience):
+    def __init__(self, store, audience, model=models.KEV):
         self.store = store
         self.audience = trusted_url(audience)
+        self.model = models.spec(model)
 
     def job(self, job_id, owner=None):
         query = f"id=eq.{identifier(job_id)}"
@@ -168,7 +171,7 @@ class Service:
             return {
                 "downloads": {
                     name: self.store.signed(MODEL_BUCKET, job["release_prefix"] + "/" + name)
-                    for name in (*fez.ARTIFACT_FILES, "release.json")
+                    for name in (*models.candidate_files(models.job_model(job)), "release.json")
                 }
             }
         raise APIError(404, "Unknown route.")
@@ -200,7 +203,8 @@ class Service:
             return {
                 "assignment": {
                     **row,
-                    "base_revision": protocol.BASE_REVISION,
+                    "model": models.spec(models.job_model(job)),
+                    "base_revision": models.spec(models.job_model(job))["base_revision"],
                     "initial_sha256": job["initial_sha256"],
                     "job_sha256": job["job_sha256"],
                     "training_sha256": job["manifest"]["files"]["miner-training.jsonl"],
@@ -237,7 +241,7 @@ class Service:
                         if self.store.exists(MODEL_BUCKET, artifact_path(row, name))
                         else self.store.signed(MODEL_BUCKET, artifact_path(row, name), upload=True)
                     )
-                    for name in fez.ARTIFACT_FILES
+                    for name in models.candidate_files(models.job_model(self.job(row["job_id"])))
                 }
             }
         sha = body.get("sha256")
@@ -259,7 +263,8 @@ class Service:
 
     def fetch(self, row, destination, expected):
         total = 0
-        for name in fez.ARTIFACT_FILES:
+        model = models.job_model(self.job(row["job_id"]))
+        for name in models.candidate_files(model):
             total += self.store.download(
                 MODEL_BUCKET,
                 artifact_path(row, name),
@@ -268,6 +273,10 @@ class Service:
             )
         if fez.checkpoint_hash(destination) != expected:
             raise ValueError("uploaded checkpoint does not match its signed hash")
+        if models.checkpoint_model(destination) != model or (
+            model == models.JEVK5 and models.metadata(destination)["kind"] != "adapter"
+        ):
+            raise ValueError("candidate differs from the job's model contract")
 
 
 def handler(service, origin):
@@ -314,7 +323,9 @@ def handler(service, origin):
                     body = json.loads(self.rfile.read(length) or b"{}")
                     if not isinstance(body, dict):
                         raise APIError(400, "Request must be a JSON object.")
-                if self.path.startswith("/v1/workers/") and self.command == "POST":
+                if self.path == "/v1/config" and self.command == "GET":
+                    result = {"model": service.model}
+                elif self.path.startswith("/v1/workers/") and self.command == "POST":
                     result = service.worker(self.path, body)
                 else:
                     auth = self.headers.get("Authorization", "")
@@ -341,6 +352,14 @@ class Processor:
     def __init__(self, service, root, reference, args):
         self.service, self.store = service, service.store
         self.root, self.reference, self.args = Path(root), Path(reference), args
+        self.references = {
+            models.checkpoint_model(path): Path(path)
+            for path in [reference, *getattr(args, "additional_reference", [])]
+        }
+        if models.spec(models.checkpoint_model(self.reference)) != service.model:
+            raise ValueError("processor reference differs from the active service model")
+        for path in self.references.values():
+            fez.checkpoint_hash(path)
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     def renew(self, job):
@@ -392,7 +411,7 @@ class Processor:
                 )
                 values = {
                     "error": (
-                        "Dataset validation failed. Check JSONL fields, labels, family coverage and split overlap."
+                        "Dataset validation failed. Check fields, labels and split overlap. JevK5 supports up to 16 outcomes and 2,048 tokens per example; shorten long examples."
                         if stage == "validating"
                         and isinstance(error, (ValueError, KeyError, TypeError))
                         else "Processing failed. An operator must inspect the job before retrying."
@@ -412,6 +431,9 @@ class Processor:
         return False
 
     def prepare(self, job, work):
+        model = models.checkpoint_model(self.reference)
+        if models.spec(model) != self.service.model:
+            raise RuntimeError("processor reference differs from the active service model")
         splits = {}
         for split in ("train", "calibration", "test"):
             path = work / (split + ".jsonl")
@@ -419,9 +441,18 @@ class Processor:
                 DATA_BUCKET, f"{job['id']}/inputs/{split}.jsonl", path, MAX_DATA_BYTES
             )
             splits[split] = benchmark.read_jsonl(path)
+        if model == models.JEVK5:
+            from .jevk5 import validate_inputs
+
+            validate_inputs(splits)
         data = work / "benchmark"
         manifest = jobs.build(
-            data, job["id"], splits, job["acceptance"], allow_training_data_export=True
+            data,
+            job["id"],
+            splits,
+            job["acceptance"],
+            allow_training_data_export=True,
+            model=model,
         )
         initial = fez.checkpoint_hash(self.reference)
         sha = digest(data / "manifest.json")
@@ -441,9 +472,10 @@ class Processor:
             self.store.download(DATA_BUCKET, prepared_path(job, name), data / name, MAX_DATA_BYTES)
         if digest(data / "manifest.json") != job["job_sha256"]:
             raise ValueError("job manifest changed")
-        if fez.checkpoint_hash(self.reference) != job["initial_sha256"]:
+        reference = self.references[models.job_model(job)]
+        if fez.checkpoint_hash(reference) != job["initial_sha256"]:
             raise ValueError("reference changed")
-        fez.stage(fez.submission(self.reference, 0), work / "reference")
+        fez.stage(fez.submission(reference, 0), work / "reference")
         assignments = self.store.rows(ASSIGNMENTS, f"job_id=eq.{job['id']}")
         members = {str(a["uid"]): {"hotkey": a["hotkey"]} for a in assignments}
         registry = {
@@ -463,7 +495,7 @@ class Processor:
             "job_sha256": job["job_sha256"],
             "benchmark_sha256": job["job_sha256"],
             "initial_sha256": job["initial_sha256"],
-            "base_revision": protocol.BASE_REVISION,
+            "base_revision": models.spec(models.job_model(job))["base_revision"],
             "members": members,
         }
 
@@ -483,6 +515,7 @@ class Processor:
             "p95_ms",
         )
         result = {
+            "model": models.spec(models.job_model(job)),
             "delivery": {k: v for k, v in report["delivery"].items() if k != "checkpoint"},
             "baseline": {k: report["baseline"][k] for k in fields if k in report["baseline"]},
             "miners": [{k: r[k] for k in fields if k in r} for r in report["miners"]],
@@ -492,7 +525,7 @@ class Processor:
         if result["delivery"]["status"] == "accepted":
             release = work / report["delivery"]["checkpoint"]
             prefix = f"{job['id']}/releases/{job['lease_token']}"
-            for name in (*fez.ARTIFACT_FILES, "release.json"):
+            for name in (*models.artifact_files(release), "release.json"):
                 self.store.upload(MODEL_BUCKET, prefix + "/" + name, release / name)
         return {"result": result, "release_prefix": prefix}
 
@@ -506,6 +539,7 @@ def main():
     processor = sub.add_parser("process")
     processor.add_argument("--state", required=True)
     processor.add_argument("--reference", default="models/reference")
+    processor.add_argument("--additional-reference", action="append", default=[])
     processor.add_argument("--runtime-python", default=sys.executable)
     processor.add_argument("--device", choices=("cpu", "mps", "cuda"), default="cpu")
     processor.add_argument("--once", action="store_true")
@@ -518,7 +552,11 @@ def main():
     approve.add_argument("--hotkeys", nargs="+", required=True)
     args = parser.parse_args()
     try:
-        service = Service(Supabase(), os.environ["FEZ_TRAINING_API_URL"])
+        service = Service(
+            Supabase(),
+            os.environ["FEZ_TRAINING_API_URL"],
+            os.environ.get("FEZ_TRAINING_MODEL", models.KEV),
+        )
         if args.command == "serve":
             origin = trusted_url(os.environ["FEZ_WEB_ORIGIN"])
             with ThreadingHTTPServer((args.host, args.port), handler(service, origin)) as server:

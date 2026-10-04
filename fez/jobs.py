@@ -9,7 +9,7 @@ from pathlib import Path
 
 import fez
 
-from . import benchmark
+from . import benchmark, models
 
 VERSION = "fez-customer-job/v1"
 
@@ -46,7 +46,7 @@ def validate_splits(splits):
         raise ValueError("calibration and test families must match and be present in training")
 
 
-def build(root, job_id, splits, policy, *, allow_training_data_export=False):
+def build(root, job_id, splits, policy, *, allow_training_data_export=False, model=None):
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", job_id):
         raise ValueError("job ID must be 1..64 lowercase letters, digits or hyphens")
     if allow_training_data_export is not True:
@@ -71,6 +71,8 @@ def build(root, job_id, splits, policy, *, allow_training_data_export=False):
         "files": {name: benchmark.file_hash(root / name) for name in benchmark.FILES},
         "counts": {split: len(cases) for split, cases in splits.items()},
     }
+    if model is not None:
+        manifest["model"] = models.spec(model)
     benchmark.write_private(root / "manifest.json", json.dumps(manifest, indent=2) + "\n")
     return manifest
 
@@ -84,6 +86,8 @@ def audit(root, manifest):
     ):
         raise ValueError("invalid customer job manifest")
     validate_policy(manifest["acceptance"])
+    if "model" in manifest:
+        models.validate_spec(manifest["model"])
     root = Path(root)
     for name in benchmark.FILES:
         if benchmark.file_hash(root / name) != manifest["files"][name]:
