@@ -96,7 +96,7 @@ No DigitalOcean resources are required or created by this repository.
 
 ## Connect the web app
 
-In the existing Next.js Fez web app, configure:
+In the independent [Zils website](https://github.com/ooo-hq/zils-web), configure:
 
 ```dotenv
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
@@ -201,7 +201,9 @@ without understanding lease ownership.
 Training data is readable by approved workers, who may retain it. Signed URLs
 limit access, not the use of downloaded bytes. Files and raw local runs are
 retained until operator cleanup; automatic retention/deletion, billing, resumable
-multipart uploads, confidential compute, and serving are not implemented. The
+multipart uploads, confidential compute, and automatic serving of training artifacts are not implemented.
+The separate [Zils decision API](decision-api.md) provides shared-model inference
+and bulk processing with its own credentials, queue, and retention controls. The
 initial upload path uses direct PUT; retry restarts a failed file transfer.
 
 ## Verification

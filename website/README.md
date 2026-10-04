@@ -1,10 +1,10 @@
-# Fez standalone benchmark preview
+# Zils standalone benchmark preview
 
 A read-only, single-page observatory. Native HTML, CSS, and JavaScript; no npm
 dependencies, GPU, wallet, model download, or validator required.
 
-The selected public location is `https://fez.chat/model`, implemented in the
-existing [Fez website app](https://github.com/KennethAshley/fez/tree/main/web)
+The selected public location is `https://zils.ai/model`, implemented in the
+existing [Zils website app](https://github.com/ooo-hq/zils-web)
 with its shared navigation and visual identity. This folder retains the
 standalone benchmark preview. The domain route must be published through that
 website's normal deployment; this preview does not deploy it.
@@ -48,7 +48,7 @@ copy repository folders, raw runs, model artifacts, private configuration, or
 participant endpoints. `dist/` is generated and ignored. Publish only a clean
 build of `website/dist/`; never serve the repository root publicly.
 
-The `/model` integration belongs to the existing `fez-web` hosting project.
+The `/model` integration is deployed through the `ooo-hq/zils-web` GitHub repository.
 Do not deploy this standalone output over the main homepage or the separate
 `docs.fez.chat` manual. The website app renders public benchmark and testnet snapshots at build time
 without a live feed. See the [benchmark methodology](../docs/jevbench-public.md)

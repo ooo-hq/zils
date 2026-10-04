@@ -1,6 +1,6 @@
 # Project standards
 
-Fez is a professional developer tool. Write code and documentation for external
+Zils is a professional developer tool. Write code and documentation for external
 engineers, operators, and investors who have no access to the maintainer's setup.
 
 - Public setup instructions must work from a fresh clone. Create required inputs

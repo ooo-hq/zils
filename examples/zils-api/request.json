@@ -1,0 +1,28 @@
+{
+  "model": "zils-shared",
+  "state": {
+    "query": "USB-C to USB-C charging cable",
+    "product": "One metre USB-C to USB-C cable"
+  },
+  "questions": {
+    "match": {
+      "type": "choice",
+      "instructions": "How does this product relate to the shopping query?",
+      "criteria": {
+        "exact": "Meets the query",
+        "substitute": "Usable alternative",
+        "complement": "Accessory rather than the requested item",
+        "irrelevant": "Unrelated"
+      }
+    },
+    "compatible": {
+      "type": "noul",
+      "instructions": "Does the cable have USB-C connectors at both ends?"
+    },
+    "fit": {
+      "type": "score",
+      "instructions": "How closely does the product satisfy the query?",
+      "criteria": ["Does not match", "Partly matches", "Fully matches"]
+    }
+  }
+}

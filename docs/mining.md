@@ -1,4 +1,4 @@
-# Run a Fez miner
+# Run a Zils miner
 
 After the one-time setup below, run this in your assigned miner folder:
 
@@ -14,7 +14,7 @@ pinned base model. Later starts reuse the cache.
 ## Prepare bundles on the validator
 
 From the repository root, after installing dependencies and downloading the
-reference as described in the [project README](https://github.com/ooo-hq/fez#setup):
+reference as described in the [project README](https://github.com/ooo-hq/zils#setup):
 
 ```bash
 .venv-kev/bin/python -m fez.benchmark build --out .private/benchmarks/local

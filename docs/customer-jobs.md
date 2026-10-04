@@ -1,6 +1,6 @@
 # Customer decision jobs
 
-Fez can run a customer dataset through its existing approved-worker competition:
+Zils can run a customer dataset through its existing approved-worker competition:
 train candidates, calibrate each candidate and the starting checkpoint, compare
 their test results, and export a qualifying candidate. This is an experimental
 local workflow, not a hosted customer service or a published model release.
@@ -106,5 +106,6 @@ no model meets the delivery criteria. Scores from different customer jobs must
 not be pooled as if they measured the same task. Repeated rounds reuse test data;
 acceptance is a measured threshold on that set, not a guarantee of generalization
 or statistical significance. Reserve independent final evaluation data for real
-deployment decisions. Private inference serving, release approval/rollback,
-billing, and cross-job reward allocation remain future work.
+deployment decisions. The separate [Zils decision API](decision-api.md) serves approved shared JevK5
+weights in a local pilot. Deployment of these training artifacts, automated release
+approval/rollback, billing, and cross-job reward allocation remain future work.

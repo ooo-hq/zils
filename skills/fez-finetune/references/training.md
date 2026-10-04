@@ -31,11 +31,11 @@ cd "$FEZ_TOOLS_DIR"
 ```
 
 Check every command succeeds and HEAD equals `FEZ_TOOLS_REF` before continuing.
-The installed Fez skill is self-contained apart from this explicit network
-dependency; it needs no existing Fez checkout or separately installed Kev skill.
+The installed Zils skill is self-contained apart from this explicit network
+dependency; it needs no existing Zils checkout or separately installed Kev skill.
 
 Read `SKILL.md` in `FEZ_TOOLS_DIR` for the tool sequence, then the relevant
-`references/data-format.md` and `references/data-generation.md`. Apply Fez's
+`references/data-format.md` and `references/data-generation.md`. Apply Zils's
 scope, evidence, and subnet requirements from the calling skill. Don't execute
 the upstream deployment or teardown phases just because they are listed.
 
@@ -45,7 +45,7 @@ that compatible default and record both the tools revision and the report's
 commit and use `repository@commit` as `FEZ_INIT_FROM`. This retains the released
 decision head and adapters; a bare Qwen base does not.
 
-For a supplied Fez checkpoint, use its pinned Hub repository or the local
+For a supplied Zils checkpoint, use its pinned Hub repository or the local
 hardware branch. A path on the user's computer is not visible inside Modal.
 To continue a run already on the shared Modal volume, verify and use its full
 `/runs/<run-name>/checkpoint` path for training: this pinned trainer does not
@@ -132,7 +132,7 @@ When the user chooses local hardware, read the pinned repository's `kev/train.py
 and `kev/benchmark.py` help and use an isolated environment in that checkout.
 The Modal commands do not run on a local GPU. Follow the warm-start recipe with
 `kev.train --init_from`; verify the matching base/revision, dtype, checkpointing,
-and a one-batch memory check before the full run. The existing Fez miner recipe
+and a one-batch memory check before the full run. The existing Zils miner recipe
 and validator are fixed to 0.8B and must not be edited to bypass that contract.
 
 For calibration, the pinned `kev.calibrate` command writes a **report**, not a
@@ -148,7 +148,7 @@ prediction/row files for paired comparison.
 Read the pinned `references/deploy.md` only when the user wants an endpoint,
 downloaded weights, publication, or cleanup. Its commands support pulling the
 checkpoint, authenticated serving, remote evaluation, and publishing to a
-user-selected Hub repository. Use a Fez candidate model card that credits Kev
+user-selected Hub repository. Use a Zils candidate model card that credits Kev
 and names the exact parent, data, measurements, and limitations.
 
 Check the upload file list: the upstream publisher includes reports and logs,

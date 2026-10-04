@@ -20,6 +20,11 @@ database. A live Supabase smoke test verified authentication, customer isolation
 private uploads, processor validation, and cancellation. Real queued training
 remains unverified.
 
+The separate [Zils decision API](decision-api.md) now implements authenticated
+shared JevK5 inference and durable bulk jobs. Local database, SDK, and real GPU
+checks passed; hosted deployment and automatic adapter promotion remain unverified
+or unimplemented. Miners continue to train candidates, not serve bulk requests.
+
 Next steps include real queued-training validation, rewards across different jobs,
 independent final evaluation, confidential compute, retention controls, billing,
 and authenticated inference deployment with release approval and rollback.
@@ -28,7 +33,7 @@ and authenticated inference deployment with release approval and rollback.
 
 Planned dashboard capabilities:
 
-- Current winning Fez checkpoint, version/hash, download, and winner history.
+- Current winning Zils checkpoint, version/hash, download, and winner history.
 - Decision accuracy, Brier probability score, and highly confident mistakes;
   show dataset/rubric versions and comparable evaluation settings.
 - Median and p95 response latency, with the measured hardware and timing scope.
@@ -36,10 +41,10 @@ Planned dashboard capabilities:
 - Miner/validator health and published chain weights/reward allocation, with
   testnet status clearly labeled.
 
-Use Teutonic's visibility into model progress as inspiration. Fez's dashboard
+Use Teutonic's visibility into model progress as inspiration. Zils's dashboard
 should report its decision-model results; percentages from different benchmark
 suites must not be presented as directly comparable.
 
-The [public model page](https://fez.chat/model) presents recorded benchmark results
+The [public model page](https://zils.ai/model) presents recorded benchmark results
 and the verified testnet round. Live subnet views require an explicit public
 aggregate feed; unavailable data stays labeled.

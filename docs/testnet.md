@@ -1,4 +1,4 @@
-# Fez on Bittensor testnet
+# Zils on Bittensor testnet
 
 The [first closed round](testnet-round-001.md) completed on **testnet subnet 579**
 on September 25, 2026. Three fresh checkpoints were trained and scored; their
@@ -107,7 +107,7 @@ Publish the completed round, substituting its directory for `ROUND`:
 
 For subsequent rounds, add `--publish-weights` to the validator startup command.
 The SDK enforces chain constraints and chooses plain weights or timelocked
-commit-reveal. Fez uses mechanism 0 and weights version 1. An increased required
+commit-reveal. Zils uses mechanism 0 and weights version 1. An increased required
 version blocks this client rather than pretending to implement a newer rubric.
 
 ## Read the outcome
@@ -131,7 +131,7 @@ Verification checks the current registered identities, a later `LastUpdate`,
 and the expected proportions after SDK clipping/quantization. It reports the
 current weight state; it cannot uniquely attribute identical weights to one
 commit if another process writes for the same hotkey. `rate_limited` and
-`no_weights` send nothing; previous on-chain weights remain. Fez never invents
+`no_weights` send nothing; previous on-chain weights remain. Zils never invents
 uniform rewards when every candidate fails.
 
 ## Validation
