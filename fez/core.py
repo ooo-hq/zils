@@ -14,7 +14,7 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-from . import ROOT
+from . import ROOT, models
 
 ARTIFACT_FILES = ("adapter_config.json", "adapter_model.safetensors", "head.pt")
 MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
@@ -129,7 +129,7 @@ def weight_vector(rows):
 def checkpoint_hash(path):
     path = Path(path)
     records, total = [], 0
-    for name in ARTIFACT_FILES:
+    for name in models.artifact_files(path):
         artifact = path / name
         if artifact.is_symlink() or not artifact.is_file():
             raise ValueError(f"checkpoint requires a regular, non-symlink {name}")
@@ -177,11 +177,11 @@ def stage(entry, destination):
     if checkpoint_hash(source) != entry["sha256"]:
         raise ValueError("checkpoint hash changed since submission")
     destination.mkdir()
-    for name in ARTIFACT_FILES:
+    for name in models.artifact_files(source):
         shutil.copyfile(source / name, destination / name)
     if checkpoint_hash(destination) != entry["sha256"]:
         raise ValueError("checkpoint hash changed while copying")
-    for name in ARTIFACT_FILES:
+    for name in models.artifact_files(destination):
         (destination / name).chmod(0o444)
 
 
@@ -200,7 +200,15 @@ def evaluate(args):
     requests = [
         {"id": case["id"], "state": case["state"], "question": case["question"]} for case in cases
     ]
-    runner = Path(__file__).with_name("kev_runner.py")
+    model = (
+        models.JEVK5
+        if args.base_revision == models.spec(models.JEVK5)["base_revision"]
+        else models.KEV
+    )
+    base = models.spec(model)["base"]
+    runner = Path(__file__).with_name(
+        "jevk5_runner.py" if model == models.JEVK5 else "kev_runner.py"
+    )
     environment = {
         **os.environ,
         "HF_HUB_OFFLINE": "1",
@@ -221,6 +229,8 @@ def evaluate(args):
             with tempfile.TemporaryDirectory(prefix="fez-eval-") as tmp:
                 checkpoint = Path(tmp) / "checkpoint"
                 stage(entry, checkpoint)
+                if models.checkpoint_model(checkpoint) != model:
+                    raise ValueError("checkpoint belongs to a different model")
                 try:
                     result = subprocess.run(
                         [
@@ -229,7 +239,7 @@ def evaluate(args):
                             "--checkpoint",
                             str(checkpoint),
                             "--base",
-                            BASE,
+                            base,
                             "--base-revision",
                             args.base_revision,
                             "--device",
@@ -260,7 +270,7 @@ def evaluate(args):
     report = {
         "mode": "local-dry-run",
         "rubric": RUBRIC,
-        "base": BASE,
+        "base": base,
         "base_revision": args.base_revision,
         "device": args.device,
         "timeout_s": args.timeout,

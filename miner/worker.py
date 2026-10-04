@@ -14,7 +14,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 
 import fez
-from fez import protocol as wire
+from fez import models, protocol as wire
 from fez.runtime import digest, request, run_child, signed, signing_key
 
 
@@ -90,6 +90,26 @@ def train_candidate(config, directory, job, runtime, device):
         "--out",
         str(raw),
     ]
+    if models.checkpoint_model(directory / "reference") == models.JEVK5:
+        if config["base_revision"] != models.spec(models.JEVK5)["base_revision"]:
+            raise ValueError("training model revision differs from its reference")
+        command = [
+            runtime,
+            "-u",
+            "-m",
+            "fez.jevk5",
+            "train",
+            "--data",
+            str(directory / "miner-training.jsonl"),
+            "--reference",
+            str(directory / "reference"),
+            "--device",
+            device,
+            "--seed",
+            str(seed),
+            "--out",
+            str(raw),
+        ]
     print(
         f"miner {config['uid']}: training round {job['round_id']} on {device}; log {work / 'training.log'}",
         flush=True,
