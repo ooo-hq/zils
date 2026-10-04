@@ -6,6 +6,7 @@ import json
 import unittest
 import uuid
 
+from fez.cloud import APIError
 from fez.decisions import DecisionError
 from tests.test_api import BODY, FINGERPRINT, RELEASE
 
@@ -89,3 +90,42 @@ class BatchTest(unittest.TestCase):
         self.assertTrue(all(x["result"]["error"]["status"] == 422 for x in parsed))
         with self.assertRaises(DecisionError):
             m.parse_input(json.dumps({"custom_id": "bad\x00", "body": BODY}).encode(), catalog)
+
+    def test_create_retry_recovers_only_confirmed_completed_uploads(self):
+        m = self.module()
+        owner, batch = str(uuid.uuid4()), str(uuid.uuid4())
+
+        class StorageConflict:
+            def __init__(self, status, uploaded):
+                self.status, self.uploaded = status, uploaded
+
+            def rpc(self, name, args):
+                return {"id": batch, "status": "uploading", "input_path": "input.jsonl"}
+
+            def signed(self, bucket, path, *, upload=False):
+                raise APIError(self.status, "Storage rejected the signing request")
+
+            def exists(self, bucket, path):
+                return self.uploaded
+
+        for status, uploaded, recovered in [
+            (409, True, True),
+            (409, False, False),
+            (503, True, False),
+        ]:
+            with self.subTest(status=status, uploaded=uploaded):
+                service = m.Batches(StorageConflict(status, uploaded))
+                if recovered:
+                    code, result = service.dispatch(
+                        "POST", "/v1/batches", owner, {"idempotency_key": "retry"}, None
+                    )
+                    self.assertEqual(
+                        (code, result["id"], result["status"]), (200, batch, "uploading")
+                    )
+                    self.assertNotIn("upload", result)
+                else:
+                    with self.assertRaises(APIError) as cm:
+                        service.dispatch(
+                            "POST", "/v1/batches", owner, {"idempotency_key": "retry"}, None
+                        )
+                    self.assertEqual(cm.exception.status, status)

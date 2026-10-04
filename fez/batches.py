@@ -140,7 +140,13 @@ class Batches:
                 )
             result = public(row)
             if row["status"] == "uploading":
-                result["upload"] = self.db.signed(BUCKET, row["input_path"], upload=True)
+                try:
+                    result["upload"] = self.db.signed(BUCKET, row["input_path"], upload=True)
+                except APIError as error:
+                    # Supabase refuses immutable upload URLs once the object exists.
+                    # Recover the batch only after confirming its private input arrived.
+                    if error.status != 409 or not self.db.exists(BUCKET, row["input_path"]):
+                        raise
                 result["limits"] = {"max_bytes": MAX_FILE, "max_records": MAX_RECORDS}
             return 200, result
         if len(parts) not in (3, 4) or parts[:2] != ["v1", "batches"]:
