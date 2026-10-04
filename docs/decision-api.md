@@ -8,9 +8,13 @@ evaluate them, and trusted Zils servers run inference. The existing training
 queue does not automatically deploy an adapter into this API.
 
 The implementation has local HTTP, real PostgreSQL, official SDK, and RTX 4090
-runtime checks. It has not been deployed or verified against hosted Supabase
-Storage. There is no billing, measured service-level guarantee, automatic model
-promotion, or open-miner inference network. Onboarding is a separate service.
+runtime checks. A hosted staging check also verified key creation/revocation,
+real inference, private Supabase uploads, retry recovery, and account isolation.
+Its four-record synthetic bulk job completed three valid records and returned
+one expected validation error. This verifies the workflow, not customer model
+quality or production capacity. There is no billing, measured service-level
+guarantee, automatic model promotion, or open-miner inference network. Onboarding
+is a separate service.
 
 ## Request and credential contract
 
@@ -231,8 +235,10 @@ PY
 
 All API operations use the current account API key. The signed PUT uses the
 returned Storage authorization URL. It cannot replace an uploaded object. Repeat
-create with the same idempotency key to recover the batch ID/upload destination;
-use a new idempotency key for changed inputs. Repeated submit does not change
+create with the same idempotency key to recover the batch ID. If the input has
+already arrived, the response omits `upload`; submit that batch without uploading
+again. Otherwise, `upload` contains a fresh signed destination. Use a new
+idempotency key for changed inputs. Repeated submit does not change
 versions or duplicate jobs. Signed uploads expire after two hours under
 [Supabase Storage's documented behavior](https://supabase.com/docs/reference/javascript/storage-from-createsigneduploadurl); create again with the same key for a fresh destination.
 Upload completion is checked at submit; dataset/schema validation happens in the

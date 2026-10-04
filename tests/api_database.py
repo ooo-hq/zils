@@ -109,6 +109,8 @@ class Database:
         return OWNER if token == "session-owner" else OTHER
 
     def signed(self, bucket, path, *, upload=False):
+        if upload and path in self.objects:
+            raise APIError(409, "The resource already exists")
         return {"url": "https://storage.example/" + path, "method": "PUT", "headers": {}}
 
     def exists(self, bucket, path):
@@ -199,6 +201,8 @@ def run(command):
                 assert error.status == 409
             path = db.rows("zils_api_batches", "id=eq." + batch["id"])[0]["input_path"]
             db.objects[path] = "\n".join(json.dumps(x) for x in records).encode()
+            _, recovered = call("POST", "/v1/batches", {"idempotency_key": key})
+            assert recovered["id"] == batch["id"] and "upload" not in recovered
             assert call("POST", "/v1/batches/" + batch["id"] + "/submit")[0] == 202
             return batch["id"], path
 
