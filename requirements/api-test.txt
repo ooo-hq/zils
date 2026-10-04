@@ -1,0 +1,3 @@
+-r api.txt
+-r dev.txt
+typesafe-sdk==0.7.2

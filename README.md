@@ -25,6 +25,13 @@ three fresh miner checkpoints and verified revealed weights. See the
 [recorded result and limitations](docs/testnet-round-001.md).
 There is no published Zils model release or automatic winner promotion yet.
 
+**Zils API:** the decision protocol/subnet is now named Zils; Fez remains the
+chat application. The [new decision API](docs/decision-api.md) adds authenticated
+TypeSafe-style inference and durable bulk jobs using shared JevK5. Its local
+verification and deployment limits are documented separately from this training
+pilot; it does not automatically serve miner adapters. Existing package and
+training resource names remain compatible.
+
 [Documentation](docs/README.md) covers operation, development, evaluation, and
 measured results.
 
@@ -144,6 +151,7 @@ After setup, install the lint tools and SDK used by the testnet tests:
 
 ```bash
 uv pip install --python .venv-kev/bin/python -r requirements/dev.txt -r requirements/testnet.txt
+uv pip install --python .venv-kev/bin/python --no-deps -r requirements/jevk5-source.txt
 make check
 ```
 

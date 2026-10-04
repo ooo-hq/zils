@@ -1,0 +1,2 @@
+# Use --no-deps for pure prompt tests; GPU serving uses requirements/jevk5.txt.
+jevk5 @ git+https://github.com/allebee/jevk5.git@f26426d16f59e8bbe1470e5b162cc89329e29b29

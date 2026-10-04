@@ -196,7 +196,9 @@ without understanding lease ownership.
 Training data is readable by approved workers, who may retain it. Signed URLs
 limit access, not the use of downloaded bytes. Files and raw local runs are
 retained until operator cleanup; automatic retention/deletion, billing, resumable
-multipart uploads, confidential compute, and serving are not implemented. The
+multipart uploads, confidential compute, and automatic serving of training artifacts are not implemented.
+The separate [Zils decision API](decision-api.md) provides shared-model inference
+and bulk processing with its own credentials, queue, and retention controls. The
 initial upload path uses direct PUT; retry restarts a failed file transfer.
 
 ## Verification

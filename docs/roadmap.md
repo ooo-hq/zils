@@ -20,6 +20,11 @@ database. A live Supabase smoke test verified authentication, customer isolation
 private uploads, processor validation, and cancellation. Real queued training
 remains unverified.
 
+The separate [Zils decision API](decision-api.md) now implements authenticated
+shared JevK5 inference and durable bulk jobs. Local database, SDK, and real GPU
+checks passed; hosted deployment and automatic adapter promotion remain unverified
+or unimplemented. Miners continue to train candidates, not serve bulk requests.
+
 Next steps include real queued-training validation, rewards across different jobs,
 independent final evaluation, confidential compute, retention controls, billing,
 and authenticated inference deployment with release approval and rollback.
