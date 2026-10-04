@@ -51,6 +51,7 @@ def initialize(out, benchmark_path, checkpoint, host, port, miner_ports, identit
                 )
     benchmark_path = Path(benchmark_path)
     benchmark.audit(benchmark_path)
+    manifest = json.loads((benchmark_path / "manifest.json").read_text())
     entry = fez.submission(checkpoint, 0)
     out = Path(out)
     out.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -74,6 +75,9 @@ def initialize(out, benchmark_path, checkpoint, host, port, miner_ports, identit
         "initial_sha256": entry["sha256"],
         "training_sha256": digest(data / "miner-training.jsonl"),
     }
+    if "job_id" in manifest:
+        shared.update(job_id=manifest["job_id"], job_sha256=digest(data / "manifest.json"))
+        fez.stage(entry, validator_dir / "reference")
     if identities is not None:
         shared["chain"] = dict(identities["chain"])
     members = {}

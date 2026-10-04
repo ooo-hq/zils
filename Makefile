@@ -1,7 +1,7 @@
 PYTHON ?= .venv-kev/bin/python
 PYTHON_SOURCES = fez miner scripts tests
 
-.PHONY: check lint format test check-website
+.PHONY: check lint format test check-website check-queue-db
 
 check: lint test $(if $(wildcard website/package.json),check-website)
 
@@ -21,3 +21,6 @@ check-website:
 	@for file in website/*.js website/*.mjs; do node --check "$$file" || exit 1; done
 	npm --prefix website test
 	npm --prefix website run build
+
+check-queue-db:
+	$(PYTHON) -m scripts.check_queue_db

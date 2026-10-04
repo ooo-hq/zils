@@ -23,6 +23,9 @@ def train_candidate(config, directory, job, runtime, device):
     for name in ("base_revision", "initial_sha256", "training_sha256"):
         if job.get(name) != config[name]:
             raise ValueError("validator round differs from the installed training configuration")
+    for name in ("job_id", "job_sha256"):
+        if job.get(name) != config.get(name):
+            raise ValueError("validator round differs from the installed customer job")
     if not re.fullmatch("[a-f0-9]{32}", job.get("round_id", "")):
         raise ValueError("invalid round id")
     if digest(directory / "miner-training.jsonl") != config["training_sha256"]:
@@ -42,11 +45,10 @@ def train_candidate(config, directory, job, runtime, device):
     if not (work / "job.json").exists():
         wire.write_json(work / "job.json", job)
     identity = config.get("seed") or config["hotkey"]
+    authority = config.get("training_authority") or config["validator_hotkey"]
     seed = (
         int(
-            hashlib.sha256(
-                (config["validator_hotkey"] + identity + job["round_id"]).encode()
-            ).hexdigest()[:8],
+            hashlib.sha256((authority + identity + job["round_id"]).encode()).hexdigest()[:8],
             16,
         )
         % 2**31
@@ -160,6 +162,8 @@ def miner(config, directory, args):
                         "sha256": entry["sha256"],
                         "endpoint": endpoint,
                     }
+                    if "job_sha256" in config:
+                        claim["job_sha256"] = config["job_sha256"]
                     reply = request(
                         config,
                         "/submit",

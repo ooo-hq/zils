@@ -16,8 +16,8 @@ from . import protocol as wire
 from .runtime import digest, locked, run_child, signed, signing_key, verified
 
 
-def evaluate_round(config, directory, work, registry, args):
-    from . import benchmark, calibrate
+def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=None):
+    from . import benchmark, calibrate, jobs
 
     if shutil.disk_usage(work).free < 2 * 1024**3:
         raise RuntimeError("less than 2 GiB free; archive completed rounds before evaluating again")
@@ -25,6 +25,11 @@ def evaluate_round(config, directory, work, registry, args):
     if digest(data / "manifest.json") != config["benchmark_sha256"]:
         raise ValueError("benchmark manifest changed")
     benchmark.audit(data)
+    manifest = json.loads((data / "manifest.json").read_text())
+    if config.get("job_sha256") != (
+        digest(data / "manifest.json") if "job_id" in manifest else None
+    ) or config.get("job_id") != manifest.get("job_id"):
+        raise ValueError("customer job differs from the installed configuration")
     entries, failed = [], {}
     attempt = work / ("evaluation-" + uuid.uuid4().hex)
     attempt.mkdir(mode=0o700)
@@ -32,7 +37,7 @@ def evaluate_round(config, directory, work, registry, args):
         claim = message["claim"]
         path = attempt / f"raw-{uid}"
         try:
-            wire.fetch_checkpoint(
+            (fetch_checkpoint or wire.fetch_checkpoint)(
                 claim, path, expected_endpoint=claim["endpoint"], round_scoped=True
             )
             entries.append(fez.submission(path, uid))
@@ -65,6 +70,38 @@ def evaluate_round(config, directory, work, registry, args):
             command, attempt / f"{name}.log", args.device, timeout=120 + 600 * len(submissions)
         )
         return json.loads(report.read_text())
+
+    baseline = None
+    if "job_id" in config:
+        # Calibrate the reference on the same population as each candidate. A
+        # published reference may already carry a temperature from another task.
+        from kev.checkpoint import read_meta, write_meta
+
+        source = directory / "reference"
+        entry = fez.submission(source, 0)
+        if entry["sha256"] != config["initial_sha256"]:
+            raise ValueError("job baseline checkpoint changed")
+        raw = attempt / "baseline-raw"
+        fez.stage(entry, raw)
+        meta = read_meta(raw)
+        meta.temperature = 1.0
+        (raw / "head.pt").chmod(0o600)
+        write_meta(raw, meta)
+        (raw / "head.pt").chmod(0o444)
+        calibration = evaluate(
+            [fez.submission(raw, 0)], data / "calibration.jsonl", "baseline-calibration"
+        )
+        if calibration["miners"][0]["status"] != "evaluated":
+            raise RuntimeError("baseline calibration failed; no customer model can be accepted")
+        fitted_baseline = attempt / "baseline-calibrated"
+        calibrate.fit(data, calibration, 0, raw, fitted_baseline)
+        baseline_report = evaluate(
+            [fez.submission(fitted_baseline, 0)], data / "test.jsonl", "baseline-test"
+        )
+        jobs.verify_report(data, baseline_report, "test")
+        baseline = baseline_report["miners"][0]
+        if baseline["status"] != "evaluated":
+            raise RuntimeError("baseline evaluation failed; no customer model can be accepted")
 
     fitted = []
     if entries:
@@ -102,6 +139,34 @@ def evaluate_round(config, directory, work, registry, args):
         weights=fez.weight_vector(report["miners"]),
         submitted={uid: m["claim"]["sha256"] for uid, m in registry.items()},
     )
+    if baseline is not None:
+        delivery = jobs.select(baseline, report["miners"], manifest["acceptance"])
+        if delivery["status"] == "accepted":
+            winner = next(entry for entry in fitted if entry["uid"] == delivery["uid"])
+            release = attempt / "accepted-model"
+            fez.stage(winner, release)
+            delivery["checkpoint"] = str(release.relative_to(work))
+            wire.write_json(
+                release / "release.json",
+                {
+                    "job_id": config["job_id"],
+                    "job_sha256": config["job_sha256"],
+                    "round_id": work.name,
+                    "base": fez.BASE,
+                    "base_revision": config["base_revision"],
+                    "initial_sha256": config["initial_sha256"],
+                    "submitted_sha256": registry[delivery["uid"]]["claim"]["sha256"],
+                    "baseline_brier": baseline["brier"],
+                    **delivery,
+                },
+            )
+        report.update(
+            job_id=config["job_id"],
+            job_sha256=config["job_sha256"],
+            benchmark_use="customer-held-out-reused-across-rounds",
+            baseline=baseline,
+            delivery=delivery,
+        )
     if "chain" in config:
         report.update(
             mode="testnet-closed-development",
@@ -172,6 +237,7 @@ def validator(config, directory, args):
                             members,
                             updated,
                             endpoints={uid: endpoint},
+                            job_sha256=config.get("job_sha256"),
                         )
                         path = rounds / current["round_id"] / "submissions" / f"{uid}.json"
                         if not path.exists():
@@ -242,7 +308,18 @@ def validator(config, directory, args):
                 }
                 if chain_state is not None:
                     job["chain"] = config["chain"]
+                if "job_id" in config:
+                    job.update(job_id=config["job_id"], job_sha256=config["job_sha256"])
                 wire.write_json(work / "job.json", job)
+            for name in (
+                "base_revision",
+                "initial_sha256",
+                "training_sha256",
+                "job_id",
+                "job_sha256",
+            ):
+                if job.get(name) != config.get(name):
+                    raise ValueError("pending round differs from the installed job configuration")
             if chain_state is not None and not (work / "chain-snapshot.json").exists():
                 wire.write_json(work / "chain-snapshot.json", chain_state)
             with condition:
@@ -259,6 +336,7 @@ def validator(config, directory, args):
                         members,
                         registry,
                         endpoints={c["uid"]: c["endpoint"]},
+                        job_sha256=config.get("job_sha256"),
                     )
                 while len(registry) < len(members) and time.time() < job["deadline"]:
                     condition.wait(min(1, max(0.01, job["deadline"] - time.time())))

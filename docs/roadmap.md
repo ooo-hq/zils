@@ -6,7 +6,25 @@ testnet subnet 579, including verification after commit–reveal.
 Public discovery, isolated untrusted-model evaluation, benchmark refresh, and
 model release/promotion rules remain work for an open competition.
 
-## Dashboard
+## Customer jobs
+
+The experimental [customer job workflow](customer-jobs.md) freezes authorized
+data and acceptance criteria, binds submissions to a job, compares candidates
+against a calibrated starting checkpoint, and exports qualifying artifacts
+locally. Each fleet configuration currently pins one job.
+
+The [Supabase training queue](supabase-training.md) now connects private uploads,
+approved-worker assignments, expiring claims, and accepted-model downloads.
+It has been tested locally with fixture models and a disposable PostgreSQL
+database. A live Supabase smoke test verified authentication, customer isolation,
+private uploads, processor validation, and cancellation. Real queued training
+remains unverified.
+
+Next steps include real queued-training validation, rewards across different jobs,
+independent final evaluation, confidential compute, retention controls, billing,
+and authenticated inference deployment with release approval and rollback.
+
+## Dashboard plans
 
 Planned dashboard capabilities:
 

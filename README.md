@@ -85,6 +85,13 @@ The Bittensor SDK is optional until [testnet setup](docs/testnet.md).
 
 ## Run a local fleet
 
+For authorized business data, the experimental [customer job workflow](docs/customer-jobs.md)
+adds a frozen job manifest, calibrated baseline comparison, and a local export
+only when a candidate meets acceptance thresholds. Each fleet configuration
+currently handles one job. The [Supabase training queue](docs/supabase-training.md)
+adds private customer uploads and a shared pool of approved workers. Live upload
+and validation checks have passed; real training through the queue remains unverified.
+
 1. Generate a benchmark and three miner bundles. Use new output directories:
 
    ```bash

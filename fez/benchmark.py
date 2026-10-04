@@ -421,6 +421,10 @@ def build(root, seed=None):
 def audit(root):
     root = Path(root)
     manifest = json.loads((root / "manifest.json").read_text())
+    from . import jobs
+
+    if manifest.get("version") == jobs.VERSION:
+        return jobs.audit(root, manifest)
     if manifest["version"] != VERSION or set(manifest["files"]) != set(FILES):
         raise ValueError("unknown benchmark version or file list")
     for name in FILES:
@@ -436,6 +440,8 @@ def audit(root):
 
 def summarize(root, report, split):
     cases = audit(root)[split]
+    manifest = json.loads((Path(root) / "manifest.json").read_text())
+    synthetic = manifest["version"] == VERSION
     digest = hashlib.sha256(json.dumps(cases, sort_keys=True, allow_nan=False).encode()).hexdigest()
     if report["dataset_sha256"] != digest:
         raise ValueError("report dataset does not match frozen benchmark split")
@@ -455,11 +461,14 @@ def summarize(root, report, split):
             "runtime": miner["runtime"],
             "overall": overall,
         }
-        for field in ("family", "variant"):
+        for field in ("family", "variant") if synthetic else ("family",):
             row[f"by_{field}"] = {}
             for value in sorted({c[field] for c in cases}):
                 subset = [c for c in cases if c[field] == value]
                 row[f"by_{field}"][value] = fez.score(subset, [by_id[c["id"]] for c in subset])
+        if not synthetic:
+            rows.append(row)
+            continue
         pairs = defaultdict(list)
         for c in cases:
             p = by_id[c["id"]]["probabilities"]
@@ -469,13 +478,17 @@ def summarize(root, report, split):
         row["both_variants_correct"] = sum(a[1] and b[1] for a, b in pairs.values()) / len(pairs)
         rows.append(row)
     return {
-        "benchmark": VERSION,
+        "benchmark": manifest["version"],
         "split": split,
         "dataset_sha256": digest,
         "manifest_sha256": file_hash(Path(root) / "manifest.json"),
         "cases": len(cases),
         "groups": len({c["group_id"] for c in cases}),
-        "scenarios": len({c["scenario_id"] for c in cases}),
+        **(
+            {"scenarios": len({c["scenario_id"] for c in cases})}
+            if synthetic
+            else {"job_id": manifest["job_id"]}
+        ),
         "miners": rows,
     }
 

@@ -13,12 +13,13 @@ class CLITest(unittest.TestCase):
         modules = [
             "fez",
             "fez.benchmark",
+            "fez.jobs",
             "fez.calibrate",
             "fez.testnet",
             "scripts.download_models",
         ]
         if importlib.util.find_spec("bittensor_wallet"):
-            modules += ["miner", "fez.fleet", "scripts.rehearsal"]
+            modules += ["miner", "fez.fleet", "scripts.rehearsal", "fez.coordinator", "miner.queue"]
         for module in modules:
             with self.subTest(module=module):
                 result = subprocess.run(

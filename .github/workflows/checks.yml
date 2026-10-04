@@ -49,6 +49,19 @@ jobs:
           -r requirements/model.txt -r requirements/rehearsal.txt -r requirements/testnet.txt
       - run: make test PYTHON=python
 
+  queue-database:
+    name: Training queue database
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Install PostgreSQL
+        run: sudo apt-get update && sudo apt-get install -y postgresql-16
+      - name: Test migration and access control in a disposable cluster
+        run: FEZ_PG_BIN=/usr/lib/postgresql/16/bin make check-queue-db PYTHON=python3
+
   website:
     name: Website checks
     runs-on: ubuntu-latest

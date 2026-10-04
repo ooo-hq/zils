@@ -50,12 +50,17 @@ def endpoint_ok(endpoint, allowed=None):
         raise ValueError("endpoint must match a pinned private IPv4 address")
 
 
-def register(message, round_id, members, registry, endpoints=None):
+def register(message, round_id, members, registry, endpoints=None, job_sha256=None):
     if not isinstance(message, dict) or set(message) != {"claim", "signature"}:
         raise ValueError("announcement requires claim and signature")
     c, signature = message["claim"], message["signature"]
-    if not isinstance(c, dict) or set(c) != {"round_id", "uid", "hotkey", "sha256", "endpoint"}:
+    fields = {"round_id", "uid", "hotkey", "sha256", "endpoint"}
+    if job_sha256 is not None:
+        fields.add("job_sha256")
+    if not isinstance(c, dict) or set(c) != fields:
         raise ValueError("invalid claim fields")
+    if job_sha256 is not None and c["job_sha256"] != job_sha256:
+        raise ValueError("announcement belongs to another customer job")
     uid = c["uid"]
     if type(uid) is not int or uid not in members or c["hotkey"] != members[uid]:
         raise ValueError("identity is not in this rehearsal's allowlist")

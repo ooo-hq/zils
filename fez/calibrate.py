@@ -7,12 +7,12 @@ from pathlib import Path
 
 import fez
 
-from . import benchmark
+from . import benchmark, jobs
 
 
 def fit(root, report, uid, checkpoint, destination):
     # Verifies the report's dataset and distributions before any checkpoint is written.
-    benchmark.summarize(root, report, "calibration")
+    jobs.verify_report(root, report, "calibration")
     matches = [m for m in report["miners"] if m["uid"] == uid]
     if len(matches) != 1 or matches[0]["status"] != "evaluated":
         raise ValueError("require exactly one evaluated checkpoint for this uid")
@@ -47,7 +47,7 @@ def fit(root, report, uid, checkpoint, destination):
                 "inference_temperature": 1.0,
                 # Kev filters on this eligibility marker. Our declared fit population includes all variants.
                 "variant": "clean",
-                "fez_variant": case["variant"],
+                "fez_variant": case.get("variant", "customer"),
             }
         )
     temperature = fit_temperature(rows, aggregation="macro", points=81)

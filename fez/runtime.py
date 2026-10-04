@@ -64,7 +64,11 @@ def locked(path, wait=False):
 
 def run_child(command, log, device, timeout=3600):
     environment = {
-        **os.environ,
+        **{
+            k: v
+            for k, v in os.environ.items()
+            if k not in {"SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL"}
+        },
         "HF_HOME": os.environ.get("HF_HOME", str(ROOT / ".cache/huggingface")),
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
