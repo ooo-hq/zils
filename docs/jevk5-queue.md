@@ -94,7 +94,10 @@ head remain frozen. The candidate's raw temperature is 1.0; the validator fits
 the baseline and candidate separately using only calibration labels.
 
 JevK5 candidates contain `adapter_config.json`, `adapter_model.safetensors`, and
-`model.json`; accepted downloads add `release.json`. The validator instantiates
+`model.json`; accepted downloads add `release.json`. Training keeps FP32 LoRA
+parameters and saves them in BF16, producing an approximately 29 MB adapter
+that fits a 50 MB storage upload limit. The loader also accepts earlier FP32
+adapters. The validator instantiates
 its own fixed LoRA architecture and checks the exact tensor names, shapes, dtypes
 and finiteness before loading. It never executes miner-provided model code or
 loads a miner-chosen base. Artifact hashes include the model metadata and weights.
