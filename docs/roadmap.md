@@ -14,7 +14,7 @@ against a calibrated starting checkpoint, and exports qualifying artifacts
 locally. Each fleet configuration currently pins one job.
 
 The [Supabase training queue](supabase-training.md) now connects private uploads,
-approved-worker assignments, expiring claims, and accepted-model downloads.
+approved-miner assignments, expiring claims, and accepted-model downloads.
 It has been tested locally with fixture models and a disposable PostgreSQL
 database. A live Supabase smoke test verified authentication, customer isolation,
 private uploads, processor validation, and cancellation. Real queued training
@@ -30,8 +30,8 @@ independent final evaluation, confidential compute, retention controls, billing,
 and authenticated inference deployment with release approval and rollback.
 
 The [automatic training workflow](automatic-training.md) now implements approved
-worker assignment gated on GPU capacity and verified activation of accepted
-customer adapters. Deployment requires explicit worker and hardware configuration;
+miner assignment gated on GPU capacity and verified activation of accepted
+customer adapters. Deployment requires explicit miner and hardware configuration;
 it does not provision capacity or weaken evaluation thresholds. Shared/private
 serving can use one base, and updated registries reload without per-customer
 service restarts. See the workflow guide for verification scope and remaining
