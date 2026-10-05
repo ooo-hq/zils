@@ -20,11 +20,11 @@ from urllib.parse import parse_qs
 import requests
 from bittensor_wallet import Keypair
 
-import fez
-from fez import cloud, coordinator, queue_protocol
-from fez.cloud import APIError
+import zils
 from miner.queue import Client, run_once
 from tests.test_jobs import POLICY, examples
+from zils import cloud, coordinator, queue_protocol
+from zils.cloud import APIError
 
 OWNER = "11111111-1111-4111-8111-111111111111"
 OTHER = "22222222-2222-4222-8222-222222222222"
@@ -231,7 +231,7 @@ class QueueTest(unittest.TestCase):
             "url": "/object/upload/sign/fez-training-data/job/train.jsonl?token=fixture"
         }
         store = cloud.Supabase("https://project.supabase.co", "server-only-fixture")
-        with patch("fez.cloud.requests.request", return_value=response) as request:
+        with patch("zils.cloud.requests.request", return_value=response) as request:
             result = store.signed(cloud.DATA_BUCKET, "job/train.jsonl", upload=True)
             self.assertEqual(result["method"], "PUT")
             self.assertEqual(result["headers"]["x-upsert"], "false")
@@ -241,7 +241,7 @@ class QueueTest(unittest.TestCase):
             )
             self.assertEqual(request.call_args.kwargs["headers"]["x-upsert"], "false")
         with patch(
-            "fez.cloud.requests.request",
+            "zils.cloud.requests.request",
             side_effect=requests.ConnectionError("secret upstream URL"),
         ):
             with self.assertRaises(APIError) as failure:
@@ -270,7 +270,7 @@ class QueueTest(unittest.TestCase):
             invalid["payload"].update(change)
             with self.subTest(change=change), self.assertRaises(APIError):
                 service.worker(path, invalid)
-        with server(coordinator.handler(service, "https://fez.example")) as url:
+        with server(coordinator.handler(service, "https://zils.example")) as url:
             self.assertEqual(requests.get(url + "/v1/jobs", timeout=5).status_code, 401)
             self.assertEqual(
                 requests.get(
@@ -302,21 +302,21 @@ class QueueTest(unittest.TestCase):
             )
 
     def test_upload_claim_train_submit_evaluate_download(self):
-        from fez import models
+        from zils import models
 
         self.queued_model_flow(models.KEV)
 
     def test_jevk5_upload_train_calibrate_and_download(self):
-        from fez import models
+        from zils import models
 
-        with patch("fez.jevk5.validate_inputs"):
+        with patch("zils.jevk5.validate_inputs"):
             self.queued_model_flow(models.JEVK5)
 
     def queued_model_flow(self, model):
         import torch
         from kev.checkpoint import Meta, write_meta
 
-        from fez import models
+        from zils import models
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -325,7 +325,7 @@ class QueueTest(unittest.TestCase):
             (reference / "adapter_config.json").write_text("{}")
             (reference / "adapter_model.safetensors").write_text("baseline")
             write_meta(
-                reference, Meta(base=fez.BASE, head={"fixture": torch.zeros(1)}, temperature=1.0)
+                reference, Meta(base=zils.BASE, head={"fixture": torch.zeros(1)}, temperature=1.0)
             )
             if model == models.JEVK5:
                 (reference / "head.pt").unlink()
@@ -341,14 +341,14 @@ assert 'SUPABASE_DB_URL' not in os.environ
 from pathlib import Path
 import torch
 from kev.checkpoint import Meta, read_meta, write_meta
-from fez import models
+from zils import models
 if '-m' in sys.argv:
     out = Path(sys.argv[sys.argv.index('--out')+1]); out.mkdir()
     data = Path(sys.argv[sys.argv.index('--data')+1])
     assert all(set(json.loads(line))=={'state','questions'} for line in data.read_text().splitlines())
     (out/'adapter_config.json').write_text('{}')
     (out/'adapter_model.safetensors').write_text('trained')
-    if 'fez.jevk5' in sys.argv:
+    if 'zils.jevk5' in sys.argv:
         models.write_metadata(out)
     else:
         write_meta(out, Meta(base='Qwen/Qwen3.5-0.8B-Base',head={'fixture':torch.ones(1)},temperature=1.0))
@@ -371,7 +371,7 @@ else:
             service = coordinator.Service(store, "http://127.0.0.1:8910", model)
             with (
                 server(store.handler()) as storage_url,
-                server(coordinator.handler(service, "https://fez.example")) as url,
+                server(coordinator.handler(service, "https://zils.example")) as url,
             ):
                 store.url = storage_url
                 service.audience = url
@@ -457,9 +457,9 @@ else:
                 accepted = root / "accepted"
                 accepted.mkdir()
                 for name in models.candidate_files(model):
-                    cloud.download(downloads[name]["url"], accepted / name, fez.MAX_ARTIFACT_BYTES)
+                    cloud.download(downloads[name]["url"], accepted / name, zils.MAX_ARTIFACT_BYTES)
                 self.assertEqual(
-                    fez.checkpoint_hash(accepted), result["result"]["delivery"]["sha256"]
+                    zils.checkpoint_hash(accepted), result["result"]["delivery"]["sha256"]
                 )
                 self.assertEqual(
                     requests.get(
@@ -470,7 +470,7 @@ else:
                     404,
                 )
                 if model == models.JEVK5:
-                    from fez.adapter_releases import publish, register, registry_entry
+                    from zils.adapter_releases import publish, register, registry_entry
 
                     release = publish(store, job_id, root / "serving")
                     entry = registry_entry(release, "http://127.0.0.1:8921", "TOKEN")

@@ -11,13 +11,13 @@ from concurrent.futures import ThreadPoolExecutor
 class RuntimeTest(unittest.TestCase):
     def module(self):
         self.assertIsNotNone(
-            importlib.util.find_spec("fez.jev_server"), "private runtime is missing"
+            importlib.util.find_spec("zils.jev_server"), "private runtime is missing"
         )
-        return importlib.import_module("fez.jev_server")
+        return importlib.import_module("zils.jev_server")
 
     def test_timeout_does_not_release_running_work(self):
         m = self.module()
-        from fez.decisions import DecisionError
+        from zils.decisions import DecisionError
 
         entered, release = threading.Event(), threading.Event()
 
@@ -45,7 +45,7 @@ class RuntimeTest(unittest.TestCase):
 
     def test_bulk_and_realtime_have_bounded_fair_admission(self):
         m = self.module()
-        from fez.decisions import DecisionError
+        from zils.decisions import DecisionError
 
         entered, release = threading.Event(), threading.Event()
         order = []
@@ -82,7 +82,7 @@ class RuntimeTest(unittest.TestCase):
 
     def test_invalid_preparation_never_runs_model(self):
         m = self.module()
-        from fez.decisions import DecisionError
+        from zils.decisions import DecisionError
 
         class Engine:
             def prepare(self, body):
@@ -102,14 +102,14 @@ class RuntimeTest(unittest.TestCase):
 
 class ModelWrapperTest(unittest.TestCase):
     def module(self):
-        import fez.jev_server as m
+        import zils.jev_server as m
 
         self.assertTrue(hasattr(m, "JevEngine"), "JevK5 wrapper is missing")
         return m
 
     def test_large_choice_token_accounting_and_preflight(self):
         m = self.module()
-        from fez.decisions import DecisionError, make_response
+        from zils.decisions import DecisionError, make_response
 
         class Model:
             calls = 0
@@ -150,7 +150,7 @@ class ModelWrapperTest(unittest.TestCase):
 
     def test_token_reservation_stops_at_first_over_budget_question(self):
         m = self.module()
-        from fez.decisions import DecisionError
+        from zils.decisions import DecisionError
 
         class Model:
             calls = 0

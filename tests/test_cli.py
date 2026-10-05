@@ -11,15 +11,21 @@ class CLITest(unittest.TestCase):
     def test_module_entry_points(self):
         root = Path(__file__).resolve().parents[1]
         modules = [
-            "fez",
-            "fez.benchmark",
-            "fez.jobs",
-            "fez.calibrate",
-            "fez.testnet",
+            "zils",
+            "zils.benchmark",
+            "zils.jobs",
+            "zils.calibrate",
+            "zils.testnet",
             "scripts.download_models",
         ]
         if importlib.util.find_spec("bittensor_wallet"):
-            modules += ["miner", "fez.fleet", "scripts.rehearsal", "fez.coordinator", "miner.queue"]
+            modules += [
+                "miner",
+                "zils.fleet",
+                "scripts.rehearsal",
+                "zils.coordinator",
+                "miner.queue",
+            ]
         for module in modules:
             with self.subTest(module=module):
                 result = subprocess.run(

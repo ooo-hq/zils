@@ -40,8 +40,8 @@ For a reproducible plumbing example, generate synthetic inputs first. These are
 not customer data and cannot establish customer-task quality:
 
 ```bash
-.venv-kev/bin/python -m fez.benchmark build --out .private/job-example-input
-.venv-kev/bin/python -m fez.jobs \
+.venv-kev/bin/python -m zils.benchmark build --out .private/job-example-input
+.venv-kev/bin/python -m zils.jobs \
   --job-id example-decisions-v1 \
   --train .private/job-example-input/train.jsonl \
   --calibration .private/job-example-input/calibration.jsonl \
@@ -59,18 +59,18 @@ output directories and a new job version when changing inputs or thresholds.
 ## Run the job
 
 ```bash
-.venv-kev/bin/python -m fez.fleet init \
+.venv-kev/bin/python -m zils.fleet init \
   --benchmark .private/jobs/example-decisions-v1 \
   --checkpoint models/reference --host 127.0.0.1 \
   --out .private/fleet-example-decisions-v1
-.venv-kev/bin/python -m fez.fleet validator \
+.venv-kev/bin/python -m zils.fleet validator \
   --config .private/fleet-example-decisions-v1/validator/config.json --rounds 1
 ```
 
 In separate terminals, start each miner as in the [fleet setup](../README.md#run-a-local-fleet):
 
 ```bash
-FEZ_PYTHON="$PWD/.venv-kev/bin/python" HF_HOME="$PWD/.cache/huggingface" \
+ZILS_PYTHON="$PWD/.venv-kev/bin/python" HF_HOME="$PWD/.cache/huggingface" \
   .private/fleet-example-decisions-v1/miner-1/start-miner --rounds 1
 ```
 

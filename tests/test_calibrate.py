@@ -8,20 +8,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import fez
-from fez import benchmark
+import zils
+from zils import benchmark
 
 
 @unittest.skipUnless(importlib.util.find_spec("kev"), "use .venv-kev for calibration checks")
 class CalibrationTest(unittest.TestCase):
     def test_calibration_uses_only_matching_raw_development_predictions(self):
         self.assertIsNotNone(
-            importlib.util.find_spec("fez.calibrate"), "calibration adapter is missing"
+            importlib.util.find_spec("zils.calibrate"), "calibration adapter is missing"
         )
         import torch
         from kev.checkpoint import Meta, read_meta, write_meta
 
-        from fez import calibrate
+        from zils import calibrate
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -33,12 +33,12 @@ class CalibrationTest(unittest.TestCase):
             (source / "adapter_config.json").write_text("{}")
             (source / "adapter_model.safetensors").write_bytes(b"test artifact only")
             write_meta(
-                source, Meta(base=fez.BASE, head={"fixture": torch.zeros(1)}, temperature=1.0)
+                source, Meta(base=zils.BASE, head={"fixture": torch.zeros(1)}, temperature=1.0)
             )
-            original = fez.checkpoint_hash(source)
+            original = zils.checkpoint_hash(source)
             predictions = []
             for case in cases:
-                keys = fez.options(case["question"])
+                keys = zils.options(case["question"])
                 wrong = next(k for k in keys if k != case["label"])
                 predictions.append(
                     {
@@ -69,7 +69,7 @@ class CalibrationTest(unittest.TestCase):
             self.assertEqual(result["fit_cases"], 112)
             self.assertEqual(result["before"]["accuracy"], result["after"]["accuracy"])
             self.assertLess(result["after"]["brier"], result["before"]["brier"])
-            self.assertEqual(fez.checkpoint_hash(source), original)
+            self.assertEqual(zils.checkpoint_hash(source), original)
             fitted = read_meta(root / "fitted")
             self.assertAlmostEqual(fitted.temperature, 4.0)
             self.assertTrue(torch.equal(fitted.head["fixture"], read_meta(source).head["fixture"]))

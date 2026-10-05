@@ -4,7 +4,7 @@ import argparse
 import os
 from pathlib import Path
 
-from fez import ROOT
+from zils import ROOT
 
 
 def main():
@@ -14,8 +14,8 @@ def main():
 
     from huggingface_hub import snapshot_download
 
-    from fez import ARTIFACT_FILES, checkpoint_hash
-    from fez.runtime import prepare_base
+    from zils import ARTIFACT_FILES, checkpoint_hash
+    from zils.runtime import prepare_base
 
     snapshot_download(
         "jaredpalmer/kev-0.8b",

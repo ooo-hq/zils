@@ -24,9 +24,9 @@ def request():
 class DecisionTest(unittest.TestCase):
     def module(self):
         self.assertIsNotNone(
-            importlib.util.find_spec("fez.decisions"), "decision contract is missing"
+            importlib.util.find_spec("zils.decisions"), "decision contract is missing"
         )
-        return importlib.import_module("fez.decisions")
+        return importlib.import_module("zils.decisions")
 
     def test_mixed_answers_and_structured_legend(self):
         d = self.module()

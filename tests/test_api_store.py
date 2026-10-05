@@ -6,7 +6,7 @@ import importlib.util
 import unittest
 import uuid
 
-from fez.decisions import DecisionError
+from zils.decisions import DecisionError
 
 
 class MemoryDB:
@@ -49,8 +49,8 @@ class MemoryDB:
 
 class KeysTest(unittest.TestCase):
     def module(self):
-        self.assertIsNotNone(importlib.util.find_spec("fez.api_store"), "key store missing")
-        return importlib.import_module("fez.api_store")
+        self.assertIsNotNone(importlib.util.find_spec("zils.api_store"), "key store missing")
+        return importlib.import_module("zils.api_store")
 
     def test_keys_are_unrecoverable_unique_and_revocable_without_count_cap(self):
         m = self.module()

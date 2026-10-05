@@ -1,11 +1,11 @@
-"""Fez checkpoint scoring and subnet services."""
+"""Compatibility exports for the renamed zils package."""
 
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
 # ROOT must exist before core imports it. Explicit aliases preserve the public API.
-from .core import (  # noqa: E402
+from zils import (  # noqa: E402
     ARTIFACT_FILES as ARTIFACT_FILES,
     BASE as BASE,
     MAX_ARTIFACT_BYTES as MAX_ARTIFACT_BYTES,

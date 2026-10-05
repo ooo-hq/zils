@@ -10,14 +10,14 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
-import fez
-from fez import jobs
+import zils
 from tests.test_jobs import POLICY
+from zils import jobs
 
 
 def versioned_fixture(root, previous=None):
-    from fez import benchmark
     from tests.test_adapter_releases import fixture
+    from zils import benchmark
 
     job = fixture(root)
     selection = {"version": "zils-version-selection/v1", "root_job_id": job["id"], "previous": None}
@@ -51,8 +51,8 @@ def versioned_fixture(root, previous=None):
 
 class SelectionTest(unittest.TestCase):
     def test_restricted_registration_promotes_versions_with_atomic_predecessor_check(self):
-        from fez.adapter_releases import publish, registry_entry
         from tests.test_adapter_releases import Source
+        from zils.adapter_releases import publish, registry_entry
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -63,7 +63,7 @@ class SelectionTest(unittest.TestCase):
             command = [
                 sys.executable,
                 "-m",
-                "fez.workflow",
+                "zils.workflow",
                 "register",
                 "--registry",
                 str(registry),
@@ -92,8 +92,8 @@ class SelectionTest(unittest.TestCase):
                     before = registry.read_bytes()
 
     def test_versioned_release_publication_binds_comparison_and_exposes_task_alias(self):
-        from fez.adapter_releases import publish, registry_entry
         from tests.test_adapter_releases import Source
+        from zils.adapter_releases import publish, registry_entry
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -108,9 +108,9 @@ class SelectionTest(unittest.TestCase):
                 publish(source, job["id"], root / "other")
 
     def test_workflow_stale_promotion_requires_review_and_preserves_accepted_evidence(self):
-        from fez.version_selection import StaleVersion
-        from fez.workflow import Workflow
         from tests.test_workflow import Store
+        from zils.version_selection import StaleVersion
+        from zils.workflow import Workflow
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -131,8 +131,8 @@ class SelectionTest(unittest.TestCase):
             self.assertEqual(len(calls), 1)
 
     def test_upgrade_evaluation_uses_incumbent_weights_and_frozen_serving_temperature(self):
-        from fez import benchmark, models, validator
         from tests.test_jobs import examples
+        from zils import benchmark, models, validator
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -144,7 +144,7 @@ class SelectionTest(unittest.TestCase):
             models.write_metadata(incumbent, temperature=2.0)
             (incumbent / "adapter_config.json").write_text("{}")
             (incumbent / "adapter_model.safetensors").write_text("incumbent")
-            sha = fez.checkpoint_hash(incumbent)
+            sha = zils.checkpoint_hash(incumbent)
             selection = {
                 "version": "zils-version-selection/v1",
                 "root_job_id": previous_id,
@@ -168,7 +168,7 @@ class SelectionTest(unittest.TestCase):
                 "job_id": current_id,
                 "job_sha256": manifest_sha,
                 "benchmark_sha256": manifest_sha,
-                "initial_sha256": fez.checkpoint_hash(reference),
+                "initial_sha256": zils.checkpoint_hash(reference),
                 "base_revision": models.spec(models.JEVK5)["base_revision"],
                 "members": {},
             }
@@ -177,7 +177,7 @@ class SelectionTest(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 + """import json, sys
 from pathlib import Path
-from fez import models
+from zils import models
 path = Path(sys.argv[sys.argv.index('--checkpoint') + 1])
 t = models.temperature(path)
 p = 0.8 if (path / 'adapter_config.json').exists() else 0.5
@@ -198,8 +198,8 @@ print(json.dumps({'runtime': {'temperature': t}, 'predictions': [
             self.assertEqual(report["delivery"]["status"], "no_qualifying_model")
 
     def test_comparison_pins_an_accepted_ready_adapter_owned_by_the_customer(self):
-        from fez.version_selection import freeze
         from tests.test_adapter_releases import OTHER, OWNER, Source, fixture
+        from zils.version_selection import freeze
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -262,8 +262,8 @@ print(json.dumps({'runtime': {'temperature': t}, 'predictions': [
         )
 
     def test_stale_upgrade_cannot_replace_newer_version_and_old_ids_remain(self):
-        from fez.adapter_releases import register
-        from fez.version_selection import StaleVersion
+        from zils.adapter_releases import register
+        from zils.version_selection import StaleVersion
 
         owner, root, second, third = [str(uuid.uuid4()) for _ in range(4)]
         alias = "zils-task-" + root

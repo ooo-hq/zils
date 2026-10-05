@@ -14,8 +14,8 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
-import fez
-from fez import benchmark
+import zils
+from zils import benchmark
 
 
 @unittest.skipUnless(
@@ -25,16 +25,16 @@ from fez import benchmark
 class FleetTest(unittest.TestCase):
     def module(self):
         self.assertIsNotNone(
-            importlib.util.find_spec("fez.fleet"), "persistent miner service is missing"
+            importlib.util.find_spec("zils.fleet"), "persistent miner service is missing"
         )
-        from fez import fleet
+        from zils import fleet
 
         return fleet
 
     def test_pinned_network_and_authenticated_validator(self):
         from bittensor_wallet import Keypair
 
-        from fez import protocol as r, runtime
+        from zils import protocol as r, runtime
 
         key = Keypair.create_from_seed("0x" + "01" * 32)
         claim = {
@@ -78,7 +78,7 @@ class FleetTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             destination = Path(tmp) / "state.json"
             with (
-                patch("fez.protocol.os.fsync", side_effect=OSError("interrupted write")),
+                patch("zils.protocol.os.fsync", side_effect=OSError("interrupted write")),
                 self.assertRaises(OSError),
             ):
                 r.write_json(destination, {"complete": True})
@@ -92,7 +92,7 @@ class FleetTest(unittest.TestCase):
         from miner.worker import train_candidate
 
         f = self.module()
-        from fez import runtime
+        from zils import runtime
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -100,7 +100,7 @@ class FleetTest(unittest.TestCase):
             benchmark.build(data, seed=553)
             source = root / "source"
             source.mkdir()
-            for name in fez.ARTIFACT_FILES:
+            for name in zils.ARTIFACT_FILES:
                 (source / name).write_bytes(b"initial fixture")
             sockets = []
             for _ in range(4):
@@ -151,8 +151,8 @@ else:
     meta=read_meta(sys.argv[sys.argv.index('--checkpoint')+1])
     requests=json.load(sys.stdin)
     assert all(set(row)=={'id','state','question'} for row in requests)
-    import fez
-    predictions=[{'id':row['id'],'elapsed_ms':1,'probabilities':dict.fromkeys(fez.options(row['question']),1/len(fez.options(row['question'])))} for row in requests]
+    import zils
+    predictions=[{'id':row['id'],'elapsed_ms':1,'probabilities':dict.fromkeys(zils.options(row['question']),1/len(zils.options(row['question'])))} for row in requests]
     print(json.dumps({'predictions':predictions,'runtime':{'fixture':True,'temperature':meta.temperature}}))
 """
             )
@@ -171,7 +171,7 @@ else:
                         else [
                             sys.executable,
                             "-m",
-                            "fez.fleet",
+                            "zils.fleet",
                             role,
                             "--config",
                             str(directory / "config.json"),
@@ -193,7 +193,7 @@ else:
                             ],
                             stdout=log,
                             stderr=subprocess.STDOUT,
-                            env={**os.environ, "FEZ_PYTHON": sys.executable},
+                            env={**os.environ, "ZILS_PYTHON": sys.executable},
                         )
                     )
                     if role == "validator":

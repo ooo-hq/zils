@@ -19,8 +19,8 @@ class RehearsalTest(unittest.TestCase):
 
         from bittensor_wallet import Keypair
 
-        import fez
-        from fez import protocol as r
+        import zils
+        from zils import protocol as r
 
         keys = [Keypair.create_from_seed("0x" + (bytes([n]) * 32).hex()) for n in (1, 2)]
         members = {i + 1: k.ss58_address for i, k in enumerate(keys)}
@@ -80,17 +80,17 @@ class RehearsalTest(unittest.TestCase):
             root = Path(tmp)
             source = root / "source"
             source.mkdir()
-            for name in fez.ARTIFACT_FILES:
+            for name in zils.ARTIFACT_FILES:
                 (source / name).write_bytes(b"test artifact")
-            item = {**claim, "endpoint": endpoint, "sha256": fez.checkpoint_hash(source)}
+            item = {**claim, "endpoint": endpoint, "sha256": zils.checkpoint_hash(source)}
             result = r.fetch_checkpoint(item, root / "download")
             self.assertEqual(result["bytes"], 3 * len(b"test artifact"))
-            self.assertEqual(fez.checkpoint_hash(root / "download"), item["sha256"])
+            self.assertEqual(zils.checkpoint_hash(root / "download"), item["sha256"])
             with self.assertRaisesRegex(ValueError, "hash"):
                 r.fetch_checkpoint({**item, "sha256": "c" * 64}, root / "corrupt")
 
     def test_two_miner_processes_one_validator(self):
-        import fez
+        import zils
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -99,7 +99,7 @@ class RehearsalTest(unittest.TestCase):
                 path = root / quality
                 path.mkdir()
                 checkpoints.append(str(path))
-                for name in fez.ARTIFACT_FILES:
+                for name in zils.ARTIFACT_FILES:
                     (path / name).write_text(quality)
             cases = root / "cases.jsonl"
             cases.write_text(
@@ -170,8 +170,8 @@ print(json.dumps({'predictions': predictions, 'runtime': {'fixture': True}}))
             )
             for uid, source in enumerate(checkpoints, 1):
                 self.assertEqual(
-                    fez.checkpoint_hash(source),
-                    fez.checkpoint_hash(output / f"validator/downloads/{uid}"),
+                    zils.checkpoint_hash(source),
+                    zils.checkpoint_hash(output / f"validator/downloads/{uid}"),
                 )
             before = (output / "validator/report.json").read_bytes()
             again = subprocess.run(command, capture_output=True, text=True, timeout=10)

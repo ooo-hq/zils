@@ -53,9 +53,9 @@ Complete the [model installation steps](../README.md#setup) to download
 `models/reference` and cache the pinned base model before these examples.
 
 ```bash
-.venv-kev/bin/python -m fez submit \
+.venv-kev/bin/python -m zils submit \
   --checkpoint models/reference --uid 1 > submissions-reference.json
-.venv-kev/bin/python -m fez evaluate \
+.venv-kev/bin/python -m zils evaluate \
   --submissions submissions-reference.json --cases examples/cases.jsonl \
   --base-revision dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68 \
   --runner-python .venv-kev/bin/python --device cpu --report round-local.json

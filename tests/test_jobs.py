@@ -10,8 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import fez
-from fez import benchmark, jobs
+import zils
+from zils import benchmark, jobs
 
 
 def examples():
@@ -85,8 +85,8 @@ class JobTest(unittest.TestCase):
         from bittensor_wallet import Keypair
         from kev.checkpoint import Meta, write_meta
 
-        from fez import fleet, protocol, validator
         from miner.worker import train_candidate
+        from zils import fleet, protocol, validator
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -97,7 +97,7 @@ class JobTest(unittest.TestCase):
             (source / "adapter_config.json").write_text("{}")
             (source / "adapter_model.safetensors").write_text("baseline")
             write_meta(
-                source, Meta(base=fez.BASE, head={"fixture": torch.zeros(1)}, temperature=2.0)
+                source, Meta(base=zils.BASE, head={"fixture": torch.zeros(1)}, temperature=2.0)
             )
             package = fleet.initialize(root / "fleet", data, source, "127.0.0.1", 8900, [8901])
             directory = package / "validator"
@@ -125,12 +125,12 @@ class JobTest(unittest.TestCase):
                     "cpu",
                 )
             candidate = root / "candidate"
-            fez.stage(fez.submission(source, 1), candidate)
+            zils.stage(zils.submission(source, 1), candidate)
             (candidate / "adapter_model.safetensors").chmod(0o600)
             (candidate / "adapter_model.safetensors").write_text("good")
             (candidate / "head.pt").chmod(0o600)
             write_meta(
-                candidate, Meta(base=fez.BASE, head={"fixture": torch.ones(1)}, temperature=1.0)
+                candidate, Meta(base=zils.BASE, head={"fixture": torch.ones(1)}, temperature=1.0)
             )
             worker = root / "fixture-python"
             worker.write_text(
@@ -155,7 +155,7 @@ print(json.dumps({'runtime': {'temperature': meta.temperature}, 'predictions': [
                 "round_id": rid,
                 "uid": 1,
                 "hotkey": key.ss58_address,
-                "sha256": fez.checkpoint_hash(candidate),
+                "sha256": zils.checkpoint_hash(candidate),
                 "endpoint": "http://127.0.0.1:8901",
                 "job_sha256": config["job_sha256"],
             }
@@ -172,12 +172,12 @@ print(json.dumps({'runtime': {'temperature': meta.temperature}, 'predictions': [
                 protocol.register(changed, rid, {1: key.ss58_address}, {}, job_sha256="f" * 64)
 
             def download(claim, destination, **kwargs):
-                fez.stage(fez.submission(candidate, claim["uid"]), destination)
+                zils.stage(zils.submission(candidate, claim["uid"]), destination)
 
             args = SimpleNamespace(runtime_python=str(worker), device="cpu")
             work = root / rid
             work.mkdir()
-            with patch("fez.protocol.fetch_checkpoint", side_effect=download):
+            with patch("zils.protocol.fetch_checkpoint", side_effect=download):
                 report = validator.evaluate_round(config, directory, work, registry, args)
             self.assertEqual(report["delivery"]["status"], "accepted")
             summary = benchmark.summarize(data, report, "test")
@@ -186,7 +186,7 @@ print(json.dumps({'runtime': {'temperature': meta.temperature}, 'predictions': [
             self.assertEqual(report["baseline"]["accuracy"], 0)
             self.assertEqual(report["weights"], {1: 1})
             release = work / report["delivery"]["checkpoint"]
-            self.assertEqual(fez.checkpoint_hash(release), report["delivery"]["sha256"])
+            self.assertEqual(zils.checkpoint_hash(release), report["delivery"]["sha256"])
             self.assertEqual(
                 json.loads((release / "release.json").read_text())["job_sha256"],
                 config["job_sha256"],

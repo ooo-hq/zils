@@ -26,9 +26,9 @@ def server(module, dispatch, origin=None, **options):
 class TransportTest(unittest.TestCase):
     def module(self):
         self.assertIsNotNone(
-            importlib.util.find_spec("fez.decision_http"), "HTTP transport is missing"
+            importlib.util.find_spec("zils.decision_http"), "HTTP transport is missing"
         )
-        return importlib.import_module("fez.decision_http")
+        return importlib.import_module("zils.decision_http")
 
     def test_json_auth_and_request_ids(self):
         m = self.module()
@@ -70,7 +70,7 @@ class TransportTest(unittest.TestCase):
 
     def test_cors_and_errors_exclude_private_exception(self):
         m = self.module()
-        from fez.decisions import DecisionError
+        from zils.decisions import DecisionError
 
         def dispatch(*args):
             raise DecisionError(422, "invalid_request", "Invalid field", ["body", "state"])

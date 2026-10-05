@@ -15,7 +15,7 @@ class TestnetTest(unittest.TestCase):
     def test_registration_and_publication_fail_closed(self):
         from bittensor.result import ChainError, ErrorCode, ExtrinsicResult
 
-        from fez import testnet as t
+        from zils import testnet as t
 
         config = {
             "chain": {"network": "test", "netuid": 553},
@@ -229,8 +229,8 @@ class TestnetTest(unittest.TestCase):
     def test_wallet_signing_and_bundles_keep_keys_out(self):
         from bittensor.wallet import Wallet
 
-        import fez
-        from fez import benchmark, fleet, protocol as rehearsal, runtime
+        import zils
+        from zils import benchmark, fleet, protocol as rehearsal, runtime
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -247,7 +247,7 @@ class TestnetTest(unittest.TestCase):
             benchmark.build(data, seed=42)
             checkpoint = root / "checkpoint"
             checkpoint.mkdir()
-            for name in fez.ARTIFACT_FILES:
+            for name in zils.ARTIFACT_FILES:
                 (checkpoint / name).write_bytes(b"fixture")
             out = fleet.initialize(
                 root / "fleet",

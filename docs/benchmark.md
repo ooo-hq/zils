@@ -11,8 +11,8 @@ Complete the [installation steps](../README.md#setup), then run from the reposit
 root. The output directory must not already exist:
 
 ```bash
-.venv-kev/bin/python -m fez.benchmark build --out .private/benchmarks/local
-.venv-kev/bin/python -m fez.benchmark audit --benchmark .private/benchmarks/local
+.venv-kev/bin/python -m zils.benchmark build --out .private/benchmarks/local
+.venv-kev/bin/python -m zils.benchmark audit --benchmark .private/benchmarks/local
 ```
 
 Each build chooses a new seed and writes a manifest containing that seed, the
@@ -72,15 +72,15 @@ Variant slices have different task mixes; use matched pairs to study perturbatio
 Create a manifest for the reference installed during setup, then evaluate it:
 
 ```bash
-.venv-kev/bin/python -m fez submit \
+.venv-kev/bin/python -m zils submit \
   --checkpoint models/reference --uid 1 > submissions-reference.json
-.venv-kev/bin/python -m fez evaluate \
+.venv-kev/bin/python -m zils evaluate \
   --submissions submissions-reference.json \
   --cases .private/benchmarks/local/test.jsonl \
   --base-revision dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68 \
   --runner-python .venv-kev/bin/python --device cpu \
   --report .private/benchmarks/local/reference-test.json
-.venv-kev/bin/python -m fez.benchmark summarize \
+.venv-kev/bin/python -m zils.benchmark summarize \
   --benchmark .private/benchmarks/local \
   --report .private/benchmarks/local/reference-test.json \
   --out .private/benchmarks/local/reference-summary.json
@@ -103,15 +103,15 @@ The [development guide](development.md#train-a-smoke-test-candidate) produces
 that artifact and the generated bundle:
 
 ```bash
-.venv-kev/bin/python -m fez submit \
+.venv-kev/bin/python -m zils submit \
   --checkpoint models/fez-probe --uid 2 > submissions-candidate.json
-.venv-kev/bin/python -m fez evaluate \
+.venv-kev/bin/python -m zils evaluate \
   --submissions submissions-candidate.json \
   --cases .private/benchmarks/local/calibration.jsonl \
   --base-revision dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68 \
   --runner-python .venv-kev/bin/python --device cpu \
   --report .private/benchmarks/local/candidate-calibration.json
-.venv-kev/bin/python -m fez.calibrate \
+.venv-kev/bin/python -m zils.calibrate \
   --benchmark .private/benchmarks/local \
   --report .private/benchmarks/local/candidate-calibration.json --uid 2 \
   --checkpoint models/fez-probe --out models/fez-probe-calibrated

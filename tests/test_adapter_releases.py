@@ -9,16 +9,16 @@ import unittest
 import uuid
 from pathlib import Path
 
-import fez
-from fez import models
+import zils
 from tests.test_jobs import POLICY, examples
+from zils import models
 
 OWNER = "11111111-1111-4111-8111-111111111111"
 OTHER = "22222222-2222-4222-8222-222222222222"
 
 
 def fixture(root, owner=OWNER, checkpoint=None):
-    from fez import jobs
+    from zils import jobs
 
     root.mkdir()
     if checkpoint is None:
@@ -30,7 +30,7 @@ def fixture(root, owner=OWNER, checkpoint=None):
     else:
         for name in models.JEVK5_FILES:
             shutil.copyfile(Path(checkpoint) / name, root / name)
-    checkpoint = fez.checkpoint_hash(root)
+    checkpoint = zils.checkpoint_hash(root)
     job_id, round_id = str(uuid.uuid4()), str(uuid.uuid4())
     manifest = jobs.build(
         root / "data",
@@ -109,7 +109,7 @@ class Source:
 
 class ReleaseTest(unittest.TestCase):
     def test_acceptance_owner_and_hashes_are_bound_and_retry_is_idempotent(self):
-        from fez.adapter_releases import publish, read_release
+        from zils.adapter_releases import publish, read_release
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -127,7 +127,7 @@ class ReleaseTest(unittest.TestCase):
             )
 
     def test_rejected_or_incomplete_jobs_publish_nothing(self):
-        from fez.adapter_releases import publish
+        from zils.adapter_releases import publish
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -142,7 +142,7 @@ class ReleaseTest(unittest.TestCase):
             self.assertFalse((root / "published").exists())
 
     def test_forged_acceptance_and_tampered_artifacts_are_rejected(self):
-        from fez.adapter_releases import publish, read_release
+        from zils.adapter_releases import publish, read_release
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -161,8 +161,8 @@ class ReleaseTest(unittest.TestCase):
                 publish(Source(job, root / "source"), job["id"], root / "published")
 
     def test_registry_preserves_shared_and_old_releases_and_prevents_cross_owner_aliases(self):
-        from fez.adapter_releases import merge_registry, publish, registry_entry
-        from fez.api import Registry
+        from zils.adapter_releases import merge_registry, publish, registry_entry
+        from zils.api import Registry
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -178,7 +178,7 @@ class ReleaseTest(unittest.TestCase):
             self.assertEqual(registry.resolve("support", OWNER)["id"], release["release_id"])
             self.assertEqual(registry.resolve("older-release", OWNER)["fingerprint"], "a" * 64)
             self.assertEqual(registry.resolve("zils-shared", OTHER)["id"], "shared-release")
-            from fez.decisions import DecisionError
+            from zils.decisions import DecisionError
 
             with self.assertRaises(DecisionError):
                 registry.resolve("support", OTHER)
@@ -187,8 +187,8 @@ class ReleaseTest(unittest.TestCase):
             self.assertEqual(merge_registry(result, entry), result)
 
     def test_failed_download_or_registry_collision_preserves_previous_release(self):
-        from fez.adapter_releases import publish, read_release, register, registry_entry
-        from fez.cloud import APIError
+        from zils.adapter_releases import publish, read_release, register, registry_entry
+        from zils.cloud import APIError
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -218,7 +218,7 @@ class ReleaseTest(unittest.TestCase):
             self.assertEqual(registry.read_bytes(), before)
 
     def test_symlinked_manifest_and_changed_calibration_fail_verification(self):
-        from fez.adapter_releases import publish, read_release
+        from zils.adapter_releases import publish, read_release
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

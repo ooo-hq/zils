@@ -6,15 +6,17 @@ import json
 import unittest
 import uuid
 
-from fez.cloud import APIError
-from fez.decisions import DecisionError
 from tests.test_api import BODY, FINGERPRINT, RELEASE
+from zils.cloud import APIError
+from zils.decisions import DecisionError
 
 
 class BatchTest(unittest.TestCase):
     def module(self):
-        self.assertIsNotNone(importlib.util.find_spec("fez.batches"), "durable bulk module missing")
-        return importlib.import_module("fez.batches")
+        self.assertIsNotNone(
+            importlib.util.find_spec("zils.batches"), "durable bulk module missing"
+        )
+        return importlib.import_module("zils.batches")
 
     def test_mixed_input_preserves_ids_and_rejects_duplicates_before_execution(self):
         m = self.module()

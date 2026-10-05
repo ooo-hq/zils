@@ -10,9 +10,9 @@ import uuid
 from pathlib import Path
 from unittest.mock import patch
 
-from fez.adapter_releases import publish, register, registry_entry
-from fez.api import Registry
 from tests.test_adapter_releases import OTHER, OWNER, Source, fixture
+from zils.adapter_releases import publish, register, registry_entry
+from zils.api import Registry
 
 
 class Store(Source):
@@ -54,7 +54,7 @@ class WorkflowTest(unittest.TestCase):
             command = [
                 sys.executable,
                 "-m",
-                "fez.workflow",
+                "zils.workflow",
                 "register",
                 "--registry",
                 str(path),
@@ -85,9 +85,9 @@ class WorkflowTest(unittest.TestCase):
     def test_capacity_deferral_preserves_retry_budget_and_cannot_reuse_lease(self):
         from bittensor_wallet import Keypair
 
-        from fez import coordinator, queue_protocol
-        from fez.cloud import APIError
         from tests.test_queue import Store as QueueStore
+        from zils import coordinator, queue_protocol
+        from zils.cloud import APIError
 
         store = QueueStore()
         key = Keypair.create_from_seed("0x" + "31" * 32)
@@ -118,8 +118,8 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(row["attempts"], 2)
 
     def test_capacity_probe_failure_does_not_claim_a_job(self):
-        from fez.runtime import gpu_ready
         from miner.queue import run_once
+        from zils.runtime import gpu_ready
 
         class NoClaim:
             def call(self, *args):
@@ -132,7 +132,7 @@ class WorkflowTest(unittest.TestCase):
             self.assertFalse(run_once(NoClaim(), None, None, None, "cuda"))
 
     def test_pending_progress_is_not_misrepresented_as_an_evaluation_result(self):
-        from fez.coordinator import public_job
+        from zils.coordinator import public_job
 
         job = {
             "id": str(uuid.uuid4()),
@@ -144,8 +144,8 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(public["workflow"]["state"], "waiting_capacity")
 
     def test_new_adapter_is_visible_without_restart_and_shared_requests_disable_adapter(self):
-        from fez.adapter_server import SharedEngine
         from tests.test_adapter_server import Backend
+        from zils.adapter_server import SharedEngine
 
         class SharedBackend(Backend):
             def shared_prepare(self, body):
@@ -185,7 +185,7 @@ class WorkflowTest(unittest.TestCase):
             self.assertEqual(engine.predict(engine.prepare(customer)), prediction)
 
     def test_capacity_and_consent_gate_assignment_without_losing_uploaded_data(self):
-        from fez.workflow import Workflow
+        from zils.workflow import Workflow
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -215,7 +215,7 @@ class WorkflowTest(unittest.TestCase):
             self.assertEqual(job["status"], "queued")
 
     def test_accepted_release_becomes_owner_model_only_after_activation_succeeds(self):
-        from fez.workflow import Workflow
+        from zils.workflow import Workflow
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -246,7 +246,7 @@ class WorkflowTest(unittest.TestCase):
             self.assertEqual(len(calls), 2)
 
     def test_rejected_candidate_never_activates(self):
-        from fez.workflow import Workflow
+        from zils.workflow import Workflow
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -261,7 +261,7 @@ class WorkflowTest(unittest.TestCase):
             self.assertFalse((root / "releases").exists())
 
     def test_registry_reload_preserves_existing_requests_and_rejects_invalid_update(self):
-        from fez.api import FileRegistry
+        from zils.api import FileRegistry
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
