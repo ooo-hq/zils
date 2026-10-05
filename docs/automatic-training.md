@@ -1,19 +1,19 @@
 # Automatic customer training
 
 The workflow service connects the existing private upload queue, approved training
-worker, held-out evaluation, and customer model registry. Customer API keys, Auth,
-and database schemas are unchanged. The operator explicitly configures the worker
+miner, held-out evaluation, and customer model registry. Customer API keys, Auth,
+and database schemas are unchanged. The operator explicitly configures the miner
 that may receive training data. Assignment requires a validated JevK5 job with
-recorded worker-export consent, an enabled worker, and available GPU capacity.
+recorded miner-export consent, an enabled miner, and available GPU capacity.
 
 ## Job lifecycle
 
 1. The existing processor validates the uploaded examples and freezes the job.
-2. The workflow waits for an idle approved worker and the configured free-memory
+2. The workflow waits for an idle approved miner and the configured free-memory
    requirement, then uses the existing transactional approval RPC to assign it.
-3. The worker trains the adapter. The evaluator checks the baseline and candidate
+3. The miner trains the adapter. The evaluator checks the baseline and candidate
    against the original acceptance criteria. Neither the criteria nor held-out
-   examples are sent to the worker.
+   examples are sent to the miner.
 4. An accepted result becomes an immutable release. The workflow verifies that
    the prediction runtime reports that release's identity before registering it
    for the job owner. Failed activation retries; rejected candidates never publish.
@@ -38,13 +38,13 @@ Complete the [JevK5 training setup](jevk5-queue.md) and
 [decision API setup](decision-api.md) first. Use Linux or WSL 2, systemd for the
 optional service-health checks, Python 3.13, and a BF16-capable NVIDIA GPU. Install
 the pinned training and API dependencies described in those guides. Configure a
-single workflow service per approved worker.
+single workflow service per approved miner.
 
 Training and prediction may share a GPU only when both fit. The workflow does not
 stop prediction servers or unrelated workloads. A dedicated training GPU is the
 deployment option for continuous prediction availability. The memory check is a
 capacity gate, not a reservation against unrelated applications; operators must
-coordinate all GPU workloads. Worker and evaluator share `ZILS_COMPUTE_LOCK`.
+coordinate all GPU workloads. Miner and evaluator share `ZILS_COMPUTE_LOCK`.
 
 Set these variables on both training services, using measured requirements for
 the largest supported examples on the chosen hardware:
@@ -56,7 +56,7 @@ export ZILS_NVIDIA_SMI=/usr/bin/nvidia-smi
 
 On WSL 2, the GPU utility is commonly `/usr/lib/wsl/lib/nvidia-smi`; verify the path
 on the host. Capacity is checked before claiming work and again inside the shared
-compute lock. A capacity timeout releases the worker lease without consuming a
+compute lock. A capacity timeout releases the miner lease without consuming a
 training attempt. Existing job deadlines still apply.
 
 ## Serve shared and customer models with one base
@@ -104,7 +104,7 @@ Create `.private/workflow.json` with operator-provided values:
 }
 ```
 
-The example paths, worker address, service names, and group are placeholders.
+The example paths, miner address, service names, and group are placeholders.
 Create the directory and group explicitly, grant the workflow write access and
 the prediction service read/traverse access, and provision the existing runtime
 secret through a protected environment. Omit `release_group` when both services
@@ -112,7 +112,7 @@ use the same identity. Omit `training_services` when systemd health checks are n
 appropriate, and provide equivalent external service supervision.
 
 Run using the processor's existing protected Supabase environment and the existing
-runtime secret; workers must never receive the service-role credential:
+runtime secret; miners must never receive the service-role credential:
 
 ```sh
 python -m zils.workflow run --config .private/workflow.json

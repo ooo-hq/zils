@@ -2,12 +2,12 @@
 
 The hosted queue supports pinned JevK5 4B weights as its starting model. New
 datasets are bound to a model identity when the processor validates them. The
-model identity and base revision are included in the hashed job manifest, worker
+model identity and base revision are included in the hashed job manifest, miner
 assignment, customer job response and accepted release. Existing manifests that
 predate model identities retain the original Kev 0.8B contract.
 
 This changes the training workflow. It does not add a hosted prediction API or
-automatically approve customer-data exports or worker assignments. The local
+automatically approve customer-data exports or miner assignments. The local
 and testnet fleet remains on its existing Kev contract.
 
 ## Install and create the reference
@@ -38,7 +38,7 @@ the full base weights. The model is `alibiserikbay/JevK5`, revision
 
 For an already downloaded model, set `ZILS_JEVK5_BASE_DIR` to its directory and
 use `--no-download`. This override must pass the same weight and tokenizer
-checksums; it cannot select another model. Model workers run offline.
+checksums; it cannot select another model. Model processes run offline.
 
 ## Configure the services
 
@@ -56,9 +56,9 @@ processor with:
 Use a persistent service supervisor for deployment. The processor refuses to
 start if its reference does not match the configured active model. The read-only
 `GET /v1/config` response identifies that active model; it is configuration, not
-a worker-health or inference-availability signal.
+a miner-health or inference-availability signal.
 
-On an approved worker, create the protected hotkey/wallet configuration described
+On an approved miner, create the protected hotkey/wallet configuration described
 in the queue guide, download the same reference, and run:
 
 ```sh
@@ -67,22 +67,22 @@ in the queue guide, download the same reference, and run:
   --reference models/jevk5-reference --device cuda
 ```
 
-The worker receives only approved training exports and signed storage URLs. It
+The miner receives only approved training exports and signed storage URLs. It
 must not receive the processor's Supabase credential or calibration/test data.
-Run worker and processor under separate operating-system identities if they share
+Run miner and processor under separate operating-system identities if they share
 a machine, with separate private state directories and environment files.
 
 When multiple identities share one GPU, configure the same `ZILS_COMPUTE_LOCK`
 path for them. Pre-create it in an administrator-owned directory with group
 read/write access for the service identities; do not make the parent directory
-writable by workers. Without this override the existing per-user/device lock is
+writable by miners. Without this override the existing per-user/device lock is
 used. Other applications need their own resource coordination.
 
 ## Data and training contract
 
 This version supports choice, true/false and ordinal-score decisions with at
 most **16 outcomes** and **2,048 prompt tokens per example**. Validation checks
-those limits before worker approval. Inputs are never silently truncated. The
+those limits before miner approval. Inputs are never silently truncated. The
 website's decision text is supplied as JevK5's criterion when the question has
 no explicit `instructions`; the original evidence remains present.
 
@@ -113,12 +113,12 @@ customer model.
 Keep existing job rows, manifests, references and release files unchanged. The
 API determines old download filenames from each job's model, not today's active
 setting. To evaluate older pending jobs with the new processor, also provide
-`--additional-reference models/reference` and retain that Kev base cache. Workers
-must use a reference matching their assigned job; an incompatible worker refuses
+`--additional-reference models/reference` and retain that Kev base cache. Miners
+must use a reference matching their assigned job; an incompatible miner refuses
 the assignment instead of training another model.
 
 Before changing the active model, finish or inventory in-flight work and prepare
-the appropriate workers and references. Change the API environment and primary
+the appropriate miners and references. Change the API environment and primary
 processor reference together. Rollback uses the same procedure with
 `ZILS_TRAINING_MODEL=kev-0.8b-v1` and the Kev reference, retaining JevK5 as an
 additional reference if any JevK5 jobs still need evaluation. Do not change a

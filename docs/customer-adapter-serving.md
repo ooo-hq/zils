@@ -73,7 +73,7 @@ chmod 700 .private/adapters
 
 Use the already-configured training project's `SUPABASE_URL` and
 `SUPABASE_SERVICE_ROLE_KEY` in the publisher's protected environment. Never pass
-these credentials to customers, model workers, or the private inference process.
+these credentials to customers, model miners, or the private inference process.
 The existing [training setup](supabase-training.md) must already contain a
 completed, accepted JevK5 job and its accepted release objects.
 
@@ -126,7 +126,7 @@ This downloads and checksum-verifies the pinned JevK5 base. Alternatively set
 to the reference command. The runtime uses local weights only. Copy the complete
 private `releases` directory to this host if publication happened elsewhere,
 preserving the directory names and permissions. The runtime identity needs read
-access; unrelated users and model workers must not have access.
+access; unrelated users and model miners must not have access.
 
 Generate a new private gateway-to-runtime credential in a protected file:
 

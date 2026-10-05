@@ -1,6 +1,6 @@
 # Customer decision jobs
 
-Zils can run a customer dataset through its existing approved-worker competition:
+Zils can run a customer dataset through its existing approved-miner competition:
 train candidates, calibrate each candidate and the starting checkpoint, compare
 their test results, and export a qualifying candidate. This is an experimental
 local workflow, not a hosted customer service or a published model release.
@@ -8,16 +8,16 @@ local workflow, not a hosted customer service or a published model release.
 This page describes the local bundle workflow, where one fleet configuration
 pins one job. For a shared pool that claims different customer jobs without
 regenerating bundles, use the [Supabase training queue](supabase-training.md).
-It adds private uploads and approved-worker assignments; cross-job chain rewards
+It adds private uploads and approved-miner assignments; cross-job chain rewards
 remain unimplemented. The existing synthetic fleet remains supported.
 
 ## Prepare data
 
 Complete the Python 3.13 [repository setup](../README.md#repository-setup), including
 the model download. Work from the repository root on macOS, Linux, or WSL 2.
-Use only data authorized for training and for export to the configured workers.
+Use only data authorized for training and for export to the configured miners.
 The export flag records an operator decision; it does not provide encryption,
-confidential compute, legal authorization, or isolation from worker operators.
+confidential compute, legal authorization, or isolation from miner operators.
 
 Create three JSONL files under ignored `.private/` storage: `train.jsonl`,
 `calibration.jsonl`, and `test.jsonl`. Each line uses the existing decision-case
@@ -33,7 +33,7 @@ cannot cross splits. Calibration and test must have the same task families,
 all present in training. These checks cannot identify semantic duplicates or
 incorrectly assigned source groups. The operator remains responsible for labels
 and a representative split. The exporter sends only training states, questions,
-and labels to workers. Calibration/test cases and acceptance policy stay with
+and labels to miners. Calibration/test cases and acceptance policy stay with
 the validator; miners receive the job ID and manifest hash.
 
 For a reproducible plumbing example, generate synthetic inputs first. These are

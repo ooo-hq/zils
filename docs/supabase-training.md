@@ -1,13 +1,13 @@
 # Supabase training workflow
 
 The training service connects a customer dashboard to a shared pool of approved
-workers. Supabase provides Auth, Postgres job state, and private object storage.
+miners. Supabase provides Auth, Postgres job state, and private object storage.
 The Python coordinator handles authorization and issues storage URLs; dataset
 and checkpoint bytes transfer directly to Storage. A separate processor validates
 data and runs the existing validator. Miners claim assigned jobs over outbound
 HTTPS, so they no longer need an inbound artifact server or a new bundle per job.
 
-This is an implemented pilot workflow, tested with fixture model workers,
+This is an implemented pilot workflow, tested with fixture miners,
 a local Supabase HTTP/storage double, and a disposable real PostgreSQL database.
 A deployed Supabase smoke test also verified authentication, customer isolation,
 private signed uploads, processor validation, and cancellation using synthetic
@@ -48,9 +48,9 @@ policy prevents existing broad client policies from exposing the training
 buckets. Service-role access remains privileged.
 
 Customers can select only their own job records and cannot directly change job
-state. Worker registrations, assignments, replay nonces, and queue RPCs are
+state. Miner registrations, assignments, replay nonces, and queue RPCs are
 server-only. The coordinator verifies each customer session against Supabase
-Auth. Workers instead sign requests with Bittensor hotkeys; they receive no
+Auth. Miners instead sign requests with Bittensor hotkeys; they receive no
 Supabase project credentials.
 
 ## Run the API and processor
@@ -88,7 +88,7 @@ processor directory has an exclusive process lock.
 
 The API listens on `127.0.0.1:8910` by default. For remote operation, run it behind
 an HTTPS reverse proxy with request/concurrency limits and configure the exact
-public URL on both coordinator and workers. The built-in threaded HTTP server
+public URL on both coordinator and miners. The built-in threaded HTTP server
 is a development server; it is not an internet edge server. A persistent host,
 such as a DigitalOcean host managed using `doctl`, can run the API under a service
 supervisor. The processor belongs on hardware able to evaluate the pinned model.
@@ -119,10 +119,10 @@ each split directly with an immutable signed URL, and submits for server-side
 validation. Interrupted uploads can resume missing objects; files already
 uploaded cannot be replaced. Cancel and create a new job to change input data.
 
-## Approve workers and run a queued miner
+## Approve miners and run a queued miner
 
 A job enters `awaiting_approval` after validation. It does not expose data to all
-registered miners. First register an approved worker's public hotkey and a stable
+registered miners. First register an approved miner's public hotkey and a stable
 UID using the coordinator environment:
 
 ```bash
@@ -131,10 +131,10 @@ UID using the coordinator environment:
   --job "$JOB_ID" --hotkeys "$WORKER_HOTKEY"
 ```
 
-`WORKER_HOTKEY` is the worker's public SS58 address; `JOB_ID` is the UUID displayed
+`WORKER_HOTKEY` is the miner's public SS58 address; `JOB_ID` is the UUID displayed
 in the dashboard. Supply up to sixteen distinct approved hotkeys. UIDs are local
 queue identities, not a claim of chain registration. IDs are frozen in each
-assignment. `worker --disable` disables future authenticated worker requests;
+assignment. `worker --disable` disables future authenticated miner requests;
 previously issued download URLs remain valid until expiry and downloaded data
 cannot be recalled.
 
@@ -164,17 +164,17 @@ chmod 600 .private/queue-miner.json
 For a disposable local test identity, a configuration may use `seed` instead of
 `wallet` and `hotkey`; generate it with `Keypair.create_from_seed` from a securely
 generated 32-byte seed, keep it private, and register the resulting public address.
-Never give miners the Supabase service-role key. Each worker downloads and hashes
+Never give miners the Supabase service-role key. Each miner downloads and hashes
 its assigned training export, reuses the cached base model, trains a candidate,
-and uploads only the three checkpoint files. Saved candidates survive worker
-restarts. The same running worker can subsequently claim another customer's job;
+and uploads only the three checkpoint files. Saved candidates survive miner
+restarts. The same running miner can subsequently claim another customer's job;
 no new fleet bundle is required.
 
 ## Completion, failures, and limits
 
 Jobs transition through `uploading → validating → awaiting_approval → queued →
 running → evaluating → completed`, or `failed`. There are at most five active
-jobs per customer. Worker leases last twenty minutes and renew every minute;
+jobs per customer. Miner leases last twenty minutes and renew every minute;
 requests are signed for the exact API URL, route, body, nonce, and timestamp.
 Expired claims cannot submit with an old token. Each assignment permits up to
 three attempts. A job is evaluated when all assignments finish/fail, or after
@@ -201,7 +201,7 @@ downloaded or immediately terminate remote compute. For a transient failed job,
 inspect the cause before creating a new one. Do not reset database states by hand
 without understanding lease ownership.
 
-Training data is readable by approved workers, who may retain it. Signed URLs
+Training data is readable by approved miners, who may retain it. Signed URLs
 limit access, not the use of downloaded bytes. Files and raw local runs are
 retained until operator cleanup; automatic retention/deletion, billing, resumable
 multipart uploads, confidential compute, and automatic serving of training artifacts are not implemented.
@@ -222,7 +222,7 @@ deletes a separate temporary database cluster, never connects to your existing
 Supabase database, and checks migration execution, tenant/storage isolation,
 service-only functions, replay rejection, lease recovery, and bounded attempts.
 CI runs both suites. HTTP tests exercise real signatures and file transfers with
-fixture model workers; they do not contact Supabase or send chain transactions.
+fixture miners; they do not contact Supabase or send chain transactions.
 
 Implementation references: [Supabase database functions](https://supabase.com/docs/guides/database/functions),
 [row-level security](https://supabase.com/docs/guides/database/postgres/row-level-security),
