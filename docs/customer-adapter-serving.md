@@ -13,10 +13,12 @@ server-side service-role credential is privileged; **read-only describes this
 program's operations, not that credential's permissions**. The inference process
 needs no Supabase credential.
 
-Publication prepares files. It does not restart services or make a model live.
-The gateway, bulk worker, and adapter runtime load their catalogs on startup;
-operators must coordinate a restart to activate a prepared release. The training
-coordinator does not invoke the publisher automatically in this version.
+The [automatic workflow](automatic-training.md) connects assignment, capacity,
+publication, verified serving, and registry reloads. The standalone publication
+command below only prepares files; it does not itself make a model live.
+The updated gateway, bulk worker, and adapter runtime discover verified catalog
+additions without restart. The workflow service invokes publication; the training
+coordinator remains responsible for validation and evaluation.
 
 ## Acceptance and identity
 
@@ -161,22 +163,23 @@ weight reloads and integrity checks.
 
 1. Publish into a prepared registry copied from the active one. Keep a backup of
    the active configuration and retain every older immutable release directory.
-2. Start or restart the private adapter runtime against the release directory.
+2. Start the private adapter runtime against the release directory if necessary.
    Verify its authenticated health identities match the prepared entries.
 3. Give the existing gateway and bulk worker the same private runtime credential
-   through their protected environments. Load the prepared registry during a
-   controlled restart; no API/key/Supabase code changes are required.
+   through their protected environments. Atomically install the prepared registry;
+   the updated gateway and bulk worker reload it. No key or Supabase changes are required.
 4. With an existing key belonging to the job owner, verify `GET /v1/models` and
    call `POST /v1/systemone` using the new immutable ID or account-specific alias.
    A different owner's key must get the same 404 as an unknown model.
 5. To roll back the default selection, move its alias to a previously verified
-   release in a prepared registry and restart the gateway and bulk worker.
+   release in an atomically installed registry.
    Preserve newer immutable entries while bulk work still references them.
 
 Restarting can interrupt requests; use normal service draining and deployment
-controls. Automatic restarts, hot catalog reloads, dashboard model selection,
-and production capacity management are outside this implementation. Shared-base
-models continue to use their existing runtime and registry entries.
+controls for the initial rollout. Hot catalog reloads and automatic activation are
+available through the workflow guide. It does not acquire GPU hardware or stop
+unrelated workloads. Shared-base models retain their existing registry entries;
+the combined runtime can serve them and private adapters using one base instance.
 
 ## Verification
 

@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import threading
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -75,6 +76,51 @@ class Registry:
                 if entry["owners"] is None or owner in entry["owners"]
             ]
         }
+
+
+class FileRegistry:
+    """Atomic catalog reloads; malformed updates leave the last verified catalog usable."""
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self.lock = threading.Lock()
+        self.signature = None
+        self.current = None
+        self._read()
+
+    def _read(self):
+        with self.lock:
+            try:
+                with self.path.open() as stream:
+                    stat = os.fstat(stream.fileno())
+                    signature = (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size)
+                    if signature == self.signature:
+                        return self.current
+                    candidate = Registry(json.load(stream)["models"])
+                if self.current is not None:
+                    if self.current.names.keys() - candidate.names.keys():
+                        raise ValueError("Existing model names must be preserved")
+                    for old in self.current.entries:
+                        new = candidate.names.get(old["id"])
+                        if new is None or any(old[k] != new[k] for k in old if k != "aliases"):
+                            raise ValueError("Existing immutable releases must be preserved")
+                    for name in self.current.names.keys() & candidate.names.keys():
+                        if self.current.names[name]["owners"] != candidate.names[name]["owners"]:
+                            raise ValueError("A model name cannot move between owners")
+                self.current, self.signature = candidate, signature
+            except (OSError, ValueError, KeyError, TypeError, DecisionError):
+                if self.current is None:
+                    raise
+            return self.current
+
+    def resolve(self, name, owner):
+        return self._read().resolve(name, owner)
+
+    def snapshot(self, owner):
+        return self._read().snapshot(owner)
+
+    def listing(self, owner):
+        return self._read().listing(owner)
 
 
 class RuntimeClient:
@@ -211,7 +257,7 @@ def main():
     from .batches import Batches
 
     store = Store()
-    registry = Registry(json.loads(args.registry.read_text())["models"])
+    registry = FileRegistry(args.registry)
     gateway = Gateway(store, registry, Batches(store.db))
     service = Server(("127.0.0.1", args.port), make_handler(gateway.dispatch, args.origin))
     print(f"Zils API ready: loopback port {args.port}", flush=True)

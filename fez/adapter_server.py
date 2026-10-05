@@ -5,6 +5,7 @@ import hmac
 import importlib.metadata
 import json
 import os
+import threading
 from pathlib import Path
 
 from .adapter_releases import RUNTIME_REVISION, read_release
@@ -16,10 +17,10 @@ from .decisions import (
     option_descriptions,
     validate_request,
 )
-from .jev_server import SerialEngine
+from .jev_server import JevEngine, SerialEngine, verify_manifest
 
 
-def catalog(root):
+def catalog(root, *, allow_empty=False):
     root = Path(root)
     releases = {}
     for path in sorted(root.iterdir()):
@@ -28,7 +29,7 @@ def catalog(root):
             if release["release_id"] in releases:
                 raise ValueError("Duplicate adapter release")
             releases[release["release_id"]] = (path, release)
-    if not releases:
+    if not releases and not allow_empty:
         raise ValueError("Publish at least one accepted adapter before starting this runtime")
     return releases
 
@@ -77,14 +78,31 @@ class AdapterEngine:
     def __init__(self, root, backend=None, max_request_tokens=65536):
         if type(max_request_tokens) is not int or max_request_tokens < 1:
             raise ValueError("Request token budget must be a positive integer")
-        self.releases = catalog(root)
+        self.root = Path(root)
+        self.catalog_lock = threading.Lock()
+        self.releases = catalog(root, allow_empty=backend is not None)
         self.backend = backend or AdapterModel(*next(iter(self.releases.values())))
         self.max_request_tokens = max_request_tokens
 
     def release(self, model):
+        if isinstance(model, str) and model not in self.releases:
+            self.refresh()
         if not isinstance(model, str) or model not in self.releases:
             raise DecisionError(404, "model_not_found", "Model is unavailable.")
         return self.releases[model]
+
+    def refresh(self):
+        with self.catalog_lock:
+            additions = {}
+            for path in sorted(self.root.iterdir()):
+                if not path.name.startswith("zils-adapter-") or path.name in self.releases:
+                    continue
+                try:
+                    release = read_release(path)
+                except (OSError, ValueError, KeyError, TypeError):
+                    continue  # An invalid new release cannot interrupt existing predictions.
+                additions[release["release_id"]] = (path, release)
+            self.releases = {**self.releases, **additions}
 
     def prepare(self, body):
         validate_request(body)
@@ -165,6 +183,7 @@ class AdapterRuntime:
         if not hmac.compare_digest(bearer.encode(), self.token.encode()):
             raise DecisionError(401, "invalid_credentials", "Invalid runtime credential.")
         if method == "GET" and path == "/health":
+            self.engine.refresh()
             return 200, {
                 "models": [
                     {"release_id": r["release_id"], "fingerprint": r["fingerprint"]}
@@ -194,6 +213,83 @@ class AdapterRuntime:
         return 200, {**identity, "predictions": predictions}
 
 
+class SharedModel(AdapterModel):
+    """A frozen base with one LoRA slot, shared by both serving contracts."""
+
+    def __init__(self, reference):
+        from .jevk5 import DecisionModel
+
+        self.model = DecisionModel(reference, "cuda", train=True)
+        self.model.peft.requires_grad_(False)
+        self.model.peft.eval()
+        self.active = None
+        self.shared = JevEngine(self.model.runtime)
+
+    def shared_prepare(self, body):
+        return self.shared.prepare(body)
+
+    def shared_predict(self, prepared):
+        # SerialEngine owns all GPU execution, including this adapter-disable context.
+        with self.model.peft.disable_adapter():
+            return self.shared.predict(prepared)
+
+
+class SharedEngine(AdapterEngine):
+    def __init__(self, root, backend, shared_id):
+        super().__init__(root, backend)
+        self.shared_id = shared_id
+
+    def prepare(self, body):
+        if isinstance(body, dict) and body.get("model") == self.shared_id:
+            prepared = self.backend.shared_prepare(body)
+            return {**prepared, "shared": True}
+        return super().prepare(body)
+
+    def predict(self, prepared):
+        if prepared.get("shared"):
+            return self.backend.shared_predict(prepared)
+        return super().predict(prepared)
+
+
+class SharedRuntime(AdapterRuntime):
+    def __init__(self, engine, serial, token, manifest):
+        super().__init__(engine, serial, token)
+        self.identity = {k: manifest[k] for k in ("release_id", "fingerprint")}
+        self.identity["limits"] = {
+            "max_pass_tokens": 4096,
+            "max_request_tokens": 65536,
+            "max_choice_options": 255,
+            "max_score_levels": 10,
+        }
+
+    def dispatch(self, method, path, bearer, body, request_id):
+        if not hmac.compare_digest(bearer.encode(), self.token.encode()):
+            raise DecisionError(401, "invalid_credentials", "Invalid runtime credential.")
+        if method == "GET" and path == "/health":
+            code, health = super().dispatch(method, path, bearer, body, request_id)
+            shared = {k: self.identity[k] for k in ("release_id", "fingerprint")}
+            return code, {**self.identity, "models": [shared, *health["models"]]}
+        if (
+            method == "POST"
+            and path in ("/v1/prepare", "/v1/systemone")
+            and isinstance(body, dict)
+            and isinstance(body.get("request"), dict)
+            and body["request"].get("model") == self.engine.shared_id
+        ):
+            if set(body) - {"request", "lane"}:
+                raise DecisionError(
+                    422, "invalid_request", "Expected an inference request envelope."
+                )
+            request = body["request"]
+            if path == "/v1/prepare":
+                prepared = self.engine.prepare(request)
+                return 200, {**self.identity, "reserved_tokens": prepared["reserved_tokens"]}
+            predictions = self.serial.evaluate(request, body.get("lane", "realtime"))
+            make_response(self.engine.shared_id, request, predictions)
+            return 200, {**self.identity, "predictions": predictions}
+        return super().dispatch(method, path, bearer, body, request_id)
+
+
 def main():
     from .decision_http import Server, make_handler
 
@@ -202,6 +298,8 @@ def main():
     parser.add_argument("--port", type=int, default=8931)
     parser.add_argument("--token-env", default="ZILS_ADAPTER_RUNTIME_TOKEN")
     parser.add_argument("--max-request-tokens", type=int, default=65536)
+    parser.add_argument("--shared-model-dir", type=Path)
+    parser.add_argument("--reference", type=Path)
     args = parser.parse_args()
     token = os.environ[args.token_env]
     if len(token) < 32 or not token.isascii():
@@ -212,9 +310,18 @@ def main():
         raise ValueError("Install the pinned JevK5 runtime revision")
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    engine = AdapterEngine(args.releases, max_request_tokens=args.max_request_tokens)
-    serial = SerialEngine(engine)
-    runtime = AdapterRuntime(engine, serial, token)
+    if args.shared_model_dir:
+        if not args.reference or args.max_request_tokens != 65536:
+            parser.error("Shared serving requires --reference and the pinned 65536 token budget")
+        manifest = verify_manifest(args.shared_model_dir)
+        os.environ["FEZ_JEVK5_BASE_DIR"] = str(args.shared_model_dir)
+        engine = SharedEngine(args.releases, SharedModel(args.reference), manifest["release_id"])
+        serial = SerialEngine(engine)
+        runtime = SharedRuntime(engine, serial, token, manifest)
+    else:
+        engine = AdapterEngine(args.releases, max_request_tokens=args.max_request_tokens)
+        serial = SerialEngine(engine)
+        runtime = AdapterRuntime(engine, serial, token)
     server = Server(
         ("127.0.0.1", args.port),
         make_handler(runtime.dispatch, body_limit=MAX_BODY + 1024, max_depth=MAX_DEPTH + 1),

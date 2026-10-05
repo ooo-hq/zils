@@ -365,13 +365,11 @@ def main():
     parser.add_argument("--registry", type=Path, required=True)
     parser.add_argument("--once", action="store_true")
     args = parser.parse_args()
-    from .api import Gateway, Registry
+    from .api import FileRegistry, Gateway
     from .api_store import Store
 
     db = Supabase()
-    worker = Worker(
-        db, Gateway(Store(db), Registry(json.loads(args.registry.read_text())["models"]))
-    )
+    worker = Worker(db, Gateway(Store(db), FileRegistry(args.registry)))
     next_cleanup = 0
     while True:
         try:

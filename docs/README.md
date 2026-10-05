@@ -11,6 +11,7 @@ on **Bittensor testnet subnet 579**. No Zils model release has been published.
 | Run a miner or validator | [Miner setup](mining.md), [testnet integration](testnet.md) |
 | Train on authorized business data | [Customer decision jobs](customer-jobs.md) |
 | Connect customer uploads to shared workers | [Supabase training queue](supabase-training.md) |
+| Automatically train and activate customer adapters | [Automatic training workflow](automatic-training.md) |
 | Develop and evaluate checkpoints | [Local development](development.md), [evaluation contract](evaluation.md) |
 | Understand benchmark methodology | [Synthetic benchmark](benchmark.md) |
 | Inspect measured results | [Experiment results](experiments.md), [public JevBench comparison](jevbench-public.md), [aggregate JSON](data/jevbench-public-001.json), [verified testnet round](testnet-round-001.md) |
