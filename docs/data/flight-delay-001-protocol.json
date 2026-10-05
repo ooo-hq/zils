@@ -1,0 +1,56 @@
+{
+  "calibration": "Separate NLL temperature fit for base and adapter: 81 log-spaced values in [0.25,4]",
+  "historical_baseline": "Same training sample; airline/origin/4-hour departure bin; 20-observation global prior; global Beta(1,1) smoothing",
+  "input_fields": [
+    "flight_date",
+    "day_of_week",
+    "airline",
+    "flight_number",
+    "origin",
+    "destination",
+    "scheduled_departure_local",
+    "scheduled_arrival_local",
+    "scheduled_duration_minutes",
+    "distance_miles"
+  ],
+  "months_2025": {
+    "calibration": 2,
+    "test": 3,
+    "train": 1
+  },
+  "origins": [
+    "EWR",
+    "JFK",
+    "LGA"
+  ],
+  "population": "Completed, non-diverted NYC departures with observed arrival delay",
+  "primary_metric": "Mean binary Brier: mean((P(late)-observed_late)^2); lower is better",
+  "promotion": "Research only; no automatic model registration or serving changes",
+  "question": {
+    "criteria": {
+      "late": "Arrives at least 15 minutes late.",
+      "not_late": "Arrives less than 15 minutes late, including early or on time."
+    },
+    "instructions": "Estimate whether this flight will arrive at least 15 minutes late. Only scheduled information is available before departure. This benchmark covers completed, non-diverted flights with recorded arrival times.",
+    "type": "choice"
+  },
+  "sample_counts": {
+    "calibration": 512,
+    "test": 1024,
+    "train": 3072
+  },
+  "sampling": "Smallest SHA256(seed:flight-identity), no label balancing",
+  "seed": 553,
+  "success": "Adapter beats equally calibrated base and historical baseline on test Brier; both paired date-bootstrap 95% intervals exclude zero",
+  "training": {
+    "alpha": 32,
+    "dropout": 0.05,
+    "epochs": 1,
+    "gradient_accumulation": 4,
+    "learning_rate": 2e-05,
+    "rank": 16,
+    "seed": 553
+  },
+  "uncertainty": "2000 paired bootstrap resamples of whole test dates, seed 553",
+  "version": "zils-flight-delay-001"
+}

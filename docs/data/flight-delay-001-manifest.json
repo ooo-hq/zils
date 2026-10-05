@@ -1,0 +1,59 @@
+{
+  "files": {
+    "calibration-inputs.jsonl": "665b7a6669645adc32cb75d99e949a119c5318bbd080a8fe5175f828be433f3e",
+    "calibration.jsonl": "4e7191eb59b70d58c40c8905494979445c07d5b025921642b470f9f523045ecc",
+    "historical.json": "3a97f887103e010ce253adbf8047e5c06f4aacf14a938c6e74c19448e35a7886",
+    "protocol.json": "544e96564efdc4e7a8128e9f233f7567be19ceb2a187b00241e937595668046c",
+    "test-inputs.jsonl": "3cdf4b218a8abeab08f9ed0c07813e3d3aca359bbb2ed3f1afc4de180a47f99b",
+    "test.jsonl": "fa8e63cb8f9263d70069b2c03b17977dc482426c223185650ff4ff4fefc3108a",
+    "train-export.jsonl": "1fbb6f712eba5ef860f190d2c8160d80d1e3993e0859c855914060d2a074153d",
+    "train-inputs.jsonl": "216f12f850cc753d60e3b929561ef3ee06532607ebdd8bf9acd97d07bc0ab22a",
+    "train.jsonl": "e03adea551ea542e2c848db1f4aa76be2b75c0e7868439d0584fc0ac638bf3a4"
+  },
+  "sources": {
+    "calibration": {
+      "eligible": 26717,
+      "excluded_cancelled_diverted_or_missing_arrival": 590,
+      "nyc_departures": 27307,
+      "sha256": "12dc8dbdb3c8b3c20d4c00a8b188196ae202f781a8760871ae502a9c733d0ecd",
+      "source_rows": 504884,
+      "url": "https://transtats.bts.gov/PREZIP/On_Time_Reporting_Carrier_On_Time_Performance_1987_present_2025_2.zip"
+    },
+    "test": {
+      "eligible": 30227,
+      "excluded_cancelled_diverted_or_missing_arrival": 379,
+      "nyc_departures": 30606,
+      "sha256": "9c80fbc2112cdbf3f0613ec2001ba019b3ad75511cd69657080736e7eda9cef4",
+      "source_rows": 600872,
+      "url": "https://transtats.bts.gov/PREZIP/On_Time_Reporting_Carrier_On_Time_Performance_1987_present_2025_3.zip"
+    },
+    "train": {
+      "eligible": 28638,
+      "excluded_cancelled_diverted_or_missing_arrival": 738,
+      "nyc_departures": 29376,
+      "sha256": "868387dcedaef1b8d8392e608e642219fde50d594c3cf2094aec858167629ccf",
+      "source_rows": 539747,
+      "url": "https://transtats.bts.gov/PREZIP/On_Time_Reporting_Carrier_On_Time_Performance_1987_present_2025_1.zip"
+    }
+  },
+  "splits": {
+    "calibration": {
+      "count": 512,
+      "first_date": "2025-02-01",
+      "last_date": "2025-02-28",
+      "late": 121
+    },
+    "test": {
+      "count": 1024,
+      "first_date": "2025-03-01",
+      "last_date": "2025-03-31",
+      "late": 201
+    },
+    "train": {
+      "count": 3072,
+      "first_date": "2025-01-01",
+      "last_date": "2025-01-31",
+      "late": 630
+    }
+  }
+}
