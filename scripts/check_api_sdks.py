@@ -5,10 +5,10 @@ import json
 import subprocess
 from pathlib import Path
 
-from fez import decision_http
-from fez.api import Gateway, Registry
 from tests.test_api import FINGERPRINT, RELEASE, FixtureStore, GatewayTest
 from tests.test_decision_http import server
+from zils import decision_http
+from zils.api import Gateway, Registry
 
 
 def main():

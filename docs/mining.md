@@ -17,8 +17,8 @@ From the repository root, after installing dependencies and downloading the
 reference as described in the [project README](https://github.com/ooo-hq/zils#setup):
 
 ```bash
-.venv-kev/bin/python -m fez.benchmark build --out .private/benchmarks/local
-.venv-kev/bin/python -m fez.fleet init --out .private/fleet-local \
+.venv-kev/bin/python -m zils.benchmark build --out .private/benchmarks/local
+.venv-kev/bin/python -m zils.fleet init --out .private/fleet-local \
   --benchmark .private/benchmarks/local --host VALIDATOR_PRIVATE_IPV4
 ```
 
@@ -50,7 +50,7 @@ references instead; provision each hotkey separately.
 4. Run `./start-miner --rounds 1`. It can start before the validator and will retry.
 
 The miner selects CUDA, then Apple MPS, then CPU. Use `--device cuda`, `mps`, or
-`cpu` to select explicitly. To reuse an environment or cache, set `FEZ_PYTHON`
+`cpu` to select explicitly. To reuse an environment or cache, set `ZILS_PYTHON`
 to its absolute Python path and `HF_HOME` to the cache directory.
 
 ### Windows / NVIDIA GPU
@@ -75,7 +75,7 @@ Native Windows service execution and NAT traversal are not implemented.
 From the repository root:
 
 ```bash
-.venv-kev/bin/python -m fez.fleet validator \
+.venv-kev/bin/python -m zils.fleet validator \
   --config .private/fleet-local/validator/config.json --rounds 1
 ```
 

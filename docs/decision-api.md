@@ -105,7 +105,7 @@ python3.13 -m venv .venv-jev
 set -a
 . .private/api/service.env
 set +a
-.venv-jev/bin/python -m fez.jev_server --model-dir models/jevk5
+.venv-jev/bin/python -m zils.jev_server --model-dir models/jevk5
 ```
 
 The downloader creates `models/jevk5/release.json`. Startup verifies all recorded
@@ -136,13 +136,13 @@ PY
 set -a
 . .private/api/service.env
 set +a
-.venv-api/bin/python -m fez.api --registry .private/api/models.json
+.venv-api/bin/python -m zils.api --registry .private/api/models.json
 ```
 
 In a second terminal with the same environment loaded:
 
 ```bash
-.venv-api/bin/python -m fez.batches --registry .private/api/models.json
+.venv-api/bin/python -m zils.batches --registry .private/api/models.json
 ```
 
 The gateway listens on loopback **8920**. These bounded threaded HTTP servers
@@ -338,13 +338,13 @@ Storage backups and copies already downloaded are outside this deletion mechanis
 .venv-api/bin/python -m pip install -r requirements/api-test.txt
 .venv-api/bin/python -m pip install --no-deps -r requirements/jevk5-source.txt
 make check-api PYTHON=.venv-api/bin/python
-FEZ_PG_BIN=/PATH/TO/POSTGRESQL16/bin make check-queue-db PYTHON=.venv-api/bin/python
+ZILS_PG_BIN=/PATH/TO/POSTGRESQL16/bin make check-queue-db PYTHON=.venv-api/bin/python
 npm install --prefix .private/api-sdk --no-audit --no-fund @typesafe-ai/sdk@0.6.0
 .venv-api/bin/python -m scripts.check_api_sdks \
   --js-module .private/api-sdk/node_modules/@typesafe-ai/sdk/dist/index.mjs
 ```
 
-Replace `FEZ_PG_BIN` with the directory containing `initdb`, `pg_ctl`, and `psql`,
+Replace `ZILS_PG_BIN` with the directory containing `initdb`, `pg_ctl`, and `psql`,
 or omit it when they are on PATH. The database checker creates a disposable
 cluster; it never connects to the configured Supabase project. The SDK check
 uses fixture model probabilities on loopback and does not call TypeSafe's API.

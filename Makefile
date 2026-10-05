@@ -1,5 +1,5 @@
 PYTHON ?= .venv-kev/bin/python
-PYTHON_SOURCES = fez miner scripts tests
+PYTHON_SOURCES = zils fez miner scripts tests
 
 .PHONY: check lint format test check-website check-queue-db check-api
 
@@ -15,7 +15,7 @@ format:
 
 test:
 	$(PYTHON) -c "import bittensor, bittensor_wallet, kev, torch"
-	$(PYTHON) -m unittest discover -v
+	$(PYTHON) -m unittest discover -s tests -t . -v
 
 check-website:
 	@for file in website/*.js website/*.mjs; do node --check "$$file" || exit 1; done

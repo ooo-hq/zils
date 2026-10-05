@@ -8,15 +8,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import fez
+import zils
 
 
 class BenchmarkTest(unittest.TestCase):
     def module(self):
         self.assertIsNotNone(
-            importlib.util.find_spec("fez.benchmark"), "benchmark builder is missing"
+            importlib.util.find_spec("zils.benchmark"), "benchmark builder is missing"
         )
-        from fez import benchmark
+        from zils import benchmark
 
         return benchmark
 
@@ -69,7 +69,7 @@ class BenchmarkTest(unittest.TestCase):
             for family in ("policy", "routing", "evidence", "severity"):
                 rows = [c for c in splits["test"] if c["family"] == family]
                 self.assertEqual(
-                    set(c["label"] for c in rows), set(fez.options(rows[0]["question"]))
+                    set(c["label"] for c in rows), set(zils.options(rows[0]["question"]))
                 )
             training = b.read_jsonl(root / "miner-training.jsonl")
             self.assertEqual(len(training), 224)
@@ -102,7 +102,7 @@ class BenchmarkTest(unittest.TestCase):
                 b.validate_splits(leaked)
             corrupt = copy.deepcopy(splits)
             first = corrupt["test"][0]
-            first["label"] = next(k for k in fez.options(first["question"]) if k != first["label"])
+            first["label"] = next(k for k in zils.options(first["question"]) if k != first["label"])
             with self.assertRaisesRegex(ValueError, "oracle"):
                 b.validate_splits(corrupt)
             (root / "test.jsonl").write_text((root / "test.jsonl").read_text() + "\n")
@@ -120,7 +120,7 @@ class BenchmarkTest(unittest.TestCase):
                     "id": c["id"],
                     "elapsed_ms": 10,
                     "probabilities": {
-                        k: float(k == c["label"]) for k in fez.options(c["question"])
+                        k: float(k == c["label"]) for k in zils.options(c["question"])
                     },
                 }
                 for c in cases

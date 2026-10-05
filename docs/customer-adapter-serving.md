@@ -95,7 +95,7 @@ use an authenticated private tunnel or restricted HTTPS proxy between hosts.
 Remote plaintext HTTP is rejected.
 
 ```sh
-.venv-publish/bin/python -m fez.adapter_releases \
+.venv-publish/bin/python -m zils.adapter_releases \
   --job ACCEPTED_JOB_UUID \
   --out .private/adapters/releases \
   --registry .private/adapters/models.next.json \
@@ -118,11 +118,11 @@ python3.13 -m venv .venv-adapters
 .venv-adapters/bin/python -m pip install uv==0.12.19
 .venv-adapters/bin/uv pip install --python .venv-adapters/bin/python --torch-backend=cu128 \
   -r requirements/model.txt -r requirements/rehearsal.txt
-.venv-adapters/bin/python -m fez.jevk5 reference --out models/jevk5-reference
+.venv-adapters/bin/python -m zils.jevk5 reference --out models/jevk5-reference
 ```
 
 This downloads and checksum-verifies the pinned JevK5 base. Alternatively set
-`FEZ_JEVK5_BASE_DIR` to the already-verified base directory and pass `--no-download`
+`ZILS_JEVK5_BASE_DIR` to the already-verified base directory and pass `--no-download`
 to the reference command. The runtime uses local weights only. Copy the complete
 private `releases` directory to this host if publication happened elsewhere,
 preserving the directory names and permissions. The runtime identity needs read
@@ -142,7 +142,7 @@ PY
 set -a
 . .private/adapters/runtime.env
 set +a
-.venv-adapters/bin/python -m fez.adapter_server \
+.venv-adapters/bin/python -m zils.adapter_server \
   --releases .private/adapters/releases --port 8931
 ```
 

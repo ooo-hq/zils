@@ -44,14 +44,14 @@ Training and prediction may share a GPU only when both fit. The workflow does no
 stop prediction servers or unrelated workloads. A dedicated training GPU is the
 deployment option for continuous prediction availability. The memory check is a
 capacity gate, not a reservation against unrelated applications; operators must
-coordinate all GPU workloads. Worker and evaluator share `FEZ_COMPUTE_LOCK`.
+coordinate all GPU workloads. Worker and evaluator share `ZILS_COMPUTE_LOCK`.
 
 Set these variables on both training services, using measured requirements for
 the largest supported examples on the chosen hardware:
 
 ```sh
-export FEZ_GPU_MIN_FREE_MIB=12288
-export FEZ_NVIDIA_SMI=/usr/bin/nvidia-smi
+export ZILS_GPU_MIN_FREE_MIB=12288
+export ZILS_NVIDIA_SMI=/usr/bin/nvidia-smi
 ```
 
 On WSL 2, the GPU utility is commonly `/usr/lib/wsl/lib/nvidia-smi`; verify the path
@@ -66,7 +66,7 @@ the existing shared model directory and its verified `release.json`:
 
 ```sh
 mkdir -p .private/customer-releases
-python -m fez.adapter_server \
+python -m zils.adapter_server \
   --releases .private/customer-releases \
   --shared-model-dir /path/to/verified-shared-model \
   --reference /path/to/jevk5-reference \
@@ -115,7 +115,7 @@ Run using the processor's existing protected Supabase environment and the existi
 runtime secret; workers must never receive the service-role credential:
 
 ```sh
-python -m fez.workflow run --config .private/workflow.json
+python -m zils.workflow run --config .private/workflow.json
 ```
 
 For a gateway on another host, replace `registry` with `register_command`, an argv
@@ -129,7 +129,7 @@ The workflow strips Supabase credentials from the child environment. A fixed,
 restricted SSH command can invoke:
 
 ```sh
-python -m fez.workflow register --registry /path/to/api/models.json
+python -m zils.workflow register --registry /path/to/api/models.json
 ```
 
 Restrict that credential to this command and registry; do not grant arbitrary
@@ -146,7 +146,7 @@ The opt-in GPU check can exercise the combined runtime:
 ZILS_TEST_ADAPTER=/path/to/trained-test-adapter \
 ZILS_TEST_SHARED_MODEL=/path/to/verified-shared-model \
 ZILS_TEST_REFERENCE=/path/to/jevk5-reference \
-FEZ_JEVK5_BASE_DIR=/path/to/verified-shared-model \
+ZILS_JEVK5_BASE_DIR=/path/to/verified-shared-model \
 python -m unittest tests.test_adapter_gpu -v
 ```
 

@@ -17,8 +17,8 @@ from urllib.request import Request
 
 from bittensor_wallet import Keypair
 
-import fez
-from fez.protocol import (
+import zils
+from zils.protocol import (
     BASE_REVISION,
     MAX_ANNOUNCEMENT,
     Handler,
@@ -35,13 +35,13 @@ from fez.protocol import (
 def miner(config):
     work = Path(config["work"])
     key = Keypair.create_from_seed(config["seed"])
-    entry = fez.submission(config["checkpoint"], config["uid"])
+    entry = zils.submission(config["checkpoint"], config["uid"])
     checkpoint = work / "artifacts"
-    fez.stage(entry, checkpoint)
+    zils.stage(entry, checkpoint)
 
     class Artifacts(Handler):
         def do_GET(self):
-            files = {"/artifacts/" + name: checkpoint / name for name in fez.ARTIFACT_FILES}
+            files = {"/artifacts/" + name: checkpoint / name for name in zils.ARTIFACT_FILES}
             if self.path not in files:
                 self.reply(404, {"error": "unknown artifact"})
                 return
@@ -82,7 +82,7 @@ def validator(config):
     cases = [
         json.loads(line) for line in Path(config["cases"]).read_text().splitlines() if line.strip()
     ]
-    fez.validate_cases(cases)
+    zils.validate_cases(cases)
     members = {int(uid): key for uid, key in config["members"].items()}
     if (
         len(members) != 2
@@ -147,7 +147,7 @@ def validator(config):
         timeout=config["timeout"],
         report=str(work / "evaluation.json"),
     )
-    fez.evaluate(args)
+    zils.evaluate(args)
     report = json.loads((work / "evaluation.json").read_text())
     for row in report["miners"]:
         if row["uid"] in failed:
@@ -168,9 +168,9 @@ def run(args):
     root.mkdir(mode=0o700, parents=True, exist_ok=False)
     round_id = uuid.uuid4().hex
     cases = [json.loads(line) for line in Path(args.cases).read_text().splitlines() if line.strip()]
-    fez.validate_cases(cases)
-    entries = [fez.submission(path, uid) for uid, path in enumerate(args.checkpoints, 1)]
-    fez.validate_submissions(entries)
+    zils.validate_cases(cases)
+    entries = [zils.submission(path, uid) for uid, path in enumerate(args.checkpoints, 1)]
+    zils.validate_submissions(entries)
     work = root / "validator"
     work.mkdir(mode=0o700)
     private_cases = work / "cases.jsonl"
@@ -209,7 +209,7 @@ def run(args):
             stdout=log,
             stderr=subprocess.STDOUT,
             start_new_session=True,
-            cwd=fez.ROOT,
+            cwd=zils.ROOT,
         )
         children.append(process)
         processes.append(
@@ -319,7 +319,7 @@ def main():
             config = json.loads(Path(args.config).read_text())
             (miner if args.command == "miner" else validator)(config)
     except (ValueError, OSError, RuntimeError) as error:
-        parser.exit(1, f"fez rehearsal: {error}\n")
+        parser.exit(1, f"zils rehearsal: {error}\n")
 
 
 if __name__ == "__main__":

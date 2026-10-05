@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from fez.jev_server import MODEL_REVISION, build_manifest
+from zils.jev_server import MODEL_REVISION, build_manifest
 
 
 def main():

@@ -8,9 +8,9 @@ import uuid
 
 import requests
 
-from fez import decision_http
-from fez.decisions import DecisionError, option_descriptions
 from tests.test_decision_http import server
+from zils import decision_http
+from zils.decisions import DecisionError, option_descriptions
 
 OWNER = "11111111-1111-4111-8111-111111111111"
 RELEASE = "zils-test-r1"
@@ -43,8 +43,8 @@ class FixtureStore:
 
 class GatewayTest(unittest.TestCase):
     def module(self):
-        self.assertIsNotNone(importlib.util.find_spec("fez.api"), "gateway missing")
-        return importlib.import_module("fez.api")
+        self.assertIsNotNone(importlib.util.find_spec("zils.api"), "gateway missing")
+        return importlib.import_module("zils.api")
 
     def runtime(self, method, path, token, body, rid):
         self.assertEqual(token, "runtime-secret")
@@ -153,7 +153,7 @@ class GatewayTest(unittest.TestCase):
 
     def test_private_envelope_preserves_utf8_and_depth_budget(self):
         m = self.module()
-        from fez.decisions import MAX_BODY, MAX_DEPTH
+        from zils.decisions import MAX_BODY, MAX_DEPTH
 
         with server(
             decision_http, self.runtime, body_limit=MAX_BODY + 1024, max_depth=MAX_DEPTH + 1

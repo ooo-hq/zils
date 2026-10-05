@@ -16,13 +16,13 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from fez import decision_http
-from fez.api import Gateway, Registry
-from fez.api_store import Store
-from fez.batches import BUCKET, Batches, Worker
-from fez.cloud import APIError
-from fez.decisions import DecisionError, option_descriptions
 from tests.test_decision_http import server
+from zils import decision_http
+from zils.api import Gateway, Registry
+from zils.api_store import Store
+from zils.batches import BUCKET, Batches, Worker
+from zils.cloud import APIError
+from zils.decisions import DecisionError, option_descriptions
 
 OWNER = "11111111-1111-4111-8111-111111111111"
 OTHER = "22222222-2222-4222-8222-222222222222"

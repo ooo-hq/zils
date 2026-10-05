@@ -65,7 +65,7 @@ jobs:
       - name: Install PostgreSQL
         run: sudo apt-get update && sudo apt-get install -y postgresql-16
       - name: Test migration and access control in a disposable cluster
-        run: FEZ_PG_BIN=/usr/lib/postgresql/16/bin make check-queue-db PYTHON=python3
+        run: ZILS_PG_BIN=/usr/lib/postgresql/16/bin make check-queue-db PYTHON=python3
 
   api-sdks:
     name: TypeSafe SDK compatibility

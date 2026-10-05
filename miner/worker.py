@@ -13,9 +13,9 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 
-import fez
-from fez import models, protocol as wire
-from fez.runtime import digest, request, run_child, signed, signing_key
+import zils
+from zils import models, protocol as wire
+from zils.runtime import digest, request, run_child, signed, signing_key
 
 
 def train_candidate(config, directory, job, runtime, device):
@@ -30,14 +30,14 @@ def train_candidate(config, directory, job, runtime, device):
         raise ValueError("invalid round id")
     if digest(directory / "miner-training.jsonl") != config["training_sha256"]:
         raise ValueError("training data changed")
-    if fez.checkpoint_hash(directory / "reference") != config["initial_sha256"]:
+    if zils.checkpoint_hash(directory / "reference") != config["initial_sha256"]:
         raise ValueError("initial checkpoint changed")
     work = directory / "state/jobs" / job["round_id"]
     work.mkdir(mode=0o700, parents=True, exist_ok=True)
     candidate = work / "candidate.json"
     if candidate.exists():
         entry = json.loads(candidate.read_text())
-        if fez.checkpoint_hash(entry["checkpoint"]) != entry["sha256"]:
+        if zils.checkpoint_hash(entry["checkpoint"]) != entry["sha256"]:
             raise ValueError("saved submission was modified")
         return entry
     if shutil.disk_usage(work).free < 2 * 1024**3:
@@ -62,7 +62,7 @@ def train_candidate(config, directory, job, runtime, device):
         "--data",
         str(directory / "miner-training.jsonl"),
         "--base",
-        fez.BASE,
+        zils.BASE,
         "--base_revision",
         config["base_revision"],
         "--init_from",
@@ -97,7 +97,7 @@ def train_candidate(config, directory, job, runtime, device):
             runtime,
             "-u",
             "-m",
-            "fez.jevk5",
+            "zils.jevk5",
             "train",
             "--data",
             str(directory / "miner-training.jsonl"),
@@ -116,8 +116,8 @@ def train_candidate(config, directory, job, runtime, device):
     )
     run_child(command, work / "training.log", device)
     frozen = work / ("artifacts-" + uuid.uuid4().hex)
-    fez.stage(fez.submission(raw, config["uid"]), frozen)
-    entry = fez.submission(frozen, config["uid"])
+    zils.stage(zils.submission(raw, config["uid"]), frozen)
+    entry = zils.submission(frozen, config["uid"])
     wire.write_json(candidate, entry)
     return entry
 
@@ -134,7 +134,7 @@ def miner(config, directory, args):
     class Artifacts(wire.Handler):
         def do_GET(self):
             match = re.fullmatch(r"/artifacts/([a-f0-9]{32})/([^/]+)", self.path)
-            if not match or match[2] not in fez.ARTIFACT_FILES:
+            if not match or match[2] not in zils.ARTIFACT_FILES:
                 self.reply(404, {"error": "unknown artifact"})
                 return
             try:
@@ -165,7 +165,7 @@ def miner(config, directory, args):
                 work = directory / "state/jobs" / rid
                 if job["status"] == "collecting":
                     if "chain" in config:
-                        from fez import testnet
+                        from zils import testnet
 
                         if job.get("chain") != config["chain"]:
                             raise ValueError("validator round is not for this testnet")

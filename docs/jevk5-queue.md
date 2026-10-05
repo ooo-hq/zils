@@ -27,7 +27,7 @@ uv venv --python 3.13 .venv-kev
 uv pip install --python .venv-kev/bin/python --torch-backend=cu128 \
   -r requirements/model.txt -r requirements/rehearsal.txt
 .venv-kev/bin/python -c "import torch; assert torch.cuda.is_available(); assert torch.cuda.is_bf16_supported()"
-.venv-kev/bin/python -m fez.jevk5 reference --out models/jevk5-reference
+.venv-kev/bin/python -m zils.jevk5 reference --out models/jevk5-reference
 ```
 
 The reference command downloads and verifies the pinned model, tokenizer and
@@ -36,7 +36,7 @@ the full base weights. The model is `alibiserikbay/JevK5`, revision
 `c4f7fdb3aeab5582336406e78d3bef11bf98833d`; the upstream runtime is pinned at
 `f26426d16f59e8bbe1470e5b162cc89329e29b29` in `requirements/model.txt`.
 
-For an already downloaded model, set `FEZ_JEVK5_BASE_DIR` to its directory and
+For an already downloaded model, set `ZILS_JEVK5_BASE_DIR` to its directory and
 use `--no-download`. This override must pass the same weight and tokenizer
 checksums; it cannot select another model. Model workers run offline.
 
@@ -44,12 +44,12 @@ checksums; it cannot select another model. Model workers run offline.
 
 Complete the Supabase resources, customer Auth, HTTPS edge and protected server
 environment setup in [Supabase training](supabase-training.md). Set
-`FEZ_TRAINING_MODEL=jevk5-4b-v0.3` in the API and processor environments. Start
-the API with the existing `python -m fez.coordinator serve` command and the
+`ZILS_TRAINING_MODEL=jevk5-4b-v0.3` in the API and processor environments. Start
+the API with the existing `python -m zils.coordinator serve` command and the
 processor with:
 
 ```sh
-.venv-kev/bin/python -m fez.coordinator process \
+.venv-kev/bin/python -m zils.coordinator process \
   --state .private/queue-processor --reference models/jevk5-reference --device cuda
 ```
 
@@ -72,7 +72,7 @@ must not receive the processor's Supabase credential or calibration/test data.
 Run worker and processor under separate operating-system identities if they share
 a machine, with separate private state directories and environment files.
 
-When multiple identities share one GPU, configure the same `FEZ_COMPUTE_LOCK`
+When multiple identities share one GPU, configure the same `ZILS_COMPUTE_LOCK`
 path for them. Pre-create it in an administrator-owned directory with group
 read/write access for the service identities; do not make the parent directory
 writable by workers. Without this override the existing per-user/device lock is
@@ -120,7 +120,7 @@ the assignment instead of training another model.
 Before changing the active model, finish or inventory in-flight work and prepare
 the appropriate workers and references. Change the API environment and primary
 processor reference together. Rollback uses the same procedure with
-`FEZ_TRAINING_MODEL=kev-0.8b-v1` and the Kev reference, retaining JevK5 as an
+`ZILS_TRAINING_MODEL=kev-0.8b-v1` and the Kev reference, retaining JevK5 as an
 additional reference if any JevK5 jobs still need evaluation. Do not change a
 prepared job's identity or rewrite its historical result.
 

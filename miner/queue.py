@@ -10,12 +10,12 @@ from pathlib import Path
 import requests
 from bittensor_wallet import Keypair
 
-import fez
-from fez import models, protocol, queue_protocol
-from fez.cloud import MAX_DATA_BYTES, APIError, download, trusted_url, upload
-from fez.coordinator import identifier, lease_heartbeat
-from fez.runtime import CapacityUnavailable, digest, gpu_ready, locked, prepare_base
+import zils
 from miner.worker import train_candidate
+from zils import models, protocol, queue_protocol
+from zils.cloud import MAX_DATA_BYTES, APIError, download, trusted_url, upload
+from zils.coordinator import identifier, lease_heartbeat
+from zils.runtime import CapacityUnavailable, digest, gpu_ready, locked, prepare_base
 
 
 class Client:
@@ -62,7 +62,7 @@ def run_once(client, state, reference, runtime, device):
                 "model", models.spec(models.KEV)
             ) != models.spec(model):
                 raise ValueError("job uses an unsupported base revision")
-            if fez.checkpoint_hash(reference) != assignment["initial_sha256"]:
+            if zils.checkpoint_hash(reference) != assignment["initial_sha256"]:
                 raise ValueError("job starting checkpoint differs from the installed reference")
             directory = Path(state) / job_id
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -82,7 +82,7 @@ def run_once(client, state, reference, runtime, device):
             if not saved.exists():
                 protocol.write_json(saved, config)
             if not (directory / "reference").exists():
-                fez.stage(fez.submission(reference, config["uid"]), directory / "reference")
+                zils.stage(zils.submission(reference, config["uid"]), directory / "reference")
             training = directory / "miner-training.jsonl"
             if not training.exists():
                 temporary = directory / ("download-" + uuid.uuid4().hex)
@@ -169,7 +169,7 @@ def main():
     except KeyboardInterrupt:
         pass
     except (APIError, ValueError, OSError, KeyError, RuntimeError) as error:
-        parser.exit(1, f"fez queued miner: {error}\n")
+        parser.exit(1, f"zils queued miner: {error}\n")
 
 
 if __name__ == "__main__":

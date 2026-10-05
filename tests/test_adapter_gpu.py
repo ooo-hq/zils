@@ -12,12 +12,12 @@ from unittest.mock import patch
 
 import requests
 
-from fez import decision_http, models
-from fez.api import Gateway, Registry
-from fez.decisions import make_response
 from tests.test_adapter_releases import OTHER, OWNER, Source, fixture
 from tests.test_adapter_server import Accounts
 from tests.test_decision_http import server
+from zils import decision_http, models
+from zils.api import Gateway, Registry
+from zils.decisions import make_response
 
 
 @unittest.skipUnless(
@@ -28,15 +28,15 @@ class AdapterGPUCheck(unittest.TestCase):
         import torch
         from safetensors.torch import load_file, save_file
 
-        from fez.adapter_releases import publish, registry_entry
-        from fez.adapter_server import (
+        from zils.adapter_releases import publish, registry_entry
+        from zils.adapter_server import (
             AdapterEngine,
             AdapterRuntime,
             SharedEngine,
             SharedModel,
             SharedRuntime,
         )
-        from fez.jev_server import SerialEngine, verify_manifest
+        from zils.jev_server import SerialEngine, verify_manifest
 
         checkpoint = Path(os.environ["ZILS_TEST_ADAPTER"])
         with tempfile.TemporaryDirectory(prefix="zils-adapter-gpu-") as tmp:

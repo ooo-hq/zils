@@ -1,24 +1,25 @@
 """Validate the migration and queue transactions in a disposable local PostgreSQL cluster."""
 
-import os
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
 
+from zils import settings
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    pg_bin = os.environ.get("FEZ_PG_BIN")
+    pg_bin = settings.get("ZILS_PG_BIN")
 
     def tool(name):
         path = str(Path(pg_bin) / name) if pg_bin else shutil.which(name)
         if not path or not Path(path).is_file():
-            raise RuntimeError("Install PostgreSQL 16+ or set FEZ_PG_BIN to its bin directory")
+            raise RuntimeError("Install PostgreSQL 16+ or set ZILS_PG_BIN to its bin directory")
         return path
 
-    with tempfile.TemporaryDirectory(prefix="fez-queue-db-") as tmp:
+    with tempfile.TemporaryDirectory(prefix="zils-queue-db-") as tmp:
         root = Path(tmp)
         data, socket = root / "data", root / "socket"
         socket.mkdir()

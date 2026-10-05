@@ -7,9 +7,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import fez
-from fez import benchmark, jobs, models
+import zils
 from tests.test_jobs import POLICY, examples
+from zils import benchmark, jobs, models
 
 
 class ModelTest(unittest.TestCase):
@@ -18,7 +18,7 @@ class ModelTest(unittest.TestCase):
         from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
         from safetensors.torch import load_file, save_file
 
-        from fez.jevk5 import load_adapter_weights, save_adapter_weights
+        from zils.jevk5 import load_adapter_weights, save_adapter_weights
 
         model = get_peft_model(
             torch.nn.Sequential(torch.nn.Linear(3, 2)),
@@ -66,7 +66,7 @@ class ModelTest(unittest.TestCase):
             result = subprocess.run(
                 [
                     sys.executable,
-                    str(Path(fez.__file__).with_name("jevk5_runner.py")),
+                    str(Path(zils.__file__).with_name("jevk5_runner.py")),
                     "--checkpoint",
                     tmp,
                     "--base",
@@ -111,24 +111,24 @@ class ModelTest(unittest.TestCase):
             base.mkdir()
             models.write_metadata(base, kind="base", temperature=1.22)
             self.assertEqual(models.artifact_files(base), ("model.json",))
-            entry = fez.submission(base, 0)
-            fez.stage(entry, root / "copy")
-            self.assertEqual(fez.checkpoint_hash(root / "copy"), entry["sha256"])
+            entry = zils.submission(base, 0)
+            zils.stage(entry, root / "copy")
+            self.assertEqual(zils.checkpoint_hash(root / "copy"), entry["sha256"])
             models.set_temperature(root / "copy", 1.0)
-            self.assertNotEqual(fez.checkpoint_hash(root / "copy"), entry["sha256"])
+            self.assertNotEqual(zils.checkpoint_hash(root / "copy"), entry["sha256"])
             self.assertEqual(models.temperature(base), 1.22)
             candidate = root / "candidate"
             candidate.mkdir()
             models.write_metadata(candidate)
             (candidate / "adapter_config.json").write_text("{}")
             (candidate / "adapter_model.safetensors").write_bytes(b"fixture")
-            original = fez.checkpoint_hash(candidate)
+            original = zils.checkpoint_hash(candidate)
             (candidate / "adapter_model.safetensors").write_bytes(b"tampered")
-            self.assertNotEqual(fez.checkpoint_hash(candidate), original)
+            self.assertNotEqual(zils.checkpoint_hash(candidate), original)
             self.assertEqual(models.artifact_files(candidate), models.JEVK5_FILES)
             (candidate / "head.pt").write_text("mixed")
             with self.assertRaisesRegex(ValueError, "mixes"):
-                fez.checkpoint_hash(candidate)
+                zils.checkpoint_hash(candidate)
 
     def test_unknown_models_and_symlink_metadata_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -138,8 +138,8 @@ class ModelTest(unittest.TestCase):
             value["model"] = "untrusted/replacement"
             (root / "model.json").write_text(json.dumps(value))
             with self.assertRaisesRegex(ValueError, "metadata"):
-                fez.checkpoint_hash(root)
+                zils.checkpoint_hash(root)
             (root / "model.json").unlink()
             (root / "model.json").symlink_to(root / "missing.json")
             with self.assertRaisesRegex(ValueError, "regular"):
-                fez.checkpoint_hash(root)
+                zils.checkpoint_hash(root)

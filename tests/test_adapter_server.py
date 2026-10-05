@@ -11,11 +11,11 @@ from pathlib import Path
 
 import requests
 
-from fez import decision_http
-from fez.api import Gateway, Registry
-from fez.decisions import DecisionError
 from tests.test_adapter_releases import OTHER, OWNER, Source, fixture
 from tests.test_decision_http import server
+from zils import decision_http
+from zils.api import Gateway, Registry
+from zils.decisions import DecisionError
 
 
 class Backend:
@@ -29,7 +29,7 @@ class Backend:
         self.release = threading.Event()
 
     def encode(self, state, question):
-        from fez import options
+        from zils import options
 
         return [1, 2, 3], options(question)
 
@@ -62,9 +62,9 @@ class Accounts:
 
 class AdapterServerTest(unittest.TestCase):
     def test_existing_gateway_calls_only_the_owners_adapter_and_keeps_identity(self):
-        from fez.adapter_releases import publish, registry_entry
-        from fez.adapter_server import AdapterEngine, AdapterRuntime
-        from fez.jev_server import SerialEngine
+        from zils.adapter_releases import publish, registry_entry
+        from zils.adapter_server import AdapterEngine, AdapterRuntime
+        from zils.jev_server import SerialEngine
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -159,9 +159,9 @@ class AdapterServerTest(unittest.TestCase):
                 os.environ.pop("ZILS_ADAPTER_TEST_TOKEN", None)
 
     def test_preflight_limits_unknown_models_and_runtime_auth_do_not_activate_weights(self):
-        from fez.adapter_releases import publish
-        from fez.adapter_server import AdapterEngine, AdapterRuntime
-        from fez.jev_server import SerialEngine
+        from zils.adapter_releases import publish
+        from zils.adapter_server import AdapterEngine, AdapterRuntime
+        from zils.jev_server import SerialEngine
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -213,8 +213,8 @@ class AdapterServerTest(unittest.TestCase):
                 serial.close()
 
     def test_activation_failure_never_returns_another_customers_prediction(self):
-        from fez.adapter_releases import publish
-        from fez.adapter_server import AdapterEngine
+        from zils.adapter_releases import publish
+        from zils.adapter_server import AdapterEngine
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

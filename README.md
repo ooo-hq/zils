@@ -9,9 +9,10 @@ Zils returns probabilities for yes/no decisions, choices, and scores without
 generating text. The current model is an experimental 0.8B candidate.
 This repository contains the miner, validator, benchmark, and testnet integration.
 
-Zils was previously named Fez. Existing `fez` Python commands, `FEZ_*` settings,
-`fez_training_*` database resources, and recorded experiment identifiers remain
-compatible. A name change does not change the subnet ID or model lineage.
+Zils uses the `zils` Python package and `ZILS_*` settings. Previous `fez` commands
+and `FEZ_*` settings remain compatible. Database resources, signed protocols,
+and recorded experiment identities retain their original identifiers. See the
+[internal-name compatibility guide](docs/internal-names.md).
 The independent website source is [ooo-hq/zils-web](https://github.com/ooo-hq/zils-web).
 
 Miners fine-tune the model and submit checkpoints. The validator runs those
@@ -51,11 +52,11 @@ miner-reported scores. See the [evaluation contract](docs/evaluation.md).
 
 ### Fine-tune on your own data
 
-Install the [Zils fine-tuning skill](skills/fez-finetune/SKILL.md) into your coding
+Install the [Zils fine-tuning skill](skills/zils-finetune/SKILL.md) into your coding
 agent:
 
 ```bash
-npx skills add ooo-hq/zils@fez-finetune
+npx skills add ooo-hq/zils@zils-finetune
 ```
 
 Then ask: “Fine-tune a 4B Zils candidate on my labelled support tickets.”
@@ -104,15 +105,15 @@ and validation checks have passed; real training through the queue remains unver
 1. Generate a benchmark and three miner bundles. Use new output directories:
 
    ```bash
-   .venv-kev/bin/python -m fez.benchmark build --out .private/benchmarks/local
-   .venv-kev/bin/python -m fez.fleet init --out .private/fleet-local \
+   .venv-kev/bin/python -m zils.benchmark build --out .private/benchmarks/local
+   .venv-kev/bin/python -m zils.fleet init --out .private/fleet-local \
      --benchmark .private/benchmarks/local --host 127.0.0.1
    ```
 
 2. Start the validator for one round:
 
    ```bash
-   .venv-kev/bin/python -m fez.fleet validator \
+   .venv-kev/bin/python -m zils.fleet validator \
      --config .private/fleet-local/validator/config.json --rounds 1
    ```
 
@@ -120,7 +121,7 @@ and validation checks have passed; real training through the queue remains unver
    `miner-2` and `miner-3`:
 
    ```bash
-   FEZ_PYTHON="$PWD/.venv-kev/bin/python" HF_HOME="$PWD/.cache/huggingface" \
+   ZILS_PYTHON="$PWD/.venv-kev/bin/python" HF_HOME="$PWD/.cache/huggingface" \
      .private/fleet-local/miner-1/start-miner --rounds 1
    ```
 

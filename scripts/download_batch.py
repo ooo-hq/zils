@@ -7,8 +7,8 @@ from pathlib import Path
 
 import requests
 
-from fez.api_store import identifier
-from fez.cloud import trusted_url
+from zils.api_store import identifier
+from zils.cloud import trusted_url
 
 
 def main():

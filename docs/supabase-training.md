@@ -18,7 +18,7 @@ The original local/testnet fleet commands remain supported.
 
 For the JevK5 4B hosted base, use the [JevK5 queue setup](jevk5-queue.md), including
 its CUDA requirement, model reference and artifact format. The commands below
-describe the legacy Kev runtime; use `FEZ_TRAINING_MODEL=kev-0.8b-v1` with those
+describe the legacy Kev runtime; use `ZILS_TRAINING_MODEL=kev-0.8b-v1` with those
 commands. Existing jobs retain their pinned model when the active base changes.
 
 ## Prerequisites and isolated project resources
@@ -62,7 +62,7 @@ chmod 600 .private/training.env
 ```
 
 Edit the copied file with the project's URL and server service-role key. Set
-`FEZ_TRAINING_API_URL` to the coordinator's reachable URL and `FEZ_WEB_ORIGIN` to
+`ZILS_TRAINING_API_URL` to the coordinator's reachable URL and `ZILS_WEB_ORIGIN` to
 the exact browser origin. The example uses loopback for local development.
 Load it in each coordinator/processor terminal:
 
@@ -70,13 +70,13 @@ Load it in each coordinator/processor terminal:
 set -a
 . .private/training.env
 set +a
-.venv-kev/bin/python -m fez.coordinator serve
+.venv-kev/bin/python -m zils.coordinator serve
 ```
 
 In another terminal with those same environment variables:
 
 ```bash
-.venv-kev/bin/python -m fez.coordinator process \
+.venv-kev/bin/python -m zils.coordinator process \
   --state .private/queue-processor --reference models/reference --device cpu
 ```
 
@@ -101,13 +101,13 @@ In the independent [Zils website](https://github.com/ooo-hq/zils-web), configure
 ```dotenv
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=replace-with-public-publishable-key
-NEXT_PUBLIC_FEZ_TRAINING_API_URL=https://your-training-api.example
+NEXT_PUBLIC_ZILS_TRAINING_API_URL=https://your-training-api.example
 ```
 
 The web app also supports `NEXT_PUBLIC_SUPABASE_ANON_KEY` as a legacy fallback.
 Only public keys belong in `NEXT_PUBLIC_*`. Configure the Supabase Auth redirect
 allowlist to include the actual `/train` URL, and set the coordinator's
-`FEZ_WEB_ORIGIN` to that site's origin. Redeploy/rebuild the web app after setting
+`ZILS_WEB_ORIGIN` to that site's origin. Redeploy/rebuild the web app after setting
 public environment variables. The `/train` dashboard is implemented in the web
 app repository, not this repository's standalone benchmark preview.
 
@@ -126,8 +126,8 @@ registered miners. First register an approved worker's public hotkey and a stabl
 UID using the coordinator environment:
 
 ```bash
-.venv-kev/bin/python -m fez.coordinator worker --hotkey "$WORKER_HOTKEY" --uid 1
-.venv-kev/bin/python -m fez.coordinator approve \
+.venv-kev/bin/python -m zils.coordinator worker --hotkey "$WORKER_HOTKEY" --uid 1
+.venv-kev/bin/python -m zils.coordinator approve \
   --job "$JOB_ID" --hotkeys "$WORKER_HOTKEY"
 ```
 
@@ -217,7 +217,7 @@ make check-queue-db
 ```
 
 The second command requires PostgreSQL 16+ binaries (`initdb`, `pg_ctl`, `psql`).
-Set `FEZ_PG_BIN` to their directory if they are not on `PATH`. It creates and
+Set `ZILS_PG_BIN` to their directory if they are not on `PATH`. It creates and
 deletes a separate temporary database cluster, never connects to your existing
 Supabase database, and checks migration execution, tenant/storage isolation,
 service-only functions, replay rejection, lease recovery, and bounded attempts.
