@@ -469,3 +469,73 @@ else:
                     ).status_code,
                     404,
                 )
+                if model == models.JEVK5:
+                    from fez.adapter_releases import publish, register, registry_entry
+
+                    release = publish(store, job_id, root / "serving")
+                    entry = registry_entry(release, "http://127.0.0.1:8921", "TOKEN")
+                    catalog = root / "models.json"
+                    register(catalog, entry, selection=release["selection"])
+                    store.patch(
+                        coordinator.JOBS,
+                        f"id=eq.{job_id}",
+                        {
+                            "result": {
+                                **service.job(job_id)["result"],
+                                "workflow": {"state": "ready", "model_id": release["release_id"]},
+                            }
+                        },
+                    )
+                    upgrade_body = {
+                        "name": "support-v2",
+                        "acceptance": {**POLICY, "previous_job_id": job_id},
+                        "allow_training_data_export": True,
+                    }
+                    foreign = requests.post(
+                        url + "/v1/jobs",
+                        headers={"Authorization": "Bearer other-token"},
+                        json=upgrade_body,
+                        timeout=5,
+                    )
+                    self.assertEqual(foreign.status_code, 400)
+                    upgraded = requests.post(
+                        url + "/v1/jobs", headers=headers, json=upgrade_body, timeout=5
+                    )
+                    self.assertEqual(upgraded.status_code, 200, upgraded.text)
+                    created = upgraded.json()
+                    upgrade_id = created["job"]["id"]
+                    for split, cases in examples().items():
+                        for case in cases:
+                            case["id"] = "upgrade-" + case["id"]
+                            case["group_id"] = "upgrade-" + case["group_id"]
+                            case["state"]["ticket"] = "upgrade-" + case["state"]["ticket"]
+                        path = root / ("upgrade-" + split + ".jsonl")
+                        path.write_text("".join(json.dumps(c) + "\n" for c in cases))
+                        cloud.upload(created["uploads"][split]["url"], path)
+                    requests.post(
+                        url + f"/v1/jobs/{upgrade_id}/submit", headers=headers, json={}, timeout=5
+                    ).raise_for_status()
+                    self.assertTrue(engine.tick())
+                    self.assertEqual(
+                        service.job(upgrade_id)["manifest"]["selection"]["previous"]["model_id"],
+                        release["release_id"],
+                    )
+                    store.rpc(
+                        "fez_approve_training_job",
+                        {"p_job": upgrade_id, "p_hotkeys": [key.ss58_address]},
+                    )
+                    self.assertTrue(run_once(client, root / "miner", reference, str(worker), "cpu"))
+                    before = catalog.read_bytes()
+                    self.assertTrue(engine.tick())
+                    upgraded = service.job(upgrade_id)
+                    self.assertEqual(upgraded["status"], "completed", upgraded)
+                    self.assertEqual(
+                        upgraded["result"]["baseline_reference_sha256"],
+                        release["checkpoint_sha256"],
+                    )
+                    # The fixture trains the same quality again: beating the base is insufficient for v2.
+                    self.assertEqual(
+                        upgraded["result"]["delivery"]["status"], "no_qualifying_model"
+                    )
+                    self.assertIsNone(publish(store, upgrade_id, root / "serving"))
+                    self.assertEqual(catalog.read_bytes(), before)

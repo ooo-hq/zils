@@ -20,6 +20,12 @@ recorded worker-export consent, an enabled worker, and available GPU capacity.
 5. The customer uses the resulting model ID with an existing API key. Other
    accounts cannot list or call the private model.
 
+[Version selection](version-selection.md) compares first versions with the base
+and explicit upgrades with the customer's previous accepted version. Versioned
+releases also expose a stable task alias. Its target changes only if the named
+predecessor is still active; a stale run requires review instead of overwriting
+a newer model.
+
 The dashboard receives a separate `workflow` field: `waiting_capacity`,
 `waiting_worker`, `needs_review`, `activating`, `activation_failed`, or `ready`.
 Only `ready` includes a confirmed API model ID. Queue status remains authoritative
@@ -113,9 +119,12 @@ python -m fez.workflow run --config .private/workflow.json
 ```
 
 For a gateway on another host, replace `registry` with `register_command`, an argv
-array for an operator-controlled secure transport. It receives only the registry
-entry as JSON on stdin and must print `{"model_id":"THE_REGISTERED_ID"}` after
-successful atomic registration. It must fail on a transport or registration error.
+array for an operator-controlled secure transport. Legacy releases send a registry
+entry as JSON on stdin. Versioned releases send `{"entry":ENTRY,"selection":SELECTION}`
+to preserve the atomic predecessor check. The command must print
+`{"model_id":"THE_REGISTERED_ID"}` after
+successful atomic registration. Exit code 3 identifies a stale predecessor;
+other failures are retryable activation errors. It must fail on transport errors.
 The workflow strips Supabase credentials from the child environment. A fixed,
 restricted SSH command can invoke:
 

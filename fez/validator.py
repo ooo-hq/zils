@@ -72,23 +72,30 @@ def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=
         return json.loads(report.read_text())
 
     baseline = None
+    selection = manifest.get("selection")
+    previous = selection["previous"] if selection else None
     if "job_id" in config:
         # Calibrate the reference on the same population as each candidate. A
         # published reference may already carry a temperature from another task.
-        source = directory / "reference"
+        source = directory / ("comparison" if previous else "reference")
         entry = fez.submission(source, 0)
-        if entry["sha256"] != config["initial_sha256"]:
+        baseline_reference_sha256 = previous["sha256"] if previous else config["initial_sha256"]
+        if entry["sha256"] != baseline_reference_sha256:
             raise ValueError("job baseline checkpoint changed")
-        raw = attempt / "baseline-raw"
-        fez.stage(entry, raw)
-        models.set_temperature(raw, 1.0)
-        calibration = evaluate(
-            [fez.submission(raw, 0)], data / "calibration.jsonl", "baseline-calibration"
-        )
-        if calibration["miners"][0]["status"] != "evaluated":
-            raise RuntimeError("baseline calibration failed; no customer model can be accepted")
-        fitted_baseline = attempt / "baseline-calibrated"
-        calibrate.fit(data, calibration, 0, raw, fitted_baseline)
+        if previous:
+            # Score the exact version the customer can call, including its serving temperature.
+            fitted_baseline = source
+        else:
+            raw = attempt / "baseline-raw"
+            fez.stage(entry, raw)
+            models.set_temperature(raw, 1.0)
+            calibration = evaluate(
+                [fez.submission(raw, 0)], data / "calibration.jsonl", "baseline-calibration"
+            )
+            if calibration["miners"][0]["status"] != "evaluated":
+                raise RuntimeError("baseline calibration failed; no customer model can be accepted")
+            fitted_baseline = attempt / "baseline-calibrated"
+            calibrate.fit(data, calibration, 0, raw, fitted_baseline)
         baseline_report = evaluate(
             [fez.submission(fitted_baseline, 0)], data / "test.jsonl", "baseline-test"
         )
@@ -152,6 +159,14 @@ def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=
                     "initial_sha256": config["initial_sha256"],
                     "submitted_sha256": registry[delivery["uid"]]["claim"]["sha256"],
                     "baseline_brier": baseline["brier"],
+                    **(
+                        {
+                            "selection": selection,
+                            "baseline_reference_sha256": baseline_reference_sha256,
+                        }
+                        if selection
+                        else {}
+                    ),
                     **delivery,
                 },
             )
@@ -162,6 +177,8 @@ def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=
             baseline=baseline,
             delivery=delivery,
         )
+        if selection:
+            report.update(selection=selection, baseline_reference_sha256=baseline_reference_sha256)
     if "chain" in config:
         report.update(
             mode="testnet-closed-development",

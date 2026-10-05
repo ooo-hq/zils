@@ -19,7 +19,7 @@ from bittensor_wallet import Keypair
 
 import fez
 
-from . import benchmark, jobs, models, queue_protocol
+from . import benchmark, jobs, models, queue_protocol, version_selection
 from .cloud import DATA_BUCKET, MAX_DATA_BYTES, MODEL_BUCKET, APIError, Supabase, trusted_url
 from .runtime import digest, gpu_ready, locked
 
@@ -36,6 +36,7 @@ def public_job(job):
         {k: v for k, v in data.items() if k != "workflow"} if "delivery" in data else None
     )
     result["model"] = models.spec(models.job_model(job)) if job.get("job_sha256") else None
+    result["selection"] = (job.get("manifest") or {}).get("selection")
     return result
 
 
@@ -122,6 +123,15 @@ class Service:
                         400, "Use a job name with 1..64 lowercase letters, digits or hyphens."
                     )
                 jobs.validate_policy(body.get("acceptance"))
+                if "previous_job_id" in body["acceptance"]:
+                    version_selection.freeze(
+                        self.store,
+                        {
+                            "id": str(uuid.uuid4()),
+                            "owner_id": owner,
+                            "acceptance": body["acceptance"],
+                        },
+                    )
                 if body.get("allow_training_data_export") is not True:
                     raise APIError(
                         400, "Permission to share training data with approved workers is required."
@@ -475,6 +485,7 @@ class Processor:
             job["acceptance"],
             allow_training_data_export=True,
             model=model,
+            selection=version_selection.freeze(self.store, job) if model == models.JEVK5 else None,
         )
         initial = fez.checkpoint_hash(self.reference)
         sha = digest(data / "manifest.json")
@@ -498,6 +509,25 @@ class Processor:
         if fez.checkpoint_hash(reference) != job["initial_sha256"]:
             raise ValueError("reference changed")
         fez.stage(fez.submission(reference, 0), work / "reference")
+        selection = job["manifest"].get("selection")
+        if selection and selection["previous"]:
+            from .adapter_releases import publish
+
+            previous = selection["previous"]
+            # Re-verify ownership and immutable job provenance before staging any weights.
+            if version_selection.freeze(self.store, job) != selection:
+                raise ValueError("Previous model identity changed")
+            release = publish(self.store, previous["job_id"], work / "previous-releases")
+            if (
+                release is None
+                or release["release_id"] != previous["model_id"]
+                or release["checkpoint_sha256"] != previous["sha256"]
+            ):
+                raise ValueError("Previous model checkpoint changed")
+            fez.stage(
+                fez.submission(work / "previous-releases" / release["release_id"], 0),
+                work / "comparison",
+            )
         assignments = self.store.rows(ASSIGNMENTS, f"job_id=eq.{job['id']}")
         members = {str(a["uid"]): {"hotkey": a["hotkey"]} for a in assignments}
         registry = {
@@ -543,6 +573,9 @@ class Processor:
             "miners": [{k: r[k] for k in fields if k in r} for r in report["miners"]],
             "weights": report["weights"],
         }
+        if selection:
+            result["selection"] = report["selection"]
+            result["baseline_reference_sha256"] = report["baseline_reference_sha256"]
         prefix = None
         if result["delivery"]["status"] == "accepted":
             release = work / report["delivery"]["checkpoint"]
