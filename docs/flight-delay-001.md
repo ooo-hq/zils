@@ -5,6 +5,50 @@ improves arrival-delay probabilities on later flights. It compares the unchanged
 base, a trained adapter, and a simple historical-rate baseline. It is a research
 experiment; running it never registers or promotes a customer prediction model.
 
+## Measured result
+
+**Training improved JevK5's probability predictions on the unseen March flights,
+but did not demonstrate an advantage over simple historical rates.** The
+calibrated adapter reduced Brier error by **6.53% relative to the calibrated
+base** and improved ROC-AUC from 0.5165 to 0.6401. The historical baseline had
+the lowest measured Brier score and highest AUC.
+
+| Model | Binary Brier ↓ | Accuracy | Late recall at 50% | ROC-AUC ↑ |
+| --- | ---: | ---: | ---: | ---: |
+| Unchanged JevK5, calibrated | 0.164076 | 80.18% | 0.50% | 0.5165 |
+| Trained adapter, calibrated | 0.153357 | 80.37% | 0.00% | 0.6401 |
+| Historical-rate baseline | **0.151347** | 80.37% | 0.00% | **0.6503** |
+| Unchanged JevK5, raw | 0.170116 | 80.18% | 0.50% | 0.5165 |
+| Trained adapter, raw | 0.156231 | 80.37% | 0.00% | 0.6401 |
+
+There were 201 late flights among 1,024 test flights. Always predicting
+"not late" would achieve 80.37% accuracy. The adapter and historical baseline
+both selected that outcome for every flight at a 50% cutoff, so the small
+accuracy change does **not** demonstrate useful delay alerts. Their probability
+rankings contain more information than those hard decisions. A different alert
+threshold would need selection on separate validation data and evaluation
+against the intended cost of missed delays and false alarms.
+
+| Reference minus calibrated adapter | Brier improvement | Paired date-bootstrap 95% interval |
+| --- | ---: | --- |
+| Calibrated base | +0.010719 | [+0.006059, +0.015117] |
+| Historical rates | −0.002010 | [−0.005960, +0.002194] |
+
+Positive values favor the adapter. Improvement over the base is supported by
+this experiment's interval. The historical comparison crosses zero and its
+point estimate favors historical rates, so the frozen requirement to beat both
+references **was not met**. This is evidence that this adapter learned useful
+flight-risk patterns beyond the unchanged base, not evidence that it is the
+best predictor or ready for deployment. No model was promoted.
+
+February-only calibration selected temperatures 0.933033 for the base and
+0.870551 for the adapter. Mean predicted late probabilities on March were
+24.42%, 23.28%, and 21.12% for calibrated base, calibrated adapter, and historical
+rates respectively, versus an observed 19.63%. Median synchronized forward time
+was 49.7 ms for the base and 64.7 ms for the adapter. All raw/calibrated metrics,
+latencies, artifact hashes, and provenance are in the
+[aggregate result](data/flight-delay-001.json).
+
 ## Frozen design
 
 The target is arrival at least 15 minutes late, conditional on a completed,
@@ -137,3 +181,40 @@ Public historical records may have appeared in the base model's pretraining;
 that contamination cannot be ruled out. Later calendar splits protect against
 leakage from this adapter's training, not against unknown base-model exposure.
 Any further recipe changes require a new experiment and a fresh final test.
+
+## Execution and verification
+
+The recorded run started October 5, 2026 at 01:47:17 UTC on Linux/WSL 2 with an
+NVIDIA RTX 4090 (23,028 MiB reported memory, driver 595.79). It used Python
+3.13.15, PyTorch 2.8.0 with CUDA 12.8, Transformers 5.17.0, PEFT 0.21.0, and the
+pinned JevK5 runtime revision documented in the installation guide. The frozen
+experiment implementation is commit `33e63fdc9cd36ef44f27342084e02719832150c5`.
+
+The adapter trained on all 3,072 examples for 768 optimizer steps in 1,651.7
+seconds (27.5 minutes, including saving and excluding initial model loading).
+Mean training loss was 0.521791. Saved BF16 adapter weights occupy 28,796,120
+bytes, or 28.8 MB. Peak training allocation measured by PyTorch was
+8,847,247,360 bytes (8.24 GiB), excluding the separate serving process. The
+longest actual input was 253 tokens; the existing trainer's 2,048-token ceiling
+in its metadata does not describe actual input length.
+
+The GPU was shared with the existing live runtime. Its health checks continued
+to succeed, and a synthetic live prediction completed during training. These
+checks establish coexistence for this run, not a production capacity guarantee.
+Reported evaluation latency measures synchronized forward calls after warmup;
+it excludes tokenization, model loading, network transport, and API scheduling.
+Optional `causal_conv1d` and `flash-linear-attention` kernels were not installed;
+the runtime reported using reference PyTorch implementations.
+
+`make check` passed locally (75 Python tests, one skipped), and all five GitHub
+checks passed, including database and SDK compatibility checks. Focused tests
+cover future-field exclusion, deterministic sampling, duplicate identities,
+historical-rate fitting, scoring, calibration, the memory floor, and child
+cleanup. Independent calculations matched six reported metrics to scikit-learn
+within `1e-12`. Prepared data hashes, the training export, and historical rates
+were also independently checked against the frozen inputs.
+After download, all aggregate metrics and confidence intervals were recomputed
+from the recorded predictions and matched within `1e-12`. Frozen adapter, source
+code, protocol, and dataset hashes matched the run's recorded evidence. The
+supervised process exited successfully after 31 minutes 35 seconds and released
+its GPU resources; the live runtime retained its original release identity.

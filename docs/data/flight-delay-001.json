@@ -1,0 +1,165 @@
+{
+  "adapter_brier_improvement": {
+    "base_calibrated": {
+      "ci95": [
+        0.006059005317263022,
+        0.015117282421218105
+      ],
+      "date_clusters": 31,
+      "mean_improvement": 0.010718551338516904,
+      "resamples": 2000
+    },
+    "historical_rate": {
+      "ci95": [
+        -0.005959929983243609,
+        0.002193735633276245
+      ],
+      "date_clusters": 31,
+      "mean_improvement": -0.0020101144026740568,
+      "resamples": 2000
+    }
+  },
+  "artifacts": {
+    "README.md": "5d8ef69dc1940151af0c2de4776847ebb291c841bc50033d1f42ec0e266b9431",
+    "adapter_config.json": "ec9bc1640f2a9e7fb2f6c5947ba213964d3cbfbb22c134c75e0322fd10542a8a",
+    "adapter_model.safetensors": "f2e948cbd9a86c334718b52ca06033b13f5ab05402cb4e572646a349cc1ad335",
+    "model.json": "bdd12aa3a08d1e720a31115f97f39502c820ce7c356347e29c2bf0aa91057c9a",
+    "training_metrics.json": "33efabbc01b8bdf11ba368c1e3c975fee27d1d43788da82610e5d0030558386e"
+  },
+  "demonstrated_improvement": false,
+  "environment": {
+    "architecture": "x86_64",
+    "jevk5_source_revision": "f26426d16f59e8bbe1470e5b162cc89329e29b29",
+    "packages": {
+      "accelerate": "1.15.0",
+      "jevk5": "0.3.3",
+      "peft": "0.21.0",
+      "safetensors": "0.8.0",
+      "torch": "2.8.0",
+      "transformers": "5.17.0"
+    },
+    "python": "3.13.15",
+    "system": "Linux"
+  },
+  "experiment": "flight-delay-001",
+  "frozen_code_commit": "33e63fdc9cd36ef44f27342084e02719832150c5",
+  "live_model_changes": false,
+  "manifest_sha256": "e92a25e25a13510be03ba9a2a6e1d0f90bef927c6f9e067f9b5462c65f799b67",
+  "median_forward_ms": {
+    "adapter": 64.71206900050674,
+    "base": 49.681710000186285
+  },
+  "metrics": {
+    "adapter_calibrated": {
+      "accuracy": 0.8037109375,
+      "balanced_accuracy": 0.5,
+      "brier": 0.15335726759622456,
+      "confident_errors": 0,
+      "count": 1024,
+      "late_rate": 0.1962890625,
+      "late_recall": 0.0,
+      "log_loss": 0.4812744434330395,
+      "mean_predicted_late": 0.2327746267382552,
+      "roc_auc": 0.6400560986078115
+    },
+    "adapter_raw": {
+      "accuracy": 0.8037109375,
+      "balanced_accuracy": 0.5,
+      "brier": 0.15623066167488428,
+      "confident_errors": 0,
+      "count": 1024,
+      "late_rate": 0.1962890625,
+      "late_recall": 0.0,
+      "log_loss": 0.4900842421345501,
+      "mean_predicted_late": 0.2603015069986372,
+      "roc_auc": 0.6400560986078115
+    },
+    "base_calibrated": {
+      "accuracy": 0.8017578125,
+      "balanced_accuracy": 0.5006649619460414,
+      "brier": 0.16407581893474146,
+      "confident_errors": 0,
+      "count": 1024,
+      "late_rate": 0.1962890625,
+      "late_recall": 0.004975124378109453,
+      "log_loss": 0.5103318332273203,
+      "mean_predicted_late": 0.24421496524392067,
+      "roc_auc": 0.5164971013704261
+    },
+    "base_raw": {
+      "accuracy": 0.8017578125,
+      "balanced_accuracy": 0.5006649619460414,
+      "brier": 0.17011562264879412,
+      "confident_errors": 0,
+      "count": 1024,
+      "late_rate": 0.1962890625,
+      "late_recall": 0.004975124378109453,
+      "log_loss": 0.5249697520278489,
+      "mean_predicted_late": 0.29427881601823186,
+      "roc_auc": 0.5164971013704261
+    },
+    "historical_rate": {
+      "accuracy": 0.8037109375,
+      "balanced_accuracy": 0.5,
+      "brier": 0.1513471531935505,
+      "confident_errors": 0,
+      "count": 1024,
+      "late_rate": 0.1962890625,
+      "late_recall": 0.0,
+      "log_loss": 0.47482207807201887,
+      "mean_predicted_late": 0.21115536517304578,
+      "roc_auc": 0.6502874449139479
+    }
+  },
+  "prediction_hashes": {
+    "adapter-calibration.jsonl": "da5a25398630521080628474824a5b349fd9458b84944c2a2d70d69f01471496",
+    "adapter-test.jsonl": "1754dcb85c6093cd9555bd03ef226e77607618cbb8d7648e36b2424f4be68e66",
+    "base-calibration.jsonl": "4bc1ba8489a63aa244ad3ad0bac2c5f079a10b8d841c91f32e331b1cd83cf3e8",
+    "base-test.jsonl": "ce8042add7f081d27372058e29250289d1e7169dda95dcfde3e059f26de7bd80"
+  },
+  "protocol_sha256": "544e96564efdc4e7a8128e9f233f7567be19ceb2a187b00241e937595668046c",
+  "run": {
+    "code_sha256": {
+      "fez/jevk5.py": "2d3c8ac65bdeb1d3ec82a6e5cf9199ec84ede5eb5e3aad220bed3c306902a1c3",
+      "scripts/flight_data.py": "79671d3b712799ca60118bd6c4b7f90f777ca95b0263ed6c0cd602acdc6f0be9",
+      "scripts/flight_experiment.py": "d8c4d2b117132556583aacbcdd44c59b0d19d51533676cb65fee4eb8179cf99e"
+    },
+    "hardware": "NVIDIA GeForce RTX 4090, 23028 MiB, 595.79",
+    "max_input_tokens": 253,
+    "model": {
+      "base": "alibiserikbay/JevK5",
+      "base_revision": "c4f7fdb3aeab5582336406e78d3bef11bf98833d",
+      "id": "jevk5-4b-v0.3",
+      "name": "JevK5 4B"
+    },
+    "reference_metadata": {
+      "kind": "base",
+      "model": "jevk5-4b-v0.3",
+      "temperature": 1.22,
+      "version": "zils-checkpoint/v1"
+    },
+    "reference_metadata_sha256": "4d63d2e977b570a4a45d79404ac05ac7524aab72e74cdc521cc7dc1c23bdeb20",
+    "started_utc": "2026-10-05T01:47:17Z"
+  },
+  "temperatures": {
+    "adapter": 0.8705505632961241,
+    "base": 0.9330329915368074
+  },
+  "training": {
+    "epochs": 1,
+    "examples": 3072,
+    "learning_rate": 2e-05,
+    "max_tokens": 2048,
+    "mean_loss": 0.5217909418837129,
+    "model": {
+      "base": "alibiserikbay/JevK5",
+      "base_revision": "c4f7fdb3aeab5582336406e78d3bef11bf98833d",
+      "id": "jevk5-4b-v0.3",
+      "name": "JevK5 4B"
+    },
+    "optimizer_steps": 768,
+    "peak_gpu_allocated_bytes": 8847247360,
+    "seed": 553,
+    "training_seconds": 1651.6510074810003
+  }
+}
