@@ -278,6 +278,8 @@ class WorkflowTest(unittest.TestCase):
             self.assertEqual(current.resolve(frozen["id"], OWNER), frozen)
             path.write_text('{"models": [{"invalid": true}]}')
             self.assertEqual(current.resolve(frozen["id"], OWNER), frozen)
+            path.write_text(json.dumps({"models": [frozen, {**entry, "url": 123}]}))
+            self.assertEqual(current.resolve(frozen["id"], OWNER), frozen)
             path.write_text('{"models": []}')
             self.assertEqual(current.resolve(frozen["id"], OWNER), frozen)
             path.write_text(json.dumps({"models": [frozen, {**entry, "owners": ["invalid-uuid"]}]}))

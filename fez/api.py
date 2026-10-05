@@ -44,6 +44,8 @@ class Registry:
                 if not isinstance(entry["owners"], list):
                     raise ValueError("Owners must be a list or null for a shared model")
                 entry = {**entry, "owners": [identifier(x) for x in entry["owners"]]}
+            if not isinstance(entry["url"], str):
+                raise ValueError("Model runtime URL must be text")
             entry = {**entry, "url": trusted_url(entry["url"])}
             for name in [entry["id"], *entry["aliases"]]:
                 if not isinstance(name, str) or not 1 <= len(name) <= 128 or name in self.names:
