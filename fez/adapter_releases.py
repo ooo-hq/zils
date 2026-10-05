@@ -184,6 +184,8 @@ def publish(store, job_id, destination):
         return None
     delivery = _accepted(job)
     source = {key: job[key] for key in SOURCE_FIELDS}
+    # Operational activation progress is mutable; the evaluation and completion time are not.
+    source["result"] = {k: v for k, v in source["result"].items() if k != "workflow"}
     root = Path(destination)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     release_id = f"zils-adapter-{job_id}-{delivery['sha256']}"
@@ -275,6 +277,10 @@ def register(path, entry):
         result = merge_registry(current, entry)
         fd, name = tempfile.mkstemp(prefix=".registry-", dir=path.parent)
         try:
+            if path.exists():
+                stat = path.stat()
+                os.fchmod(fd, stat.st_mode & 0o777)
+                os.fchown(fd, stat.st_uid, stat.st_gid)
             with os.fdopen(fd, "w") as stream:
                 json.dump(result, stream, indent=2, allow_nan=False)
                 stream.write("\n")

@@ -14,7 +14,7 @@ import fez
 from fez import models, protocol, queue_protocol
 from fez.cloud import MAX_DATA_BYTES, APIError, download, trusted_url, upload
 from fez.coordinator import identifier, lease_heartbeat
-from fez.runtime import digest, locked, prepare_base
+from fez.runtime import CapacityUnavailable, digest, gpu_ready, locked, prepare_base
 from miner.worker import train_candidate
 
 
@@ -47,6 +47,8 @@ class Client:
 
 
 def run_once(client, state, reference, runtime, device):
+    if not gpu_ready(device):
+        return False
     assignment = client.call("claim")["assignment"]
     if assignment is None:
         return False
@@ -103,6 +105,9 @@ def run_once(client, state, reference, runtime, device):
                     )
             client.call("submit", {**auth, "sha256": entry["sha256"]})
             print(f"Submitted candidate for job {job_id}.", flush=True)
+    except CapacityUnavailable:
+        client.call("defer", auth)
+        return False
     except Exception:
         # A successful submission with a lost response is protected by the DB state check.
         try:

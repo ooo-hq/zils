@@ -29,8 +29,14 @@ class AdapterGPUCheck(unittest.TestCase):
         from safetensors.torch import load_file, save_file
 
         from fez.adapter_releases import publish, registry_entry
-        from fez.adapter_server import AdapterEngine, AdapterRuntime
-        from fez.jev_server import SerialEngine
+        from fez.adapter_server import (
+            AdapterEngine,
+            AdapterRuntime,
+            SharedEngine,
+            SharedModel,
+            SharedRuntime,
+        )
+        from fez.jev_server import SerialEngine, verify_manifest
 
         checkpoint = Path(os.environ["ZILS_TEST_ADAPTER"])
         with tempfile.TemporaryDirectory(prefix="zils-adapter-gpu-") as tmp:
@@ -52,10 +58,23 @@ class AdapterGPUCheck(unittest.TestCase):
                 job = fixture(source, owner, checkpoint=source_checkpoint)
                 releases.append(publish(Source(job, source), job["id"], root / "releases"))
             torch.cuda.reset_peak_memory_stats()
-            engine = AdapterEngine(root / "releases")
+            shared_manifest = None
+            if os.environ.get("ZILS_TEST_SHARED_MODEL"):
+                shared_manifest = verify_manifest(Path(os.environ["ZILS_TEST_SHARED_MODEL"]))
+                engine = SharedEngine(
+                    root / "releases",
+                    SharedModel(os.environ["ZILS_TEST_REFERENCE"]),
+                    shared_manifest["release_id"],
+                )
+            else:
+                engine = AdapterEngine(root / "releases")
             base_identity = id(engine.backend.model.base)
             serial = SerialEngine(engine)
-            runtime = AdapterRuntime(engine, serial, "gpu-test-only-token")
+            runtime = (
+                SharedRuntime(engine, serial, "gpu-test-only-token", shared_manifest)
+                if shared_manifest
+                else AdapterRuntime(engine, serial, "gpu-test-only-token")
+            )
             body = {
                 "state": {
                     "decision": "Choose the team that owns the main customer problem.",
@@ -75,6 +94,10 @@ class AdapterGPUCheck(unittest.TestCase):
                 },
             }
             predictions, elapsed = [], []
+            shared_before = None
+            if shared_manifest:
+                shared_request = {**copy.deepcopy(body), "model": shared_manifest["release_id"]}
+                shared_before = serial.evaluate(shared_request)
             try:
                 with patch.dict(os.environ, {"ZILS_ADAPTER_GPU_TOKEN": "gpu-test-only-token"}):
                     with server(decision_http, runtime.dispatch) as port:
@@ -126,6 +149,9 @@ class AdapterGPUCheck(unittest.TestCase):
                                     model.meta["temperature"] = previous
                             self.assertEqual(predictions[0], predictions[2])
                             self.assertNotEqual(predictions[0], predictions[1])
+                            if shared_manifest:
+                                self.assertEqual(serial.evaluate(shared_request), shared_before)
+                                self.assertEqual(id(engine.backend.model.base), base_identity)
             finally:
                 serial.close()
             print(

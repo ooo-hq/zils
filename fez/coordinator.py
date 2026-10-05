@@ -21,7 +21,7 @@ import fez
 
 from . import benchmark, jobs, models, queue_protocol
 from .cloud import DATA_BUCKET, MAX_DATA_BYTES, MODEL_BUCKET, APIError, Supabase, trusted_url
-from .runtime import digest, locked
+from .runtime import digest, gpu_ready, locked
 
 JOBS = "fez_training_jobs"
 ASSIGNMENTS = "fez_training_assignments"
@@ -30,6 +30,11 @@ PUBLIC_FIELDS = ("id", "name", "status", "created_at", "updated_at", "error", "r
 
 def public_job(job):
     result = {name: job.get(name) for name in PUBLIC_FIELDS}
+    data = job.get("result") or {}
+    result["workflow"] = data.get("workflow")
+    result["result"] = (
+        {k: v for k, v in data.items() if k != "workflow"} if "delivery" in data else None
+    )
     result["model"] = models.spec(models.job_model(job)) if job.get("job_sha256") else None
     return result
 
@@ -218,6 +223,7 @@ class Service:
             "/v1/workers/uploads",
             "/v1/workers/submit",
             "/v1/workers/fail",
+            "/v1/workers/defer",
         ):
             raise APIError(404, "Unknown worker route.")
         if path.endswith("/fail"):
@@ -231,6 +237,20 @@ class Service:
             )
             return {"status": "released"}
         row = self.assignment(hotkey, body, submitted=path.endswith("/submit"))
+        if path.endswith("/defer"):
+            # The signed worker can release only its own live lease. Capacity waiting is
+            # not a failed training attempt; the job's original deadline remains in force.
+            self.store.patch(
+                ASSIGNMENTS,
+                f"job_id=eq.{row['job_id']}&hotkey=eq.{hotkey}&lease_token=eq.{row['lease_token']}&state=eq.leased",
+                {
+                    "state": "ready",
+                    "lease_token": None,
+                    "lease_until": None,
+                    "attempts": max(0, row["attempts"] - 1),
+                },
+            )
+            return {"status": "deferred"}
         if path.endswith("/renew"):
             return {"status": "renewed"}
         if path.endswith("/uploads"):
@@ -375,6 +395,8 @@ class Processor:
 
     def tick(self):
         for stage in ("validating", "evaluating"):
+            if stage == "evaluating" and not gpu_ready(self.args.device):
+                continue
             job = self.store.rpc("fez_claim_processing", {"p_stage": stage})
             if not job or not job.get("id"):
                 continue

@@ -29,6 +29,14 @@ Next steps include real queued-training validation, rewards across different job
 independent final evaluation, confidential compute, retention controls, billing,
 and authenticated inference deployment with release approval and rollback.
 
+The [automatic training workflow](automatic-training.md) now implements approved
+worker assignment gated on GPU capacity and verified activation of accepted
+customer adapters. Deployment requires explicit worker and hardware configuration;
+it does not provision capacity or weaken evaluation thresholds. Shared/private
+serving can use one base, and updated registries reload without per-customer
+service restarts. See the workflow guide for verification scope and remaining
+operational requirements.
+
 ## Dashboard plans
 
 Planned dashboard capabilities:
