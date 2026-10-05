@@ -9,10 +9,7 @@ Zils returns probabilities for yes/no decisions, choices, and scores without
 generating text. The current model is an experimental 0.8B candidate.
 This repository contains the miner, validator, benchmark, and testnet integration.
 
-Zils uses the `zils` Python package and `ZILS_*` settings. Previous `fez` commands
-and `FEZ_*` settings remain compatible. Database resources, signed protocols,
-and recorded experiment identities retain their original identifiers. See the
-[internal-name compatibility guide](docs/internal-names.md).
+Zils uses the `zils` Python package and `ZILS_*` settings.
 The independent website source is [ooo-hq/zils-web](https://github.com/ooo-hq/zils-web).
 
 Miners fine-tune the model and submit checkpoints. The validator runs those
