@@ -42,6 +42,11 @@ checksums; it cannot select another model. Model processes run offline.
 
 ## Configure the services
 
+For evaluator setup, acceptance checks, and recovery, follow
+[Run a validator](validators.md#jevk5-queue-validator). For chain participation,
+see [Bittensor registration](bittensor-registration.md); that separate fleet
+still uses Kev and testnet, not this JevK5 queue.
+
 Complete the Supabase resources, customer Auth, HTTPS edge and protected server
 environment setup in [Supabase training](supabase-training.md). Set
 `ZILS_TRAINING_MODEL=jevk5-4b-v0.3` in the API and processor environments. Start
