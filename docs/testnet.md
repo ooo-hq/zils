@@ -19,10 +19,12 @@ stop an existing validator, or launch background services.
 
 ## Provision the registered identities
 
-Before generating a fleet, fund a dedicated testnet wallet, register a subnet, and
-register the validator/miner hotkeys on the returned subnet ID. Use the live
-chain's registration cost and activation requirements; owning a new subnet
-does not itself make emissions active.
+Obtain the current testnet subnet ID from the operator, then register each
+validator/miner hotkey on that existing subnet using the
+[registration guide](https://docs.zils.ai/operations/bittensor-registration).
+Miners do not need to create a subnet. The
+[validator guide](https://docs.zils.ai/operations/validators#bittensor-testnet-validator)
+covers eligibility, evaluation, publication, and verification.
 
 Install the additional SDK on each participant, using the existing environment:
 
@@ -56,7 +58,8 @@ entry for each machine:
 }
 ```
 
-`777` is an example only; use the subnet ID returned by your registration.
+`777` is an example only; use the operator-confirmed subnet ID. Each miner UID
+must be the value returned by the chain for that hotkey, not a local queue ID.
 
 Create or reuse the local benchmark described in the [miner guide](mining.md).
 Replace `VALIDATOR_PRIVATE_IPV4` with the validator's numeric private address.
@@ -136,7 +139,7 @@ uniform rewards when every candidate fails.
 
 ## Validation
 
-Validation: `python -m unittest discover -v` with model, signing and testnet
+Validation: `python -m unittest discover -s tests -t . -v` with model, signing and testnet
 dependencies installed. Chain tests fake external RPC only; wallet signatures,
 SDK intent construction, report binding, durable receipts and restart handling
 run against real code. The first live round also exercised transaction inclusion,
