@@ -13,7 +13,7 @@ from pathlib import Path
 
 import fez
 
-from . import jobs, models
+from . import jobs, models, version_selection
 from .api import Registry
 from .cloud import DATA_BUCKET, MODEL_BUCKET, APIError, Supabase, trusted_url
 from .coordinator import identifier, prepared_path
@@ -77,6 +77,18 @@ def _accepted(job):
         raise ValueError("Only the pinned JevK5 training contract is supported")
     if job["manifest"]["acceptance"] != job["acceptance"]:
         raise ValueError("Job acceptance changed")
+    selection = job["manifest"].get("selection")
+    if selection is not None or "previous_job_id" in job["acceptance"]:
+        version_selection.validate(
+            selection, job["acceptance"].get("previous_job_id"), current_job_id=job["id"]
+        )
+        previous = selection["previous"]
+        expected = previous["sha256"] if previous else job["initial_sha256"]
+        if (
+            job["result"].get("selection") != selection
+            or job["result"].get("baseline_reference_sha256") != expected
+        ):
+            raise ValueError("Evaluation did not use the frozen comparison model")
     for field in ("job_sha256", "initial_sha256"):
         _sha(job[field])
     prefix = job["release_prefix"]
@@ -131,6 +143,11 @@ def _manifest(root):
         "baseline_brier": job["result"]["baseline"]["brier"],
         **delivery,
     }
+    if "selection" in manifest:
+        expected.update(
+            selection=manifest["selection"],
+            baseline_reference_sha256=job["result"]["baseline_reference_sha256"],
+        )
     if any(report.get(k) != v for k, v in expected.items()):
         raise ValueError("Accepted release provenance differs from the completed job")
     _sha(report["submitted_sha256"])
@@ -155,6 +172,8 @@ def _manifest(root):
         "release_date": date.date().isoformat(),
         "files": {n: _hash(root / n) for n in FILES},
     }
+    if "selection" in manifest:
+        value["selection"] = manifest["selection"]
     value["fingerprint"] = _digest(value)
     return value
 
@@ -227,6 +246,12 @@ def publish(store, job_id, destination):
 def registry_entry(release, url, token_env, alias=None):
     if not isinstance(token_env, str) or not re.fullmatch("[A-Z][A-Z0-9_]*", token_env):
         raise ValueError("Supply an environment-variable name, not a runtime secret")
+    selection = release.get("selection")
+    if selection:
+        task_alias = "zils-task-" + selection["root_job_id"]
+        if alias is not None and alias != task_alias:
+            raise ValueError("Versioned releases must retain their task alias")
+        alias = task_alias
     entry = {
         "id": release["release_id"],
         "fingerprint": release["fingerprint"],
@@ -269,11 +294,17 @@ def merge_registry(current, entry):
     return {"models": output}
 
 
-def register(path, entry):
+def register(path, entry, *, selection=None):
+    if selection is None and any(alias.startswith("zils-task-") for alias in entry["aliases"]):
+        raise ValueError("Task aliases require frozen version selection")
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with locked(path.with_name(path.name + ".lock"), wait=True):
         current = _json(path) if path.exists() else {"models": []}
+        if selection is not None:
+            from .version_selection import check_promotion
+
+            check_promotion(current, entry, selection)
         result = merge_registry(current, entry)
         fd, name = tempfile.mkstemp(prefix=".registry-", dir=path.parent)
         try:
@@ -311,7 +342,7 @@ def main():
             print(json.dumps({"status": "not_accepted", "job_id": args.job}))
             return
         entry = registry_entry(release, args.runtime_url, args.token_env, args.alias)
-        register(args.registry, entry)
+        register(args.registry, entry, selection=release.get("selection"))
         print(
             json.dumps(
                 {"status": "published", "model": entry["id"], "fingerprint": entry["fingerprint"]}

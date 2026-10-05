@@ -14,7 +14,7 @@ from pathlib import Path
 import requests
 from bittensor_wallet import Keypair
 
-from . import models
+from . import models, version_selection
 from .adapter_releases import publish, register, registry_entry
 from .cloud import APIError, Supabase, trusted_url
 from .coordinator import ASSIGNMENTS, JOBS
@@ -49,16 +49,15 @@ class Workflow:
         accepted = self.store.rows(
             JOBS,
             "status=eq.completed&result->delivery->>status=eq.accepted&"
-            "or=(result->workflow->>state.is.null,result->workflow->>state.neq.ready)&"
+            "or=(result->workflow->>state.is.null,result->workflow->>state.not.in.(ready,needs_review))&"
             f"order=created_at.asc,id.asc&limit=1&offset={self.accepted_offset}",
         )
         self.accepted_offset = self.accepted_offset + 1 if accepted else 0
         for job in accepted:
             result = job.get("result") or {}
-            if (
-                result.get("delivery", {}).get("status") != "accepted"
-                or result.get("workflow", {}).get("state") == "ready"
-            ):
+            if result.get("delivery", {}).get("status") != "accepted" or result.get(
+                "workflow", {}
+            ).get("state") in ("ready", "needs_review"):
                 continue
             try:
                 self.status(job, "activating", "Training passed. Preparing your API model.")
@@ -74,6 +73,17 @@ class Workflow:
                     "Your model is ready to use with your existing API key.",
                     model_id=model_id,
                     fingerprint=release["fingerprint"],
+                    **(
+                        {"model_alias": "zils-task-" + release["selection"]["root_job_id"]}
+                        if "selection" in release
+                        else {}
+                    ),
+                )
+            except version_selection.StaleVersion:
+                self.status(
+                    job,
+                    "needs_review",
+                    "A newer model is already active. Start a new run comparing against that version.",
                 )
             except (
                 APIError,
@@ -181,7 +191,7 @@ def activate(release, config):
         release, config.get("gateway_runtime_url", runtime_url), config["token_env"]
     )
     if config.get("registry"):
-        register(config["registry"], entry)
+        register(config["registry"], entry, selection=release.get("selection"))
     else:
         # Operator-owned argv only. The child receives no Supabase credential.
         command = config["register_command"]
@@ -196,15 +206,23 @@ def activate(release, config):
             for k, v in os.environ.items()
             if k not in ("SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL")
         }
-        result = subprocess.run(
-            command,
-            input=json.dumps(entry),
-            text=True,
-            capture_output=True,
-            timeout=45,
-            check=True,
-            env=environment,
+        payload = (
+            {"entry": entry, "selection": release["selection"]} if "selection" in release else entry
         )
+        try:
+            result = subprocess.run(
+                command,
+                input=json.dumps(payload),
+                text=True,
+                capture_output=True,
+                timeout=45,
+                check=True,
+                env=environment,
+            )
+        except subprocess.CalledProcessError as error:
+            if error.returncode == 3:
+                raise version_selection.StaleVersion("A newer model is already active") from None
+            raise
         if json.loads(result.stdout).get("model_id") != entry["id"]:
             raise ValueError("Registry did not acknowledge this release")
     return entry["id"]
@@ -226,17 +244,28 @@ def main():
         raw = sys.stdin.read(16385)
         if len(raw) > 16384:
             raise ValueError("Registry entry exceeds the size limit")
-        entry = json.loads(raw)
+        payload = json.loads(raw)
+        selection = None
+        if isinstance(payload, dict) and set(payload) == {"entry", "selection"}:
+            entry, selection = payload["entry"], payload["selection"]
+            if not isinstance(selection, dict):
+                raise ValueError("Supply frozen version selection")
+        else:
+            entry = payload
         if args.customer_only and (
             entry.get("url") != args.runtime_url
             or entry.get("token_env") != args.token_env
-            or entry.get("aliases") != []
+            or entry.get("aliases")
+            != (["zils-task-" + selection["root_job_id"]] if selection else [])
             or not isinstance(entry.get("owners"), list)
             or len(entry["owners"]) != 1
             or not re.fullmatch(r"zils-adapter-[a-f0-9-]{36}-[a-f0-9]{64}", entry.get("id", ""))
         ):
             raise ValueError("Only private adapters at the configured runtime may be registered")
-        register(args.registry, entry)
+        try:
+            register(args.registry, entry, selection=selection)
+        except version_selection.StaleVersion:
+            parser.exit(3, "A newer version is active; evaluate against that version.\n")
         print(json.dumps({"model_id": entry["id"]}))
         return
     config = json.loads(args.config.read_text())

@@ -183,6 +183,9 @@ more jobs or signing repeated requests.
 
 The processor compares candidates against the calibrated starting checkpoint,
 using the [existing acceptance gate](customer-jobs.md#inspect-the-result).
+For an explicit [version upgrade](version-selection.md), the comparison instead
+uses the pinned previous customer model and its existing serving temperature on
+the new test data. No qualifying candidate leaves the current API version intact.
 It uploads accepted artifacts and a release manifest to private Storage. The
 customer receives aggregate results and short-lived download URLs, never other
 customers' records or raw validator predictions. The release still requires the

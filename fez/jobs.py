@@ -15,8 +15,17 @@ VERSION = "fez-customer-job/v1"
 
 
 def validate_policy(policy):
-    if not isinstance(policy, dict) or set(policy) != {"min_accuracy", "min_brier_improvement"}:
+    required = {"min_accuracy", "min_brier_improvement"}
+    if (
+        not isinstance(policy, dict)
+        or not required <= set(policy)
+        or set(policy) - required - {"previous_job_id"}
+    ):
         raise ValueError("acceptance requires min_accuracy and min_brier_improvement")
+    if "previous_job_id" in policy:
+        from .version_selection import job_id
+
+        job_id(policy["previous_job_id"])
     for name, maximum in (("min_accuracy", 1), ("min_brier_improvement", 2)):
         value = policy[name]
         if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= maximum:
@@ -46,7 +55,9 @@ def validate_splits(splits):
         raise ValueError("calibration and test families must match and be present in training")
 
 
-def build(root, job_id, splits, policy, *, allow_training_data_export=False, model=None):
+def build(
+    root, job_id, splits, policy, *, allow_training_data_export=False, model=None, selection=None
+):
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", job_id):
         raise ValueError("job ID must be 1..64 lowercase letters, digits or hyphens")
     if allow_training_data_export is not True:
@@ -73,6 +84,14 @@ def build(root, job_id, splits, policy, *, allow_training_data_export=False, mod
     }
     if model is not None:
         manifest["model"] = models.spec(model)
+    if selection is not None:
+        from .version_selection import validate
+
+        manifest["selection"] = validate(
+            selection, policy.get("previous_job_id"), current_job_id=job_id
+        )
+    elif "previous_job_id" in policy:
+        raise ValueError("Upgrade requires a frozen version selection")
     benchmark.write_private(root / "manifest.json", json.dumps(manifest, indent=2) + "\n")
     return manifest
 
@@ -86,6 +105,14 @@ def audit(root, manifest):
     ):
         raise ValueError("invalid customer job manifest")
     validate_policy(manifest["acceptance"])
+    if "selection" in manifest or "previous_job_id" in manifest["acceptance"]:
+        from .version_selection import validate
+
+        validate(
+            manifest.get("selection"),
+            manifest["acceptance"].get("previous_job_id"),
+            current_job_id=manifest["job_id"],
+        )
     if "model" in manifest:
         models.validate_spec(manifest["model"])
     root = Path(root)

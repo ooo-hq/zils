@@ -94,6 +94,11 @@ strictly improves the calibrated baseline's Brier loss, and meets the configured
 minimum Brier improvement. The lowest-Brier qualifying candidate wins; accuracy
 then UID break ties. Otherwise `delivery.status` is `no_qualifying_model`.
 
+The hosted queue additionally supports [explicit customer version upgrades](version-selection.md).
+Those runs compare with the previous accepted model's exact serving checkpoint,
+evaluated on the new test set. The local fleet workflow above continues to use
+its configured reference; it cannot resolve hosted predecessor job IDs.
+
 An `accepted` result includes a `checkpoint` path relative to the round directory.
 That directory contains the calibrated adapter and head, plus `release.json`
 with job/round identity, model hashes, base revision, and acceptance information.

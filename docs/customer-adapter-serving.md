@@ -6,6 +6,12 @@ and its immutable storage objects, verifies acceptance and provenance, and build
 a local release plus a compatible API registry entry. The adapter runtime loads
 one shared JevK5 base and switches customer LoRA weights serially.
 
+For new task versions, [version selection](version-selection.md) pins the exact
+comparison model and guards the stable task alias against stale upgrades. The
+standalone publisher and automatic workflow both enforce that check when writing
+the registry. Versioned releases use their generated task alias; `--alias` remains
+available for legacy releases.
+
 This integration adds no tables, migrations, key formats, or authentication
 endpoints. The gateway continues to authenticate existing API keys and enforce
 model ownership. The publisher does not write to Supabase. Its existing
