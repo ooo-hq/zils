@@ -1,4 +1,8 @@
-# Run a Zils miner
+# Run a Kev fleet miner
+
+This guide covers the **Kev 0.8B local and Bittensor testnet fleet**.
+For customer training, use the [JevK5 queue miner guide](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md).
+The two workflows use different models, credentials, and startup commands.
 
 After the one-time setup below, run this in your assigned miner folder:
 

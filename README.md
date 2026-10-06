@@ -1,106 +1,169 @@
-<h1 align="center">Zils</h1>
+<h1 align="center">
+  <a href="https://zils.ai">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/zils-logo-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="docs/assets/zils-logo-light.svg">
+      <img alt="Zils" src="docs/assets/zils-logo-light.svg" width="196">
+    </picture>
+  </a>
+</h1>
 
 <p align="center">
-  <a href="https://zils.ai/model">zils.ai/model</a>
+  <a href="https://zils.ai">Website</a> ·
+  <a href="https://zils.ai/model">Research</a> ·
+  <a href="docs/README.md">Documentation</a>
 </p>
 
-**A small decision model with a Bittensor training competition.**
-Zils returns probabilities for yes/no decisions, choices, and scores without
-generating text. The current model is an experimental 0.8B candidate.
-This repository contains the miner, validator, benchmark, and testnet integration.
+**Train decision models on your data. Get probabilities through a simple API.**
 
-Zils uses the `zils` Python package and `ZILS_*` settings.
-The independent website source is [ooo-hq/zils-web](https://github.com/ooo-hq/zils-web).
+Zils returns probabilities for yes/no decisions, choices, and scores. Train a
+model on labelled examples, measure it against its starting checkpoint, and
+serve accepted models through an authenticated API. This repository contains
+the API, training queue, miners, validators, and Bittensor testnet integration.
 
-Miners fine-tune the model and submit checkpoints. The validator runs those
-checkpoints on its own evaluation data, scores their probabilities, and assigns
-weights. The resulting adapter and decision head can be loaded with the pinned
-base model for applications to use.
+## Start here
 
-**Status:** local training and evaluation work on Apple Silicon and an RTX 4090.
-The first closed training-to-chain round completed on **testnet subnet 579**, with
-three fresh miner checkpoints and verified revealed weights. See the
-[recorded result and limitations](docs/testnet-round-001.md).
-There is no published Zils model release or automatic winner promotion yet.
+| I want to… | Start with |
+| --- | --- |
+| Call a model or submit a bulk job | [Decision API](docs/decision-api.md) and [example request](examples/zils-api/request.json) |
+| Train on my own data | [Data format](docs/customer-jobs.md#prepare-data) and [JevK5 training workflow](docs/automatic-training.md) |
+| Run a miner | [Miner setup](#miner-setup) |
+| Run a validator | [Validator setup](#validator-setup) |
+| Inspect measured improvements | [Results and limits](#results-and-limits) |
 
-**Zils API:** the decision protocol/subnet is now named Zils; Fez remains the
-chat application. The [new decision API](docs/decision-api.md) adds authenticated
-TypeSafe-style inference and durable bulk jobs using shared JevK5. Its local
-verification and deployment limits are documented separately from this training
-pilot; it does not automatically serve miner adapters. Use `zils` for Python
-imports and commands; the old `fez` package has been removed. Existing training
-resource names remain compatible.
+## How training works
 
-[Documentation](docs/README.md) covers operation, development, evaluation, and
-measured results.
+1. **Prepare:** separate labelled examples into training, calibration, and test
+   sets. Freeze the data and acceptance criteria before training.
+2. **Train:** an approved miner receives the training split and produces a
+   candidate adapter. Calibration and test examples stay with the evaluator.
+3. **Evaluate:** the validator checks the candidate against the starting model
+   on held-out examples. A version upgrade compares against the previous
+   accepted customer model.
+4. **Serve:** when configured, the automatic workflow verifies an accepted
+   release and makes it available to its owner through the API.
 
-## How it works
+A run can finish with `no_qualifying_model`. Training does not guarantee an
+improvement. See [acceptance criteria](docs/customer-jobs.md#inspect-the-result),
+[version selection](docs/version-selection.md), and
+[model activation](docs/automatic-training.md).
 
-1. **Train:** each miner fine-tunes the pinned reference and freezes a candidate.
-2. **Submit:** the miner signs its checkpoint hash and serves its three artifact files.
-3. **Evaluate:** the validator verifies the bytes, calibrates confidence, and runs its private test cases.
-4. **Reward:** probability quality determines weights; testnet publication requires an explicit flag.
+## Miner setup
 
-The current fleet uses a fixed one-epoch training recipe with different seeds.
-It exercises the whole loop; model improvements still require controlled training
-experiments. Validators measure model outputs themselves rather than accepting
-miner-reported scores. See the [evaluation contract](docs/evaluation.md).
+A miner trains candidates and submits signed artifacts. Choose the workflow
+before installing dependencies:
+
+| Workflow | Requirements | Setup guide |
+| --- | --- | --- |
+| **Customer training — JevK5 4B** | Linux or WSL 2, a BF16-capable NVIDIA GPU, an approved hotkey, and the coordinator URL | [Install, configure, and run a queued miner](docs/queue-miners.md) |
+| **Bittensor testnet — Kev 0.8B** | Operator-confirmed testnet registration, an assigned miner bundle, and private connectivity to the validator | [Register a miner](docs/bittensor-registration.md), then [install its bundle](docs/mining.md#set-up-each-machine-once) |
+
+For customer training, the guide creates `models/jevk5-reference` and
+`.private/queue-miner.json`. Start the configured worker from the repository root:
+
+```bash
+.venv-kev/bin/python -m miner.queue \
+  --config .private/queue-miner.json --state .private/queue-miner \
+  --reference models/jevk5-reference --device cuda
+```
+
+The queue miner uses outbound HTTPS and needs no Supabase service credential.
+For the testnet fleet, run `./start-miner --rounds 1` from the assigned,
+configured bundle. Joining either workflow requires operator approval.
+
+## Validator setup
+
+A validator runs its own evaluation of submitted models. Choose the matching
+workflow and complete its configuration before starting:
+
+| Workflow | Requirements | Setup guide |
+| --- | --- | --- |
+| **Customer training — JevK5 4B** | A matching GPU/reference model, protected Supabase operator credentials, and the configured training project | [Queue validator setup](docs/validators.md#jevk5-queue-validator) |
+| **Bittensor testnet — Kev 0.8B** | A registered, eligible validator hotkey, an explicit miner roster, and private network access | [Testnet validator setup](docs/validators.md#bittensor-testnet-validator) |
+
+After completing queue validator setup, load its protected environment and
+start the evaluator from the repository root:
+
+```bash
+set -a
+. .private/training.env
+set +a
+.venv-kev/bin/python -m zils.coordinator process \
+  --state .private/queue-processor \
+  --reference models/jevk5-reference --device cuda
+```
+
+The queue evaluator verifies artifacts, calibrates predictions, and records
+acceptance results. Its scores stay in the training service. The separate
+Bittensor validator publishes weights only after explicit testnet configuration
+and publication. Keep evaluation data and service credentials on the validator.
+
+## Bittensor training competition
+
+The closed testnet fleet trains candidates, scores their probability quality,
+and turns those scores into miner weights. The current recipe starts each
+candidate from the same Kev 0.8B reference for one epoch, using different seeds.
+See the [evaluation contract](docs/evaluation.md) for the reward calculation.
+
+The [first verified round](docs/testnet-round-001.md) used three miners on
+**testnet subnet 579** on September 25, 2026. That is a recorded experiment;
+confirm the current subnet and admission with the operator before registering.
+Mainnet participation, public miner discovery, and automatic promotion of subnet
+winners are not implemented. JevK5 customer training is a separate queue and
+does not publish Bittensor weights.
 
 ## Setup
 
 ### Fine-tune on your own data
 
-Install the [Zils fine-tuning skill](skills/zils-finetune/SKILL.md) into your coding
-agent:
+For the JevK5 customer workflow, follow [queue setup](docs/jevk5-queue.md) and
+[automatic training](docs/automatic-training.md). Prepare separate training,
+calibration, and test files using the [customer data format](docs/customer-jobs.md#prepare-data).
+Approved miners can read the training data assigned to them.
+
+For standalone Kev 0.8B, 4B, or 9B experiments, install the
+[Zils fine-tuning skill](skills/zils-finetune/SKILL.md) into your coding agent:
 
 ```bash
 npx skills add ooo-hq/zils@zils-finetune
 ```
 
 Then ask: “Fine-tune a 4B Zils candidate on my labelled support tickets.”
-The skill supports 0.8B, 4B, and 9B starting checkpoints, data preparation,
-calibration, baseline comparisons, and optional serving. Cloud training requires
-a Modal account and an agreed compute budget.
-Installing the skill starts no training and needs no GPU.
-
-Outputs are experimental Zils candidates. Published Zils weights are not yet
-available, and the current subnet accepts only its pinned 0.8B architecture;
-4B/9B own-data experiments do not change that contract.
+The skill covers training, calibration, baseline comparisons, and optional
+serving. Installation starts no training. Cloud runs require a Modal account
+and an agreed compute budget. These experiments do not change the testnet
+fleet's pinned 0.8B model contract.
 
 ### Repository setup
 
-The public dashboard targets [zils.ai/model](https://zils.ai/model); its deployment
-is managed from [the website repository](https://github.com/ooo-hq/zils-web).
-For a standalone local preview, see [`website/`](website/README.md). With
-Node.js 22+ and Python 3 installed, run `npm --prefix website run preview` and
-open <http://127.0.0.1:4173>. No model environment or wallet is needed.
+This setup prepares the **Kev 0.8B local/testnet fleet**. Use the guides above
+for JevK5 miners, validators, or API deployment.
 
-Use macOS, Linux, or WSL 2 with Python 3.13, Git, and `uv` installed.
-Run these commands from the repository root:
+Install Git, Python 3.13, and `uv` on macOS, Linux, or WSL 2. From the directory
+where you keep projects:
 
 ```bash
 git clone https://github.com/ooo-hq/zils.git
 cd zils
 uv venv --python 3.13 .venv-kev
-uv pip install --python .venv-kev/bin/python -r requirements/model.txt -r requirements/rehearsal.txt
+uv pip install --python .venv-kev/bin/python \
+  -r requirements/model.txt -r requirements/rehearsal.txt
 .venv-kev/bin/python -m scripts.download_models
 ```
 
-Dependencies, the model runtime, the public reference checkpoint, and the base
-model are pinned. Downloads happen once; model workers run from the local cache.
-For Windows GPU and network setup, follow the [miner guide](docs/mining.md).
-The Bittensor SDK is optional until [testnet setup](docs/testnet.md).
+This downloads the pinned Kev reference and base model. Later model work uses
+the local cache. Follow the [miner guide](docs/mining.md) for hardware and
+network setup; registered fleets also need the [testnet SDK](docs/testnet.md).
 
 ## Run a local fleet
 
-For authorized business data, the experimental [customer job workflow](docs/customer-jobs.md)
-adds a frozen job manifest, calibrated baseline comparison, and a local export
-only when a candidate meets acceptance thresholds. Each fleet configuration
-currently handles one job. The [Supabase training queue](docs/supabase-training.md)
-adds private customer uploads and a shared pool of approved workers. Live upload
-and validation checks have passed; real training through the queue remains unverified.
+After repository setup, run one validator and three miners on the same machine.
+This rehearsal uses synthetic data and sends no chain transactions.
 
-1. Generate a benchmark and three miner bundles. Use new output directories:
+<details>
+<summary>Local fleet commands</summary>
+
+1. Generate the benchmark and bundles. Use fresh output directories:
 
    ```bash
    .venv-kev/bin/python -m zils.benchmark build --out .private/benchmarks/local
@@ -108,7 +171,7 @@ and validation checks have passed; real training through the queue remains unver
      --benchmark .private/benchmarks/local --host 127.0.0.1
    ```
 
-2. Start the validator for one round:
+2. Start the validator:
 
    ```bash
    .venv-kev/bin/python -m zils.fleet validator \
@@ -123,76 +186,73 @@ and validation checks have passed; real training through the queue remains unver
      .private/fleet-local/miner-1/start-miner --rounds 1
    ```
 
-The device is selected automatically: CUDA, Apple MPS, then CPU. Services sharing
-one device run their model work sequentially. Reports appear in
-`.private/fleet-local/validator/state/rounds/`. No chain writes occur in local mode.
-For separate machines, generate bundles using the validator's private IPv4
-address and follow [miner setup](docs/mining.md). After setup, each miner needs
-one command: `./start-miner`.
+Services select CUDA, Apple MPS, then CPU, and serialize model work on a shared
+device. Reports appear in `.private/fleet-local/validator/state/rounds/`.
+For separate machines, follow [private fleet setup](docs/mining.md#prepare-bundles-on-the-validator).
 
-## Repository layout
+</details>
 
-```text
-zils/            Decision API, scoring, calibration, validator, and testnet code
-miner/           Training and signed checkpoint submission
-scripts/         Pinned model download and two-miner rehearsal
-tests/          Scoring, protocol, process, and chain integration checks
-docs/           Setup details, benchmark methodology, and experiment history
-skills/         Installable own-data fine-tuning workflow
-website/        Static public dashboard and recorded benchmark comparison
-examples/       Public diagnostic cases and smoke-training data
-requirements/   Pinned model, signing, and optional testnet dependencies
-```
+## Model provenance
+
+Customer training and the decision API use pinned **JevK5 4B** weights and
+runtime revisions. See [model setup](docs/jevk5-queue.md#install-and-create-the-reference)
+and [API setup](docs/decision-api.md). The local/testnet fleet uses **Kev 0.8B**,
+based on Qwen3.5-0.8B-Base; its revisions are recorded in the
+[experiment methodology](docs/experiments.md#runtime-and-reference-models).
+
+A fresh clone downloads upstream reference weights. Experimental adapters,
+private datasets, wallets, and raw runs are excluded from Git. There is no
+published general-purpose Zils checkpoint to download.
+
+## Results and limits
+
+Results belong to the task, dataset, and model named in each study.
+
+| Study | Measured result | Scope |
+| --- | --- | --- |
+| [ABCD support decisions](https://zils.ai/model#support-study) | Trained JevK5: **79.2%**, unchanged JevK5: **57.8%** on the same 500 test conversations | One recipe and seed on public role-play conversations; the research adapter is not deployed |
+| [Larger-data Kev experiment](docs/experiments.md#optimized-4090-training-and-a-larger-dataset) | **976/1,120 (87.14%)** correct, up from **958/1,120 (85.54%)**; Brier loss fell **9.59%**, while high-confidence mistakes rose from **18 to 23** | Experimental comparison with the previous candidate |
+| [Public JevBench comparison](docs/jevbench-public.md) | Trained and unchanged Kev tied at **147/231 (63.64%)**; probability quality regressed | No official JevBench rank measured |
+
+The [synthetic fleet benchmark](docs/benchmark.md) reuses templates for
+development. Production capacity, open participation, and isolated evaluation
+of hostile checkpoints are not established by these experiments. API and
+workflow verification is documented separately in the
+[API guide](docs/decision-api.md#verification-and-measured-scope) and
+[training guide](docs/automatic-training.md#verification-and-limits).
 
 ## Development
 
-After setup, install the lint tools and SDK used by the testnet tests:
+Use Python 3.13, `uv`, Make, and Node.js 22+ with npm. From a cloned repository,
+create `.venv-kev` if it does not exist, then install the test dependencies:
 
 ```bash
-uv pip install --python .venv-kev/bin/python -r requirements/dev.txt -r requirements/testnet.txt
+uv venv --python 3.13 .venv-kev
+uv pip install --python .venv-kev/bin/python \
+  -r requirements/dev.txt -r requirements/model.txt \
+  -r requirements/rehearsal.txt -r requirements/testnet.txt
 uv pip install --python .venv-kev/bin/python --no-deps -r requirements/jevk5-source.txt
 make check
 ```
 
-Tests exercise real signatures, HTTP transfers, subprocesses, and restart
-recovery, with fixture model workers and fake chain RPC. They do not train a
-model or send transactions. `make check` requires all test dependencies, runs
-Ruff lint/format checks, and executes the full suite. GitHub Actions runs the same
-checks on pull requests and pushes to `main`. Use `make format` to format Python.
+Skip the environment-creation command when reusing an existing environment.
+Checks cover lint, formatting, Python behavior, and the static website. Model
+work uses fixtures and chain RPC is simulated; the default suite needs no GPU,
+model downloads, or chain transactions. See [development](docs/development.md)
+for database, SDK, and optional GPU checks.
 
-See [local development](docs/development.md) for checkpoint scoring and the
-shorter two-miner rehearsal. Commands use `python -m ...`; old flat script paths
-have been replaced. Existing standalone miner bundles keep their bundled code;
-regenerate bundles when upgrading them.
+Use the `zils` Python package and `ZILS_*` settings. Regenerate standalone miner
+bundles when upgrading their code.
 
-## Model provenance
+## Repository layout
 
-Zils fine-tunes published [Kev](https://github.com/jaredpalmer/kev) checkpoints
-and uses its pinned training and serving tools. The current 0.8B candidate builds
-on Qwen3.5-0.8B-Base through Kev. The public JevBench comparison uses the unchanged
-published checkpoint as its baseline to measure what Zils's training changed.
-Exact source and model revisions are recorded in the
-[experiment methodology](docs/experiments.md#runtime-and-reference-models).
+| Directory | Contents |
+| --- | --- |
+| `zils/` | Decision API, training coordination, evaluation, and testnet integration |
+| `miner/` | Queued workers and fleet miners |
+| `docs/` and `examples/` | Setup guides, experiment records, and example requests |
+| `scripts/`, `requirements/`, and `tests/` | Model downloads, pinned dependencies, and checks |
+| `skills/` and `website/` | Agent fine-tuning workflow and standalone research preview |
 
-## Results and limits
-
-The latest larger-data experiment scored **976/1,120 correct (87.14%)**, versus
-958/1,120 (85.54%) for the previous Zils candidate. Equal-source Brier loss fell
-9.59%, while high-confidence mistakes increased from 18 to 23. This is an
-experimental comparison, not a general claim that Zils beats Kev.
-[Experiment history](docs/experiments.md#optimized-4090-training-and-a-larger-dataset)
-records the datasets, settings, and tradeoffs.
-
-On the separate [JevBench public comparison](docs/jevbench-public.md), current
-Zils and published Kev tied at 147/231 correct (63.64%); Zils's confidence quality
-regressed. No official JevBench rank has been measured.
-
-The [synthetic benchmark](docs/benchmark.md) has shared templates and is reused
-for development. The current private-LAN services are for operator-controlled
-checkpoints; their subprocesses are not an untrusted-model security sandbox.
-Public discovery, independent hidden evaluation, and model promotion remain
-[future work](docs/roadmap.md).
-
-Model weights, wallets, private datasets, bundles, and raw runs are excluded
-from Git. A fresh clone downloads the public reference and generates new
-local data; it does not contain the experimental Zils checkpoints.
+The main website is maintained in [ooo-hq/zils-web](https://github.com/ooo-hq/zils-web).
+For the bundled research preview, see [website setup](website/README.md).

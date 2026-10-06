@@ -1,14 +1,14 @@
 # Documentation
 
-Zils is a decision-model training subnet under development. Start with the
-[repository README](../README.md) for installation and a local fleet. Registered
-testnet integration completed its [first verified closed round](testnet-round-001.md)
-on **Bittensor testnet subnet 579**. No Zils model release has been published.
+Zils provides a decision API, customer model training, and a closed Bittensor
+testnet training fleet. Start with the [repository README](../README.md) for an
+overview, then choose the guide for your role below. Customer training uses
+JevK5 4B; the testnet fleet uses Kev 0.8B and requires operator admission.
 
 | Task | Documentation |
 | --- | --- |
 | Serve typed decisions and bulk jobs | [Zils decision API](decision-api.md) |
-| Run a JevK5 miner | [JevK5 queue setup](jevk5-queue.md) |
+| Run a JevK5 miner | [JevK5 miner setup](queue-miners.md) |
 | Register on Bittensor testnet | [Miner registration](bittensor-registration.md), [closed fleet setup](testnet.md) |
 | Run a validator | [Queue and Bittensor validators](validators.md) |
 | Train on authorized business data | [Customer decision jobs](customer-jobs.md) |
