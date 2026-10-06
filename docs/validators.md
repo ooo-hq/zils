@@ -67,8 +67,8 @@ pending stage and exits; it does not wait for a full training job to finish.
 Each state directory permits one processor process. Database leases coordinate
 claimed stages and recover abandoned work.
 
-The API, approved miners, and any automatic assignment service run separately.
-Follow [miner approval](supabase-training.md#approve-miners-and-run-a-queued-miner)
+The API, [approved miners](queue-miners.md), and any automatic assignment service
+run separately. Follow [miner approval](supabase-training.md#approve-miners-and-run-a-queued-miner)
 or [automatic assignment](automatic-training.md) so validated jobs can reach
 miners. A waiting job is not evidence that the evaluator is broken.
 
