@@ -108,7 +108,7 @@ the training reference for those actions; preserve necessary artifacts first.
 
 This skill creates own-data candidates; it does not register miners, spend
 tokens on-chain, or change validator rules. The current
-[Zils validator](https://github.com/ooo-hq/zils/blob/main/fez/kev_runner.py) expects
+[Zils validator](https://github.com/ooo-hq/zils/blob/main/zils/kev_runner.py) expects
 the pinned 0.8B base, rank-16 LoRA, a 256-dimensional head, and FP32 weights.
 4B/9B candidates require a separate protocol/runtime update before admission.
 Even a 0.8B candidate must pass that validator's checks; this skill's report is

@@ -97,7 +97,7 @@ def initialize(out, benchmark_path, checkpoint, host, port, miner_ports, identit
         )
         shutil.copyfile(data / "miner-training.jsonl", directory / "miner-training.jsonl")
         zils.stage(entry, directory / "reference")
-        for name in ("zils", "fez", "miner", "requirements"):
+        for name in ("zils", "miner", "requirements"):
             shutil.copytree(
                 ROOT / name, directory / name, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
             )

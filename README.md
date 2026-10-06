@@ -27,8 +27,9 @@ There is no published Zils model release or automatic winner promotion yet.
 chat application. The [new decision API](docs/decision-api.md) adds authenticated
 TypeSafe-style inference and durable bulk jobs using shared JevK5. Its local
 verification and deployment limits are documented separately from this training
-pilot; it does not automatically serve miner adapters. Existing package and
-training resource names remain compatible.
+pilot; it does not automatically serve miner adapters. Use `zils` for Python
+imports and commands; the old `fez` package has been removed. Existing training
+resource names remain compatible.
 
 [Documentation](docs/README.md) covers operation, development, evaluation, and
 measured results.
@@ -132,7 +133,7 @@ one command: `./start-miner`.
 ## Repository layout
 
 ```text
-fez/             Scoring, benchmark, calibration, validator, and testnet code
+zils/            Decision API, scoring, calibration, validator, and testnet code
 miner/           Training and signed checkpoint submission
 scripts/         Pinned model download and two-miner rehearsal
 tests/          Scoring, protocol, process, and chain integration checks

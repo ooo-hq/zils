@@ -68,11 +68,11 @@ Generate a fresh fleet. Match `--miner-ports` to the roster's order and count
 The command copies public wallet references into bundles, **never key files**:
 
 ```bash
-.venv-kev/bin/python -m fez.fleet init --out .private/testnet-fleet \
+.venv-kev/bin/python -m zils.fleet init --out .private/testnet-fleet \
   --host VALIDATOR_PRIVATE_IPV4 --miner-ports 8901 \
   --benchmark .private/benchmarks/local \
   --testnet-identities .private/testnet-identities.json
-.venv-kev/bin/python -m fez.testnet preflight \
+.venv-kev/bin/python -m zils.testnet preflight \
   --config .private/testnet-fleet/validator/config.json
 ```
 
@@ -87,7 +87,7 @@ silently reassigned to a replacement hotkey.
 Start each miner with `./start-miner --rounds 1`. On the validator host, run:
 
 ```bash
-.venv-kev/bin/python -m fez.fleet validator \
+.venv-kev/bin/python -m zils.fleet validator \
   --config .private/testnet-fleet/validator/config.json --rounds 1
 ```
 
@@ -103,7 +103,7 @@ process should write for its hotkey on that subnet.
 Publish the completed round, substituting its directory for `ROUND`:
 
 ```bash
-.venv-kev/bin/python -m fez.testnet publish \
+.venv-kev/bin/python -m zils.testnet publish \
   --config .private/testnet-fleet/validator/config.json \
   --round .private/testnet-fleet/validator/state/rounds/ROUND
 ```
@@ -125,7 +125,7 @@ that marker and retrying can duplicate a submission.
 already use the new weights. Verify after the chain's reveal period:
 
 ```bash
-.venv-kev/bin/python -m fez.testnet verify \
+.venv-kev/bin/python -m zils.testnet verify \
   --config .private/testnet-fleet/validator/config.json \
   --round .private/testnet-fleet/validator/state/rounds/ROUND
 ```

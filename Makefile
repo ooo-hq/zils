@@ -1,5 +1,5 @@
 PYTHON ?= .venv-kev/bin/python
-PYTHON_SOURCES = zils fez miner scripts tests
+PYTHON_SOURCES = zils miner scripts tests
 
 .PHONY: check lint format test check-website check-queue-db check-api
 
