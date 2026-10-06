@@ -12,7 +12,7 @@ from pathlib import Path
 
 class LocalSubnetTest(unittest.TestCase):
     def test_validator_contract(self):
-        self.assertIsNotNone(importlib.util.find_spec("fez"), "local validator is missing")
+        self.assertIsNotNone(importlib.util.find_spec("zils"), "local validator is missing")
         import zils
 
         cases = [
