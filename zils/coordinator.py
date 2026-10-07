@@ -19,6 +19,7 @@ from bittensor_wallet import Keypair
 import zils
 
 from . import benchmark, jobs, models, queue_protocol, settings, version_selection
+from .access import require_access
 from .cloud import DATA_BUCKET, MAX_DATA_BYTES, MODEL_BUCKET, APIError, Supabase, trusted_url
 from .runtime import digest, gpu_ready, locked
 
@@ -110,6 +111,7 @@ class Service:
 
     def customer(self, method, path, token, body):
         owner = identifier(self.store.user(token))
+        require_access(self.store, owner)
         if path == "/v1/jobs":
             if method == "GET":
                 rows = self.store.rows(JOBS, f"owner_id=eq.{owner}&order=created_at.desc&limit=100")

@@ -74,6 +74,28 @@ def main():
             from tests.api_database import run
 
             run([tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"])
+            migration = ROOT / "supabase/migrations/202610070001_early_access.sql"
+            subprocess.run(
+                [
+                    tool("psql"),
+                    "-X",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-h",
+                    str(socket),
+                    "-d",
+                    "postgres",
+                    "-f",
+                    str(migration),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            from tests.access_database import run as access_checks
+
+            access_checks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
             print(
                 "Training queue and decision API migrations, isolation, leases, credentials and admission passed."
             )

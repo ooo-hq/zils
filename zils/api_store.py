@@ -7,6 +7,7 @@ import secrets
 import uuid
 from datetime import datetime, timezone
 
+from .access import require_access
 from .cloud import APIError, Supabase
 from .decisions import DecisionError
 
@@ -30,7 +31,9 @@ class Store:
         self.db = db or Supabase()
 
     def session_owner(self, token):
-        return identifier(self.db.user(token))
+        owner = identifier(self.db.user(token))
+        require_access(self.db, owner)
+        return owner
 
     def create_key(self, owner, name):
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80:

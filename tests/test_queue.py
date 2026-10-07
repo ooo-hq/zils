@@ -82,6 +82,8 @@ class Store:
         return updated
 
     def rpc(self, name, p):
+        if name == "zils_access_allowed":
+            return True
         jobs = self.tables[coordinator.JOBS]
         assignments = self.tables[coordinator.ASSIGNMENTS]
         if name == "fez_create_training_job":
