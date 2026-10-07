@@ -99,7 +99,7 @@ def run_child(command, log, device, timeout=3600):
         **{
             k: v
             for k, v in os.environ.items()
-            if k not in {"SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL"}
+            if k not in {"SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL", "TYPESAFE_API_KEY"}
         },
         "HF_HOME": os.environ.get("HF_HOME", str(ROOT / ".cache/huggingface")),
         "HF_HUB_OFFLINE": "1",

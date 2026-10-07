@@ -18,7 +18,7 @@ from bittensor_wallet import Keypair
 
 import zils
 
-from . import benchmark, jobs, models, queue_protocol, settings, version_selection
+from . import benchmark, comparisons, jobs, models, queue_protocol, settings, version_selection
 from .cloud import DATA_BUCKET, MAX_DATA_BYTES, MODEL_BUCKET, APIError, Supabase, trusted_url
 from .runtime import digest, gpu_ready, locked
 
@@ -36,6 +36,7 @@ def public_job(job):
     )
     result["model"] = models.spec(models.job_model(job)) if job.get("job_sha256") else None
     result["selection"] = (job.get("manifest") or {}).get("selection")
+    result["dataset_counts"] = (job.get("manifest") or {}).get("counts")
     return result
 
 
@@ -110,6 +111,11 @@ class Service:
 
     def customer(self, method, path, token, body):
         owner = identifier(self.store.user(token))
+        comparison = re.fullmatch(r"/v1/jobs/([a-f0-9-]+)/comparison(?:/(submit))?", path)
+        if comparison:
+            return comparisons.customer(
+                self, self.job(comparison[1], owner), method, comparison[2], body
+            )
         if path == "/v1/jobs":
             if method == "GET":
                 rows = self.store.rows(JOBS, f"owner_id=eq.{owner}&order=created_at.desc&limit=100")
@@ -459,7 +465,7 @@ class Processor:
                 },
             )
             return True
-        return False
+        return comparisons.process_one(self)
 
     def prepare(self, job, work):
         model = models.checkpoint_model(self.reference)
@@ -561,6 +567,7 @@ class Processor:
             "accuracy",
             "brier",
             "skill",
+            "cases",
             "confident_errors",
             "median_ms",
             "p95_ms",
