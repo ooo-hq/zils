@@ -293,7 +293,8 @@ class QueueTest(unittest.TestCase):
                 404,
             )
             self.assertEqual(
-                requests.get(url + "/v1/jobs", headers=headers, timeout=5).json(), {"jobs": []}
+                requests.get(url + "/v1/jobs", headers=headers, timeout=5).json(),
+                {"jobs": [], "models": []},
             )
             body = {"name": "test", "acceptance": POLICY, "allow_training_data_export": False}
             self.assertEqual(
