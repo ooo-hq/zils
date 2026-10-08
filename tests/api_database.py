@@ -37,7 +37,7 @@ def literal(value):
 
 
 def name(value):
-    assert re.fullmatch("[a-z_]+", value), value
+    assert re.fullmatch("[a-z_][a-z_0-9]*", value), value
     return value
 
 

@@ -29,7 +29,7 @@ def trusted_url(url):
     return url.rstrip("/")
 
 
-def download(url, destination, limit, headers=None):
+def download(url, destination, limit, headers=None, *, max_seconds=600):
     trusted_url(url)
     try:
         started, size = time.monotonic(), 0
@@ -48,7 +48,7 @@ def download(url, destination, limit, headers=None):
             with Path(destination).open("xb") as output:
                 for chunk in response.iter_content(1024 * 1024):
                     size += len(chunk)
-                    if size > limit or time.monotonic() - started > 600:
+                    if size > limit or time.monotonic() - started > max_seconds:
                         raise ValueError("file exceeds its size or transfer-time limit")
                     output.write(chunk)
             if declared is not None and size != int(declared):
@@ -169,8 +169,10 @@ class Supabase:
             )
         return result
 
-    def download(self, bucket, path, destination, limit):
-        return download(self.signed(bucket, path)["url"], destination, limit)
+    def download(self, bucket, path, destination, limit, *, max_seconds=600):
+        return download(
+            self.signed(bucket, path)["url"], destination, limit, max_seconds=max_seconds
+        )
 
     def upload(self, bucket, path, source):
         # Trusted processors use immutable, attempt-specific paths; never overwrite.
@@ -190,3 +192,10 @@ class Supabase:
             {"prefix": parent, "search": name, "limit": 100},
         )
         return any(row["name"] == name for row in rows)
+
+    def remove(self, bucket, paths):
+        if not isinstance(paths, list) or not 1 <= len(paths) <= 100:
+            raise ValueError("remove requires 1..100 exact object paths")
+        return self.request(
+            "DELETE", "/storage/v1/object/" + quote(bucket, safe=""), {"prefixes": paths}
+        )
