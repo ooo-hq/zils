@@ -274,7 +274,9 @@ class WorkflowTest(unittest.TestCase):
             current = FileRegistry(path)
             frozen = current.resolve("default", OWNER)
             register(path, entry)
-            self.assertEqual(current.resolve(entry["id"], OWNER), entry)
+            self.assertEqual(
+                current.resolve(entry["id"], OWNER), Registry([entry]).resolve(entry["id"], OWNER)
+            )
             self.assertEqual(current.resolve(frozen["id"], OWNER), frozen)
             path.write_text('{"models": [{"invalid": true}]}')
             self.assertEqual(current.resolve(frozen["id"], OWNER), frozen)

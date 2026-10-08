@@ -37,7 +37,10 @@ class ImageApi:
         if path == "/v1/image-models" and method == "GET":
             return 200, {
                 "models": [
-                    entry
+                    {
+                        **entry,
+                        "stock": self.registry.resolve(entry["name"], owner)["owners"] is None,
+                    }
                     for entry in self.registry.listing(owner)["models"]
                     if "image" in entry.get("capabilities", {}).get("modalities", [])
                 ],
