@@ -287,12 +287,18 @@ class Gateway:
             )
         client = RuntimeClient(entry, image)
         reserved, billable = client.prepare(request)
-        if billable is None:
-            # Legacy runtimes remain usable with billing off; the database rejects
-            # missing meters when billing is enabled.
-            self.store.admit(owner, key_id, request_id, reserved)
-        else:
-            self.store.admit(owner, key_id, request_id, reserved, billable)
+        # Record the resolved release, so aliases and bulk requests share a model row.
+        # Legacy runtimes remain usable with billing off; admission rejects missing
+        # meters when billing is enabled.
+        self.store.admit(
+            owner,
+            key_id,
+            request_id,
+            reserved,
+            billable,
+            entry["id"],
+            next(iter(entry["aliases"]), entry["id"]),
+        )
         try:
             convert = make_image_response if has_image else make_response
             result = convert(entry["id"], request, client.predict(request, lane))

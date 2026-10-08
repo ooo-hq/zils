@@ -61,10 +61,11 @@ Repeated submissions and settlement events do not create another charge.
 
 ## Worker and service setup
 
-1. Apply migrations through `202610080005_image_processing_profiles.sql` in order,
-   after the existing queue/API/billing migrations. The four image migrations use
-   versions `202610080002` through `202610080005`; the deployed prepaid migration
-   keeps version `202610080001`. Install `requirements/api.txt` on the gateway and
+1. Apply migrations through `202610080006_image_processing_profiles.sql` in order,
+   after the existing queue/API/billing/usage migrations. The four image migrations
+   use versions `202610080003` through `202610080006`; prepaid billing and usage
+   reporting keep versions `202610080001` and `202610080002`. Install
+   `requirements/api.txt` on the gateway and
    `requirements/imajev.txt` in the separate image runtime. Verify private bucket RLS,
    server-only RPCs and retention cleanup in staging. No migration was applied to
    production by this implementation.

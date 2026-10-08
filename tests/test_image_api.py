@@ -137,7 +137,7 @@ class ImageApiTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(result["answers"]["inspection"]["abstained"])
         self.assertIsNone(self.accounts.admissions[0][1])
-        self.assertEqual(self.accounts.admissions[0][-1], 442)
+        self.assertEqual(self.accounts.admissions[0][3:], (442, None, "image-release", "images"))
         self.assertEqual(self.calls[0]["image"], self.calls[1]["image"])
         self.assertEqual(self.accounts.usage[-1][1:], (442, "completed"))
         status, _ = self.call(gateway, token="zils_sk_valid", path="/v1/systemone")

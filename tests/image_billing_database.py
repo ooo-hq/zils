@@ -63,6 +63,7 @@ def run(command):
     def summary():
         return db.rpc("zils_billing_summary", {"p_owner": owner, "p_mode": "test"})
 
+    initial_usage = summary()["usage"]
     entry = {
         "id": "image-release",
         "fingerprint": "a" * 64,
@@ -104,6 +105,14 @@ def run(command):
             raise AssertionError("Failed image execution accepted")
         assert summary()["balance_nanos"] == balance
         assert summary()["reserved_nanos"] == "0"
+        image_usage = next(
+            row for row in summary()["usage"]["models"] if row["model_id"] == entry["id"]
+        )
+        assert image_usage["model_name"] == "images"
+        assert image_usage["calls"] == "2" and image_usage["failed_calls"] == "1"
+        assert image_usage["active_calls"] == "0"
+        assert image_usage["input_tokens"] == str(2 * 173)
+        assert image_usage["spend_nanos"] == str(2 * 173 * 42)
 
     def draft():
         job = db.rpc(
@@ -167,6 +176,13 @@ def run(command):
     db.rpc("zils_submit_image_job", third)
     db.sql(f"update fez_training_jobs set status='completed' where id={literal(third['p_job'])}")
     assert summary()["balance_nanos"] == str(int(balance) - 2_000_000_000)
+    usage = summary()["usage"]
+    assert int(usage["training_runs"]) == int(initial_usage["training_runs"]) + 2
+    assert int(usage["failed_training_runs"]) == int(initial_usage["failed_training_runs"]) + 1
+    assert (
+        int(usage["training_spend_nanos"])
+        == int(initial_usage["training_spend_nanos"]) + 2_000_000_000
+    )
 
     blocked = draft()
     db.sql(

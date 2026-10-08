@@ -104,7 +104,10 @@ class GatewayTest(unittest.TestCase):
                 with self.subTest(lane=lane):
                     request_id = str(uuid.uuid4())
                     result = gateway.evaluate(OWNER, OWNER, BODY, request_id, lane=lane)
-                    self.assertEqual(store.admissions[-1], (OWNER, OWNER, request_id, 100, 73))
+                    self.assertEqual(
+                        store.admissions[-1],
+                        (OWNER, OWNER, request_id, 100, 73, RELEASE, "zils-shared"),
+                    )
                     self.assertEqual(
                         result["usage"],
                         {
@@ -183,7 +186,7 @@ class GatewayTest(unittest.TestCase):
                 self.assertEqual(r.status_code, 200, r.text)
                 self.assertEqual(r.json()["model"], RELEASE)
                 self.assertEqual(r.json()["answers"]["match"]["noul"], 0.5)
-                self.assertEqual(store.admissions[0][-1], 100)
+                self.assertEqual(store.admissions[0][3], 100)
                 self.assertEqual(store.usage[0][1:], (10, "completed"))
                 for token, model, status in [
                     ("invalid", RELEASE, 401),
