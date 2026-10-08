@@ -65,12 +65,27 @@ def run(command):
     empty = db.rpc("zils_billing_summary", {"p_owner": other, "p_mode": "test"})["usage"]
     assert empty["calls"] == empty["input_tokens"] == empty["training_runs"] == "0"
     assert empty["models"] == []
+    # Pre-billing history remains visible without invented tokens or charges.
+    db.sql("update zils_billing_settings set mode='off'")
+    legacy = str(uuid.uuid4())
+    store.admit(owner, key, legacy, 100)
+    store.finish_usage(legacy, 80, "completed")
+    old_job = db.rpc(
+        "fez_create_training_job", {"p_owner": owner, "p_name": "legacy-run", "p_acceptance": {}}
+    )
+    db.patch("fez_training_jobs", "id=eq." + old_job["id"], {"status": "validating"})
+    db.patch("fez_training_jobs", "id=eq." + old_job["id"], {"status": "completed"})
     # Switching modes must not expose test usage as live usage.
     db.sql("update zils_billing_settings set mode='live'")
+    live = db.rpc("zils_billing_usage_summary", {"p_owner": owner, "p_mode": "live"})
+    assert live["calls"] == live["unmetered_calls"] == live["training_runs"] == "1"
     assert (
-        db.rpc("zils_billing_usage_summary", {"p_owner": owner, "p_mode": "live"})["calls"] == "0"
+        live["input_tokens"] == live["inference_spend_nanos"] == live["training_spend_nanos"] == "0"
     )
     db.sql("update zils_billing_settings set mode='test'")
+    assert (
+        db.rpc("zils_billing_usage_summary", {"p_owner": owner, "p_mode": "test"})["calls"] == "106"
+    )
     for role in ("anon", "authenticated"):
         assert not db.sql(
             f"select to_jsonb(has_function_privilege('{role}','zils_billing_usage_summary(uuid,text)','EXECUTE'))"

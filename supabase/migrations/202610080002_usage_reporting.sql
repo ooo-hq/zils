@@ -4,7 +4,7 @@ alter table public.zils_api_usage
   add column model_id text check(length(model_id) between 1 and 256),
   add column model_name text check(length(model_name) between 1 and 256);
 create index on public.zils_api_usage(owner_id,billing_mode,created_at);
-create index on public.zils_billing_reservations(owner_id,mode,created_at);
+create index on public.fez_training_jobs(owner_id,created_at);
 
 -- Optional arguments keep existing gateway/worker callers compatible during rollout.
 drop function public.zils_api_admit(uuid,uuid,uuid,bigint,bigint);
@@ -37,7 +37,8 @@ declare report jsonb; until_at timestamptz:=now(); since_at timestamptz:=now()-i
 begin
   perform zils_billing_require_mode(p_mode);
   with usage as (
-    select * from zils_api_usage where owner_id=p_owner and billing_mode=p_mode
+    select * from zils_api_usage where owner_id=p_owner
+      and (billing_mode=p_mode or (p_mode='live' and billing_mode is null))
       and created_at>=since_at and created_at<until_at
   ), charges as (
     select * from zils_billing_ledger where owner_id=p_owner and mode=p_mode
@@ -61,9 +62,11 @@ begin
       sum(input_tokens)::text as input_tokens,sum(spend_nanos)::text as spend_nanos
     from model_rows group by model_id
   ), training as (
-    select j.status from zils_billing_reservations r join fez_training_jobs j on j.id=r.id and j.owner_id=r.owner_id
-    where r.owner_id=p_owner and r.mode=p_mode and r.kind='training'
-      and r.created_at>=since_at and r.created_at<until_at
+    select j.status from fez_training_jobs j
+    left join zils_billing_reservations r on r.id=j.id and r.owner_id=j.owner_id and r.kind='training'
+    where j.owner_id=p_owner and j.status<>'uploading'
+      and (r.mode=p_mode or (p_mode='live' and r.id is null))
+      and coalesce(r.created_at,j.created_at)>=since_at and coalesce(r.created_at,j.created_at)<until_at
   )
   select jsonb_build_object(
     'since',since_at,'until',until_at,
@@ -71,6 +74,7 @@ begin
     'failed_calls',(select count(*)::text from usage where status='failed'),
     'active_calls',(select count(*)::text from usage where status='started'),
     'input_tokens',(select coalesce(sum(billable_tokens),0)::text from usage where status='completed'),
+    'unmetered_calls',(select count(*)::text from usage where status='completed' and billable_tokens is null),
     'training_runs',(select count(*)::text from training where status='completed'),
     'failed_training_runs',(select count(*)::text from training where status='failed'),
     'active_training_runs',(select count(*)::text from training where status not in ('completed','failed')),

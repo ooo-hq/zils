@@ -40,7 +40,9 @@ admission do not count. Included training counts as a run with zero spend.
 
 Counts use request or training-reservation start times; spend uses ledger posting
 times and excludes top-ups and refunds. Reports include only the selected billing
-mode and activity recorded after billing activation. Raw inference metadata is
+mode. Live reports also include pre-billing calls and training history; calls
+without a logical token meter are counted separately instead of estimating their
+tokens or retroactively charging them. Raw inference metadata is
 retained for 30 days; the billing ledger remains authoritative for charges.
 
 Apply `supabase/migrations/202610080002_usage_reporting.sql` before upgrading the
