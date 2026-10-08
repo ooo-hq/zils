@@ -30,6 +30,26 @@ The cutoff must be at least 24 hours old; it marks unfinished inference failed
 and releases its credit. Completed charges are unchanged. This recovery is
 manual, and does not cancel or reconcile training jobs.
 
+## Account usage reports
+
+The billing summary includes a rolling 30-day usage report across the account's
+shared API keys. It counts completed, failed, and in-progress admitted inference
+requests, logical input tokens from completed requests, and tracked training
+runs. One executed batch item counts as one request. Requests rejected before
+admission do not count. Included training counts as a run with zero spend.
+
+Counts use request or training-reservation start times; spend uses ledger posting
+times and excludes top-ups and refunds. Reports include only the selected billing
+mode and activity recorded after billing activation. Raw inference metadata is
+retained for 30 days; the billing ledger remains authoritative for charges.
+
+Apply `supabase/migrations/202610080002_usage_reporting.sql` before upgrading the
+gateway and batch worker. New admissions save the resolved model release and a
+registry alias for display. Older callers remain compatible; their model is
+reported as unrecorded instead of inferred. The report aggregates in PostgreSQL
+and is independent of the 100-row credit-activity history limit. Its RPC is
+service-role-only and the billing HTTP endpoint requires the account's session.
+
 ## Isolated test setup
 
 Use Python 3.13, PostgreSQL's `psql` client, and the existing

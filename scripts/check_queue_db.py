@@ -73,9 +73,7 @@ def main():
                     raise RuntimeError(f"{source}:\n{result.stdout}\n{result.stderr}")
             from tests.api_database import run
 
-            run([tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"])
-            billing = ROOT / "supabase/migrations/202610080001_prepaid_billing.sql"
-            if billing.exists():
+            for billing in sorted((ROOT / "supabase/migrations").glob("20261008*.sql")):
                 result = subprocess.run(
                     [
                         tool("psql"),
@@ -94,6 +92,7 @@ def main():
                 )
                 if result.returncode:
                     raise RuntimeError(result.stdout + result.stderr)
+            run([tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"])
             from tests.billing_database import run as run_billing
             from tests.billing_webhook_database import run as run_billing_webhooks
 
@@ -101,6 +100,11 @@ def main():
                 [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
             )
             run_billing_webhooks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
+            from tests.usage_database import run as run_usage
+
+            run_usage(
                 [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
             )
             print(
