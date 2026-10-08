@@ -203,7 +203,7 @@ class Billing:
             self.client.v1.checkout.sessions.create,
             {
                 "mode": "payment",
-                "payment_method_types": ["card"],
+                "allowed_payment_method_types": ["card"],
                 "client_reference_id": owner,
                 "metadata": metadata,
                 "payment_intent_data": {"metadata": metadata},
@@ -383,7 +383,7 @@ class Billing:
             self.reconcile(stripe_id(obj, "cs_"), event_id, created)
         else:
             if event["type"].startswith("charge.dispute."):
-                dispute = self.request(self.client.v1.disputes.retrieve, stripe_id(obj, "dp_"))
+                dispute = self.request(self.client.v1.disputes.retrieve, stripe_id(obj, "du_"))
                 self.check_mode(dispute)
                 charge_id = stripe_id(dispute.get("charge"), "ch_")
             else:

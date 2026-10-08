@@ -210,6 +210,8 @@ class BillingTest(unittest.TestCase):
         self.assertEqual(first, {"url": URL, "purchase_id": self.purchase})
         self.assertEqual(self.client.v1.checkout.sessions.create.call_count, 1)
         params, options = self.client.v1.checkout.sessions.create.call_args.args
+        self.assertEqual(params.get("allowed_payment_method_types"), ["card"])
+        self.assertNotIn("payment_method_types", params)
         self.assertEqual(params["line_items"][0]["price_data"]["unit_amount"], 500)
         self.assertEqual(params["success_url"], "https://app.example/billing?checkout=success")
         self.assertEqual(params["cancel_url"], "https://app.example/billing?checkout=cancelled")
@@ -314,7 +316,7 @@ class BillingTest(unittest.TestCase):
         session, _, charge = self.paid()
         charge["disputed"] = True
         dispute = {
-            "id": "dp_fixture",
+            "id": "du_fixture",
             "object": "dispute",
             "livemode": False,
             "payment_intent": "pi_fixture",
@@ -417,7 +419,8 @@ class BillingTest(unittest.TestCase):
         params = parse_qs(args[3])
         self.assertEqual(params["line_items[0][price_data][unit_amount]"], ["500"])
         self.assertEqual(params["payment_intent_data[metadata][zils_owner_id]"], [OWNER])
-        self.assertEqual(params["payment_method_types[0]"], ["card"])
+        self.assertEqual(params["allowed_payment_method_types[0]"], ["card"])
+        self.assertNotIn("payment_method_types[0]", params)
 
     def test_failed_payment_ignored_and_webhook_upstream_failure_retries(self):
         event = self.event("checkout.session.async_payment_failed")

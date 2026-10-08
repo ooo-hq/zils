@@ -59,7 +59,8 @@ class StripeNetwork:
                     for name in ("zils_purchase_id", "zils_owner_id", "zils_mode")
                 }
                 assert params["mode"] == ["payment"]
-                assert params["payment_method_types[0]"] == ["card"]
+                assert params["allowed_payment_method_types[0]"] == ["card"]
+                assert "payment_method_types[0]" not in params
                 assert params["payment_intent_data[metadata][zils_owner_id]"] == [
                     metadata["zils_owner_id"]
                 ]

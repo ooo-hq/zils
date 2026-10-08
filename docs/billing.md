@@ -178,6 +178,31 @@ replay its webhook, issue partial/full test refunds, and exercise dispute events
 against the isolated test project. Fixture tests do not establish that a Stripe
 account, webhook URL, or deployment has been configured correctly.
 
+### Stripe sandbox validation
+
+Hosted Stripe Checkout was exercised with official test cards, the Python SDK's
+serialized requests, a CLI-authorized sandbox transport, signed webhook
+forwarding, and the actual ledger migrations in local PostgreSQL. The dashboard
+used a synthetic local sign-in. The observed results were:
+
+| Scenario | Verified result |
+| --- | --- |
+| $5 payment | $5 credit and one included training run |
+| Four concurrent duplicate webhook deliveries | One top-up entry; balance and allowance unchanged |
+| $2 partial refund, then the remaining $3 | Balance fell to $3, then $0; full reversal removed the unused bonus |
+| Disputed $5 payment | New spending rejected while the account still held $5 |
+| Lost dispute | Original signed closing event reversed $5, removed the unused bonus, and cleared the hold |
+
+This validation exposed two fixture blind spots that are covered by regression
+tests: the current Checkout API requires `allowed_payment_method_types`, and
+Stripe dispute IDs use the `du_` prefix. The closing event initially failed ID
+validation and passed when replayed with its original signature after the fix.
+
+This is sandbox evidence, not a production rollout. It does not validate a
+hosted Supabase deployment, production API-key configuration, a publicly hosted
+webhook endpoint, real customer sign-in, or GPU consumption. Repeat the checks
+against the intended isolated hosted deployment before opening paid access.
+
 Live payments require separate operator authorization and verification, a live
 secret, live webhook, matching database mode, an HTTPS dashboard origin, and
 `ZILS_BILLING_ALLOW_LIVE=true`. Merely supplying a live key while configured for
