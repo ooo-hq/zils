@@ -86,7 +86,16 @@ class Store:
                 return {"owner_id": rows[0]["owner_id"], "id": rows[0]["id"]}
         raise DecisionError(401, "invalid_credentials", "API key is invalid or revoked.")
 
-    def admit(self, owner, key_id, request_id, tokens, billable_tokens=None):
+    def admit(
+        self,
+        owner,
+        key_id,
+        request_id,
+        tokens,
+        billable_tokens=None,
+        model_id=None,
+        model_name=None,
+    ):
         values = {
             "p_owner": identifier(owner),
             "p_key": identifier(key_id) if key_id else None,
@@ -95,6 +104,9 @@ class Store:
         }
         if billable_tokens is not None:
             values["p_billable_tokens"] = billable_tokens
+        if model_id is not None:
+            values["p_model_id"] = model_id
+            values["p_model_name"] = model_name or model_id
         status = self.db.rpc("zils_api_admit", values)
         if status == "allowed":
             return
