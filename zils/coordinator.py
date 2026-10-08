@@ -41,6 +41,27 @@ def public_job(job):
         if job.get("job_sha256") or job.get("model_profile")
         else None
     )
+    if models.job_model(job) == models.IMAJEV:
+        result["image_intake"] = job.get("image_intake")
+        date = (
+            job.get("updated_at")
+            if job["status"] in ("completed", "failed")
+            else job.get("created_at")
+            if job["status"] == "uploading"
+            else None
+        )
+        result["data_expires_at"] = (
+            (
+                datetime.fromisoformat(date.replace("Z", "+00:00"))
+                + (
+                    timedelta(days=30)
+                    if job["status"] in ("completed", "failed")
+                    else timedelta(hours=24)
+                )
+            ).isoformat()
+            if date
+            else None
+        )
     result["selection"] = (job.get("manifest") or {}).get("selection")
     return result
 
@@ -157,23 +178,41 @@ class Service:
                     raise APIError(
                         400, "Permission to share training data with approved workers is required."
                     )
+                intake = body.get("image_intake")
+                if intake is not None:
+                    if selected != models.IMAJEV:
+                        raise APIError(400, "Image intake requires an image model.")
+                    image_jobs.validate_intake(intake)
                 job = self.store.rpc(
-                    "zils_create_profile_job",
+                    "zils_create_image_job" if intake is not None else "zils_create_profile_job",
                     {
                         "p_owner": owner,
                         "p_name": body["name"],
                         "p_acceptance": body["acceptance"],
                         "p_model": profile,
+                        **({"p_intake": intake} if intake is not None else {}),
                     },
                 )
                 return self.uploads(job)
-        match = re.fullmatch(r"/v1/jobs/([a-f0-9-]+)(?:/(uploads|submit|downloads|cancel))?", path)
+        match = re.fullmatch(
+            r"/v1/jobs/([a-f0-9-]+)(?:/(uploads|submit|downloads|cancel|image-assets))?", path
+        )
         if not match:
             raise APIError(404, "Unknown route.")
         job = self.job(match[1], owner)
         action = match[2]
         if method == "GET" and action is None:
             return {"job": public_job(job)}
+        if method == "GET" and action == "image-assets":
+            if models.job_model(job) != models.IMAJEV or job["status"] != "uploading":
+                raise APIError(409, "This job is no longer accepting image uploads.")
+            rows = self.store.rows(
+                "zils_image_assets",
+                f"job_id=eq.{job['id']}&owner_id=eq.{owner}&state=in.(uploading,verifying,ready)&order=created_at.desc&limit=1792",
+            )
+            return {
+                "assets": [{k: row[k] for k in ("id", "filename", "source_sha256")} for row in rows]
+            }
         if method == "POST" and action == "uploads":
             return self.uploads(job)
         if method == "POST" and action == "submit":

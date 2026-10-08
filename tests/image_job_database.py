@@ -102,5 +102,18 @@ def run(command):
         db.sql(f"select to_jsonb(referenced) from zils_image_assets where id={literal(aid)}")
         is True
     )
+    intake = {
+        "version": "zils-image-intake/v1",
+        "seed": "reviewed-seed",
+        "snapshot_sha256": "d" * 64,
+    }
+    image = db.rpc("zils_create_image_job", {**args, "p_intake": intake})
+    assert image["image_intake"] == intake
+    try:
+        db.sql(f"update fez_training_jobs set image_intake=null where id={literal(image['id'])}")
+    except APIError:
+        pass
+    else:
+        raise AssertionError("frozen image intake changed")
     legacy = db.rpc("fez_create_training_job", {k: v for k, v in args.items() if k != "p_model"})
     assert legacy["model_profile"] is None

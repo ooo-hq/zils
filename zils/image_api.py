@@ -5,6 +5,7 @@ import re
 
 from .decisions import DecisionError, invalid
 from .image_contract import validate_image_request
+from .models import IMAJEV
 
 
 def enabled(name="ZILS_IMAGES_ENABLED"):
@@ -45,6 +46,15 @@ class ImageApi:
                     if "image" in entry.get("capabilities", {}).get("modalities", [])
                 ],
                 "training_enabled": enabled("ZILS_IMAGE_TRAINING_ENABLED"),
+                "training_profile": {
+                    "model": IMAJEV,
+                    "max_train": 1024,
+                    "max_calibration": 256,
+                    "max_test": 512,
+                    "max_source_bytes": 10485760,
+                    "max_pixels": 16000000,
+                    "max_edge": 8192,
+                },
             }
         if path == "/v1/image-decisions" and method == "POST":
             validate_image_request(body)
@@ -68,9 +78,11 @@ class ImageApi:
                 body["source_bytes"],
                 body["source_sha256"],
             )
-        match = re.fullmatch(r"/v1/image-assets/([^/]+)(/complete)?", path)
+        match = re.fullmatch(r"/v1/image-assets/([^/]+)(/complete|/resume)?", path)
         if match and body == {}:
-            if method == "POST" and match[2]:
+            if method == "POST" and match[2] == "/resume":
+                return 200, self.images.resume(owner, match[1])
+            if method == "POST" and match[2] == "/complete":
                 return 200, self.images.complete(owner, match[1])
             if method == "DELETE" and not match[2]:
                 self.images.delete_unused(owner, match[1])

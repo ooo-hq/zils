@@ -63,6 +63,20 @@ def case_fingerprint(case, canonical_sha256):
     ).hexdigest()
 
 
+def validate_intake(value):
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"version", "seed", "snapshot_sha256"}
+        or value["version"] != "zils-image-intake/v1"
+        or not isinstance(value["seed"], str)
+        or not 1 <= len(value["seed"]) <= 100
+        or not isinstance(value["snapshot_sha256"], str)
+        or not re.fullmatch("[a-f0-9]{64}", value["snapshot_sha256"])
+    ):
+        raise ValueError("invalid frozen image intake")
+    return value
+
+
 def validate_policy(policy, outcomes=None):
     extra = {"positive_class", "min_positive_recall", "max_false_positive_rate", "min_class_recall"}
     if not isinstance(policy, dict):
@@ -242,10 +256,16 @@ def build(root, job, splits, assets, policy):
         "outcome_order": order,
         "split_plan": {
             "method": "customer-reviewed-groups/v1",
+            "seed": validate_intake(job["image_intake"])["seed"]
+            if job.get("image_intake")
+            else None,
+            "proportions": {s: len(c) / sum(map(len, clean.values())) for s, c in clean.items()},
             "groups": groups,
             "counts": {s: len(c) for s, c in clean.items()},
         },
     }
+    if job.get("image_intake"):
+        manifest["image_intake"] = validate_intake(job["image_intake"])
     benchmark.write_private(root / "manifest.json", manifest_bytes(manifest).decode())
     return manifest
 
@@ -280,6 +300,15 @@ def audit(root, manifest):
         or question != manifest["question"]
         or order != manifest["outcome_order"]
         or groups != manifest["split_plan"]["groups"]
+        or manifest["split_plan"]["counts"] != {s: len(c) for s, c in splits.items()}
+        or manifest["split_plan"]["proportions"]
+        != {s: len(c) / sum(map(len, splits.values())) for s, c in splits.items()}
+        or manifest["split_plan"]["seed"]
+        != (
+            validate_intake(manifest["image_intake"])["seed"]
+            if manifest.get("image_intake")
+            else None
+        )
         or manifest["counts"] != {s: len(c) for s, c in splits.items()}
         or benchmark.read_jsonl(root / "miner-training.jsonl")
         != training_rows(splits["train"], catalog)

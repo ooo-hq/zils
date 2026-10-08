@@ -104,7 +104,9 @@ end $$;
 
 create function public.zils_image_get(p_owner uuid,p_asset uuid) returns jsonb
 language sql security definer set search_path=public,pg_temp as $$
-  select to_jsonb(a) || jsonb_build_object('read_until',least(clock_timestamp()+interval '10 minutes',
+  select to_jsonb(a) || jsonb_build_object('uploadable', a.state='uploading' and
+    (a.purpose='prediction' or (j.status='uploading' and j.created_at+interval '24 hours'>clock_timestamp())),
+    'read_until',least(clock_timestamp()+interval '10 minutes',
     case when a.purpose='prediction' or j.status='uploading' then a.expires_at
          when j.status='completed' then j.updated_at+interval '30 days'
          else clock_timestamp()+interval '10 minutes' end))

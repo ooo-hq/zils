@@ -233,6 +233,11 @@ class ImageJobsTest(unittest.TestCase):
             "model": models.IMAJEV,
             "acceptance": POLICY,
             "allow_training_data_export": True,
+            "image_intake": {
+                "version": "zils-image-intake/v1",
+                "seed": "fixture",
+                "snapshot_sha256": "a" * 64,
+            },
         }
         with patch.dict(
             "os.environ", {"ZILS_IMAGES_ENABLED": "false", "ZILS_IMAGE_TRAINING_ENABLED": "true"}
@@ -248,6 +253,7 @@ class ImageJobsTest(unittest.TestCase):
         frozen = store.tables["fez_training_jobs"][0]
         self.assertEqual(models.job_model(frozen), models.IMAJEV)
         self.assertIsNone(result["job"]["result"])
+        self.assertEqual(result["job"].get("image_intake"), body["image_intake"])
 
     def test_upgrade_rejects_cross_family_and_predecessor_training_holdout_overlap(self):
         from tests.test_version_selection import versioned_fixture

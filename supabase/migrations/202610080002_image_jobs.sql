@@ -1,4 +1,5 @@
 begin;
+alter table public.fez_training_jobs add column image_intake jsonb;
 -- Server-owned, exact profiles. Clients cannot add models or mutate jobs after creation.
 create table public.zils_model_profiles(id text primary key, profile jsonb not null);
 insert into public.zils_model_profiles values
@@ -12,6 +13,9 @@ grant select on public.zils_model_profiles to service_role;
 create function public.zils_job_profile_guard() returns trigger
 language plpgsql set search_path='' as $$
 begin
+  if tg_op='UPDATE' and old.image_intake is not null and old.image_intake is distinct from new.image_intake then
+    raise exception 'image intake is immutable';
+  end if;
   if tg_op='UPDATE' and old.model_profile is distinct from new.model_profile then
     if old.model_profile is not null or old.status<>'uploading' or old.manifest is not null then
       raise exception 'job model profile is immutable';
@@ -67,4 +71,19 @@ begin
 end $$;
 revoke execute on function public.zils_submit_image_job(uuid,uuid,jsonb) from public,anon,authenticated;
 grant execute on function public.zils_submit_image_job(uuid,uuid,jsonb) to service_role;
+create function public.zils_create_image_job(p_owner uuid,p_name text,p_acceptance jsonb,p_model jsonb,p_intake jsonb)
+returns public.fez_training_jobs language plpgsql set search_path='' as $$
+declare item public.fez_training_jobs;
+begin
+  if jsonb_typeof(p_intake) is distinct from 'object' or not (p_intake ?& array['version','seed','snapshot_sha256'])
+     or p_model->>'id' is distinct from 'imajev-4b-v1' or p_intake->>'version' is distinct from 'zils-image-intake/v1'
+     or p_intake->>'snapshot_sha256' !~ '^[a-f0-9]{64}$' or length(p_intake->>'seed') not between 1 and 100 then
+    raise exception 'invalid image intake';
+  end if;
+  item:=public.zils_create_profile_job(p_owner,p_name,p_acceptance,p_model);
+  update public.fez_training_jobs set image_intake=p_intake where id=item.id returning * into item;
+  return item;
+end $$;
+revoke execute on function public.zils_create_image_job(uuid,text,jsonb,jsonb,jsonb) from public,anon,authenticated;
+grant execute on function public.zils_create_image_job(uuid,text,jsonb,jsonb,jsonb) to service_role;
 commit;

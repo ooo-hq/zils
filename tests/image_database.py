@@ -254,11 +254,26 @@ def run(command):
     aid = draft["asset"]["id"]
     row = db.rpc("zils_image_get", {"p_owner": owner, "p_asset": aid})
     blobs.objects[row["source_path"]] = raw
+    recovered = service.resume(owner, aid)
+    assert recovered["uploaded"] is True and "upload" not in recovered
     service.complete(owner, aid)
+    assert service.resume(owner, aid)["asset"]["state"] == "ready"
     db.sql(
         f"update zils_image_assets set referenced=true,expires_at=now()-interval '1 day',grant_expires_at=now()-interval '1 day',finalize_until=now()-interval '1 second' where id={literal(aid)}"
     )
+    unfinished = service.create(
+        owner, "training", job, "unfinished.png", len(raw), hashlib.sha256(raw).hexdigest()
+    )
     db.sql(f"update fez_training_jobs set status='running' where id={literal(job)}")
+    try:
+        service.resume(owner, unfinished["asset"]["id"])
+    except DecisionError as error:
+        assert error.status == 404
+    else:
+        raise AssertionError("issued an upload grant after the job stopped accepting uploads")
+    db.sql(
+        f"update zils_image_assets set grant_expires_at=now()-interval '1 day' where id={literal(unfinished['asset']['id'])}"
+    )
     assert service.resolve(owner, aid)["state"] == "ready"  # live jobs survive draft TTL
     grant = service.read_reference(owner, aid, "training")
     remaining = (
@@ -296,7 +311,7 @@ def run(command):
         assert error.status == 404
     else:
         raise AssertionError("expired training asset still accessible")
-    assert service.cleanup()["removed"] == 1
+    assert service.cleanup()["removed"] == 2
     print(
         "Images: canonical bytes, source integrity, crash recovery and live/terminal retention passed."
     )

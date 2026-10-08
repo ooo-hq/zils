@@ -90,6 +90,24 @@ class ImageStore:
         self._get(owner, row["id"])
         return {"asset": public_asset(row), "upload": signed}
 
+    def resume(self, owner, asset_id):
+        row = self._get(owner, asset_id)
+        if row["state"] == "ready" or self.db.exists(BUCKET, row["source_path"]):
+            return {"asset": public_asset(row), "uploaded": True}
+        if row["state"] != "uploading":
+            raise DecisionError(
+                409, "image_verifying", "Image verification is in progress; retry shortly."
+            )
+        if not row.get("uploadable"):
+            raise not_found()
+        signed = self.db.signed(BUCKET, row["source_path"], upload=True)
+        self.db.rpc(
+            "zils_image_grant",
+            {"p_owner": owner, "p_asset": asset_id, "p_expires": upload_expiry(signed["url"])},
+        )
+        self._get(owner, asset_id)
+        return {"asset": public_asset(row), "uploaded": False, "upload": signed}
+
     def _get(self, owner, asset_id, purpose=None):
         row = self.db.rpc(
             "zils_image_get", {"p_owner": identifier(owner), "p_asset": identifier(asset_id)}
