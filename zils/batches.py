@@ -241,7 +241,10 @@ class Worker:
             "DELETE",
             f"/rest/v1/zils_api_batches?finished_at=lt.{metadata_cutoff}&purged_at=not.is.null",
         )
-        self.db.request("DELETE", f"/rest/v1/zils_api_usage?created_at=lt.{metadata_cutoff}")
+        # Unfinished usage remains the reconciliation handle for reserved credit.
+        self.db.request(
+            "DELETE", f"/rest/v1/zils_api_usage?created_at=lt.{metadata_cutoff}&status=neq.started"
+        )
 
     def once(self):
         batch = self.db.rpc("zils_api_batch_claim", {})
@@ -323,16 +326,23 @@ class Worker:
                         {"line": item["line"], "result": record_error(item["custom_id"], error)},
                     )
             else:
-                self.work(
-                    batch,
-                    "result",
-                    {
-                        "line": item["line"],
-                        "request_id": request_id,
-                        "input_tokens": response["usage"]["input_tokens"],
-                        "result": {"custom_id": item["custom_id"], "response": response},
-                    },
-                )
+                try:
+                    self.work(
+                        batch,
+                        "result",
+                        {
+                            "line": item["line"],
+                            "request_id": request_id,
+                            "input_tokens": response["usage"]["input_tokens"],
+                            "result": {"custom_id": item["custom_id"], "response": response},
+                        },
+                    )
+                except APIError as error:
+                    if error.status == 409:
+                        # Cancellation, expiry or a lost lease rejected the result.
+                        # Finishing only started usage cannot undo a committed charge.
+                        self.gateway.store.finish_usage(request_id, None, "failed")
+                    raise
             # Completion/cancellation may have cleared the lease; release is safely fenced.
             try:
                 self.work(batch, "release", {"delay": delay})

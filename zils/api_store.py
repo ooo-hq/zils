@@ -86,16 +86,16 @@ class Store:
                 return {"owner_id": rows[0]["owner_id"], "id": rows[0]["id"]}
         raise DecisionError(401, "invalid_credentials", "API key is invalid or revoked.")
 
-    def admit(self, owner, key_id, request_id, tokens):
-        status = self.db.rpc(
-            "zils_api_admit",
-            {
-                "p_owner": identifier(owner),
-                "p_key": identifier(key_id) if key_id else None,
-                "p_request": identifier(request_id),
-                "p_tokens": tokens,
-            },
-        )
+    def admit(self, owner, key_id, request_id, tokens, billable_tokens=None):
+        values = {
+            "p_owner": identifier(owner),
+            "p_key": identifier(key_id) if key_id else None,
+            "p_request": identifier(request_id),
+            "p_tokens": tokens,
+        }
+        if billable_tokens is not None:
+            values["p_billable_tokens"] = billable_tokens
+        status = self.db.rpc("zils_api_admit", values)
         if status == "allowed":
             return
         if status == "limited":
@@ -104,6 +104,10 @@ class Store:
             )
         if status == "disabled":
             raise DecisionError(401, "invalid_credentials", "Account or credential is disabled.")
+        if status == "billing_meter_unavailable":
+            raise DecisionError(503, status, "Model input billing is temporarily unavailable.")
+        if status == "insufficient_credit":
+            raise DecisionError(402, status, "Add credit to your account to run this request.")
         raise DecisionError(409, "request_conflict", "Request has already been admitted.")
 
     def finish_usage(self, request_id, tokens, status):

@@ -86,7 +86,9 @@ class Database:
                 clauses.append(name(key) + (" is null" if value == "is.null" else " is not null"))
             else:
                 op, val = value.split(".", 1)
-                clauses.append(name(key) + {"eq": "=", "gt": ">", "lt": "<"}[op] + literal(val))
+                clauses.append(
+                    name(key) + {"eq": "=", "neq": "<>", "gt": ">", "lt": "<"}[op] + literal(val)
+                )
         where = " where " + " and ".join(clauses) if clauses else ""
         return columns, where, order + limit
 
@@ -285,7 +287,27 @@ def run(command):
             "update zils_api_batches set finished_at=now()-interval '8 days' where id="
             + literal(second)
         )
+        # Retention must preserve reconciliation records for unfinished requests.
+        # Monetary reservations added by billing remain tied to these usage rows.
+        old_usage = {status: str(uuid.uuid4()) for status in ("started", "completed", "failed")}
+        for status, request_id in old_usage.items():
+            store.admit(OWNER, rotated["id"], request_id, 10)
+            if status != "started":
+                store.finish_usage(request_id, 10 if status == "completed" else None, status)
+        db.sql(
+            "update zils_api_usage set created_at=now()-interval '31 days' where request_id in ("
+            + ",".join(literal(request_id) for request_id in old_usage.values())
+            + ")"
+        )
         worker.cleanup()
+        assert db.rows("zils_api_usage", "request_id=eq." + old_usage["started"])
+        for status in ("completed", "failed"):
+            assert db.rows("zils_api_usage", "request_id=eq." + old_usage[status]) == []
+        store.finish_usage(old_usage["started"], None, "failed")
+        assert (
+            db.rows("zils_api_usage", "request_id=eq." + old_usage["started"])[0]["status"]
+            == "failed"
+        )
         assert second_path not in db.objects
         assert db.rows("zils_api_batch_items", "batch_id=eq." + second) == []
         try:

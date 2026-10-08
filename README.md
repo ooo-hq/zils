@@ -230,7 +230,7 @@ create `.venv-kev` if it does not exist, then install the test dependencies:
 uv venv --python 3.13 .venv-kev
 uv pip install --python .venv-kev/bin/python \
   -r requirements/dev.txt -r requirements/model.txt \
-  -r requirements/rehearsal.txt -r requirements/testnet.txt
+  -r requirements/rehearsal.txt -r requirements/testnet.txt -r requirements/api.txt
 uv pip install --python .venv-kev/bin/python --no-deps -r requirements/jevk5-source.txt
 make check
 ```

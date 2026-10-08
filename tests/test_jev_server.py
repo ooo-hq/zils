@@ -2,10 +2,18 @@
 
 import importlib
 import importlib.util
+import json
 import threading
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+
+
+class Tokenizer:
+    def encode(self, text, *, add_special_tokens):
+        self.text = text
+        self.special_tokens = add_special_tokens
+        return list(text.encode("utf-8"))
 
 
 class RuntimeTest(unittest.TestCase):
@@ -107,12 +115,66 @@ class ModelWrapperTest(unittest.TestCase):
         self.assertTrue(hasattr(m, "JevEngine"), "JevK5 wrapper is missing")
         return m
 
+    def test_billable_input_contains_shared_state_once_and_has_canonical_order(self):
+        m = self.module()
+
+        class Model:
+            tok = Tokenizer()
+
+            def encode(self, *args):
+                return [1] * 100
+
+        model = Model()
+        engine = m.JevEngine(model)
+        questions = {f"q{i}": {"type": "noul"} for i in range(10)}
+        body = {"model": "shared-alias", "state": "shared € context", "questions": questions}
+        prepared = engine.prepare(body)
+        self.assertEqual(prepared["billable_tokens"], 254)
+        self.assertEqual(prepared["reserved_tokens"], 1000)
+        self.assertEqual(model.tok.text.count("shared € context"), 1)
+        self.assertEqual(set(json.loads(model.tok.text)), {"state", "questions"})
+        self.assertFalse(model.tok.special_tokens)
+        canonical_input = model.tok.text
+        reordered = {
+            "questions": dict(reversed(list(questions.items()))),
+            "model": "immutable-release-id",
+            "state": "shared € context",
+        }
+        self.assertEqual(engine.prepare(reordered)["billable_tokens"], 254)
+        self.assertEqual(model.tok.text, canonical_input)
+
+    def test_unavailable_logical_tokenizer_cannot_return_a_billable_meter(self):
+        m = self.module()
+        from zils.decisions import DecisionError
+
+        class InvalidTokenizer:
+            def encode(self, *args, **kwargs):
+                return self.result
+
+        class Model:
+            tok = InvalidTokenizer()
+
+            def encode(self, *args):
+                return [1] * 100
+
+        model = Model()
+        engine = m.JevEngine(model)
+        for ids in (None, [], "tokens", [True], [-1], [1.5]):
+            with self.subTest(ids=ids):
+                model.tok.result = ids
+                with self.assertRaises(DecisionError) as error:
+                    engine.prepare(
+                        {"model": "m", "state": {}, "questions": {"q": {"type": "noul"}}}
+                    )
+                self.assertEqual(error.exception.status, 503)
+
     def test_large_choice_token_accounting_and_preflight(self):
         m = self.module()
         from zils.decisions import DecisionError, make_response
 
         class Model:
             calls = 0
+            tok = Tokenizer()
 
             def encode(self, state, criterion, texts):
                 return list(range(10 + len(texts)))
@@ -132,6 +194,7 @@ class ModelWrapperTest(unittest.TestCase):
                 },
             }
             prepared = engine.prepare(body)
+            logical_input = model.tok.text
             before = model.calls
             result = engine.predict(prepared)
             response = make_response("m", body, result)
@@ -141,6 +204,10 @@ class ModelWrapperTest(unittest.TestCase):
             expected = 10 + count if count <= 16 else 10 * ((count + 15) // 16) + count + 26
             self.assertEqual(response["usage"]["input_tokens"], expected)
             self.assertGreaterEqual(prepared["reserved_tokens"], expected)
+            self.assertEqual(model.tok.text, logical_input)
+            self.assertEqual(
+                json.loads(logical_input), {"questions": body["questions"], "state": {}}
+            )
         small = m.JevEngine(model, max_pass_tokens=11, max_request_tokens=100)
         before = model.calls
         with self.assertRaises(DecisionError) as err:

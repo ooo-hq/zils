@@ -8,6 +8,7 @@ JevK5 4B; the testnet fleet uses Kev 0.8B and requires operator admission.
 | Task | Documentation |
 | --- | --- |
 | Serve typed decisions and bulk jobs | [Zils decision API](decision-api.md) |
+| Test prepaid credit and Stripe Checkout | [Prepaid billing](billing.md) |
 | Run a JevK5 miner | [JevK5 miner setup](queue-miners.md) |
 | Register on Bittensor testnet | [Miner registration](bittensor-registration.md), [closed fleet setup](testnet.md) |
 | Run a validator | [Queue and Bittensor validators](validators.md) |
