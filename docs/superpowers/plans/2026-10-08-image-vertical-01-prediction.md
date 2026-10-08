@@ -242,4 +242,3 @@ export function imageAnswerLabel(answer: {
 ```
 
 Use this only after the full response schema validates finite normalized probabilities. The panel must not separately render a confident-looking choice badge when this function returns Needs review.
-

@@ -217,4 +217,3 @@ def full_brier(gold, probabilities):
 ```
 
 Add `full_brier(gold: str, probabilities: dict[str,float]) -> float` in image_metrics.py and call it only after validating the full distribution. Require outcome_order to match exactly the known distribution keys. Compute the chosen label from outcome_order followed by unknown; it is not the argmax of the conditional public response.
-
