@@ -18,6 +18,9 @@ def main():
     parser.add_argument("--out", type=Path)
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
     with redirect_stdout(sys.stderr):
         from zils import imajev, models, settings
 
@@ -45,7 +48,23 @@ def main():
                 prepared = engine.prepare(
                     imajev.image_path(args.images, row["image"]), row["state"], row["question"]
                 )
-                result = engine.predict(prepared, meta["temperature"])
+                import torch
+
+                from zils.image_metrics import probabilities_at_temperature
+
+                with torch.inference_mode():
+                    logits = engine.logits(prepared).cpu().tolist()
+                result = {
+                    "probabilities": dict(
+                        zip(
+                            prepared["keys"],
+                            probabilities_at_temperature(logits, meta["temperature"]),
+                            strict=True,
+                        )
+                    ),
+                    "input_tokens": prepared["input_tokens"],
+                    "logits": logits,
+                }
                 predictions.append(
                     {"id": row["id"], **result, "elapsed_ms": 1000 * (time.perf_counter() - tick)}
                 )

@@ -179,3 +179,13 @@ class ImageQueueTest(unittest.TestCase):
                 "image-downloads",
             )
         self.assertEqual(len(store.tickets), count)
+
+    def test_fixture_http_image_job_accepts_a_qualifying_candidate(self):
+        from tests.image_flow_fixture import run
+
+        run(self)
+
+    def test_fixture_http_image_job_retains_negative_quality_result(self):
+        from tests.image_flow_fixture import run
+
+        run(self, reject=True)

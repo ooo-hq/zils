@@ -575,6 +575,10 @@ class Processor:
             raise ValueError("processor reference differs from the active service model")
         for path in self.references.values():
             zils.checkpoint_hash(path)
+            if models.checkpoint_model(path) == models.IMAJEV:
+                from .imajev import verify_starting_checkpoint
+
+                verify_starting_checkpoint(path)
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
 
     def renew(self, job):
@@ -715,13 +719,40 @@ class Processor:
     def evaluate(self, job, work):
         from .validator import evaluate_round
 
+        model = models.job_model(job)
+        if model == models.IMAJEV and not gpu_ready(self.args.device, model=model):
+            raise APIError(503, "Waiting for image evaluation capacity.")
         data = work / "benchmark"
         data.mkdir(mode=0o700)
         for name in (*benchmark.FILES, "manifest.json"):
             self.store.download(DATA_BUCKET, prepared_path(job, name), data / name, MAX_DATA_BYTES)
         if digest(data / "manifest.json") != job["job_sha256"]:
             raise ValueError("job manifest changed")
-        reference = self.references[models.job_model(job)]
+        if model == models.IMAJEV:
+            from .image_store import BUCKET as IMAGE_BUCKET, ImageStore
+
+            manifest = image_jobs.verify_binding(job)
+            benchmark.audit(data)
+            cache = work / "images"
+            cache.mkdir(mode=0o700)
+            image_store = ImageStore(self.store)
+            for aid, asset in manifest["assets"].items():
+                if asset["split"] not in ("calibration", "test"):
+                    continue
+                live = image_store._get(job["owner_id"], aid, "training")
+                if live["state"] != "ready" or any(
+                    live[k] != asset[k] for k in image_jobs.ASSET_FIELDS
+                ):
+                    raise ValueError("Evaluation image binding changed")
+                target = cache / (asset["canonical_sha256"] + ".png")
+                if not target.exists():
+                    self.store.download(IMAGE_BUCKET, live["canonical_path"], target, 10 * 1024**2)
+                if (
+                    digest(target) != asset["canonical_sha256"]
+                    or target.stat().st_size != asset["canonical_bytes"]
+                ):
+                    raise ValueError("Evaluation image bytes changed")
+        reference = self.references[model]
         if zils.checkpoint_hash(reference) != job["initial_sha256"]:
             raise ValueError("reference changed")
         zils.stage(zils.submission(reference, 0), work / "reference")
@@ -782,8 +813,12 @@ class Processor:
             "median_ms",
             "p95_ms",
         )
+        if model == models.IMAJEV:
+            from .image_metrics import PUBLIC_FIELDS
+
+            fields += PUBLIC_FIELDS
         result = {
-            "model": models.spec(models.job_model(job)),
+            "model": models.spec(model),
             "delivery": {k: v for k, v in report["delivery"].items() if k != "checkpoint"},
             "baseline": {k: report["baseline"][k] for k in fields if k in report["baseline"]},
             "miners": [{k: r[k] for k in fields if k in r} for r in report["miners"]],
