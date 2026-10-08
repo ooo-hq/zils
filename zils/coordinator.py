@@ -42,6 +42,25 @@ def public_job(job):
         else None
     )
     if models.job_model(job) == models.IMAJEV:
+        from .image_metrics import public_metrics
+
+        result["acceptance"] = job.get("acceptance")
+        if result["result"] is not None:
+
+            def aggregate(row):
+                return {
+                    **public_metrics(row),
+                    **{k: row[k] for k in ("uid", "status") if k in row},
+                    **({"count": row["cases"]} if "cases" in row else {}),
+                }
+
+            result["result"] = {
+                "image_metrics_version": "zils-image-metrics/v1",
+                "baseline": aggregate(data["baseline"]),
+                "miners": [aggregate(row) for row in data.get("miners", [])],
+                "delivery": data["delivery"],
+                "weights": data.get("weights", {}),
+            }
         result["image_intake"] = job.get("image_intake")
         date = (
             job.get("updated_at")
