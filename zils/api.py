@@ -14,6 +14,7 @@ from .api_store import Store, identifier, safe_cloud
 from .cloud import APIError, trusted_url
 from .decision_http import Server, make_handler
 from .decisions import DecisionError, decode_body, make_response, validate_request
+from .image_contract import IMAGE_CAPABILITIES, TEXT_CAPABILITIES
 
 
 class Registry:
@@ -32,8 +33,12 @@ class Registry:
                 "release_date",
                 "description",
             }
-            if not isinstance(entry, dict) or set(entry) != required:
+            if not isinstance(entry, dict) or set(entry) - {"capabilities"} != required:
                 raise ValueError("Invalid model registry entry")
+            capabilities = entry.get("capabilities", TEXT_CAPABILITIES)
+            if capabilities not in (TEXT_CAPABILITIES, IMAGE_CAPABILITIES):
+                raise ValueError("Unsupported model capabilities")
+            entry = {**entry, "capabilities": json.loads(json.dumps(capabilities))}
             if not re.fullmatch("[a-f0-9]{64}", entry["fingerprint"]):
                 raise ValueError("Pin the model release fingerprint")
             if not isinstance(entry["aliases"], list) or not all(
@@ -73,6 +78,11 @@ class Registry:
                     "name": name,
                     "description": entry["description"],
                     "release_date": entry["release_date"],
+                    **(
+                        {"capabilities": entry["capabilities"]}
+                        if entry["capabilities"] != TEXT_CAPABILITIES
+                        else {}
+                    ),
                 }
                 for name, entry in self.names.items()
                 if entry["owners"] is None or owner in entry["owners"]
