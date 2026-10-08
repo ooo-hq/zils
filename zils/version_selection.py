@@ -53,6 +53,13 @@ def freeze(store, job):
         if len(rows) != 1 or rows[0]["owner_id"] != job["owner_id"]:
             raise ValueError("Previous model is unavailable to this customer")
         parent = rows[0]
+        from . import models
+
+        # Historical callers without a frozen profile retain their existing path.
+        if job.get("model_profile") is not None and models.job_model(job) != models.job_model(
+            parent
+        ):
+            raise ValueError("Previous model belongs to a different profile family")
         delivery = _accepted(parent)
         model_id = f"zils-adapter-{previous_id}-{delivery['sha256']}"
         workflow = parent["result"].get("workflow") or {}

@@ -104,7 +104,12 @@ end $$;
 
 create function public.zils_image_get(p_owner uuid,p_asset uuid) returns jsonb
 language sql security definer set search_path=public,pg_temp as $$
-  select to_jsonb(a) from zils_image_assets a where id=p_asset and owner_id=p_owner and zils_image_live(a)
+  select to_jsonb(a) || jsonb_build_object('read_until',least(clock_timestamp()+interval '10 minutes',
+    case when a.purpose='prediction' or j.status='uploading' then a.expires_at
+         when j.status='completed' then j.updated_at+interval '30 days'
+         else clock_timestamp()+interval '10 minutes' end))
+  from zils_image_assets a left join fez_training_jobs j on j.id=a.job_id
+  where a.id=p_asset and a.owner_id=p_owner and zils_image_live(a)
 $$;
 
 create function public.zils_image_claim_finalize(p_owner uuid,p_asset uuid) returns jsonb

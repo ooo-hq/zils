@@ -67,6 +67,12 @@ def validate_spec(value):
 
 def job_model(job):
     value = (job.get("manifest") or {}).get("model")
+    profile = job.get("model_profile")
+    if profile is not None:
+        model = validate_spec(profile)
+        if value is not None and value != profile:
+            raise ValueError("job profile differs from its frozen manifest")
+        return model
     return validate_spec(value) if value is not None else KEV
 
 

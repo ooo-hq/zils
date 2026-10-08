@@ -140,6 +140,7 @@ def run(command):
     import base64
     import json
     import time
+    from datetime import datetime, timezone
     from pathlib import Path
 
     from tests.test_image_assets import png
@@ -259,6 +260,13 @@ def run(command):
     )
     db.sql(f"update fez_training_jobs set status='running' where id={literal(job)}")
     assert service.resolve(owner, aid)["state"] == "ready"  # live jobs survive draft TTL
+    grant = service.read_reference(owner, aid, "training")
+    remaining = (
+        datetime.fromisoformat(grant["expires_at"]) - datetime.now(timezone.utc)
+    ).total_seconds()
+    assert 0 < remaining <= 600, (
+        "runtime read deadline must follow the live grant, not expired draft TTL"
+    )
     try:
         service.delete_unused(owner, aid)
     except APIError:
@@ -270,6 +278,15 @@ def run(command):
         f"update fez_training_jobs set status='completed',updated_at=now()-interval '29 days' where id={literal(job)}"
     )
     assert service.resolve(owner, aid)["state"] == "ready"
+    db.sql(
+        f"update fez_training_jobs set updated_at=now()-interval '30 days'+interval '5 minutes' where id={literal(job)}"
+    )
+    grant = service.read_reference(owner, aid, "training")
+    assert (
+        0
+        < (datetime.fromisoformat(grant["expires_at"]) - datetime.now(timezone.utc)).total_seconds()
+        <= 300
+    )
     db.sql(
         f"update fez_training_jobs set updated_at=now()-interval '31 days' where id={literal(job)}"
     )

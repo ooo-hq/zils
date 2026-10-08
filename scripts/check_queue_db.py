@@ -117,6 +117,27 @@ def main():
             image_checks(
                 [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
             )
+            subprocess.run(
+                [
+                    tool("psql"),
+                    "-X",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-h",
+                    str(socket),
+                    "-d",
+                    "postgres",
+                    "-f",
+                    str(ROOT / "supabase/migrations/202610080002_image_jobs.sql"),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            from tests.image_job_database import run as image_job_checks
+
+            image_job_checks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
             print(
                 "Training queue and decision API migrations, isolation, leases, credentials and admission passed."
             )

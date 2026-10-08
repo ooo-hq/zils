@@ -18,9 +18,10 @@ from bittensor_wallet import Keypair
 
 import zils
 
-from . import benchmark, jobs, models, queue_protocol, settings, version_selection
+from . import benchmark, image_jobs, jobs, models, queue_protocol, settings, version_selection
 from .access import require_access
 from .cloud import DATA_BUCKET, MAX_DATA_BYTES, MODEL_BUCKET, APIError, Supabase, trusted_url
+from .decisions import DecisionError
 from .runtime import digest, gpu_ready, locked
 
 JOBS = "fez_training_jobs"
@@ -35,7 +36,11 @@ def public_job(job):
     result["result"] = (
         {k: v for k, v in data.items() if k != "workflow"} if "delivery" in data else None
     )
-    result["model"] = models.spec(models.job_model(job)) if job.get("job_sha256") else None
+    result["model"] = (
+        models.spec(models.job_model(job))
+        if job.get("job_sha256") or job.get("model_profile")
+        else None
+    )
     result["selection"] = (job.get("manifest") or {}).get("selection")
     return result
 
@@ -123,7 +128,21 @@ class Service:
                     raise APIError(
                         400, "Use a job name with 1..64 lowercase letters, digits or hyphens."
                     )
-                jobs.validate_policy(body.get("acceptance"))
+                requested = body.get("model", self.model["id"])
+                selected = (
+                    models.validate_spec(requested) if isinstance(requested, dict) else requested
+                )
+                if selected not in (self.model["id"], models.IMAJEV):
+                    raise APIError(400, "This model is not enabled for new jobs.")
+                profile = models.spec(selected)
+                if selected == models.IMAJEV:
+                    from .image_api import enabled
+
+                    if not enabled() or not enabled("ZILS_IMAGE_TRAINING_ENABLED"):
+                        raise APIError(503, "Image training is not enabled yet.")
+                    image_jobs.validate_policy(body.get("acceptance"))
+                else:
+                    jobs.validate_policy(body.get("acceptance"))
                 if "previous_job_id" in body["acceptance"]:
                     version_selection.freeze(
                         self.store,
@@ -131,6 +150,7 @@ class Service:
                             "id": str(uuid.uuid4()),
                             "owner_id": owner,
                             "acceptance": body["acceptance"],
+                            "model_profile": profile,
                         },
                     )
                 if body.get("allow_training_data_export") is not True:
@@ -138,11 +158,12 @@ class Service:
                         400, "Permission to share training data with approved workers is required."
                     )
                 job = self.store.rpc(
-                    "fez_create_training_job",
+                    "zils_create_profile_job",
                     {
                         "p_owner": owner,
                         "p_name": body["name"],
                         "p_acceptance": body["acceptance"],
+                        "p_model": profile,
                     },
                 )
                 return self.uploads(job)
@@ -163,6 +184,23 @@ class Service:
                 for s in ("train", "calibration", "test")
             ):
                 raise APIError(409, "Upload all three dataset splits before submitting.")
+            if models.job_model(job) == models.IMAJEV:
+                ids = set()
+                with tempfile.TemporaryDirectory(prefix="zils-image-submit-") as temp:
+                    for split, limit in image_jobs.SPLITS.items():
+                        file = Path(temp) / (split + ".jsonl")
+                        self.store.download(
+                            DATA_BUCKET, f"{job['id']}/inputs/{split}.jsonl", file, MAX_DATA_BYTES
+                        )
+                        cases = benchmark.read_jsonl(file)
+                        if not 1 <= len(cases) <= limit:
+                            raise APIError(400, "Image split exceeds the allowed example count.")
+                        ids.update(identifier(c["image"]["asset_id"]) for c in cases)
+                submitted = self.store.rpc(
+                    "zils_submit_image_job",
+                    {"p_owner": owner, "p_job": job["id"], "p_assets": sorted(ids)},
+                )
+                return {"job": public_job(submitted)}
             rows = self.store.patch(
                 JOBS,
                 f"id=eq.{job['id']}&status=eq.uploading",
@@ -176,6 +214,7 @@ class Service:
                 {
                     "status": "failed",
                     "error": "Cancelled by customer.",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
                     "lease_token": None,
                     "lease_until": None,
                 },
@@ -230,6 +269,7 @@ class Service:
                 }
             }
         if path not in (
+            "/v1/workers/image-downloads",
             "/v1/workers/renew",
             "/v1/workers/uploads",
             "/v1/workers/submit",
@@ -248,6 +288,35 @@ class Service:
             )
             return {"status": "released"}
         row = self.assignment(hotkey, body, submitted=path.endswith("/submit"))
+        if path.endswith("/image-downloads"):
+            from .image_store import ImageStore
+
+            job = self.job(row["job_id"])
+            manifest = image_jobs.verify_binding(job)
+            requested = body.get("asset_ids")
+            if (
+                not isinstance(requested, list)
+                or not 1 <= len(requested) <= 100
+                or any(not isinstance(aid, str) for aid in requested)
+                or len(set(requested)) != len(requested)
+            ):
+                raise APIError(400, "Request 1–100 distinct training image IDs.")
+            allowed = manifest["assets"]
+            if any(aid not in allowed or allowed[aid]["split"] != "train" for aid in requested):
+                raise APIError(404, "Training image is unavailable.")
+            images = ImageStore(self.store)
+            # Validate the entire batch before the first signed grant.
+            for aid in requested:
+                live = images._get(job["owner_id"], aid, "training")
+                if live["state"] != "ready" or any(
+                    live[k] != allowed[aid][k] for k in image_jobs.ASSET_FIELDS
+                ):
+                    raise APIError(404, "Training image is unavailable.")
+            return {
+                "images": [
+                    images.read_reference(job["owner_id"], aid, "training") for aid in requested
+                ]
+            }
         if path.endswith("/defer"):
             # The signed worker can release only its own live lease. Capacity waiting is
             # not a failed training attempt; the job's original deadline remains in force.
@@ -364,7 +433,7 @@ def handler(service, origin):
                         raise APIError(401, "Sign in to continue.")
                     result = service.customer(self.command, self.path, auth[7:], body)
                 self.send(200, result)
-            except APIError as error:
+            except (APIError, DecisionError) as error:
                 self.send(error.status, {"error": str(error)})
             except (ValueError, TypeError, KeyError):
                 self.send(400, {"error": "Invalid request or dataset/checkpoint content."})
@@ -464,9 +533,14 @@ class Processor:
         return False
 
     def prepare(self, job, work):
-        model = models.checkpoint_model(self.reference)
-        if models.spec(model) != self.service.model:
-            raise RuntimeError("processor reference differs from the active service model")
+        model = (
+            models.job_model(job)
+            if job.get("model_profile")
+            else models.checkpoint_model(self.reference)
+        )
+        reference = self.references.get(model)
+        if reference is None:
+            raise APIError(503, "The frozen model reference is not available yet.")
         splits = {}
         for split in ("train", "calibration", "test"):
             path = work / (split + ".jsonl")
@@ -479,16 +553,42 @@ class Processor:
 
             validate_inputs(splits)
         data = work / "benchmark"
-        manifest = jobs.build(
-            data,
-            job["id"],
-            splits,
-            job["acceptance"],
-            allow_training_data_export=True,
-            model=model,
-            selection=version_selection.freeze(self.store, job) if model == models.JEVK5 else None,
-        )
-        initial = zils.checkpoint_hash(self.reference)
+        if model == models.IMAJEV:
+            from .image_store import ImageStore
+
+            images = ImageStore(self.store)
+            assets = {
+                case["image"]["asset_id"]: images._get(
+                    job["owner_id"], case["image"]["asset_id"], "training"
+                )
+                for rows in splits.values()
+                for case in rows
+            }
+            manifest = image_jobs.build(
+                data,
+                {**job, "selection": version_selection.freeze(self.store, job)},
+                splits,
+                assets,
+                job["acceptance"],
+            )
+            previous = manifest["selection"]["previous"]
+            if previous:
+                parent = self.service.job(previous["job_id"], job["owner_id"])
+                image_jobs.verify_binding(parent)
+                image_jobs.validate_predecessor(manifest, parent["manifest"])
+        else:
+            manifest = jobs.build(
+                data,
+                job["id"],
+                splits,
+                job["acceptance"],
+                allow_training_data_export=True,
+                model=model,
+                selection=version_selection.freeze(self.store, job)
+                if model == models.JEVK5
+                else None,
+            )
+        initial = zils.checkpoint_hash(reference)
         sha = digest(data / "manifest.json")
         snapshot = {**job, "job_sha256": sha}
         for name in (*benchmark.FILES, "manifest.json"):

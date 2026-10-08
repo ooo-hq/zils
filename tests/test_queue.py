@@ -86,10 +86,11 @@ class Store:
             return True
         jobs = self.tables[coordinator.JOBS]
         assignments = self.tables[coordinator.ASSIGNMENTS]
-        if name == "fez_create_training_job":
+        if name in ("fez_create_training_job", "zils_create_profile_job"):
             row = {
                 "id": str(uuid.uuid4()),
                 "owner_id": p["p_owner"],
+                "model_profile": p.get("p_model"),
                 "name": p["p_name"],
                 "acceptance": p["p_acceptance"],
                 "status": "uploading",

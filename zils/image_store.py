@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -175,10 +175,20 @@ class ImageStore:
         row = self._get(owner, asset_id, purpose)
         if row["state"] != "ready":
             raise not_found()
+        deadline = datetime.now(timezone.utc) + timedelta(minutes=10)
+        if row["purpose"] == "prediction":
+            deadline = min(
+                deadline, datetime.fromisoformat(row["expires_at"].replace("Z", "+00:00"))
+            )
+        if row.get("read_until"):
+            deadline = min(
+                deadline, datetime.fromisoformat(row["read_until"].replace("Z", "+00:00"))
+            )
         signed = self.db.signed(BUCKET, row["canonical_path"])
         return {
             **public_asset(row),
             "url": signed["url"],
+            "expires_at": deadline.isoformat(),
             "bytes": row["canonical_bytes"],
             "pixel_sha256": row["pixel_sha256"],
             "preprocessor": row["preprocessor"],
