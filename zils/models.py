@@ -1,5 +1,6 @@
 """Pinned model identities and checkpoint formats; legacy Kev artifacts stay readable."""
 
+import hashlib
 import json
 import math
 from copy import deepcopy
@@ -59,6 +60,27 @@ def spec(model):
     return deepcopy(SPECS[model])
 
 
+def profile_identity(model):
+    def digest(value):
+        return hashlib.sha256(
+            json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+    profile = spec(model)
+    runtime = {"base_revision": profile["base_revision"]}
+    if model == IMAJEV:
+        runtime = {
+            "files": json.loads(Path(__file__).with_name("imajev-pins.json").read_text())[
+                "runtime"
+            ],
+            "requirements": (
+                Path(__file__).resolve().parents[1] / "requirements/imajev.txt"
+            ).read_text(),
+            "recipe": profile["recipe"],
+        }
+    return {"profile_sha256": digest(profile), "runtime_sha256": digest(runtime)}
+
+
 def validate_spec(value):
     if not isinstance(value, dict) or value != spec(value.get("id")):
         raise ValueError("model specification differs from its pinned version")
@@ -97,7 +119,7 @@ def metadata(checkpoint):
     ):
         raise ValueError("invalid model metadata")
     if value["model"] == IMAJEV:
-        if value.get("profile") != spec(IMAJEV):
+        if value.get("profile") != spec(IMAJEV) or value["kind"] != "adapter":
             raise ValueError("image metadata differs from the pinned profile")
     elif "profile" in value:
         raise ValueError("legacy metadata cannot contain an image profile")

@@ -18,7 +18,7 @@ from zils import models, protocol as wire
 from zils.runtime import digest, request, run_child, signed, signing_key
 
 
-def train_candidate(config, directory, job, runtime, device):
+def train_candidate(config, directory, job, runtime, device, *, check_lease=None):
     directory = Path(directory)
     for name in ("base_revision", "initial_sha256", "training_sha256"):
         if job.get(name) != config[name]:
@@ -90,7 +90,8 @@ def train_candidate(config, directory, job, runtime, device):
         "--out",
         str(raw),
     ]
-    if models.checkpoint_model(directory / "reference") == models.JEVK5:
+    model = models.checkpoint_model(directory / "reference")
+    if model == models.JEVK5:
         if config["base_revision"] != models.spec(models.JEVK5)["base_revision"]:
             raise ValueError("training model revision differs from its reference")
         command = [
@@ -110,11 +111,42 @@ def train_candidate(config, directory, job, runtime, device):
             "--out",
             str(raw),
         ]
+    if model == models.IMAJEV:
+        command = [
+            runtime,
+            "-u",
+            "-m",
+            "zils.imajev_runner",
+            "--train",
+            "--cases",
+            str(directory / "miner-training.jsonl"),
+            "--checkpoint",
+            str(directory / "reference"),
+            "--images",
+            str(directory / "images"),
+            "--device",
+            device,
+            "--seed",
+            str(seed),
+            "--out",
+            str(raw),
+        ]
     print(
         f"miner {config['uid']}: training round {job['round_id']} on {device}; log {work / 'training.log'}",
         flush=True,
     )
-    run_child(command, work / "training.log", device)
+    if model == models.IMAJEV:
+        run_child(
+            command,
+            work / "training.log",
+            device,
+            model=model,
+            minimum_mib=job["min_free_mib"],
+            timeout=job["max_seconds"],
+            check_lease=check_lease,
+        )
+    else:
+        run_child(command, work / "training.log", device)
     frozen = work / ("artifacts-" + uuid.uuid4().hex)
     zils.stage(zils.submission(raw, config["uid"]), frozen)
     entry = zils.submission(frozen, config["uid"])

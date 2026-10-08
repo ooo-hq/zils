@@ -98,10 +98,14 @@ def lease_heartbeat(renew, interval=60):
     renew()
     thread = threading.Thread(target=keep_alive, daemon=True)
     thread.start()
-    try:
-        yield
+
+    def check_lease():
         if errors:
             raise APIError(409, "Lease renewal failed; this attempt must be retried.")
+
+    try:
+        yield check_lease
+        check_lease()
     finally:
         stopped.set()
         thread.join(timeout=35)
@@ -289,14 +293,70 @@ class Service:
 
     def worker(self, path, message):
         hotkey, body = queue_protocol.verify(message, self.audience, path, self.store)
+        if path == "/v1/workers/profiles":
+            rows = self.store.rows("zils_worker_profiles", f"hotkey=eq.{hotkey}&enabled=eq.true")
+            return {
+                "profiles": [
+                    {
+                        key: row[key]
+                        for key in (
+                            "profile_id",
+                            "profile_sha256",
+                            "runtime_sha256",
+                            "min_free_mib",
+                        )
+                    }
+                    for row in rows
+                    if row["profile_id"] in models.SPECS
+                    and all(
+                        row[key] == value
+                        for key, value in models.profile_identity(row["profile_id"]).items()
+                    )
+                ]
+            }
         if path == "/v1/workers/claim":
-            row = self.store.rpc("fez_claim_training", {"p_hotkey": hotkey})
+            profiles = body.get("supported_profiles")
+            if profiles is None:
+                if body:
+                    raise APIError(400, "Invalid legacy claim request.")
+                row = self.store.rpc("fez_claim_training", {"p_hotkey": hotkey})
+            else:
+                if (
+                    set(body) != {"supported_profiles"}
+                    or not isinstance(profiles, list)
+                    or not 1 <= len(profiles) <= len(models.SPECS)
+                    or any(not isinstance(x, str) or x not in models.SPECS for x in profiles)
+                    or len(set(profiles)) != len(profiles)
+                ):
+                    raise APIError(400, "Advertise distinct installed model profiles.")
+                row = self.store.rpc(
+                    "zils_claim_profile_training",
+                    {"p_hotkey": hotkey, "p_supported_profiles": profiles},
+                )
             if not row:
                 return {"assignment": None}
             job = self.job(row["job_id"])
+            model = models.job_model(job)
+            if model not in (profiles if profiles is not None else [models.KEV, models.JEVK5]):
+                raise APIError(409, "Worker assignment profile differs from its claim.")
+            resources = {}
+            if model == models.IMAJEV:
+                qualified = self.store.rows(
+                    "zils_worker_profiles",
+                    f"hotkey=eq.{hotkey}&profile_id=eq.{model}&enabled=eq.true",
+                )
+                if len(qualified) != 1 or any(
+                    qualified[0][k] != v for k, v in models.profile_identity(model).items()
+                ):
+                    raise APIError(409, "Worker profile qualification changed.")
+                resources = {
+                    "min_free_mib": qualified[0]["min_free_mib"],
+                    "max_seconds": qualified[0]["evidence"]["max_seconds"],
+                }
             return {
                 "assignment": {
                     **row,
+                    **resources,
                     "model": models.spec(models.job_model(job)),
                     "base_revision": models.spec(models.job_model(job))["base_revision"],
                     "initial_sha256": job["initial_sha256"],
@@ -413,7 +473,8 @@ class Service:
         if zils.checkpoint_hash(destination) != expected:
             raise ValueError("uploaded checkpoint does not match its signed hash")
         if models.checkpoint_model(destination) != model or (
-            model == models.JEVK5 and models.metadata(destination)["kind"] != "adapter"
+            model in (models.JEVK5, models.IMAJEV)
+            and models.metadata(destination)["kind"] != "adapter"
         ):
             raise ValueError("candidate differs from the job's model contract")
 
@@ -464,6 +525,21 @@ def handler(service, origin):
                         raise APIError(400, "Request must be a JSON object.")
                 if self.path == "/v1/config" and self.command == "GET":
                     result = {"model": service.model}
+                    if settings.get("ZILS_IMAGES_ENABLED") == "1":
+                        from .image_contract import IMAGE_CAPABILITIES
+
+                        result["image"] = {
+                            "model": models.spec(models.IMAJEV),
+                            "capabilities": IMAGE_CAPABILITIES,
+                            "training_enabled": settings.get("ZILS_IMAGE_TRAINING_ENABLED") == "1",
+                            "limits": {
+                                "train": 1024,
+                                "calibration": 256,
+                                "test": 512,
+                                "max_source_bytes": 10 * 1024**2,
+                                "max_input_tokens": 4096,
+                            },
+                        }
                 elif self.path.startswith("/v1/workers/") and self.command == "POST":
                     result = service.worker(self.path, body)
                 else:
