@@ -1,6 +1,6 @@
 # Image decisions beside JevK5: implementation design
 
-Status: proposed design, awaiting written-spec review. Product code and deployment have not changed.
+Status: approved by the user on 2026-10-08. Implementation planning follows; product code and deployment have not changed.
 
 ## Outcome and scope
 
