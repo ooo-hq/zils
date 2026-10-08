@@ -126,17 +126,22 @@ class Store:
                 raise APIError(409, "Replay.")
             self.nonces.add(nonce)
             return None
-        if name == "fez_claim_processing":
+        if name in ("fez_claim_processing", "zils_claim_profile_processing"):
             row = next(
                 (
                     j
                     for j in jobs
-                    if (j["status"] == "validating" and p["p_stage"] == "validating")
-                    or (
-                        j["status"] == "running"
-                        and p["p_stage"] == "evaluating"
-                        and all(
-                            a["state"] == "submitted" for a in assignments if a["job_id"] == j["id"]
+                    if models.job_model(j) in p.get("p_profiles", [models.KEV, models.JEVK5])
+                    and (
+                        (j["status"] == "validating" and p["p_stage"] == "validating")
+                        or (
+                            j["status"] == "running"
+                            and p["p_stage"] == "evaluating"
+                            and all(
+                                a["state"] == "submitted"
+                                for a in assignments
+                                if a["job_id"] == j["id"]
+                            )
                         )
                     )
                 ),

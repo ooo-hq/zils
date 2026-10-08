@@ -613,9 +613,16 @@ class Processor:
 
     def tick(self):
         for stage in ("validating", "evaluating"):
-            if stage == "evaluating" and not gpu_ready(self.args.device):
+            profiles = [
+                model
+                for model in self.references
+                if stage == "validating" or gpu_ready(self.args.device, model=model)
+            ]
+            if not profiles:
                 continue
-            job = self.store.rpc("fez_claim_processing", {"p_stage": stage})
+            job = self.store.rpc(
+                "zils_claim_profile_processing", {"p_stage": stage, "p_profiles": profiles}
+            )
             if not job or not job.get("id"):
                 continue
             work = self.root / job["id"] / job["lease_token"]

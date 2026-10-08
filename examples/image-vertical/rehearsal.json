@@ -1,0 +1,30 @@
+{
+  "isolated": true,
+  "owner_id": "11111111-1111-4111-8111-111111111111",
+  "other_owner_id": "22222222-2222-4222-8222-222222222222",
+  "api_url": "http://127.0.0.1:8940",
+  "coordinator_url": "http://127.0.0.1:8910",
+  "storage_url": "http://127.0.0.1:8950",
+  "owner_token_env": "IMAGE_REHEARSAL_OWNER_SESSION",
+  "other_token_env": "IMAGE_REHEARSAL_OTHER_SESSION",
+  "runtime_token_env": "ZILS_IMAGE_RUNTIME_TOKEN",
+  "text_token_env": "ZILS_RUNTIME_TOKEN",
+  "image_runtime": {
+    "url": "http://127.0.0.1:8931/health",
+    "token_config": "runtime_token_env",
+    "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "text_runtime": {
+    "url": "http://127.0.0.1:8921/health",
+    "token_config": "text_token_env",
+    "fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "max_seconds": 300,
+  "acceptance": {
+    "min_accuracy": 0.8,
+    "min_brier_improvement": 0.01,
+    "positive_class": "damaged",
+    "min_positive_recall": 0.9,
+    "max_false_positive_rate": 0.1
+  }
+}

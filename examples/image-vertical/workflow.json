@@ -1,0 +1,18 @@
+{
+  "hotkey": "EXISTING_TEXT_WORKER_HOTKEY",
+  "min_free_mib": 12288,
+  "releases": "/srv/zils/text-releases",
+  "runtime_url": "http://127.0.0.1:8921",
+  "token_env": "ZILS_RUNTIME_TOKEN",
+  "registry": "/srv/zils/registry.json",
+  "training_services": [],
+  "image": {
+    "hotkey": "REPLACE_WITH_QUALIFIED_WORKER_HOTKEY",
+    "min_free_mib": 12288,
+    "releases": "/srv/zils/image-releases",
+    "runtime_url": "http://127.0.0.1:8931",
+    "token_env": "ZILS_IMAGE_RUNTIME_TOKEN",
+    "registry": "/srv/zils/registry.json",
+    "training_services": []
+  }
+}

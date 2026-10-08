@@ -101,11 +101,40 @@ def gpu_ready(device, *, model=None, minimum_mib=0):
 
 
 def run_child(command, log, device, timeout=3600, *, model=None, minimum_mib=0, check_lease=None):
+    image_environment = {
+        "PATH",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "CUDA_VISIBLE_DEVICES",
+        "CUDA_HOME",
+        "LD_LIBRARY_PATH",
+        "PYTHONPATH",
+        "HF_HOME",
+        "HF_HUB_CACHE",
+        "HUGGINGFACE_HUB_CACHE",
+        "XDG_CACHE_HOME",
+        "TRITON_CACHE_DIR",
+        "TORCH_HOME",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "PYTORCH_CUDA_ALLOC_CONF",
+        "PYTORCH_ALLOC_CONF",
+        "ZILS_IMAGE_REFERENCE",
+        "ZILS_COMPUTE_LOCK",
+        "ZILS_NVIDIA_SMI",
+    }
     environment = {
         **{
             k: v
             for k, v in os.environ.items()
             if k not in {"SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL"}
+            and (model != models.IMAJEV or k in image_environment)
         },
         "HF_HOME": os.environ.get("HF_HOME", str(ROOT / ".cache/huggingface")),
         "HF_HUB_OFFLINE": "1",

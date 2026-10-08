@@ -174,9 +174,17 @@ class ImageEngine:
             "instructions": question.get("instructions")
             or "Choose the best answer from the image and permitted state.",
         }
-        request, _ = to_request_with_plan(
-            {"state": state, "questions": {"inspection": q}}, max_options=self.engine.max_options
-        )
+        try:
+            request, _ = to_request_with_plan(
+                {"state": state, "questions": {"inspection": q}},
+                max_options=self.engine.max_options,
+            )
+        except (ValueError, TypeError):
+            raise DecisionError(
+                422,
+                "invalid_image_question",
+                "Use shorter image instructions and valid answer descriptions.",
+            ) from None
         header, choices, texts = compile_question(
             request.fields[0], request.state, self.engine.prompt_layout
         )
@@ -188,7 +196,19 @@ class ImageEngine:
             f"{label}: {text}" for label, text in zip(labels, texts, strict=True)
         )
         with Image.open(image) as photo:
-            _, inputs, ids = self.engine.prepare([photo.convert("RGB")], prompt, labels)
+            try:
+                _, inputs, ids = self.engine.prepare([photo.convert("RGB")], prompt, labels)
+            except ValueError as error:
+                if (
+                    str(error)
+                    == f"Processed request exceeds the {self.engine.max_length}-token limit"
+                ):
+                    raise DecisionError(
+                        413,
+                        "context_limit",
+                        "The image and question exceed this model context limit.",
+                    ) from None
+                raise
         count = int(inputs["input_ids"].shape[-1])
         if count > 4096:
             raise DecisionError(

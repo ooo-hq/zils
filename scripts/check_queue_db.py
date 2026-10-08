@@ -159,6 +159,27 @@ def main():
             image_queue_checks(
                 [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
             )
+            subprocess.run(
+                [
+                    tool("psql"),
+                    "-X",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-h",
+                    str(socket),
+                    "-d",
+                    "postgres",
+                    "-f",
+                    str(ROOT / "supabase/migrations/202610080004_image_processing_profiles.sql"),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            from tests.image_processing_database import run as processing_checks
+
+            processing_checks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
             print(
                 "Training queue and decision API migrations, isolation, leases, credentials and admission passed."
             )

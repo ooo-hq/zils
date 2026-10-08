@@ -368,3 +368,55 @@ class ImageCatalogTest(unittest.TestCase):
             self.assertIn(release["release_id"], health)
             self.assertNotIn(other["release_id"], health)
             self.assertNotIn(invalid["release_id"], health)
+
+
+class NativeInputBoundaryTest(unittest.TestCase):
+    def test_native_context_overflow_and_question_validation_are_client_errors(self):
+        import tempfile
+        from pathlib import Path
+        from types import ModuleType, SimpleNamespace
+        from unittest.mock import Mock, patch
+
+        from zils.imajev import ImageEngine
+
+        question = {
+            "type": "choice",
+            "instructions": "Inspect",
+            "criteria": {"normal": None, "damaged": None},
+        }
+        native = ModuleType("vision_decision.jev_api")
+        native.to_request_with_plan = Mock(
+            return_value=(SimpleNamespace(fields=[object()], state={}), None)
+        )
+        scoring = ModuleType("vision_decision.scoring")
+        scoring.compile_question = Mock(
+            return_value=(
+                "Prompt",
+                [("normal", None), ("damaged", None), ("__unknown__", None)],
+                ["normal", "damaged", "unknown"],
+            )
+        )
+        engine = object.__new__(ImageEngine)
+        engine.engine = SimpleNamespace(
+            max_options=255,
+            max_length=4096,
+            prompt_layout="fixture",
+            labels=lambda *a: ["A", "B", "C"],
+            prepare=Mock(side_effect=ValueError("Processed request exceeds the 4096-token limit")),
+        )
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.dict(
+                "sys.modules",
+                {"vision_decision.jev_api": native, "vision_decision.scoring": scoring},
+            ),
+        ):
+            image = Path(tmp) / "photo.png"
+            image.write_bytes(png())
+            with self.assertRaises(DecisionError) as error:
+                engine.prepare(image, {}, question)
+            self.assertEqual(error.exception.status, 413)
+            native.to_request_with_plan.side_effect = ValueError("native validation rejected input")
+            with self.assertRaises(DecisionError) as error:
+                engine.prepare(image, {}, question)
+            self.assertEqual(error.exception.status, 422)
