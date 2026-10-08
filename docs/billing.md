@@ -205,5 +205,12 @@ against the intended isolated hosted deployment before opening paid access.
 
 Live payments require separate operator authorization and verification, a live
 secret, live webhook, matching database mode, an HTTPS dashboard origin, and
-`ZILS_BILLING_ALLOW_LIVE=true`. Merely supplying a live key while configured for
-test is rejected. This release's intended initial rollout is test mode only.
+`ZILS_BILLING_ALLOW_LIVE=true`. The `STRIPE_SECRET_KEY` setting accepts a
+mode-matching restricted key (`rk_test_` or `rk_live_`) as well as a standard
+secret key. Prefer a restricted key with Checkout Sessions read/write and read
+access to PaymentIntents, Charges, and Disputes; verify these permissions against
+the configured Stripe account before activation. Webhook endpoint management
+belongs to operator setup and does not require write access in the runtime.
+Merely supplying a live key while configured for test is rejected. Enable live
+billing only after the gateway, batch worker, and all serving runtimes report
+billable input tokens and the dashboard supports live Checkout.

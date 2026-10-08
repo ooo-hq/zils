@@ -74,7 +74,11 @@ class Billing:
             raise ValueError("Billing mode must be off, test, or live")
         if mode == "live" and not allow_live:
             raise ValueError("Live payments require explicit operator enablement")
-        if mode != "off" and secret_key and not secret_key.startswith(f"sk_{mode}_"):
+        if (
+            mode != "off"
+            and secret_key
+            and not secret_key.startswith((f"sk_{mode}_", f"rk_{mode}_"))
+        ):
             raise ValueError("Stripe key does not match the configured billing mode")
         if webhook_secret and not webhook_secret.startswith("whsec_"):
             raise ValueError("Stripe webhook secret must be an endpoint signing secret")
