@@ -15,12 +15,6 @@ def run(command):
         db.sql(
             f"insert into auth.users(id,email,email_confirmed_at) values({literal(user)},{literal(user + '@example.com')},now())"
         )
-    db.sql("update zils_access_settings set capacity=100")
-    db.rpc(
-        "zils_access_invite",
-        {"p_email": owner + "@example.com", "p_action": "approve", "p_actor": owner},
-    )
-    db.rpc("zils_access_claim", {"p_owner": owner})
     db.rpc("zils_image_ensure_account", {"p_owner": owner})
     db.sql(f"update zils_api_accounts set enabled=false where owner_id={literal(owner)}")
     try:

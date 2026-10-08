@@ -46,10 +46,26 @@ recall. Missing denominators cannot satisfy a quality gate. Incumbents are compa
 without re-training or re-calibrating them. A late upgrade cannot replace a newer
 accepted version.
 
+## Accounts and credit
+
+Image training uses the existing Google/email Supabase accounts and prepaid balance.
+The separate early-access email signup remains unchanged. No additional invitation
+or API-key system is introduced.
+
+Submitting a draft reserves one included training run when eligible, otherwise $2.
+The reservation and immutable image references commit together: insufficient credit
+leaves the draft and photos available to retry. A completed evaluation consumes the
+run even if no candidate qualifies. Failed processing or cancellation before work
+begins releases the reservation; cancelling after a worker has started consumes it.
+Repeated submissions and settlement events do not create another charge.
+
 ## Worker and service setup
 
-1. Apply migrations through `202610080004_image_processing_profiles.sql` in order,
-   after the existing queue/API/early-access migrations. Verify private bucket RLS,
+1. Apply migrations through `202610080005_image_processing_profiles.sql` in order,
+   after the existing queue/API/billing migrations. The four image migrations use
+   versions `202610080002` through `202610080005`; the deployed prepaid migration
+   keeps version `202610080001`. Install `requirements/api.txt` on the gateway and
+   `requirements/imajev.txt` in the separate image runtime. Verify private bucket RLS,
    server-only RPCs and retention cleanup in staging. No migration was applied to
    production by this implementation.
 2. Qualify each image worker against the exact `models.profile_identity(IMAJEV)`

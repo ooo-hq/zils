@@ -98,6 +98,43 @@ class KeysTest(unittest.TestCase):
         self.assertEqual(name, "zils_api_admit")
         self.assertEqual(values["p_owner"], owner)
         self.assertEqual(values["p_tokens"], 123)
+        self.assertNotIn("p_billable_tokens", values)
+
+    def test_billable_tokens_are_separate_from_resource_reservation(self):
+        db = MemoryDB()
+        store = self.module().Store(db)
+        owner, key, request_id = (str(uuid.uuid4()) for _ in range(3))
+        store.admit(owner, key, request_id, 1000, billable_tokens=73)
+        self.assertEqual(
+            db.calls[-1],
+            (
+                "zils_api_admit",
+                {
+                    "p_owner": owner,
+                    "p_key": key,
+                    "p_request": request_id,
+                    "p_tokens": 1000,
+                    "p_billable_tokens": 73,
+                },
+            ),
+        )
+
+    def test_database_billing_rejections_are_safe_and_do_not_admit(self):
+        class BillingDB:
+            status = None
+
+            def rpc(self, name, values):
+                return self.status
+
+        db = BillingDB()
+        store = self.module().Store(db)
+        for reason, status in (("billing_meter_unavailable", 503), ("insufficient_credit", 402)):
+            with self.subTest(reason=reason):
+                db.status = reason
+                with self.assertRaises(DecisionError) as error:
+                    store.admit(str(uuid.uuid4()), None, str(uuid.uuid4()), 1000)
+                self.assertEqual(error.exception.status, status)
+                self.assertEqual(error.exception.code, reason)
 
     def test_key_listing_walks_provider_pages_without_losing_older_keys(self):
         m = self.module()

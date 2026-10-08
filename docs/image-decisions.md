@@ -55,6 +55,19 @@ The browser uses session routes `GET /v1/image-models` and
 another account are omitted from listings and return 404 on use. Runtime addresses,
 tokens, signed image read URLs and raw held-out predictions are never returned.
 
+## Billing
+
+Image requests use the existing prepaid account, rate limits and API keys. The
+`usage.billable_input_tokens` meter counts the model's processed visual tokens plus
+one canonical copy of the supplied state and question. It excludes asset IDs,
+filenames, model routing and internal prompt wrappers. The existing input-token
+price applies; `usage.input_tokens` remains the full processed context used for
+resource limits. Credit is reserved before prediction and settled once on success;
+a failed prediction releases its reservation. Insufficient credit returns 402.
+
+The browser's batch tool submits images sequentially, keeps completed results, and
+pauses on a credit error. Top up in Billing and resume only the remaining images.
+
 ## Limits and retention
 
 | Limit | Bound |
@@ -74,7 +87,7 @@ Truncated, animated, oversized and undecodable files fail before GPU work. Clean
 waits for outstanding upload grants and finalization leases; disabling admissions
 must not disable cleanup.
 
-401 means sign in or refresh the key; 404 means the image/model is unavailable to
+401 means sign in or refresh the key; 402 means add credit in Billing; 404 means the image/model is unavailable to
 this account or expired. Re-upload expired photos. 413 means the actual model context
 is too large. 422 means invalid image/question or a mismatch with the saved task.
 429 means account/upload limits; 503 means unavailable runtime or capacity. No image

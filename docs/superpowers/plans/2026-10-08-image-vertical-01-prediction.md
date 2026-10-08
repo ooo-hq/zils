@@ -87,7 +87,7 @@ Use these profile limits after structural validation; never apply them to legacy
 
 ## Task 2: Verified private assets, bounded decoding and expiry
 
-**Files:** Create backend `zils/image_assets.py`, `zils/image_store.py`, `zils/image_cleanup.py`, `requirements/images.txt`, `supabase/migrations/202610080001_image_assets.sql`, `tests/test_image_assets.py`, `tests/image_database.py`; modify `scripts/check_queue_db.py`, `zils/cloud.py` as needed for bounded object removal.
+**Files:** Create backend `zils/image_assets.py`, `zils/image_store.py`, `zils/image_cleanup.py`, `requirements/images.txt`, `supabase/migrations/202610080002_image_assets.sql`, `tests/test_image_assets.py`, `tests/image_database.py`; modify `scripts/check_queue_db.py`, `zils/cloud.py` as needed for bounded object removal.
 
 **Interfaces:**
 - `CanonicalImage` is a frozen dataclass with `data: bytes` (metadata-free PNG), `source_sha256: str`, `sha256: str`, `pixel_sha256: str`, `width: int` and `height: int`.

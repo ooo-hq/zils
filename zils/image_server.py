@@ -122,7 +122,10 @@ class ImageRuntime:
                 )
             encoded = time.perf_counter()
             if operation == "prepare":
-                return {"reserved_tokens": count}
+                return {
+                    "reserved_tokens": count,
+                    "billable_tokens": self.engine.billable_input(request, prepared),
+                }
             row = self.engine.predict(prepared, temperature=release["temperature"])
         except (ValueError, RuntimeError, OSError):
             self.active_release = None

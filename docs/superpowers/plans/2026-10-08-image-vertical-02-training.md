@@ -26,7 +26,7 @@ Apply every [master-plan constraint](2026-10-08-image-vertical.md#global-constra
 
 ## Task 6: Image-job identity, manifests and private exports
 
-**Files:** Create backend `zils/image_jobs.py`, `tests/test_image_jobs.py` and `supabase/migrations/202610080002_image_jobs.sql`; modify `zils/coordinator.py`, `zils/jobs.py`, `zils/core.py`, `zils/benchmark.py`, `zils/version_selection.py` and `scripts/check_queue_db.py`.
+**Files:** Create backend `zils/image_jobs.py`, `tests/test_image_jobs.py` and `supabase/migrations/202610080003_image_jobs.sql`; modify `zils/coordinator.py`, `zils/jobs.py`, `zils/core.py`, `zils/benchmark.py`, `zils/version_selection.py` and `scripts/check_queue_db.py`.
 
 **Interfaces:**
 - `image_jobs.case_fingerprint(case: dict, canonical_sha256: str) -> str` hashes state, question and verified canonical content.
@@ -121,7 +121,7 @@ const row = {
 
 ## Task 8: Compatible worker claims and real image training
 
-**Files:** Modify backend `zils/coordinator.py`, `zils/workflow.py`, `zils/runtime.py`, `miner/queue.py`, `miner/worker.py`, `scripts/check_queue_db.py`; extend `zils/imajev.py`; create `zils/imajev_runner.py`, `supabase/migrations/202610080003_image_worker_profiles.sql`, `tests/test_image_queue.py` and `tests/test_imajev_training.py`.
+**Files:** Modify backend `zils/coordinator.py`, `zils/workflow.py`, `zils/runtime.py`, `miner/queue.py`, `miner/worker.py`, `scripts/check_queue_db.py`; extend `zils/imajev.py`; create `zils/imajev_runner.py`, `supabase/migrations/202610080004_image_worker_profiles.sql`, `tests/test_image_queue.py` and `tests/test_imajev_training.py`.
 
 **Interfaces:**
 - `zils_claim_profile_training(p_hotkey text,p_supported_profiles text[])` claims only the intersection of the worker's operator-verified profiles, its advertised installed profiles and the job's frozen model.

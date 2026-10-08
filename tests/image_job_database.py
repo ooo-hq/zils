@@ -13,11 +13,6 @@ def run(command):
     db.sql(
         f"insert into auth.users(id,email,email_confirmed_at) values({literal(owner)},{literal(owner + '@example.com')},now())"
     )
-    db.rpc(
-        "zils_access_invite",
-        {"p_email": owner + "@example.com", "p_action": "approve", "p_actor": owner},
-    )
-    db.rpc("zils_access_claim", {"p_owner": owner})
     args = {
         "p_owner": owner,
         "p_name": "images",

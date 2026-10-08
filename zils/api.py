@@ -228,21 +228,30 @@ class RuntimeClient:
     def prepare(self, body):
         result = self.call("/v1/prepare", {"request": body})
         tokens = result.get("reserved_tokens")
-        if type(tokens) is not int or not 0 <= tokens <= 2**31:
+        billable = result.get("billable_tokens")
+        if (
+            type(tokens) is not int
+            or not 0 <= tokens <= 2**31
+            or (
+                "billable_tokens" in result
+                and (type(billable) is not int or not 1 <= billable <= 2**31)
+            )
+        ):
             raise DecisionError(
                 502, "invalid_model_response", "Model returned invalid token accounting."
             )
-        return tokens
+        return tokens, billable
 
     def predict(self, body, lane):
         return self.call("/v1/systemone", {"request": body, "lane": lane}).get("predictions")
 
 
 class Gateway:
-    def __init__(self, store, registry, batches=None, image_store=None):
+    def __init__(self, store, registry, batches=None, billing=None, *, image_store=None):
         self.store, self.registry, self.batches = store, registry, batches
         self.image_store = image_store
         self.images = ImageApi(store, image_store, registry, self.evaluate) if image_store else None
+        self.billing = billing
 
     def evaluate(self, owner, key_id, body, request_id, *, lane="realtime", frozen=None):
         has_image = isinstance(body, dict) and "images" in body
@@ -277,8 +286,13 @@ class Gateway:
                 owner, body["images"][0]["asset_id"], purpose="prediction"
             )
         client = RuntimeClient(entry, image)
-        reserved = client.prepare(request)
-        self.store.admit(owner, key_id, request_id, reserved)
+        reserved, billable = client.prepare(request)
+        if billable is None:
+            # Legacy runtimes remain usable with billing off; the database rejects
+            # missing meters when billing is enabled.
+            self.store.admit(owner, key_id, request_id, reserved)
+        else:
+            self.store.admit(owner, key_id, request_id, reserved, billable)
         try:
             convert = make_image_response if has_image else make_response
             result = convert(entry["id"], request, client.predict(request, lane))
@@ -291,6 +305,8 @@ class Gateway:
             raise
         if lane == "realtime":
             self.store.finish_usage(request_id, result["usage"]["input_tokens"], "completed")
+        if billable is not None:
+            result["usage"]["billable_input_tokens"] = billable
         # Bulk commits the item result and usage together under its database lease.
         return result
 
@@ -298,6 +314,15 @@ class Gateway:
         try:
             if path.startswith("/v1/image-") and self.images:
                 return self.images.dispatch(method, path, bearer, body, request_id)
+            if path in ("/v1/billing", "/v1/billing/checkout"):
+                owner = self.store.session_owner(bearer)
+                if self.billing is None:
+                    raise DecisionError(503, "billing_unavailable", "Billing is unavailable.")
+                if path == "/v1/billing" and method == "GET":
+                    return 200, self.billing.summary(owner)
+                if path == "/v1/billing/checkout" and method == "POST":
+                    return 200, self.billing.checkout(owner, body)
+                raise DecisionError(405, "method_not_allowed", "Method is not supported.")
             if path == "/v1/keys" or re.fullmatch(r"/v1/keys/[^/]+/revoke", path):
                 owner = self.store.session_owner(bearer)
                 if path == "/v1/keys" and method == "GET":
@@ -329,14 +354,21 @@ def main():
     parser.add_argument("--origin", help="Exact optional dashboard CORS origin")
     args = parser.parse_args()
     from .batches import Batches
+    from .billing import Billing
     from .image_store import ImageStore
 
     store = Store()
     registry = FileRegistry(args.registry)
-    gateway = Gateway(store, registry, Batches(store.db), ImageStore(store.db))
+    billing = Billing.from_env(store.db)
+    gateway = Gateway(store, registry, Batches(store.db), billing, image_store=ImageStore(store.db))
     service = Server(
         ("127.0.0.1", args.port),
-        make_handler(gateway.dispatch, args.origin, allowed_methods=("GET", "POST", "DELETE")),
+        make_handler(
+            gateway.dispatch,
+            args.origin,
+            webhook=billing.webhook,
+            allowed_methods=("GET", "POST", "DELETE"),
+        ),
     )
     print(f"Zils API ready: loopback port {args.port}", flush=True)
     try:

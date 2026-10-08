@@ -12,9 +12,9 @@ runtime checks. A hosted smoke check also verified key creation/revocation,
 real inference, private Supabase uploads, retry recovery, and account isolation.
 Its four-record synthetic bulk job completed three valid records and returned
 one expected validation error. This verifies the workflow, not customer model
-quality or production capacity. There is no billing, measured service-level
-guarantee, automatic model promotion, or open-miner inference network. Onboarding
-is a separate service.
+quality or production capacity. Billing is disabled by default. There is no
+measured service-level guarantee, automatic model promotion, or open-miner
+inference network. Onboarding is a separate service.
 
 ## Request and credential contract
 
@@ -43,7 +43,7 @@ An [example commerce request](../examples/zils-api/request.json) asks Choice,
 Noul, and Score questions about one state. Responses retain question IDs:
 
 ```json
-{"model":"zils-jevk5-v0.3-r1","answers":{"compatible":{"type":"noul","noul":0.9}},"usage":{"input_tokens":120,"output_tokens":0}}
+{"model":"zils-jevk5-v0.3-r1","answers":{"compatible":{"type":"noul","noul":0.9}},"usage":{"input_tokens":120,"output_tokens":0,"billable_input_tokens":48}}
 ```
 
 This is an illustrative response, not a recorded quality result. `noul` is the
@@ -52,6 +52,20 @@ confidence; Score includes an expected zero-based score, probabilities,
 confidence, and the original structured legend. Instructions can be absent/null.
 Choice supports 2–255 options and Score supports 2–10 levels. There is no fixed
 question-count cap, but body, context, and execution budgets apply.
+
+`usage.billable_input_tokens` is the logical input count used for prepaid billing:
+the shared `state` appears once and every question appears once, including its
+ID, instructions, and criteria. The release's tokenizer processes the UTF-8 JSON
+object `{"state": ..., "questions": ...}` with keys sorted recursively, compact
+separators, unescaped Unicode, and no added special tokens. The `model` field,
+model prompt templates, repeated model passes, and generated output are excluded.
+The price is $0.042 per million logical input tokens; output is free.
+
+`usage.input_tokens` retains the resource count across all executed model passes;
+it can differ from `billable_input_tokens` and is used for throughput accounting,
+not pricing. `usage.output_tokens` remains zero. Older runtimes omit
+`billable_input_tokens` and can serve only when billing is disabled. Both
+real-time and bulk responses use these same fields.
 
 The wire contract follows the [TypeSafe API](https://docs.typesafe.ai/api) and
 [confidence formulas](https://docs.typesafe.ai/confidence). Python SDK **0.7.2**
@@ -180,9 +194,12 @@ For Python, install `typesafe-sdk==0.7.2` in your client environment:
 import os
 from typesafe_sdk import RetryPolicy, TypeSafeClient
 
-with TypeSafeClient(api_key=os.environ["ZILS_API_KEY"],
-                    base_url=os.environ["ZILS_URL"], model="zils-shared",
-                    retry=RetryPolicy(max_retries=0)) as client:
+with TypeSafeClient(
+    api_key=os.environ["ZILS_API_KEY"],
+    base_url=os.environ["ZILS_URL"],
+    model="zils-shared",
+    retry=RetryPolicy(max_retries=0),
+) as client:
     result = client.system_one(
         state={"query": "USB-C cable", "product": "USB-C to USB-C cable"},
         questions={"match": {"type": "noul", "instructions": "Does this product match?"}},
@@ -317,7 +334,8 @@ admission reserves its worst-case token work. Unused reservations are not refund
 Configure TPS to accommodate the largest single-request reservation: a smaller
 ceiling continually throttles that request until it is split or the budget is raised.
 Actual successful input usage is recorded separately; unknown/failed work is not
-invented as zero usage or treated as a bill. This prototype implements no charges.
+invented as zero usage or treated as a bill. Monetary billing uses the separately
+metered logical input, independent of these compute-resource reservations.
 Each non-purged batch reserves 25 MiB of input Storage capacity, including failed
 and cancelled jobs, until retention cleanup. Database body/result storage is
 additional; this byte budget is an input-object reservation, not a whole-database

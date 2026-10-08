@@ -18,6 +18,7 @@ from . import models, version_selection
 from .adapter_releases import publish, register, registry_entry
 from .cloud import APIError, Supabase, trusted_url
 from .coordinator import ASSIGNMENTS, JOBS
+from .model_names import model_name, valid_customer_aliases
 from .runtime import locked
 
 
@@ -91,6 +92,7 @@ class Workflow:
                     "ready",
                     "Your model is ready to use with your existing API key.",
                     model_id=model_id,
+                    model_name=model_name(job["name"], job["id"]),
                     fingerprint=release["fingerprint"],
                     **(
                         {"model_alias": "zils-task-" + release["selection"]["root_job_id"]}
@@ -226,7 +228,10 @@ def activate(release, config):
     if identity not in identities:
         raise ValueError("Serving runtime has not verified the accepted adapter")
     entry = registry_entry(
-        release, config.get("gateway_runtime_url", runtime_url), config["token_env"]
+        release,
+        config.get("gateway_runtime_url", runtime_url),
+        config["token_env"],
+        name=json.loads((path / "source.json").read_text())["name"],
     )
     if config.get("registry"):
         register(config["registry"], entry, selection=release.get("selection"))
@@ -293,8 +298,7 @@ def main():
         if args.customer_only and (
             entry.get("url") != args.runtime_url
             or entry.get("token_env") != args.token_env
-            or entry.get("aliases")
-            != (["zils-task-" + selection["root_job_id"]] if selection else [])
+            or not valid_customer_aliases(entry, selection)
             or not isinstance(entry.get("owners"), list)
             or len(entry["owners"]) != 1
             or not re.fullmatch(r"zils-adapter-[a-f0-9-]{36}-[a-f0-9]{64}", entry.get("id", ""))

@@ -17,6 +17,7 @@ from . import jobs, models, version_selection
 from .api import Registry
 from .cloud import DATA_BUCKET, MODEL_BUCKET, APIError, Supabase, trusted_url
 from .coordinator import identifier, prepared_path
+from .model_names import is_model_name, model_name
 from .runtime import locked
 
 VERSION = "zils-customer-adapter/v1"
@@ -291,7 +292,7 @@ def publish(store, job_id, destination):
                 shutil.rmtree(temporary)
 
 
-def registry_entry(release, url, token_env, alias=None):
+def registry_entry(release, url, token_env, alias=None, *, name=None):
     if not isinstance(token_env, str) or not re.fullmatch("[A-Z][A-Z0-9_]*", token_env):
         raise ValueError("Supply an environment-variable name, not a runtime secret")
     selection = release.get("selection")
@@ -319,6 +320,8 @@ def registry_entry(release, url, token_env, alias=None):
             task=release["task"],
             description="Private image model, accepted by held-out training evaluation",
         )
+    if name is not None:
+        entry["aliases"].append(model_name(name, release["job_id"]))
     Registry([entry])
     return entry
 
@@ -346,6 +349,8 @@ def merge_registry(current, entry):
         if old["id"] in entry["aliases"]:
             raise ValueError("An alias cannot replace another release ID")
         overlap = set(old["aliases"]) & set(entry["aliases"])
+        if any(is_model_name(name, entry["id"]) for name in overlap):
+            raise ValueError("A readable model name cannot move to another release")
         if overlap and old["owners"] != entry["owners"]:
             raise ValueError("An alias cannot move between customer or shared scopes")
         output.append({**old, "aliases": [a for a in old["aliases"] if a not in overlap]})

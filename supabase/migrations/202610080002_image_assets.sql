@@ -46,7 +46,6 @@ create policy zils_images_private on storage.objects as restrictive for all to a
 create function public.zils_image_ensure_account(p_owner uuid) returns void
 language plpgsql security definer set search_path=public,pg_temp as $$
 begin
-  if not zils_access_allowed(p_owner) then raise exception 'early access required'; end if;
   insert into zils_api_accounts(owner_id) values(p_owner) on conflict do nothing;
   if not (select enabled from zils_api_accounts where owner_id=p_owner) then
     raise exception 'account disabled'; end if;

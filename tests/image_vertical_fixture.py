@@ -170,6 +170,9 @@ class FixtureEngine:
     def prepare(self, image, state, question):
         return {"keys": [*question["criteria"], "__unknown__"], "input_tokens": 442}
 
+    def billable_input(self, request, prepared):
+        return 173
+
     def predict(self, prepared, temperature=1):
         return {
             "probabilities": dict(zip(prepared["keys"], [0.9, 0.05, 0.05], strict=True)),

@@ -50,7 +50,6 @@ create function public.zils_submit_image_job(p_owner uuid,p_job uuid,p_assets js
 returns public.fez_training_jobs language plpgsql set search_path='' as $$
 declare item public.fez_training_jobs; ids uuid[];
 begin
-  if not public.zils_access_allowed(p_owner) then raise exception 'early access required'; end if;
   select * into item from public.fez_training_jobs where id=p_job and owner_id=p_owner for update;
   if not found or item.model_profile->>'id' is distinct from 'imajev-4b-v1' then raise exception 'image job unavailable'; end if;
   if item.status<>'uploading' then return item; end if;

@@ -148,6 +148,15 @@ class Supabase:
             if not 200 <= response.status_code < 300:
                 # Never send database details, storage tokens or upstream URLs to a caller.
                 if response.status_code in (400, 409, 422):
+                    try:
+                        detail = response.json()
+                    except ValueError:
+                        detail = None
+                    if isinstance(detail, dict) and detail.get("code") == "P0402":
+                        raise APIError(
+                            402,
+                            "Add credit or resolve your payment issue before submitting this job.",
+                        )
                     raise APIError(409, "Operation conflicts with the current job or lease state.")
                 raise APIError(503, "Supabase request failed; check service configuration.")
             return response.json() if response.content else None

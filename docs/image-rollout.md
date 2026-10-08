@@ -66,8 +66,16 @@ A separate bounded capacity probe decoded a 16-million-pixel source, prepared th
 400,000-pixel processor budget and exactly 4,096 input tokens with 16 answers. Training
 then hit `OutOfMemoryError` under the isolated half-GPU allocation, at 12,058,624,000
 peak reserved bytes. The 36.32-second probe registered no worker and left live text
-health, process and model identity unchanged. This host is **not qualified** for the
-advertised maximum training envelope; the small rehearsal does not establish capacity.
+health, process and model identity unchanged. That allocation did not qualify for the
+advertised maximum training envelope; the small rehearsal did not establish capacity.
+
+A later maximum-envelope probe used CPU activation offload and a 55% GPU allocation.
+Four examples reached 4,096 tokens each at the same 400,000-pixel processor budget,
+with a decoded 16-million-pixel source, finite gradients and exact save/reload logits.
+Peak reserved memory was 13,279,166,464 bytes; one optimizer step took 35.65 seconds
+and the complete probe took 76.86 seconds. The live text identity remained unchanged.
+This passed the isolated capacity test; no production worker was registered. The
+qualified configuration must include the tested offload and allocation settings.
 
 Private evidence is retained in the implementation workspace under
 `.private/image-e2e/last-status.json`, `.private/image-switching/last-status.json` and
@@ -75,10 +83,18 @@ Private evidence is retained in the implementation workspace under
 the successful rehearsal kept the same dataset and policy. Raw photos, credentials,
 private prediction reports and host details are excluded from this document.
 
+## Billing integration
+
+The image branch now includes the deployed prepaid billing and Google/email account
+flows. The restored early-access email signup remains unchanged. Disposable database
+checks cover the upgrade from the billing schema to image tables, account/key access,
+inference settlement and failure release, included and paid training runs, concurrent
+submission and insufficient-credit rollback. These checks do not use live payments.
+
 ## Launch gates
 
-1. Resolve GPU allocation and certify a worker at the maximum admitted image/context
-   envelope. Do not register the shared host based on small-image timing alone.
+1. Configure and register a worker using the successful maximum-envelope offload
+   configuration. The isolated capacity probe alone does not reserve serving capacity.
 2. Verify a fresh pinned installation and the complete path against staging Supabase.
 3. Obtain a qualifying real candidate under a policy frozen before evaluation; verify
    its owned API prediction and second-account denial without changing thresholds.

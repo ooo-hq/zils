@@ -96,8 +96,6 @@ class Store:
         return updated
 
     def rpc(self, name, p):
-        if name == "zils_access_allowed":
-            return True
         jobs = self.tables[coordinator.JOBS]
         assignments = self.tables[coordinator.ASSIGNMENTS]
         if name in ("fez_create_training_job", "zils_create_profile_job", "zils_create_image_job"):
@@ -350,7 +348,8 @@ class QueueTest(unittest.TestCase):
                 404,
             )
             self.assertEqual(
-                requests.get(url + "/v1/jobs", headers=headers, timeout=5).json(), {"jobs": []}
+                requests.get(url + "/v1/jobs", headers=headers, timeout=5).json(),
+                {"jobs": [], "models": []},
             )
             body = {"name": "test", "acceptance": POLICY, "allow_training_data_export": False}
             self.assertEqual(

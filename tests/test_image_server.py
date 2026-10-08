@@ -39,6 +39,9 @@ class Engine:
         self.active -= 1
         return {"input_tokens": self.tokens}
 
+    def billable_input(self, request, prepared):
+        return 173
+
     def predict(self, prepared, temperature=1.0):
         self.executions += 1
         return {
@@ -121,6 +124,7 @@ class ImageRuntimeTest(unittest.TestCase):
         rt = self.runtime()
         status, prep = rt.dispatch("POST", "/v1/prepare", "secret", self.envelope, "prepare")
         self.assertEqual((status, prep["reserved_tokens"]), (200, 442))
+        self.assertEqual(prep.get("billable_tokens"), 173)
         _, result = rt.dispatch("POST", "/v1/systemone", "secret", self.envelope, "predict")
         self.assertEqual(result["predictions"]["inspection"]["input_tokens"], 442)
         self.assertEqual(result["predictions"]["inspection"]["probabilities"]["__unknown__"], 0.1)
@@ -420,3 +424,35 @@ class NativeInputBoundaryTest(unittest.TestCase):
             with self.assertRaises(DecisionError) as error:
                 engine.prepare(image, {}, question)
             self.assertEqual(error.exception.status, 422)
+
+
+class ImageBillingMeterTest(unittest.TestCase):
+    def test_counts_visual_tokens_plus_logical_input_without_prompt_or_asset_metadata(self):
+        import json
+        from types import SimpleNamespace
+
+        import torch
+
+        from zils.imajev import ImageEngine
+
+        class Tokenizer:
+            def encode(self, text, add_special_tokens):
+                self.text = text
+                assert add_special_tokens is False
+                return [1] * 37
+
+        tokenizer = Tokenizer()
+        engine = object.__new__(ImageEngine)
+        engine.engine = SimpleNamespace(
+            processor=SimpleNamespace(tokenizer=tokenizer),
+            model=SimpleNamespace(config=SimpleNamespace(image_token_id=77)),
+        )
+        prepared = {"inputs": {"input_ids": torch.tensor([[2, 77, 77, 3, 4]])}, "input_tokens": 5}
+        self.assertEqual(engine.billable_input(BODY, prepared), 39)
+        self.assertEqual(
+            json.loads(tokenizer.text), {"state": BODY["state"], "questions": BODY["questions"]}
+        )
+        self.assertNotIn("asset_id", tokenizer.text)
+        prepared["inputs"]["input_ids"] = torch.tensor([[2, 3, 4]])
+        with self.assertRaises(DecisionError):
+            engine.billable_input(BODY, prepared)

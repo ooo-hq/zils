@@ -222,6 +222,17 @@ class ImageEngine:
             raise ValueError("Image processor omitted visual input")
         return {"inputs": inputs, "token_ids": ids, "keys": keys, "input_tokens": count}
 
+    def billable_input(self, request, prepared):
+        from .token_meter import billable_tokens
+
+        image_token = self.engine.model.config.image_token_id
+        if type(image_token) is not int or image_token < 0:
+            raise DecisionError(503, "tokenizer_error", "Image token accounting is unavailable.")
+        visual = int((prepared["inputs"]["input_ids"] == image_token).sum().item())
+        if not 1 <= visual <= prepared["input_tokens"]:
+            raise DecisionError(503, "tokenizer_error", "Image token accounting is unavailable.")
+        return visual + billable_tokens(request, self.engine.processor.tokenizer)
+
     def logits(self, prepared):
         return self.engine.candidate_logits(prepared["inputs"], prepared["token_ids"]).float()
 

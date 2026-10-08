@@ -49,7 +49,7 @@ class WorkflowTest(unittest.TestCase):
             root = Path(tmp)
             job = fixture(root / "source")
             release = publish(Source(job, root / "source"), job["id"], root / "releases")
-            entry = registry_entry(release, "http://127.0.0.1:8921", "TOKEN")
+            entry = registry_entry(release, "http://127.0.0.1:8921", "TOKEN", name=job["name"])
             path = root / "models.json"
             command = [
                 sys.executable,
@@ -228,7 +228,10 @@ class WorkflowTest(unittest.TestCase):
                 calls.append(release["release_id"])
                 if len(calls) == 1:
                     raise OSError("Temporary runtime outage")
-                register(registry, registry_entry(release, "http://127.0.0.1:8921", "TOKEN"))
+                register(
+                    registry,
+                    registry_entry(release, "http://127.0.0.1:8921", "TOKEN", name=job["name"]),
+                )
                 return release["release_id"]
 
             flow = Workflow(store, "approved", root / "releases", lambda: {"ready": True}, activate)
@@ -240,6 +243,9 @@ class WorkflowTest(unittest.TestCase):
             self.assertEqual(job["result"]["workflow"]["state"], "ready")
             catalog = Registry(json.loads(registry.read_text())["models"])
             self.assertEqual(catalog.resolve(calls[-1], OWNER)["id"], calls[-1])
+            self.assertEqual(
+                catalog.resolve(job["result"]["workflow"]["model_name"], OWNER)["id"], calls[-1]
+            )
             self.assertEqual(catalog.listing(OTHER), {"models": []})
             self.assertEqual(job["result"]["delivery"], delivery)
             flow.tick()

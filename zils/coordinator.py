@@ -19,7 +19,6 @@ from bittensor_wallet import Keypair
 import zils
 
 from . import benchmark, image_jobs, jobs, models, queue_protocol, settings, version_selection
-from .access import require_access
 from .cloud import DATA_BUCKET, MAX_DATA_BYTES, MODEL_BUCKET, APIError, Supabase, trusted_url
 from .decisions import DecisionError
 from .runtime import digest, gpu_ready, locked
@@ -83,6 +82,21 @@ def public_job(job):
         )
     result["selection"] = (job.get("manifest") or {}).get("selection")
     return result
+
+
+def available_models(store, owner):
+    """Keep usable models discoverable even outside the latest 100 training runs."""
+    output, cursor = [], ""
+    while True:
+        rows = store.rows(
+            JOBS,
+            f"owner_id=eq.{owner}&status=eq.completed&result->delivery->>status=eq.accepted&"
+            f"result->workflow->>state=eq.ready&order=id.asc&limit=100{cursor}",
+        )
+        output.extend(public_job(row) for row in rows)
+        if len(rows) < 100:
+            return output
+        cursor = "&id=gt." + identifier(rows[-1]["id"])
 
 
 def identifier(value):
@@ -160,11 +174,13 @@ class Service:
 
     def customer(self, method, path, token, body):
         owner = identifier(self.store.user(token))
-        require_access(self.store, owner)
         if path == "/v1/jobs":
             if method == "GET":
                 rows = self.store.rows(JOBS, f"owner_id=eq.{owner}&order=created_at.desc&limit=100")
-                return {"jobs": [public_job(row) for row in rows]}
+                return {
+                    "jobs": [public_job(row) for row in rows],
+                    "models": available_models(self.store, owner),
+                }
             if method == "POST":
                 if not isinstance(body.get("name"), str) or not re.fullmatch(
                     r"[a-z0-9][a-z0-9-]{0,63}", body["name"]
