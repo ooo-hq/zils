@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 import requests
 
 from .api_store import Store, identifier, safe_cloud
+from .billing import Billing
 from .cloud import APIError, trusted_url
 from .decision_http import Server, make_handler
 from .decisions import DecisionError, decode_body, make_response, validate_request
@@ -185,19 +186,28 @@ class RuntimeClient:
     def prepare(self, body):
         result = self.call("/v1/prepare", {"request": body})
         tokens = result.get("reserved_tokens")
-        if type(tokens) is not int or not 0 <= tokens <= 2**31:
+        billable = result.get("billable_tokens")
+        if (
+            type(tokens) is not int
+            or not 0 <= tokens <= 2**31
+            or (
+                "billable_tokens" in result
+                and (type(billable) is not int or not 1 <= billable <= 2**31)
+            )
+        ):
             raise DecisionError(
                 502, "invalid_model_response", "Model returned invalid token accounting."
             )
-        return tokens
+        return tokens, billable
 
     def predict(self, body, lane):
         return self.call("/v1/systemone", {"request": body, "lane": lane}).get("predictions")
 
 
 class Gateway:
-    def __init__(self, store, registry, batches=None):
+    def __init__(self, store, registry, batches=None, billing=None):
         self.store, self.registry, self.batches = store, registry, batches
+        self.billing = billing
 
     def evaluate(self, owner, key_id, body, request_id, *, lane="realtime", frozen=None):
         validate_request(body)
@@ -208,8 +218,13 @@ class Gateway:
             raise DecisionError(503, "release_mismatch", "The batch model release is unavailable.")
         request = {**body, "model": entry["id"]}
         client = RuntimeClient(entry)
-        reserved = client.prepare(request)
-        self.store.admit(owner, key_id, request_id, reserved)
+        reserved, billable = client.prepare(request)
+        if billable is None:
+            # Legacy runtimes remain usable with billing off; the database rejects
+            # missing meters when billing is enabled.
+            self.store.admit(owner, key_id, request_id, reserved)
+        else:
+            self.store.admit(owner, key_id, request_id, reserved, billable)
         try:
             result = make_response(entry["id"], request, client.predict(request, lane))
             if result["usage"]["input_tokens"] > reserved:
@@ -221,11 +236,22 @@ class Gateway:
             raise
         if lane == "realtime":
             self.store.finish_usage(request_id, result["usage"]["input_tokens"], "completed")
+        if billable is not None:
+            result["usage"]["billable_input_tokens"] = billable
         # Bulk commits the item result and usage together under its database lease.
         return result
 
     def dispatch(self, method, path, bearer, body, request_id):
         try:
+            if path in ("/v1/billing", "/v1/billing/checkout"):
+                owner = self.store.session_owner(bearer)
+                if self.billing is None:
+                    raise DecisionError(503, "billing_unavailable", "Billing is unavailable.")
+                if path == "/v1/billing" and method == "GET":
+                    return 200, self.billing.summary(owner)
+                if path == "/v1/billing/checkout" and method == "POST":
+                    return 200, self.billing.checkout(owner, body)
+                raise DecisionError(405, "method_not_allowed", "Method is not supported.")
             if path == "/v1/keys" or re.fullmatch(r"/v1/keys/[^/]+/revoke", path):
                 owner = self.store.session_owner(bearer)
                 if path == "/v1/keys" and method == "GET":
@@ -260,8 +286,12 @@ def main():
 
     store = Store()
     registry = FileRegistry(args.registry)
-    gateway = Gateway(store, registry, Batches(store.db))
-    service = Server(("127.0.0.1", args.port), make_handler(gateway.dispatch, args.origin))
+    billing = Billing.from_env(store.db)
+    gateway = Gateway(store, registry, Batches(store.db), billing)
+    service = Server(
+        ("127.0.0.1", args.port),
+        make_handler(gateway.dispatch, args.origin, webhook=billing.webhook),
+    )
     print(f"Zils API ready: loopback port {args.port}", flush=True)
     try:
         service.serve_forever()

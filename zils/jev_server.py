@@ -4,6 +4,7 @@ import threading
 from concurrent.futures import Future, TimeoutError
 
 from .decisions import DecisionError
+from .token_meter import billable_tokens
 
 
 class SerialEngine:
@@ -218,7 +219,11 @@ class JevEngine:
                 "texts": texts,
                 "keys": keys,
             }
-        return {"questions": prepared, "reserved_tokens": reserved}
+        return {
+            "questions": prepared,
+            "reserved_tokens": reserved,
+            "billable_tokens": billable_tokens(body, self.model.tok),
+        }
 
     def predict(self, prepared):
         import math
@@ -320,7 +325,11 @@ def main():
             raise DecisionError(404, "model_not_found", "Model is unavailable.")
         if path == "/v1/prepare":
             prepared = engine.prepare(request)
-            return 200, {**identity, "reserved_tokens": prepared["reserved_tokens"]}
+            return 200, {
+                **identity,
+                "reserved_tokens": prepared["reserved_tokens"],
+                "billable_tokens": prepared["billable_tokens"],
+            }
         predictions = serial.evaluate(request, body.get("lane", "realtime"))
         make_response(RELEASE_ID, request, predictions)
         return 200, {**identity, "predictions": predictions}

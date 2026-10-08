@@ -18,6 +18,7 @@ from .decisions import (
     validate_request,
 )
 from .jev_server import JevEngine, SerialEngine, verify_manifest
+from .token_meter import billable_tokens
 
 
 def catalog(root, *, allow_empty=False):
@@ -48,6 +49,10 @@ class AdapterModel:
         from .jevk5 import encode
 
         return encode(self.model.tokenizer, state, question)
+
+    @property
+    def tokenizer(self):
+        return self.model.tokenizer
 
     def activate(self, path, release):
         from .jevk5 import load_adapter_weights
@@ -155,6 +160,7 @@ class AdapterEngine:
             "release": release,
             "questions": questions,
             "reserved_tokens": reserved,
+            "billable_tokens": billable_tokens(body, self.backend.tokenizer),
         }
 
     def predict(self, prepared):
@@ -207,7 +213,11 @@ class AdapterRuntime:
         }
         if path == "/v1/prepare":
             prepared = self.engine.prepare(request)
-            return 200, {**identity, "reserved_tokens": prepared["reserved_tokens"]}
+            return 200, {
+                **identity,
+                "reserved_tokens": prepared["reserved_tokens"],
+                "billable_tokens": prepared["billable_tokens"],
+            }
         predictions = self.serial.evaluate(request, body.get("lane", "realtime"))
         make_response(release["release_id"], request, predictions)
         return 200, {**identity, "predictions": predictions}
@@ -283,7 +293,11 @@ class SharedRuntime(AdapterRuntime):
             request = body["request"]
             if path == "/v1/prepare":
                 prepared = self.engine.prepare(request)
-                return 200, {**self.identity, "reserved_tokens": prepared["reserved_tokens"]}
+                return 200, {
+                    **self.identity,
+                    "reserved_tokens": prepared["reserved_tokens"],
+                    "billable_tokens": prepared["billable_tokens"],
+                }
             predictions = self.serial.evaluate(request, body.get("lane", "realtime"))
             make_response(self.engine.shared_id, request, predictions)
             return 200, {**self.identity, "predictions": predictions}

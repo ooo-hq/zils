@@ -74,6 +74,35 @@ def main():
             from tests.api_database import run
 
             run([tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"])
+            billing = ROOT / "supabase/migrations/202610080001_prepaid_billing.sql"
+            if billing.exists():
+                result = subprocess.run(
+                    [
+                        tool("psql"),
+                        "-X",
+                        "-v",
+                        "ON_ERROR_STOP=1",
+                        "-h",
+                        str(socket),
+                        "-d",
+                        "postgres",
+                        "-f",
+                        str(billing),
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode:
+                    raise RuntimeError(result.stdout + result.stderr)
+            from tests.billing_database import run as run_billing
+            from tests.billing_webhook_database import run as run_billing_webhooks
+
+            run_billing(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
+            run_billing_webhooks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
             print(
                 "Training queue and decision API migrations, isolation, leases, credentials and admission passed."
             )

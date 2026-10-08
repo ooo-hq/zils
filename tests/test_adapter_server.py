@@ -13,6 +13,7 @@ import requests
 
 from tests.test_adapter_releases import OTHER, OWNER, Source, fixture
 from tests.test_decision_http import server
+from tests.test_jev_server import Tokenizer
 from zils import decision_http
 from zils.api import Gateway, Registry
 from zils.decisions import DecisionError
@@ -27,6 +28,7 @@ class Backend:
         self.temperatures = []
         self.entered = threading.Event()
         self.release = threading.Event()
+        self.tokenizer = Tokenizer()
 
     def encode(self, state, question):
         from zils import options
@@ -183,6 +185,7 @@ class AdapterServerTest(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(prepared["fingerprint"], release["fingerprint"])
                 self.assertEqual(prepared["reserved_tokens"], 3)
+                self.assertEqual(prepared["billable_tokens"], 46)
                 cases = [
                     ({**body, "model": "unknown"}, 404),
                     (
@@ -209,6 +212,48 @@ class AdapterServerTest(unittest.TestCase):
                     )
                 self.assertEqual(error.exception.status, 401)
                 self.assertEqual(backend.activations, [])
+            finally:
+                serial.close()
+
+    def test_shared_hosted_runtime_returns_logical_input_meter(self):
+        from zils.adapter_server import SharedEngine, SharedRuntime
+        from zils.jev_server import JevEngine, SerialEngine
+
+        class Backend:
+            tok = Tokenizer()
+
+            def encode(self, *args):
+                return [1] * 100
+
+            def shared_prepare(self, body):
+                return JevEngine(self).prepare(body)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            engine = SharedEngine(Path(tmp), Backend(), "shared-release")
+            serial = SerialEngine(engine)
+            runtime = SharedRuntime(
+                engine,
+                serial,
+                "runtime-secret",
+                {"release_id": "shared-release", "fingerprint": "a" * 64},
+            )
+            try:
+                status, prepared = runtime.dispatch(
+                    "POST",
+                    "/v1/prepare",
+                    "runtime-secret",
+                    {
+                        "request": {
+                            "model": "shared-release",
+                            "state": {},
+                            "questions": {"q": {"type": "noul"}},
+                        }
+                    },
+                    "rid",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(prepared["reserved_tokens"], 100)
+                self.assertEqual(prepared["billable_tokens"], 46)
             finally:
                 serial.close()
 

@@ -38,7 +38,7 @@ class Server(ThreadingHTTPServer):
             self.slots.release()
 
 
-def make_handler(dispatch, origin=None, *, body_limit=MAX_BODY, max_depth=MAX_DEPTH):
+def make_handler(dispatch, origin=None, *, body_limit=MAX_BODY, max_depth=MAX_DEPTH, webhook=None):
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
             super().setup()
@@ -86,8 +86,11 @@ def make_handler(dispatch, origin=None, *, body_limit=MAX_BODY, max_depth=MAX_DE
                     return
                 if self.command not in ("GET", "POST"):
                     raise DecisionError(405, "method_not_allowed", "Method is not supported.")
+                is_webhook = webhook is not None and self.path == "/v1/billing/webhook"
+                if is_webhook and self.command != "POST":
+                    raise DecisionError(405, "method_not_allowed", "Method is not supported.")
                 auth = self.headers.get_all("Authorization", [])
-                if (
+                if not is_webhook and (
                     len(auth) != 1
                     or not auth[0].startswith("Bearer ")
                     or not 1 <= len(auth[0][7:]) <= 8192
@@ -110,7 +113,8 @@ def make_handler(dispatch, origin=None, *, body_limit=MAX_BODY, max_depth=MAX_DE
                 ):
                     raise DecisionError(400, "invalid_framing", "Invalid content length.")
                 length = int(lengths[0]) if lengths else 0
-                if length > body_limit:
+                request_limit = min(body_limit, 256 * 1024) if is_webhook else body_limit
+                if length > request_limit:
                     raise DecisionError(413, "body_too_large", "Request exceeds the body limit.")
                 body = {}
                 if self.command == "POST":
@@ -125,6 +129,15 @@ def make_handler(dispatch, origin=None, *, body_limit=MAX_BODY, max_depth=MAX_DE
                     raw = self.rfile.read(length)
                     if len(raw) != length:
                         raise DecisionError(400, "invalid_framing", "Incomplete request body.")
+                    if is_webhook:
+                        signatures = self.headers.get_all("Stripe-Signature", [])
+                        if len(signatures) != 1 or len(signatures[0]) > 4096:
+                            raise DecisionError(
+                                400, "invalid_webhook", "Payment event could not be verified."
+                            )
+                        status, result = webhook(raw, signatures[0])
+                        self.send(status, result, request_id)
+                        return
                     body = decode_body(raw, limit=body_limit, max_depth=max_depth)
                 elif length:
                     raise DecisionError(
