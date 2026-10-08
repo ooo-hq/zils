@@ -23,11 +23,22 @@ from .runtime import locked
 
 class Workflow:
     def __init__(
-        self, store, hotkey, releases, capacity, activate, *, image_hotkey=None, image_capacity=None
+        self,
+        store,
+        hotkey,
+        releases,
+        capacity,
+        activate,
+        *,
+        image_hotkey=None,
+        image_capacity=None,
+        image_releases=None,
+        image_activate=None,
     ):
         self.store, self.hotkey, self.releases = store, hotkey, Path(releases)
         self.capacity, self.activate = capacity, activate
         self.image_hotkey, self.image_capacity = image_hotkey, image_capacity
+        self.image_releases, self.image_activate = image_releases, image_activate
         self.accepted_offset = 0
         self.pending_offset = 0
 
@@ -64,10 +75,15 @@ class Workflow:
                 continue
             try:
                 self.status(job, "activating", "Training passed. Preparing your API model.")
-                release = publish(self.store, job["id"], self.releases)
+                image = models.job_model(job) == models.IMAJEV
+                destination = self.image_releases if image else self.releases
+                activation = self.image_activate if image else self.activate
+                if destination is None or activation is None:
+                    raise APIError(503, "Image activation is not configured yet.")
+                release = publish(self.store, job["id"], destination)
                 if release is None:
                     continue
-                model_id = self.activate(release)
+                model_id = activation(release)
                 if model_id != release["release_id"]:
                     raise ValueError("Activation identity differs from accepted release")
                 self.status(
@@ -204,6 +220,8 @@ def activate(release, config):
     ) as response:
         response.raise_for_status()
         identities = response.json().get("models", [])
+    if isinstance(identities, dict):
+        identities = list(identities.values())
     identity = {k: release[k] for k in ("release_id", "fingerprint")}
     if identity not in identities:
         raise ValueError("Serving runtime has not verified the accepted adapter")
@@ -309,6 +327,8 @@ def main():
         ),
         lambda release: activate(release, config),
         image_hotkey=image["hotkey"] if image else None,
+        image_releases=image["releases"] if image else None,
+        image_activate=(lambda release: activate(release, image)) if image else None,
         image_capacity=(
             lambda: gpu_capacity(
                 image["min_free_mib"],

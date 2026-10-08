@@ -94,6 +94,8 @@ def check_promotion(current, entry, selection):
         incumbent = next(
             (row for row in current["models"] if row["id"] == previous["model_id"]), None
         )
+        if incumbent is not None and incumbent.get("profile") != entry.get("profile"):
+            raise ValueError("A task version cannot move between model profiles")
         if incumbent is None or incumbent["owners"] != entry["owners"]:
             raise ValueError("Previous model is unavailable to this customer")
         if active is None and (

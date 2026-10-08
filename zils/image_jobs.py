@@ -320,6 +320,8 @@ def audit(root, manifest):
 def validate_predecessor(manifest, previous):
     if previous.get("model") != manifest["model"]:
         raise ValueError("previous model belongs to a different profile family")
+    if task_contract(manifest) != task_contract(previous):
+        raise ValueError("An image upgrade must retain its incumbent's callable task question")
     known = previous.get("assets", {})
     for field in ("canonical_sha256", "pixel_sha256"):
         prior = {a[field] for a in known.values() if a["split"] in ("train", "calibration")}
@@ -328,3 +330,25 @@ def validate_predecessor(manifest, previous):
         }
         if prior & holdout:
             raise ValueError("new holdout images overlap predecessor training or calibration")
+
+
+def task_contract(manifest):
+    """Recover declared order after PostgreSQL jsonb has reordered object keys."""
+    order = manifest["outcome_order"]
+    question = manifest["question"]
+    if (
+        not isinstance(order, list)
+        or len(set(order)) != len(order)
+        or set(order) != set(question["criteria"])
+    ):
+        raise ValueError("Image task outcome order changed")
+    question = {**question, "criteria": {key: question["criteria"][key] for key in order}}
+    validate_image_request(
+        {
+            "model": models.IMAJEV,
+            "state": {},
+            "questions": {"decision": question},
+            "images": [{"asset_id": "00000000-0000-0000-0000-000000000000"}],
+        }
+    )
+    return {"question": question, "outcome_order": list(order)}

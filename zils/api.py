@@ -39,12 +39,32 @@ class Registry:
                 "release_date",
                 "description",
             }
-            if not isinstance(entry, dict) or set(entry) - {"capabilities"} != required:
+            if (
+                not isinstance(entry, dict)
+                or set(entry) - {"capabilities", "profile", "task"} != required
+            ):
                 raise ValueError("Invalid model registry entry")
             capabilities = entry.get("capabilities", TEXT_CAPABILITIES)
             if capabilities not in (TEXT_CAPABILITIES, IMAGE_CAPABILITIES):
                 raise ValueError("Unsupported model capabilities")
             entry = {**entry, "capabilities": json.loads(json.dumps(capabilities))}
+            if capabilities == IMAGE_CAPABILITIES:
+                from . import models
+                from .image_jobs import task_contract
+
+                profile = entry.get("profile", models.spec(models.IMAJEV))
+                if profile != models.spec(models.IMAJEV):
+                    raise ValueError("Image registry profile differs from its pinned version")
+                entry = {**entry, "profile": profile}
+                if "task" in entry:
+                    if not isinstance(entry["task"], dict) or set(entry["task"]) != {
+                        "question",
+                        "outcome_order",
+                    }:
+                        raise ValueError("Invalid image task contract")
+                    entry = {**entry, "task": task_contract(entry["task"])}
+            elif "profile" in entry or "task" in entry:
+                raise ValueError("Image contracts cannot be attached to text models")
             if not re.fullmatch("[a-f0-9]{64}", entry["fingerprint"]):
                 raise ValueError("Pin the model release fingerprint")
             if not isinstance(entry["aliases"], list) or not all(
@@ -84,6 +104,8 @@ class Registry:
                     "name": name,
                     "description": entry["description"],
                     "release_date": entry["release_date"],
+                    **({"profile": entry["profile"]} if "profile" in entry else {}),
+                    **({"task": entry["task"]} if "task" in entry else {}),
                     **(
                         {"capabilities": entry["capabilities"]}
                         if entry["capabilities"] != TEXT_CAPABILITIES
@@ -120,7 +142,9 @@ class FileRegistry:
                         raise ValueError("Existing model names must be preserved")
                     for old in self.current.entries:
                         new = candidate.names.get(old["id"])
-                        if new is None or any(old[k] != new[k] for k in old if k != "aliases"):
+                        if new is None or {k: v for k, v in old.items() if k != "aliases"} != {
+                            k: v for k, v in new.items() if k != "aliases"
+                        }:
                             raise ValueError("Existing immutable releases must be preserved")
                     for name in self.current.names.keys() & candidate.names.keys():
                         if self.current.names[name]["owners"] != candidate.names[name]["owners"]:

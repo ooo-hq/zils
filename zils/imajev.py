@@ -414,3 +414,58 @@ def train(reference, training, images, out, seed, device):
         **models.profile_identity(models.IMAJEV),
     }
     return report
+
+
+CHECKPOINT_SCHEMA = json.loads(Path(__file__).with_name("imajev-schema.json").read_text())
+
+
+def validate_checkpoint(checkpoint):
+    """CPU-only validation against tensor headers extracted from the pinned public artifact."""
+    import torch
+    from safetensors import safe_open
+
+    import zils
+
+    root = Path(checkpoint)
+    meta = models.metadata(root)
+    if not meta or meta["model"] != models.IMAJEV:
+        raise ValueError("An image checkpoint is required")
+    zils.checkpoint_hash(root)
+    allowed = {
+        *models.IMAJEV_FILES,
+        "README.md",
+        "calibration.json",
+        "release.json",
+        "manifest.json",
+        "source.json",
+        "serving.json",
+    }
+    if any(
+        path.name not in allowed or not path.is_file() or path.is_symlink()
+        for path in root.iterdir()
+    ):
+        raise ValueError("Unexpected image checkpoint files")
+    ignored = {"base_model_name_or_path", "inference_mode", "peft_version"}
+    for name, expected in CHECKPOINT_SCHEMA["json"].items():
+        path = root / name
+        if path.stat().st_size > 256 * 1024:
+            raise ValueError("Image artifact metadata is too large")
+        actual = json.loads(path.read_text())
+        if name == "adapter_config.json":
+            actual = {k: v for k, v in actual.items() if k not in ignored}
+            expected = {k: v for k, v in expected.items() if k not in ignored}
+        if actual != expected:
+            raise ValueError("Image artifact configuration differs from its pinned schema")
+    for name, expected in CHECKPOINT_SCHEMA["tensors"].items():
+        with safe_open(str(root / name), framework="pt", device="cpu") as tensors:
+            if set(tensors.keys()) != set(expected):
+                raise ValueError("Image tensor names differ from the pinned schema")
+            for key, layout in expected.items():
+                view = tensors.get_slice(key)
+                if view.get_shape() != layout["shape"] or view.get_dtype() != "F32":
+                    raise ValueError(
+                        "Image tensor shape or precision differs from the pinned schema"
+                    )
+                if not bool(torch.isfinite(tensors.get_tensor(key)).all()):
+                    raise ValueError("Image checkpoint contains nonfinite weights")
+    return meta
