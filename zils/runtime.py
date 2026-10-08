@@ -170,6 +170,11 @@ def request(config, path, message=None):
 
 
 def prepare_base(model=models.KEV):
+    if model == models.IMAJEV:
+        from .imajev import resolve_reference
+
+        base, _ = resolve_reference(Path(settings.required("ZILS_IMAGE_REFERENCE")))
+        return base
     if model == models.JEVK5:
         from .jevk5 import base_path
 

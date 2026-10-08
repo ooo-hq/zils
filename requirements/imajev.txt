@@ -1,0 +1,11 @@
+# Dedicated CUDA image environment; install a matching CUDA wheel index for torch/torchvision.
+torch==2.8.0
+torchvision==0.23.0
+transformers==5.17.0
+peft==0.21.0
+safetensors==0.8.0
+Pillow==11.3.0
+huggingface_hub==1.33.0
+requests==2.32.5
+pydantic==2.12.5
+# The upstream source is fetched and verified by scripts.download_imajev at its pinned revision.

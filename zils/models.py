@@ -28,6 +28,8 @@ SPECS = {
         "base_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
         "adapter": "mohit67890/imajev-4b",
         "adapter_revision": "f8d8234cebc6c99065c07731e59716dc0a6e27ab",
+        "starting_adapter_sha256": "88c2c44361e0c469352495abcfee789ff73a4deae0811168d9402cfc2b6e749c",
+        "starting_head_sha256": "52ceafd7d824bf3ea5ce55276b48cc08ba9dd6b2c98a55d9bd6a72ed1643a427",
         "runtime_revision": "ccf586d43d2a580319b6535c893668904d909eb9",
         "preprocessor": "zils-image-rgb-png/v1",
         "prompt": "imajev-readout/v1",
