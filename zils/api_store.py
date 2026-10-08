@@ -35,6 +35,16 @@ class Store:
         require_access(self.db, owner)
         return owner
 
+    def ensure_account(self, owner):
+        owner = identifier(owner)
+        require_access(self.db, owner)
+        try:
+            self.db.rpc("zils_image_ensure_account", {"p_owner": owner})
+        except APIError as error:
+            if error.status == 409:
+                raise DecisionError(403, "account_disabled", "Account is unavailable.") from None
+            raise
+
     def create_key(self, owner, name):
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80:
             raise DecisionError(422, "invalid_name", "Use a key name of 1–80 characters.")

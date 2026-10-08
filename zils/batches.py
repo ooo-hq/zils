@@ -71,6 +71,10 @@ def parse_input(raw, catalog, *, max_records=MAX_RECORDS):
             )
         seen.add(custom_id)
         result, frozen, body = None, None, row["body"]
+        if isinstance(body, dict) and "images" in body:
+            raise DecisionError(
+                422, "image_bulk_unsupported", "Image requests support realtime only."
+            )
         try:
             validate_request(body)
             pending = [body]
@@ -164,6 +168,35 @@ class Batches:
                 raise DecisionError(
                     409, "upload_missing", "Complete the immutable upload before submitting."
                 )
+            if action == "submit" and row["status"] == "uploading":
+                image_names = {
+                    entry["name"]
+                    for entry in registry.listing(owner)["models"]
+                    if "image" in entry.get("capabilities", {}).get("modalities", [])
+                }
+                with TemporaryDirectory(prefix="zils-batch-check-") as temp:
+                    source = Path(temp) / "input.jsonl"
+                    self.db.download(BUCKET, row["input_path"], source, MAX_FILE)
+                    for encoded in source.read_bytes().splitlines()[:MAX_RECORDS]:
+                        try:
+                            item = decode_body(
+                                encoded, limit=MAX_BODY + 1024, max_depth=MAX_DEPTH + 1
+                            )
+                        except DecisionError:
+                            continue  # Existing worker owns malformed text-record errors.
+                        value = item.get("body") if isinstance(item, dict) else None
+                        if isinstance(value, dict) and (
+                            "images" in value
+                            or (
+                                isinstance(value.get("model"), str)
+                                and value["model"] in image_names
+                            )
+                        ):
+                            raise DecisionError(
+                                422,
+                                "image_bulk_unsupported",
+                                "Image requests support realtime only.",
+                            )
             row = self.db.rpc(
                 "zils_api_batch_action",
                 {

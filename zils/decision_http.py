@@ -38,7 +38,17 @@ class Server(ThreadingHTTPServer):
             self.slots.release()
 
 
-def make_handler(dispatch, origin=None, *, body_limit=MAX_BODY, max_depth=MAX_DEPTH):
+def make_handler(
+    dispatch,
+    origin=None,
+    *,
+    body_limit=MAX_BODY,
+    max_depth=MAX_DEPTH,
+    allowed_methods=("GET", "POST"),
+):
+    if not allowed_methods or set(allowed_methods) - {"GET", "POST", "DELETE"}:
+        raise ValueError("Unsupported HTTP method configuration")
+
     class Handler(BaseHTTPRequestHandler):
         def setup(self):
             super().setup()
@@ -62,7 +72,9 @@ def make_handler(dispatch, origin=None, *, body_limit=MAX_BODY, max_depth=MAX_DE
             self.send_header("Vary", "Origin")
             if origin and self.headers.get("Origin") == origin:
                 self.send_header("Access-Control-Allow-Origin", origin)
-                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header(
+                    "Access-Control-Allow-Methods", ", ".join((*allowed_methods, "OPTIONS"))
+                )
                 self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
                 self.send_header("Access-Control-Expose-Headers", "X-Request-ID, Retry-After")
             if retry_after is not None:
@@ -84,7 +96,7 @@ def make_handler(dispatch, origin=None, *, body_limit=MAX_BODY, max_depth=MAX_DE
                         raise DecisionError(403, "origin_not_allowed", "Origin is not allowed.")
                     self.send(204, {}, request_id)
                     return
-                if self.command not in ("GET", "POST"):
+                if self.command not in allowed_methods:
                     raise DecisionError(405, "method_not_allowed", "Method is not supported.")
                 auth = self.headers.get_all("Authorization", [])
                 if (

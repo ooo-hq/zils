@@ -14,7 +14,13 @@ from .api_store import Store, identifier, safe_cloud
 from .cloud import APIError, trusted_url
 from .decision_http import Server, make_handler
 from .decisions import DecisionError, decode_body, make_response, validate_request
-from .image_contract import IMAGE_CAPABILITIES, TEXT_CAPABILITIES
+from .image_api import ImageApi, require_images
+from .image_contract import (
+    IMAGE_CAPABILITIES,
+    TEXT_CAPABILITIES,
+    make_image_response,
+    validate_image_request,
+)
 
 
 class Registry:
@@ -136,11 +142,14 @@ class FileRegistry:
 
 
 class RuntimeClient:
-    def __init__(self, entry):
+    def __init__(self, entry, image=None):
         self.entry = entry
+        self.image = image
         self.token = os.environ[entry["token_env"]]
 
     def call(self, path, body):
+        if self.image is not None:
+            body = {**body, "image": self.image, "fingerprint": self.entry["fingerprint"]}
         try:
             with requests.post(
                 self.entry["url"] + path,
@@ -206,22 +215,49 @@ class RuntimeClient:
 
 
 class Gateway:
-    def __init__(self, store, registry, batches=None):
+    def __init__(self, store, registry, batches=None, image_store=None):
         self.store, self.registry, self.batches = store, registry, batches
+        self.image_store = image_store
+        self.images = ImageApi(store, image_store, registry, self.evaluate) if image_store else None
 
     def evaluate(self, owner, key_id, body, request_id, *, lane="realtime", frozen=None):
-        validate_request(body)
+        has_image = isinstance(body, dict) and "images" in body
+        if has_image:
+            require_images()
+            validate_image_request(body)
+            if lane != "realtime":
+                raise DecisionError(
+                    422, "image_bulk_unsupported", "Image requests support realtime only."
+                )
+        else:
+            validate_request(body)
         entry = self.registry.resolve(frozen["id"] if frozen else body["model"], owner)
+        image_model = entry["capabilities"] == IMAGE_CAPABILITIES
+        if has_image != image_model:
+            raise DecisionError(
+                422,
+                "model_modality",
+                "Use one image with an image model, or a text model for text requests.",
+            )
         if frozen is not None and (
             entry["id"] != frozen["id"] or entry["fingerprint"] != frozen["fingerprint"]
         ):
             raise DecisionError(503, "release_mismatch", "The batch model release is unavailable.")
         request = {**body, "model": entry["id"]}
-        client = RuntimeClient(entry)
+        image = None
+        if has_image:
+            if self.image_store is None:
+                raise DecisionError(503, "images_unavailable", "Image storage is unavailable.")
+            self.store.ensure_account(owner)
+            image = self.image_store.read_reference(
+                owner, body["images"][0]["asset_id"], purpose="prediction"
+            )
+        client = RuntimeClient(entry, image)
         reserved = client.prepare(request)
         self.store.admit(owner, key_id, request_id, reserved)
         try:
-            result = make_response(entry["id"], request, client.predict(request, lane))
+            convert = make_image_response if has_image else make_response
+            result = convert(entry["id"], request, client.predict(request, lane))
             if result["usage"]["input_tokens"] > reserved:
                 raise DecisionError(
                     502, "token_accounting_error", "Model exceeded its token reservation."
@@ -236,6 +272,8 @@ class Gateway:
 
     def dispatch(self, method, path, bearer, body, request_id):
         try:
+            if path.startswith("/v1/image-") and self.images:
+                return self.images.dispatch(method, path, bearer, body, request_id)
             if path == "/v1/keys" or re.fullmatch(r"/v1/keys/[^/]+/revoke", path):
                 owner = self.store.session_owner(bearer)
                 if path == "/v1/keys" and method == "GET":
@@ -267,11 +305,15 @@ def main():
     parser.add_argument("--origin", help="Exact optional dashboard CORS origin")
     args = parser.parse_args()
     from .batches import Batches
+    from .image_store import ImageStore
 
     store = Store()
     registry = FileRegistry(args.registry)
-    gateway = Gateway(store, registry, Batches(store.db))
-    service = Server(("127.0.0.1", args.port), make_handler(gateway.dispatch, args.origin))
+    gateway = Gateway(store, registry, Batches(store.db), ImageStore(store.db))
+    service = Server(
+        ("127.0.0.1", args.port),
+        make_handler(gateway.dispatch, args.origin, allowed_methods=("GET", "POST", "DELETE")),
+    )
     print(f"Zils API ready: loopback port {args.port}", flush=True)
     try:
         service.serve_forever()
