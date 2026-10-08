@@ -41,6 +41,13 @@ No training examples or customer API keys are downloaded into the serving bundle
 The bundle contains private job provenance and must remain access-controlled.
 
 Each release has an immutable ID containing the job UUID and checkpoint hash.
+Automatic activation also registers a readable API name from the training run's
+name and the first eight characters of its job ID, such as
+`support-actions-9f670236`. The name prefix is shortened to at most 24 characters.
+Each run gets a separate name; it stays pinned to that accepted release even
+after another version wins. Existing full IDs and stable task aliases continue
+to work. A name collision fails registration rather than redirecting a name to
+a different release. The response's `model` still reports the full immutable ID.
 Its fingerprint also covers the serving contract, pinned runtime, calibrated
 temperature, owner, and provenance files. Retrying the same publication is
 idempotent. A changed checkpoint or provenance fails verification. Downloads

@@ -3,6 +3,8 @@
 import re
 import uuid
 
+from .model_names import valid_customer_aliases
+
 VERSION = "zils-version-selection/v1"
 
 
@@ -76,7 +78,7 @@ def check_promotion(current, entry, selection):
         raise ValueError("Version release requires an immutable customer model ID")
     validate(selection, previous["job_id"] if previous else None, current_job_id=match[1])
     alias = "zils-task-" + selection["root_job_id"]
-    if entry["aliases"] != [alias]:
+    if not valid_customer_aliases(entry, selection):
         raise ValueError("A version release must use its task alias")
     active = next((row for row in current["models"] if alias in row["aliases"]), None)
     if active and active["owners"] != entry["owners"]:
