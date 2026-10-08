@@ -73,7 +73,12 @@ def main():
                     raise RuntimeError(f"{source}:\n{result.stdout}\n{result.stderr}")
             from tests.api_database import run
 
-            for billing in sorted((ROOT / "supabase/migrations").glob("20261008*.sql")):
+            # Verify the production billing/usage schema before adding image tables.
+            for source in (
+                "202610080001_prepaid_billing.sql",
+                "202610080002_usage_reporting.sql",
+            ):
+                billing = ROOT / "supabase/migrations" / source
                 result = subprocess.run(
                     [
                         tool("psql"),
@@ -95,6 +100,7 @@ def main():
             run([tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"])
             from tests.billing_database import run as run_billing
             from tests.billing_webhook_database import run as run_billing_webhooks
+            from tests.usage_database import run as run_usage
 
             run_billing(
                 [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
@@ -102,8 +108,127 @@ def main():
             run_billing_webhooks(
                 [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
             )
-            from tests.usage_database import run as run_usage
+            run_usage(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
+            subprocess.run(
+                [
+                    tool("psql"),
+                    "-X",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-h",
+                    str(socket),
+                    "-d",
+                    "postgres",
+                    "-c",
+                    "update zils_billing_settings set mode='off'",
+                ],
+                check=True,
+                capture_output=True,
+            )
+            from tests.image_database import run as image_checks
 
+            subprocess.run(
+                [
+                    tool("psql"),
+                    "-X",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-h",
+                    str(socket),
+                    "-d",
+                    "postgres",
+                    "-f",
+                    str(ROOT / "supabase/migrations/202610080003_image_assets.sql"),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            image_checks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
+            subprocess.run(
+                [
+                    tool("psql"),
+                    "-X",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-h",
+                    str(socket),
+                    "-d",
+                    "postgres",
+                    "-f",
+                    str(ROOT / "supabase/migrations/202610080004_image_jobs.sql"),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            from tests.image_job_database import run as image_job_checks
+
+            image_job_checks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
+            from tests.image_queue_database import run as image_queue_checks
+
+            subprocess.run(
+                [
+                    tool("psql"),
+                    "-X",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-h",
+                    str(socket),
+                    "-d",
+                    "postgres",
+                    "-f",
+                    str(ROOT / "supabase/migrations/202610080005_image_worker_profiles.sql"),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            image_queue_checks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
+            subprocess.run(
+                [
+                    tool("psql"),
+                    "-X",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-h",
+                    str(socket),
+                    "-d",
+                    "postgres",
+                    "-f",
+                    str(ROOT / "supabase/migrations/202610080006_image_processing_profiles.sql"),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            from tests.image_queue_database import cancellation_claim_races
+
+            cancellation_claim_races(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
+            from tests.image_processing_database import run as processing_checks
+
+            processing_checks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
+            from tests.image_billing_database import run as image_billing_checks
+
+            image_billing_checks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
+            # Image migrations replace queue functions: recheck production billing
+            # after the full upgrade, including the cancellation/claim race.
+            run_billing(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
+            run_billing_webhooks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
             run_usage(
                 [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
             )

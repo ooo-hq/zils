@@ -143,15 +143,22 @@ def verify_report(root, report, split):
     return cases
 
 
-def select(baseline, rows, policy):
+def select(baseline, rows, policy, *, model=None):
     """Delivery gate only; miner rewards remain governed by the round rubric."""
-    validate_policy(policy)
+    if model == models.IMAJEV:
+        from .image_jobs import validate_policy as image_policy
+        from .image_metrics import image_policy_passes
+
+        image_policy(policy, baseline["outcome_order"])
+    else:
+        validate_policy(policy)
     if baseline.get("status") != "evaluated":
         raise ValueError("a valid baseline evaluation is required for delivery")
     eligible = [
         row
         for row in rows
         if row["status"] == "evaluated"
+        and (model != models.IMAJEV or image_policy_passes(row, policy))
         and row["skill"] > 0
         and row["accuracy"] >= policy["min_accuracy"]
         and baseline["brier"] - row["brier"] > 0

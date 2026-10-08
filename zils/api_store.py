@@ -30,7 +30,17 @@ class Store:
         self.db = db or Supabase()
 
     def session_owner(self, token):
-        return identifier(self.db.user(token))
+        owner = identifier(self.db.user(token))
+        return owner
+
+    def ensure_account(self, owner):
+        owner = identifier(owner)
+        try:
+            self.db.rpc("zils_image_ensure_account", {"p_owner": owner})
+        except APIError as error:
+            if error.status == 409:
+                raise DecisionError(403, "account_disabled", "Account is unavailable.") from None
+            raise
 
     def create_key(self, owner, name):
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80:

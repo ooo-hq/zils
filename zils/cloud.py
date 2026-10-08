@@ -1,6 +1,11 @@
 """Small Supabase REST client; server credentials never travel to workers or browsers."""
 
+import json
+import math
 import os
+import subprocess
+import sys
+import tempfile
 import time
 from pathlib import Path
 from urllib.parse import quote, urlsplit
@@ -29,7 +34,44 @@ def trusted_url(url):
     return url.rstrip("/")
 
 
-def download(url, destination, limit, headers=None):
+def download(url, destination, limit, headers=None, *, max_seconds=600):
+    """Terminate the complete network operation at its wall-clock deadline."""
+    trusted_url(url)
+    if not math.isfinite(max_seconds) or max_seconds <= 0:
+        raise ValueError("invalid transfer-time limit")
+    destination = Path(destination)
+    if destination.exists():
+        raise FileExistsError("download destination already exists")
+    # A separate process can be killed even during DNS, headers, or a trickling read.
+    # Keep partial bytes private, and publish exclusively only after full validation.
+    with tempfile.TemporaryDirectory(prefix=".zils-download-", dir=destination.parent) as temp:
+        staged = Path(temp) / "payload"
+        payload = dict(url=url, destination=str(staged), limit=limit, headers=headers)
+        try:
+            process = subprocess.run(
+                [sys.executable, str(Path(__file__).resolve()), "--download"],
+                input=json.dumps(payload),
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                timeout=max_seconds,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            raise ValueError("file exceeds its transfer-time limit") from None
+        try:
+            result = json.loads(process.stdout)
+        except ValueError:
+            result = {}
+        if process.returncode or type(result.get("size")) is not int:
+            if result.get("error") == "invalid_file":
+                raise ValueError("file exceeds its size limit or is truncated")
+            raise APIError(503, "File download interrupted; please retry.")
+        os.link(staged, destination)
+        return result["size"]
+
+
+def _download_stream(url, destination, limit, headers=None, *, max_seconds=600):
     trusted_url(url)
     try:
         started, size = time.monotonic(), 0
@@ -48,7 +90,7 @@ def download(url, destination, limit, headers=None):
             with Path(destination).open("xb") as output:
                 for chunk in response.iter_content(1024 * 1024):
                     size += len(chunk)
-                    if size > limit or time.monotonic() - started > 600:
+                    if size > limit or time.monotonic() - started > max_seconds:
                         raise ValueError("file exceeds its size or transfer-time limit")
                     output.write(chunk)
             if declared is not None and size != int(declared):
@@ -178,8 +220,10 @@ class Supabase:
             )
         return result
 
-    def download(self, bucket, path, destination, limit):
-        return download(self.signed(bucket, path)["url"], destination, limit)
+    def download(self, bucket, path, destination, limit, *, max_seconds=600):
+        return download(
+            self.signed(bucket, path)["url"], destination, limit, max_seconds=max_seconds
+        )
 
     def upload(self, bucket, path, source):
         # Trusted processors use immutable, attempt-specific paths; never overwrite.
@@ -199,3 +243,25 @@ class Supabase:
             {"prefix": parent, "search": name, "limit": 100},
         )
         return any(row["name"] == name for row in rows)
+
+    def remove(self, bucket, paths):
+        if not isinstance(paths, list) or not 1 <= len(paths) <= 100:
+            raise ValueError("remove requires 1..100 exact object paths")
+        return self.request(
+            "DELETE", "/storage/v1/object/" + quote(bucket, safe=""), {"prefixes": paths}
+        )
+
+
+def _download_worker():
+    try:
+        values = json.loads(sys.stdin.read())
+        result = {"size": _download_stream(**values)}
+    except ValueError:
+        result = {"error": "invalid_file"}
+    except (APIError, OSError):
+        result = {"error": "unavailable"}
+    print(json.dumps(result))
+
+
+if __name__ == "__main__" and sys.argv[1:] == ["--download"]:
+    _download_worker()

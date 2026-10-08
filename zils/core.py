@@ -63,6 +63,12 @@ def validate_cases(cases):
 
 def score(cases, predictions):
     validate_cases(cases)
+    if any("image" in c for c in cases):
+        if not all("image" in c for c in cases):
+            raise ValueError("Mixed image and text evaluation is unsupported")
+        from .image_metrics import score as image_score
+
+        return image_score(cases, predictions)
     if not isinstance(predictions, list) or len(predictions) != len(cases):
         raise ValueError("exactly one prediction per case is required")
     by_id = {}
@@ -200,17 +206,43 @@ def evaluate(args):
     requests = [
         {"id": case["id"], "state": case["state"], "question": case["question"]} for case in cases
     ]
-    model = (
-        models.JEVK5
-        if args.base_revision == models.spec(models.JEVK5)["base_revision"]
-        else models.KEV
-    )
+    matched = [
+        model for model in models.SPECS if models.spec(model)["base_revision"] == args.base_revision
+    ]
+    # Legacy Kev CLI callers retain their supplied revision and artifact rejection behavior.
+    model = matched[0] if matched else models.KEV
     base = models.spec(model)["base"]
     runner = Path(__file__).with_name(
-        "jevk5_runner.py" if model == models.JEVK5 else "kev_runner.py"
+        {
+            models.JEVK5: "jevk5_runner.py",
+            models.IMAJEV: "imajev_runner.py",
+            models.KEV: "kev_runner.py",
+        }[model]
     )
+    if model == models.IMAJEV:
+        from . import benchmark
+
+        root = Path(args.cases).parent
+        frozen = benchmark.audit(root)
+        if (
+            Path(args.cases).stem not in ("calibration", "test")
+            or frozen[Path(args.cases).stem] != cases
+        ):
+            raise ValueError("Image evaluation requires a frozen held-out split")
+        manifest = json.loads((root / "manifest.json").read_text())
+        if manifest["model"] != models.spec(model) or not getattr(args, "images", None):
+            raise ValueError("Image evaluation requires verified local image assets")
+        for request, case in zip(requests, cases, strict=True):
+            asset = manifest["assets"][case["image"]["asset_id"]]
+            request["image"] = {"asset_id": asset["id"], "sha256": asset["canonical_sha256"]}
+    elif any("image" in c for c in cases):
+        raise ValueError("Image data cannot use a text runtime")
     environment = {
-        **os.environ,
+        **{
+            k: v
+            for k, v in os.environ.items()
+            if k not in {"SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL"}
+        },
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
         "TORCH_FORCE_WEIGHTS_ONLY_LOAD": "1",
@@ -231,20 +263,23 @@ def evaluate(args):
                 stage(entry, checkpoint)
                 if models.checkpoint_model(checkpoint) != model:
                     raise ValueError("checkpoint belongs to a different model")
+                command = [
+                    args.runner_python,
+                    str(runner),
+                    "--checkpoint",
+                    str(checkpoint),
+                    "--device",
+                    args.device,
+                ]
+                if model == models.IMAJEV:
+                    inputs = Path(tmp) / "requests.json"
+                    inputs.write_text(json.dumps(requests, allow_nan=False))
+                    command.extend(["--cases", str(inputs), "--images", str(args.images)])
+                else:
+                    command.extend(["--base", base, "--base-revision", args.base_revision])
                 try:
                     result = subprocess.run(
-                        [
-                            args.runner_python,
-                            str(runner),
-                            "--checkpoint",
-                            str(checkpoint),
-                            "--base",
-                            base,
-                            "--base-revision",
-                            args.base_revision,
-                            "--device",
-                            args.device,
-                        ],
+                        command,
                         input=json.dumps(requests, allow_nan=False),
                         text=True,
                         capture_output=True,
@@ -260,6 +295,15 @@ def evaluate(args):
                 if result.returncode:
                     raise ValueError(f"model runner failed: {result.stderr[-1000:]}")
                 output = json.loads(result.stdout)
+                if model == models.IMAJEV and (
+                    output["runtime"].get("model") != models.spec(model)
+                    or output["runtime"].get("temperature") != models.temperature(checkpoint)
+                    or any(
+                        output["runtime"].get(k) != v
+                        for k, v in models.profile_identity(model).items()
+                    )
+                ):
+                    raise ValueError("Image inference runtime identity changed")
                 row.update(score(cases, output["predictions"]))
                 row.update(
                     status="evaluated", runtime=output["runtime"], predictions=output["predictions"]
@@ -311,6 +355,7 @@ def main():
     run.add_argument("--device", choices=("cpu", "mps", "cuda"), default="cpu")
     run.add_argument("--timeout", type=float, default=600)
     run.add_argument("--report", required=True)
+    run.add_argument("--images", type=Path)
     args = parser.parse_args()
     try:
         if args.command == "submit":

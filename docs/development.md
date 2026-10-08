@@ -108,3 +108,16 @@ can take several minutes; the command allows up to 30 minutes per checkpoint.
 
 This rehearsal submits existing checkpoints. The [persistent fleet](mining.md)
 trains a new candidate each round. Neither local mode writes chain weights.
+
+## Optional image vertical
+
+Read [image decisions](image-decisions.md) and [image training](image-training.md).
+Both feature flags default off. Run `python -m unittest tests.test_image_vertical -v`
+for the isolated upload-to-private-prediction contract, including negative and failed
+activation paths. `make check-queue-db` verifies real PostgreSQL worker/profile and
+processing-capacity intersections. The ordinary suite never starts a GPU job.
+
+Explicit CUDA state-switching verification uses `python -m tests.test_image_adapter_gpu
+--stock PATH --adapter PATH --images PATH --out NEW_PATH`. The full rehearsal driver
+requires explicit isolated services and authorized data; its output never overwrites
+earlier evidence. No command above authorizes production migration or service interruption.

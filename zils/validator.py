@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 
 import zils
 
-from . import models, protocol as wire
+from . import models, protocol as wire, settings
 from .runtime import digest, locked, run_child, signed, signing_key, verified
 
 
@@ -26,6 +26,9 @@ def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=
         raise ValueError("benchmark manifest changed")
     benchmark.audit(data)
     manifest = json.loads((data / "manifest.json").read_text())
+    model = models.validate_spec(manifest["model"]) if "model" in manifest else models.KEV
+    if config["base_revision"] != models.spec(model)["base_revision"]:
+        raise ValueError("Evaluation configuration differs from the frozen model profile")
     if config.get("job_sha256") != (
         digest(data / "manifest.json") if "job_id" in manifest else None
     ) or config.get("job_id") != manifest.get("job_id"):
@@ -60,14 +63,22 @@ def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=
             "--base-revision",
             config["base_revision"],
             "--runner-python",
-            args.runtime_python,
+            settings.required("ZILS_IMAGE_RUNTIME_PYTHON")
+            if model == models.IMAJEV
+            else args.runtime_python,
             "--device",
             args.device,
             "--report",
             str(report),
         ]
+        if model == models.IMAJEV:
+            command.extend(["--images", str(directory / "images")])
         run_child(
-            command, attempt / f"{name}.log", args.device, timeout=120 + 600 * len(submissions)
+            command,
+            attempt / f"{name}.log",
+            args.device,
+            timeout=120 + 600 * len(submissions),
+            **({"model": model} if model == models.IMAJEV else {}),
         )
         return json.loads(report.read_text())
 
@@ -141,12 +152,23 @@ def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=
         submitted={uid: m["claim"]["sha256"] for uid, m in registry.items()},
     )
     if baseline is not None:
-        delivery = jobs.select(baseline, report["miners"], manifest["acceptance"])
+        delivery = jobs.select(baseline, report["miners"], manifest["acceptance"], model=model)
         if delivery["status"] == "accepted":
             winner = next(entry for entry in fitted if entry["uid"] == delivery["uid"])
             release = attempt / "accepted-model"
             zils.stage(winner, release)
             delivery["checkpoint"] = str(release.relative_to(work))
+            evidence = {}
+            if model == models.IMAJEV:
+                from .image_metrics import public_metrics
+
+                selected = next(row for row in report["miners"] if row["uid"] == delivery["uid"])
+                evidence = {
+                    "image_metrics": {
+                        "baseline": public_metrics(baseline),
+                        "candidate": public_metrics(selected),
+                    }
+                }
             wire.write_json(
                 release / "release.json",
                 {
@@ -168,6 +190,7 @@ def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=
                         else {}
                     ),
                     **delivery,
+                    **evidence,
                 },
             )
         report.update(

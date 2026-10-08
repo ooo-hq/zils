@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 import sys
 import time
 import uuid
@@ -12,7 +13,7 @@ from bittensor_wallet import Keypair
 
 import zils
 from miner.worker import train_candidate
-from zils import models, protocol, queue_protocol
+from zils import models, protocol, queue_protocol, settings
 from zils.cloud import MAX_DATA_BYTES, APIError, download, trusted_url, upload
 from zils.coordinator import identifier, lease_heartbeat
 from zils.runtime import CapacityUnavailable, digest, gpu_ready, locked, prepare_base
@@ -46,18 +47,47 @@ class Client:
             response.close()
 
 
-def run_once(client, state, reference, runtime, device):
+def run_once(client, state, reference, runtime, device, *, references=None):
     if not gpu_ready(device):
         return False
-    assignment = client.call("claim")["assignment"]
+    claim = None
+    if references is not None:
+        available = [model for model in references if gpu_ready(device, model=model)]
+        if not available:
+            return False
+        approved = client.call("profiles")["profiles"]
+        available = [
+            model
+            for model in available
+            if any(
+                q["profile_id"] == model
+                and all(q[k] == v for k, v in models.profile_identity(model).items())
+                and gpu_ready(device, model=model, minimum_mib=q["min_free_mib"])
+                for q in approved
+            )
+        ]
+        if not available:
+            return False
+        claim = {"supported_profiles": available}
+    assignment = client.call("claim", claim)["assignment"]
     if assignment is None:
         return False
     job_id = identifier(assignment["job_id"])
     token = identifier(assignment["lease_token"])
     auth = {"job_id": job_id, "lease_token": token}
     try:
-        with lease_heartbeat(lambda: client.call("renew", auth)):
-            model = models.checkpoint_model(reference)
+        with lease_heartbeat(lambda: client.call("renew", auth)) as check_lease:
+            model = models.validate_spec(assignment.get("model", models.spec(models.KEV)))
+            if references is not None:
+                if model not in claim["supported_profiles"]:
+                    raise ValueError("Worker received an unadvertised model profile")
+                reference = Path(references[model])
+            if models.checkpoint_model(reference) != model:
+                raise ValueError("Installed reference differs from the assigned profile")
+            if model == models.IMAJEV:
+                from zils.imajev import verify_starting_checkpoint
+
+                verify_starting_checkpoint(reference)
             if assignment["base_revision"] != models.spec(model)["base_revision"] or assignment.get(
                 "model", models.spec(models.KEV)
             ) != models.spec(model):
@@ -94,7 +124,20 @@ def run_once(client, state, reference, runtime, device):
                 finally:
                     temporary.unlink(missing_ok=True)
             job = {**config, "round_id": uuid.UUID(job_id).hex}
-            entry = train_candidate(config, directory, job, runtime, device)
+            if model == models.IMAJEV:
+                download_images(client, auth, training, directory / "images")
+                runtime = settings.required("ZILS_IMAGE_RUNTIME_PYTHON")
+                job["min_free_mib"] = assignment["min_free_mib"]
+                job["max_seconds"] = assignment["max_seconds"]
+            entry = train_candidate(
+                config,
+                directory,
+                job,
+                runtime,
+                device,
+                **({"check_lease": check_lease} if model == models.IMAJEV else {}),
+            )
+            check_lease()
             urls = client.call("uploads", auth)["uploads"]
             for name in models.artifact_files(entry["checkpoint"]):
                 if not urls[name].get("uploaded"):
@@ -118,13 +161,60 @@ def run_once(client, state, reference, runtime, device):
     return True
 
 
+def download_images(client, auth, training, destination):
+    from datetime import datetime, timezone
+
+    from zils.imajev import image_path
+
+    destination = Path(destination)
+    destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+    bindings = {}
+    for line in Path(training).read_text().splitlines():
+        row = json.loads(line)
+        if len(row["images"]) != 1:
+            raise ValueError("Training requires one frozen image per row")
+        image = row["images"][0]
+        aid = identifier(image["asset_id"])
+        if not isinstance(image.get("sha256"), str) or not re.fullmatch(
+            "[a-f0-9]{64}", image["sha256"]
+        ):
+            raise ValueError("Invalid frozen training image hash")
+        if aid in bindings and bindings[aid] != image["sha256"]:
+            raise ValueError("Training image binding changed")
+        bindings[aid] = image["sha256"]
+    # Small refresh batches keep URLs short lived, even on slow connections.
+    for aid, sha in bindings.items():
+        target = destination / (sha + ".png")
+        if target.exists():
+            image_path(destination, {"sha256": sha})
+            continue
+        response = client.call("image-downloads", {**auth, "asset_ids": [aid]})["images"]
+        if len(response) != 1 or response[0]["id"] != aid or response[0]["sha256"] != sha:
+            raise ValueError("Coordinator returned a different training image")
+        ref = response[0]
+        if datetime.fromisoformat(ref["expires_at"].replace("Z", "+00:00")) <= datetime.now(
+            timezone.utc
+        ):
+            raise ValueError("Training image grant expired")
+        temporary = destination / ("download-" + uuid.uuid4().hex)
+        try:
+            download(ref["url"], temporary, 10 * 1024**2)
+            if digest(temporary) != sha or temporary.stat().st_size != ref["bytes"]:
+                raise ValueError("Training image bytes changed")
+            temporary.rename(target)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--config", required=True, help="JSON with coordinator and seed or wallet/hotkey"
     )
     parser.add_argument("--state", required=True)
-    parser.add_argument("--reference", default="models/reference")
+    parser.add_argument(
+        "--reference", action="append", help="Repeat for each installed pinned checkpoint"
+    )
     parser.add_argument("--runtime-python", default=sys.executable)
     parser.add_argument("--device", choices=("cpu", "mps", "cuda"), default="cpu")
     parser.add_argument("--once", action="store_true")
@@ -143,12 +233,20 @@ def main():
         client = Client(config["coordinator"], key)
         state = Path(args.state)
         state.mkdir(mode=0o700, parents=True, exist_ok=True)
-        if not args.no_download:
-            prepare_base(models.checkpoint_model(args.reference))
+        references = {}
+        for path in args.reference or ["models/reference"]:
+            model = models.checkpoint_model(path)
+            if model in references:
+                raise ValueError("Install only one reference per model profile")
+            references[model] = Path(path).resolve()
+            if not args.no_download:
+                prepare_base(model)
         with locked(state / "queue-worker.lock"):
             while True:
                 try:
-                    run_once(client, state, Path(args.reference), args.runtime_python, args.device)
+                    run_once(
+                        client, state, None, args.runtime_python, args.device, references=references
+                    )
                 except (
                     APIError,
                     ValueError,

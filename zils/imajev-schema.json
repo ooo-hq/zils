@@ -1,0 +1,3898 @@
+{
+  "json": {
+    "adapter_config.json": {
+      "alora_invocation_tokens": null,
+      "alpha_pattern": {},
+      "arrow_config": null,
+      "auto_mapping": {
+        "base_model_class": "Qwen3_5ForConditionalGeneration",
+        "parent_library": "transformers.models.qwen3_5.modeling_qwen3_5"
+      },
+      "base_model_name_or_path": "/workspace/hf/hub/models--Qwen--Qwen3.5-4B/snapshots/851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
+      "bias": "none",
+      "corda_config": null,
+      "ensure_weight_tying": false,
+      "eva_config": null,
+      "exclude_modules": null,
+      "fan_in_fan_out": false,
+      "inference_mode": true,
+      "init_lora_weights": true,
+      "kasa_config": null,
+      "layer_replication": null,
+      "layers_pattern": null,
+      "layers_to_transform": null,
+      "loftq_config": {},
+      "lora_alpha": 128.0,
+      "lora_bias": false,
+      "lora_dropout": 0.0,
+      "lora_ga_config": null,
+      "megatron_config": null,
+      "megatron_core": "megatron.core",
+      "modules_to_save": null,
+      "monteclora_config": null,
+      "peft_type": "LORA",
+      "peft_version": "0.21.0",
+      "qalora_group_size": 16,
+      "r": 64,
+      "rank_pattern": {},
+      "revision": null,
+      "target_modules": ".*language_model.*\\.(q_proj|k_proj|v_proj|o_proj|gate_proj|up_proj|down_proj|in_proj_qkv|in_proj_z|out_proj)",
+      "target_parameters": null,
+      "task_type": null,
+      "trainable_token_indices": null,
+      "use_bdlora": null,
+      "use_dora": false,
+      "use_qalora": false,
+      "use_rslora": false,
+      "velora_config": null
+    },
+    "decision_readout.json": {
+      "version": 1,
+      "codes": [
+        {
+          "code": "A",
+          "token_id": 32
+        },
+        {
+          "code": "B",
+          "token_id": 33
+        },
+        {
+          "code": "C",
+          "token_id": 34
+        },
+        {
+          "code": "D",
+          "token_id": 35
+        },
+        {
+          "code": "E",
+          "token_id": 36
+        },
+        {
+          "code": "F",
+          "token_id": 37
+        },
+        {
+          "code": "G",
+          "token_id": 38
+        },
+        {
+          "code": "H",
+          "token_id": 39
+        },
+        {
+          "code": "I",
+          "token_id": 40
+        },
+        {
+          "code": "J",
+          "token_id": 41
+        },
+        {
+          "code": "K",
+          "token_id": 42
+        },
+        {
+          "code": "L",
+          "token_id": 43
+        },
+        {
+          "code": "M",
+          "token_id": 44
+        },
+        {
+          "code": "N",
+          "token_id": 45
+        },
+        {
+          "code": "O",
+          "token_id": 46
+        },
+        {
+          "code": "P",
+          "token_id": 47
+        },
+        {
+          "code": "Q",
+          "token_id": 48
+        },
+        {
+          "code": "R",
+          "token_id": 49
+        },
+        {
+          "code": "S",
+          "token_id": 50
+        },
+        {
+          "code": "T",
+          "token_id": 51
+        },
+        {
+          "code": "U",
+          "token_id": 52
+        },
+        {
+          "code": "V",
+          "token_id": 53
+        },
+        {
+          "code": "W",
+          "token_id": 54
+        },
+        {
+          "code": "X",
+          "token_id": 55
+        },
+        {
+          "code": "Y",
+          "token_id": 56
+        },
+        {
+          "code": "Z",
+          "token_id": 57
+        },
+        {
+          "code": "AA",
+          "token_id": 5840
+        },
+        {
+          "code": "AB",
+          "token_id": 1803
+        },
+        {
+          "code": "AC",
+          "token_id": 1646
+        },
+        {
+          "code": "AD",
+          "token_id": 1745
+        },
+        {
+          "code": "AE",
+          "token_id": 13276
+        },
+        {
+          "code": "AF",
+          "token_id": 8018
+        },
+        {
+          "code": "AG",
+          "token_id": 1825
+        },
+        {
+          "code": "AH",
+          "token_id": 28946
+        },
+        {
+          "code": "AI",
+          "token_id": 15015
+        },
+        {
+          "code": "AJ",
+          "token_id": 29595
+        },
+        {
+          "code": "AK",
+          "token_id": 11568
+        },
+        {
+          "code": "AL",
+          "token_id": 939
+        },
+        {
+          "code": "AM",
+          "token_id": 1354
+        },
+        {
+          "code": "AN",
+          "token_id": 1058
+        },
+        {
+          "code": "AO",
+          "token_id": 18183
+        },
+        {
+          "code": "AP",
+          "token_id": 2456
+        },
+        {
+          "code": "AQ",
+          "token_id": 88898
+        },
+        {
+          "code": "AR",
+          "token_id": 905
+        },
+        {
+          "code": "AS",
+          "token_id": 1846
+        },
+        {
+          "code": "AT",
+          "token_id": 802
+        },
+        {
+          "code": "AU",
+          "token_id": 33869
+        },
+        {
+          "code": "AV",
+          "token_id": 7839
+        },
+        {
+          "code": "AW",
+          "token_id": 14006
+        },
+        {
+          "code": "AX",
+          "token_id": 2860
+        },
+        {
+          "code": "AY",
+          "token_id": 2926
+        },
+        {
+          "code": "AZ",
+          "token_id": 22828
+        },
+        {
+          "code": "BA",
+          "token_id": 6844
+        },
+        {
+          "code": "BB",
+          "token_id": 9798
+        },
+        {
+          "code": "BC",
+          "token_id": 4738
+        },
+        {
+          "code": "BD",
+          "token_id": 9265
+        },
+        {
+          "code": "BE",
+          "token_id": 11261
+        },
+        {
+          "code": "BF",
+          "token_id": 19278
+        },
+        {
+          "code": "BG",
+          "token_id": 36513
+        },
+        {
+          "code": "BH",
+          "token_id": 93801
+        },
+        {
+          "code": "BI",
+          "token_id": 8335
+        },
+        {
+          "code": "BJ",
+          "token_id": 14544
+        },
+        {
+          "code": "BK",
+          "token_id": 85266
+        },
+        {
+          "code": "BL",
+          "token_id": 9110
+        },
+        {
+          "code": "BM",
+          "token_id": 28000
+        },
+        {
+          "code": "BN",
+          "token_id": 15137
+        },
+        {
+          "code": "BO",
+          "token_id": 4525
+        },
+        {
+          "code": "BP",
+          "token_id": 25261
+        },
+        {
+          "code": "BR",
+          "token_id": 12717
+        },
+        {
+          "code": "BS",
+          "token_id": 7116
+        },
+        {
+          "code": "BT",
+          "token_id": 17078
+        },
+        {
+          "code": "BU",
+          "token_id": 14497
+        },
+        {
+          "code": "BV",
+          "token_id": 57339
+        },
+        {
+          "code": "BW",
+          "token_id": 74909
+        },
+        {
+          "code": "BX",
+          "token_id": 52072
+        },
+        {
+          "code": "BY",
+          "token_id": 19305
+        },
+        {
+          "code": "CA",
+          "token_id": 4887
+        },
+        {
+          "code": "CB",
+          "token_id": 12607
+        },
+        {
+          "code": "CC",
+          "token_id": 3580
+        },
+        {
+          "code": "CD",
+          "token_id": 6281
+        },
+        {
+          "code": "CE",
+          "token_id": 2036
+        },
+        {
+          "code": "CF",
+          "token_id": 9362
+        },
+        {
+          "code": "CG",
+          "token_id": 8533
+        },
+        {
+          "code": "CH",
+          "token_id": 2080
+        },
+        {
+          "code": "CI",
+          "token_id": 10911
+        },
+        {
+          "code": "CK",
+          "token_id": 2925
+        },
+        {
+          "code": "CL",
+          "token_id": 3040
+        },
+        {
+          "code": "CM",
+          "token_id": 9690
+        },
+        {
+          "code": "CN",
+          "token_id": 27731
+        },
+        {
+          "code": "CO",
+          "token_id": 8023
+        },
+        {
+          "code": "CP",
+          "token_id": 6901
+        },
+        {
+          "code": "CR",
+          "token_id": 8702
+        },
+        {
+          "code": "CS",
+          "token_id": 6211
+        },
+        {
+          "code": "CT",
+          "token_id": 1123
+        },
+        {
+          "code": "CU",
+          "token_id": 16307
+        },
+        {
+          "code": "CV",
+          "token_id": 18990
+        },
+        {
+          "code": "CW",
+          "token_id": 64045
+        },
+        {
+          "code": "CX",
+          "token_id": 63037
+        },
+        {
+          "code": "CY",
+          "token_id": 33380
+        },
+        {
+          "code": "DA",
+          "token_id": 6151
+        },
+        {
+          "code": "DB",
+          "token_id": 3392
+        },
+        {
+          "code": "DC",
+          "token_id": 5449
+        },
+        {
+          "code": "DD",
+          "token_id": 3967
+        },
+        {
+          "code": "DE",
+          "token_id": 1113
+        },
+        {
+          "code": "DF",
+          "token_id": 5095
+        },
+        {
+          "code": "DG",
+          "token_id": 51923
+        },
+        {
+          "code": "DH",
+          "token_id": 49600
+        },
+        {
+          "code": "DI",
+          "token_id": 17099
+        },
+        {
+          "code": "DJ",
+          "token_id": 51483
+        },
+        {
+          "code": "DK",
+          "token_id": 17756
+        },
+        {
+          "code": "DL",
+          "token_id": 16037
+        },
+        {
+          "code": "DM",
+          "token_id": 8135
+        },
+        {
+          "code": "DN",
+          "token_id": 30237
+        },
+        {
+          "code": "DO",
+          "token_id": 5683
+        },
+        {
+          "code": "DP",
+          "token_id": 9992
+        },
+        {
+          "code": "DR",
+          "token_id": 7444
+        },
+        {
+          "code": "DS",
+          "token_id": 5751
+        },
+        {
+          "code": "DT",
+          "token_id": 10284
+        },
+        {
+          "code": "DU",
+          "token_id": 20887
+        },
+        {
+          "code": "DV",
+          "token_id": 59884
+        },
+        {
+          "code": "DW",
+          "token_id": 52396
+        },
+        {
+          "code": "DX",
+          "token_id": 16103
+        },
+        {
+          "code": "DY",
+          "token_id": 67547
+        },
+        {
+          "code": "EA",
+          "token_id": 18535
+        },
+        {
+          "code": "EB",
+          "token_id": 8006
+        },
+        {
+          "code": "EC",
+          "token_id": 7263
+        },
+        {
+          "code": "ED",
+          "token_id": 1425
+        },
+        {
+          "code": "EE",
+          "token_id": 6878
+        },
+        {
+          "code": "EF",
+          "token_id": 14453
+        },
+        {
+          "code": "EG",
+          "token_id": 9097
+        },
+        {
+          "code": "EH",
+          "token_id": 44072
+        },
+        {
+          "code": "EI",
+          "token_id": 76089
+        },
+        {
+          "code": "EK",
+          "token_id": 68720
+        },
+        {
+          "code": "EL",
+          "token_id": 2662
+        },
+        {
+          "code": "EM",
+          "token_id": 2629
+        },
+        {
+          "code": "EN",
+          "token_id": 923
+        },
+        {
+          "code": "EO",
+          "token_id": 6548
+        },
+        {
+          "code": "EP",
+          "token_id": 8924
+        },
+        {
+          "code": "EQ",
+          "token_id": 52194
+        },
+        {
+          "code": "ER",
+          "token_id": 622
+        },
+        {
+          "code": "ES",
+          "token_id": 1515
+        },
+        {
+          "code": "ET",
+          "token_id": 1300
+        },
+        {
+          "code": "EU",
+          "token_id": 37523
+        },
+        {
+          "code": "EV",
+          "token_id": 44473
+        },
+        {
+          "code": "EW",
+          "token_id": 36530
+        },
+        {
+          "code": "EX",
+          "token_id": 3152
+        },
+        {
+          "code": "EZ",
+          "token_id": 93924
+        },
+        {
+          "code": "FA",
+          "token_id": 3505
+        },
+        {
+          "code": "FB",
+          "token_id": 15731
+        },
+        {
+          "code": "FC",
+          "token_id": 6542
+        },
+        {
+          "code": "FD",
+          "token_id": 14176
+        },
+        {
+          "code": "FE",
+          "token_id": 11091
+        },
+        {
+          "code": "FF",
+          "token_id": 1686
+        },
+        {
+          "code": "FG",
+          "token_id": 11660
+        },
+        {
+          "code": "FH",
+          "token_id": 80440
+        },
+        {
+          "code": "FI",
+          "token_id": 18836
+        },
+        {
+          "code": "FK",
+          "token_id": 26132
+        },
+        {
+          "code": "FL",
+          "token_id": 5934
+        },
+        {
+          "code": "FM",
+          "token_id": 24794
+        },
+        {
+          "code": "FN",
+          "token_id": 40229
+        },
+        {
+          "code": "FO",
+          "token_id": 3660
+        },
+        {
+          "code": "FP",
+          "token_id": 11361
+        },
+        {
+          "code": "FR",
+          "token_id": 10191
+        },
+        {
+          "code": "FS",
+          "token_id": 8225
+        },
+        {
+          "code": "FT",
+          "token_id": 3860
+        },
+        {
+          "code": "FU",
+          "token_id": 78413
+        },
+        {
+          "code": "FW",
+          "token_id": 17680
+        },
+        {
+          "code": "FX",
+          "token_id": 15900
+        },
+        {
+          "code": "FY",
+          "token_id": 78138
+        },
+        {
+          "code": "GA",
+          "token_id": 15653
+        },
+        {
+          "code": "GB",
+          "token_id": 5213
+        },
+        {
+          "code": "GC",
+          "token_id": 22150
+        },
+        {
+          "code": "GD",
+          "token_id": 39500
+        },
+        {
+          "code": "GE",
+          "token_id": 10460
+        },
+        {
+          "code": "GF",
+          "token_id": 35131
+        },
+        {
+          "code": "GG",
+          "token_id": 21563
+        },
+        {
+          "code": "GH",
+          "token_id": 43194
+        },
+        {
+          "code": "GI",
+          "token_id": 27127
+        },
+        {
+          "code": "GL",
+          "token_id": 3697
+        },
+        {
+          "code": "GM",
+          "token_id": 20011
+        },
+        {
+          "code": "GN",
+          "token_id": 24368
+        },
+        {
+          "code": "GO",
+          "token_id": 15058
+        },
+        {
+          "code": "GP",
+          "token_id": 23658
+        },
+        {
+          "code": "GR",
+          "token_id": 8362
+        },
+        {
+          "code": "GS",
+          "token_id": 16035
+        },
+        {
+          "code": "GT",
+          "token_id": 24583
+        },
+        {
+          "code": "GU",
+          "token_id": 52857
+        },
+        {
+          "code": "GV",
+          "token_id": 38403
+        },
+        {
+          "code": "GW",
+          "token_id": 60456
+        },
+        {
+          "code": "GX",
+          "token_id": 81519
+        },
+        {
+          "code": "GY",
+          "token_id": 40097
+        },
+        {
+          "code": "HA",
+          "token_id": 16522
+        },
+        {
+          "code": "HB",
+          "token_id": 29722
+        },
+        {
+          "code": "HC",
+          "token_id": 21756
+        },
+        {
+          "code": "HD",
+          "token_id": 18567
+        },
+        {
+          "code": "HE",
+          "token_id": 1736
+        },
+        {
+          "code": "HF",
+          "token_id": 48043
+        },
+        {
+          "code": "HG",
+          "token_id": 87013
+        },
+        {
+          "code": "HH",
+          "token_id": 22456
+        },
+        {
+          "code": "HI",
+          "token_id": 23165
+        },
+        {
+          "code": "HK",
+          "token_id": 55523
+        },
+        {
+          "code": "HL",
+          "token_id": 13097
+        },
+        {
+          "code": "HM",
+          "token_id": 50397
+        },
+        {
+          "code": "HN",
+          "token_id": 41741
+        },
+        {
+          "code": "HO",
+          "token_id": 23073
+        },
+        {
+          "code": "HP",
+          "token_id": 6401
+        },
+        {
+          "code": "HQ",
+          "token_id": 86538
+        },
+        {
+          "code": "HR",
+          "token_id": 16585
+        },
+        {
+          "code": "HS",
+          "token_id": 11622
+        },
+        {
+          "code": "HT",
+          "token_id": 2464
+        },
+        {
+          "code": "HU",
+          "token_id": 84982
+        },
+        {
+          "code": "HV",
+          "token_id": 75516
+        },
+        {
+          "code": "HW",
+          "token_id": 36984
+        },
+        {
+          "code": "HX",
+          "token_id": 58795
+        },
+        {
+          "code": "HY",
+          "token_id": 47217
+        },
+        {
+          "code": "HZ",
+          "token_id": 59675
+        },
+        {
+          "code": "IA",
+          "token_id": 5681
+        },
+        {
+          "code": "IB",
+          "token_id": 3151
+        },
+        {
+          "code": "IC",
+          "token_id": 1271
+        },
+        {
+          "code": "ID",
+          "token_id": 887
+        },
+        {
+          "code": "IE",
+          "token_id": 5203
+        },
+        {
+          "code": "IF",
+          "token_id": 2685
+        },
+        {
+          "code": "IG",
+          "token_id": 1849
+        },
+        {
+          "code": "IH",
+          "token_id": 72470
+        },
+        {
+          "code": "II",
+          "token_id": 5370
+        },
+        {
+          "code": "IJ",
+          "token_id": 74063
+        },
+        {
+          "code": "IK",
+          "token_id": 27629
+        },
+        {
+          "code": "IL",
+          "token_id": 1655
+        },
+        {
+          "code": "IM",
+          "token_id": 1728
+        },
+        {
+          "code": "IN",
+          "token_id": 669
+        },
+        {
+          "code": "IO",
+          "token_id": 3682
+        },
+        {
+          "code": "IP",
+          "token_id": 3191
+        },
+        {
+          "code": "IQ",
+          "token_id": 59865
+        },
+        {
+          "code": "IR",
+          "token_id": 2712
+        },
+        {
+          "code": "IS",
+          "token_id": 1580
+        },
+        {
+          "code": "IT",
+          "token_id": 922
+        },
+        {
+          "code": "IU",
+          "token_id": 77243
+        },
+        {
+          "code": "IV",
+          "token_id": 2990
+        },
+        {
+          "code": "IW",
+          "token_id": 78493
+        },
+        {
+          "code": "IX",
+          "token_id": 5228
+        },
+        {
+          "code": "IZ",
+          "token_id": 2750
+        },
+        {
+          "code": "JA",
+          "token_id": 42711
+        },
+        {
+          "code": "JB",
+          "token_id": 44568
+        },
+        {
+          "code": "JC",
+          "token_id": 56402
+        },
+        {
+          "code": "JD",
+          "token_id": 48236
+        },
+        {
+          "code": "JE",
+          "token_id": 38993
+        },
+        {
+          "code": "JI",
+          "token_id": 43559
+        },
+        {
+          "code": "JJ",
+          "token_id": 61250
+        },
+        {
+          "code": "JK",
+          "token_id": 32942
+        },
+        {
+          "code": "JM",
+          "token_id": 86302
+        },
+        {
+          "code": "JO",
+          "token_id": 25310
+        },
+        {
+          "code": "JP",
+          "token_id": 26313
+        },
+        {
+          "code": "JR",
+          "token_id": 81770
+        },
+        {
+          "code": "JS",
+          "token_id": 12185
+        },
+        {
+          "code": "JT",
+          "token_id": 78382
+        },
+        {
+          "code": "JU",
+          "token_id": 213977
+        }
+      ]
+    }
+  },
+  "tensors": {
+    "adapter_model.safetensors": {
+      "base_model.model.model.language_model.layers.0.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.0.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.0.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.0.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.0.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.0.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.0.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.0.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.0.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.0.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.0.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.0.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.1.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.1.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.1.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.1.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.1.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.1.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.1.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.1.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.1.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.1.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.1.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.1.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.10.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.10.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.10.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.10.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.10.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.10.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.10.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.10.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.10.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.10.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.10.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.10.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.self_attn.k_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.self_attn.k_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.self_attn.o_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.self_attn.o_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.self_attn.q_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.self_attn.q_proj.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.self_attn.v_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.11.self_attn.v_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.12.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.12.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.12.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.12.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.12.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.12.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.12.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.12.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.12.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.12.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.12.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.12.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.13.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.13.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.13.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.13.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.13.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.13.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.13.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.13.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.13.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.13.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.13.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.13.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.14.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.14.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.14.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.14.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.14.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.14.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.14.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.14.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.14.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.14.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.14.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.14.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.self_attn.k_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.self_attn.k_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.self_attn.o_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.self_attn.o_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.self_attn.q_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.self_attn.q_proj.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.self_attn.v_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.15.self_attn.v_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.16.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.16.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.16.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.16.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.16.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.16.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.16.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.16.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.16.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.16.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.16.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.16.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.17.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.17.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.17.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.17.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.17.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.17.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.17.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.17.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.17.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.17.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.17.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.17.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.18.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.18.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.18.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.18.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.18.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.18.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.18.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.18.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.18.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.18.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.18.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.18.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.self_attn.k_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.self_attn.k_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.self_attn.o_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.self_attn.o_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.self_attn.q_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.self_attn.q_proj.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.self_attn.v_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.19.self_attn.v_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.2.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.2.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.2.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.2.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.2.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.2.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.2.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.2.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.2.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.2.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.2.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.2.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.20.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.20.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.20.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.20.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.20.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.20.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.20.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.20.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.20.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.20.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.20.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.20.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.21.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.21.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.21.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.21.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.21.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.21.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.21.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.21.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.21.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.21.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.21.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.21.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.22.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.22.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.22.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.22.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.22.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.22.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.22.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.22.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.22.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.22.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.22.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.22.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.self_attn.k_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.self_attn.k_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.self_attn.o_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.self_attn.o_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.self_attn.q_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.self_attn.q_proj.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.self_attn.v_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.23.self_attn.v_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.24.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.24.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.24.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.24.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.24.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.24.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.24.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.24.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.24.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.24.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.24.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.24.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.25.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.25.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.25.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.25.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.25.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.25.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.25.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.25.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.25.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.25.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.25.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.25.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.26.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.26.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.26.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.26.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.26.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.26.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.26.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.26.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.26.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.26.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.26.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.26.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.self_attn.k_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.self_attn.k_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.self_attn.o_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.self_attn.o_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.self_attn.q_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.self_attn.q_proj.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.self_attn.v_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.27.self_attn.v_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.28.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.28.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.28.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.28.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.28.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.28.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.28.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.28.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.28.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.28.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.28.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.28.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.29.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.29.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.29.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.29.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.29.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.29.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.29.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.29.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.29.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.29.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.29.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.29.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.self_attn.k_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.self_attn.k_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.self_attn.o_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.self_attn.o_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.self_attn.q_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.self_attn.q_proj.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.self_attn.v_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.3.self_attn.v_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.30.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.30.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.30.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.30.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.30.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.30.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.30.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.30.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.30.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.30.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.30.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.30.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.self_attn.k_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.self_attn.k_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.self_attn.o_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.self_attn.o_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.self_attn.q_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.self_attn.q_proj.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.self_attn.v_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.31.self_attn.v_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.4.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.4.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.4.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.4.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.4.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.4.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.4.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.4.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.4.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.4.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.4.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.4.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.5.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.5.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.5.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.5.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.5.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.5.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.5.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.5.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.5.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.5.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.5.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.5.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.6.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.6.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.6.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.6.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.6.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.6.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.6.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.6.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.6.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.6.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.6.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.6.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.self_attn.k_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.self_attn.k_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.self_attn.o_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.self_attn.o_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.self_attn.q_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.self_attn.q_proj.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.self_attn.v_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.7.self_attn.v_proj.lora_B.weight": {
+        "shape": [
+          1024,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.8.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.8.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.8.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.8.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.8.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.8.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.8.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.8.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.8.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.8.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.8.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.8.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.9.linear_attn.in_proj_qkv.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.9.linear_attn.in_proj_qkv.lora_B.weight": {
+        "shape": [
+          8192,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.9.linear_attn.in_proj_z.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.9.linear_attn.in_proj_z.lora_B.weight": {
+        "shape": [
+          4096,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.9.linear_attn.out_proj.lora_A.weight": {
+        "shape": [
+          64,
+          4096
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.9.linear_attn.out_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.9.mlp.down_proj.lora_A.weight": {
+        "shape": [
+          64,
+          9216
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.9.mlp.down_proj.lora_B.weight": {
+        "shape": [
+          2560,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.9.mlp.gate_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.9.mlp.gate_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.9.mlp.up_proj.lora_A.weight": {
+        "shape": [
+          64,
+          2560
+        ],
+        "dtype": "F32"
+      },
+      "base_model.model.model.language_model.layers.9.mlp.up_proj.lora_B.weight": {
+        "shape": [
+          9216,
+          64
+        ],
+        "dtype": "F32"
+      }
+    },
+    "decision_readout.safetensors": {
+      "weight": {
+        "shape": [
+          256,
+          2560
+        ],
+        "dtype": "F32"
+      }
+    }
+  },
+  "sha256": {
+    "adapter_config.json": "a5bad80823e9768c82a8e7459bec6c6b77f835306ddcc9b3ecfe514238b5806e",
+    "adapter_model.safetensors": "88c2c44361e0c469352495abcfee789ff73a4deae0811168d9402cfc2b6e749c",
+    "decision_readout.json": "4bc0237812d7d8c2611e60f1e7d0de8f108a9c18fbb8402aefecc3c71c54d68c",
+    "decision_readout.safetensors": "52ceafd7d824bf3ea5ce55276b48cc08ba9dd6b2c98a55d9bd6a72ed1643a427"
+  }
+}

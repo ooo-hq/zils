@@ -14,6 +14,13 @@ from .api_store import Store, identifier, safe_cloud
 from .cloud import APIError, trusted_url
 from .decision_http import Server, make_handler
 from .decisions import DecisionError, decode_body, make_response, validate_request
+from .image_api import ImageApi, require_images
+from .image_contract import (
+    IMAGE_CAPABILITIES,
+    TEXT_CAPABILITIES,
+    make_image_response,
+    validate_image_request,
+)
 
 
 class Registry:
@@ -32,8 +39,32 @@ class Registry:
                 "release_date",
                 "description",
             }
-            if not isinstance(entry, dict) or set(entry) != required:
+            if (
+                not isinstance(entry, dict)
+                or set(entry) - {"capabilities", "profile", "task"} != required
+            ):
                 raise ValueError("Invalid model registry entry")
+            capabilities = entry.get("capabilities", TEXT_CAPABILITIES)
+            if capabilities not in (TEXT_CAPABILITIES, IMAGE_CAPABILITIES):
+                raise ValueError("Unsupported model capabilities")
+            entry = {**entry, "capabilities": json.loads(json.dumps(capabilities))}
+            if capabilities == IMAGE_CAPABILITIES:
+                from . import models
+                from .image_jobs import task_contract
+
+                profile = entry.get("profile", models.spec(models.IMAJEV))
+                if profile != models.spec(models.IMAJEV):
+                    raise ValueError("Image registry profile differs from its pinned version")
+                entry = {**entry, "profile": profile}
+                if "task" in entry:
+                    if not isinstance(entry["task"], dict) or set(entry["task"]) != {
+                        "question",
+                        "outcome_order",
+                    }:
+                        raise ValueError("Invalid image task contract")
+                    entry = {**entry, "task": task_contract(entry["task"])}
+            elif "profile" in entry or "task" in entry:
+                raise ValueError("Image contracts cannot be attached to text models")
             if not re.fullmatch("[a-f0-9]{64}", entry["fingerprint"]):
                 raise ValueError("Pin the model release fingerprint")
             if not isinstance(entry["aliases"], list) or not all(
@@ -73,6 +104,13 @@ class Registry:
                     "name": name,
                     "description": entry["description"],
                     "release_date": entry["release_date"],
+                    **({"profile": entry["profile"]} if "profile" in entry else {}),
+                    **({"task": entry["task"]} if "task" in entry else {}),
+                    **(
+                        {"capabilities": entry["capabilities"]}
+                        if entry["capabilities"] != TEXT_CAPABILITIES
+                        else {}
+                    ),
                 }
                 for name, entry in self.names.items()
                 if entry["owners"] is None or owner in entry["owners"]
@@ -104,7 +142,9 @@ class FileRegistry:
                         raise ValueError("Existing model names must be preserved")
                     for old in self.current.entries:
                         new = candidate.names.get(old["id"])
-                        if new is None or any(old[k] != new[k] for k in old if k != "aliases"):
+                        if new is None or {k: v for k, v in old.items() if k != "aliases"} != {
+                            k: v for k, v in new.items() if k != "aliases"
+                        }:
                             raise ValueError("Existing immutable releases must be preserved")
                     for name in self.current.names.keys() & candidate.names.keys():
                         if self.current.names[name]["owners"] != candidate.names[name]["owners"]:
@@ -126,11 +166,14 @@ class FileRegistry:
 
 
 class RuntimeClient:
-    def __init__(self, entry):
+    def __init__(self, entry, image=None):
         self.entry = entry
+        self.image = image
         self.token = os.environ[entry["token_env"]]
 
     def call(self, path, body):
+        if self.image is not None:
+            body = {**body, "image": self.image, "fingerprint": self.entry["fingerprint"]}
         try:
             with requests.post(
                 self.entry["url"] + path,
@@ -204,19 +247,45 @@ class RuntimeClient:
 
 
 class Gateway:
-    def __init__(self, store, registry, batches=None, billing=None):
+    def __init__(self, store, registry, batches=None, billing=None, *, image_store=None):
         self.store, self.registry, self.batches = store, registry, batches
+        self.image_store = image_store
+        self.images = ImageApi(store, image_store, registry, self.evaluate) if image_store else None
         self.billing = billing
 
     def evaluate(self, owner, key_id, body, request_id, *, lane="realtime", frozen=None):
-        validate_request(body)
+        has_image = isinstance(body, dict) and "images" in body
+        if has_image:
+            require_images()
+            validate_image_request(body)
+            if lane != "realtime":
+                raise DecisionError(
+                    422, "image_bulk_unsupported", "Image requests support realtime only."
+                )
+        else:
+            validate_request(body)
         entry = self.registry.resolve(frozen["id"] if frozen else body["model"], owner)
+        image_model = entry["capabilities"] == IMAGE_CAPABILITIES
+        if has_image != image_model:
+            raise DecisionError(
+                422,
+                "model_modality",
+                "Use one image with an image model, or a text model for text requests.",
+            )
         if frozen is not None and (
             entry["id"] != frozen["id"] or entry["fingerprint"] != frozen["fingerprint"]
         ):
             raise DecisionError(503, "release_mismatch", "The batch model release is unavailable.")
         request = {**body, "model": entry["id"]}
-        client = RuntimeClient(entry)
+        image = None
+        if has_image:
+            if self.image_store is None:
+                raise DecisionError(503, "images_unavailable", "Image storage is unavailable.")
+            self.store.ensure_account(owner)
+            image = self.image_store.read_reference(
+                owner, body["images"][0]["asset_id"], purpose="prediction"
+            )
+        client = RuntimeClient(entry, image)
         reserved, billable = client.prepare(request)
         # Record the resolved release, so aliases and bulk requests share a model row.
         # Legacy runtimes remain usable with billing off; admission rejects missing
@@ -231,7 +300,8 @@ class Gateway:
             next(iter(entry["aliases"]), entry["id"]),
         )
         try:
-            result = make_response(entry["id"], request, client.predict(request, lane))
+            convert = make_image_response if has_image else make_response
+            result = convert(entry["id"], request, client.predict(request, lane))
             if result["usage"]["input_tokens"] > reserved:
                 raise DecisionError(
                     502, "token_accounting_error", "Model exceeded its token reservation."
@@ -248,6 +318,8 @@ class Gateway:
 
     def dispatch(self, method, path, bearer, body, request_id):
         try:
+            if path.startswith("/v1/image-") and self.images:
+                return self.images.dispatch(method, path, bearer, body, request_id)
             if path in ("/v1/billing", "/v1/billing/checkout"):
                 owner = self.store.session_owner(bearer)
                 if self.billing is None:
@@ -289,14 +361,20 @@ def main():
     args = parser.parse_args()
     from .batches import Batches
     from .billing import Billing
+    from .image_store import ImageStore
 
     store = Store()
     registry = FileRegistry(args.registry)
     billing = Billing.from_env(store.db)
-    gateway = Gateway(store, registry, Batches(store.db), billing)
+    gateway = Gateway(store, registry, Batches(store.db), billing, image_store=ImageStore(store.db))
     service = Server(
         ("127.0.0.1", args.port),
-        make_handler(gateway.dispatch, args.origin, webhook=billing.webhook),
+        make_handler(
+            gateway.dispatch,
+            args.origin,
+            webhook=billing.webhook,
+            allowed_methods=("GET", "POST", "DELETE"),
+        ),
     )
     print(f"Zils API ready: loopback port {args.port}", flush=True)
     try:

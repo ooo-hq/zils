@@ -277,7 +277,11 @@ def run(command):
             while not db.sql(
                 "select to_jsonb(exists(select 1 from pg_stat_activity where wait_event_type='Lock' and query like 'select to_jsonb(fez_claim_training%'))"
             ):
-                assert not pending.done(), "claim finished before acquiring the job lock"
+                if pending.done():
+                    # Profile-aware queues skip jobs already locked by cancellation.
+                    # Earlier queues wait for the lock and reject the later update.
+                    assert pending.result() is None, "worker claimed a cancellation-locked job"
+                    break
                 assert time.monotonic() < deadline, "claim did not reach the locked job"
                 time.sleep(0.01)
             lock.stdin.write(
@@ -286,10 +290,10 @@ def run(command):
             lock.stdin.flush()
             assert lock.stdout.readline().strip() == "cancelled"
             try:
-                pending.result(timeout=5)
-                raise AssertionError("worker revived a cancelled paid job")
+                assert pending.result(timeout=5) is None, "worker revived a cancelled paid job"
             except Exception as error:
                 assert "job no longer accepts training" in str(error), error
+        assert db.rows("fez_training_assignments", "job_id=eq." + racing)[0]["attempts"] == 0
         assert db.rows("fez_training_jobs", "id=eq." + racing)[0]["status"] == "failed"
         assert db.rows("zils_billing_reservations", "id=eq." + racing)[0]["status"] == "released"
     finally:

@@ -23,9 +23,23 @@ from .runtime import locked
 
 
 class Workflow:
-    def __init__(self, store, hotkey, releases, capacity, activate):
+    def __init__(
+        self,
+        store,
+        hotkey,
+        releases,
+        capacity,
+        activate,
+        *,
+        image_hotkey=None,
+        image_capacity=None,
+        image_releases=None,
+        image_activate=None,
+    ):
         self.store, self.hotkey, self.releases = store, hotkey, Path(releases)
         self.capacity, self.activate = capacity, activate
+        self.image_hotkey, self.image_capacity = image_hotkey, image_capacity
+        self.image_releases, self.image_activate = image_releases, image_activate
         self.accepted_offset = 0
         self.pending_offset = 0
 
@@ -62,10 +76,15 @@ class Workflow:
                 continue
             try:
                 self.status(job, "activating", "Training passed. Preparing your API model.")
-                release = publish(self.store, job["id"], self.releases)
+                image = models.job_model(job) == models.IMAJEV
+                destination = self.image_releases if image else self.releases
+                activation = self.image_activate if image else self.activate
+                if destination is None or activation is None:
+                    raise APIError(503, "Image activation is not configured yet.")
+                release = publish(self.store, job["id"], destination)
                 if release is None:
                     continue
-                model_id = self.activate(release)
+                model_id = activation(release)
                 if model_id != release["release_id"]:
                     raise ValueError("Activation identity differs from accepted release")
                 self.status(
@@ -108,24 +127,41 @@ class Workflow:
         self.pending_offset = self.pending_offset + 100 if len(pending) == 100 else 0
         if not pending:
             return
-        workers = self.store.rows(
-            "fez_training_workers", f"hotkey=eq.{self.hotkey}&enabled=eq.true"
-        )
-        enabled = any(w["hotkey"] == self.hotkey and w["enabled"] for w in workers)
-        busy = self.store.rows(
-            ASSIGNMENTS,
-            f"select=job_id,{JOBS}!inner(status)&hotkey=eq.{self.hotkey}&"
-            f"state=in.(ready,leased)&{JOBS}.status=in.(queued,running)&limit=1",
-        )
-        try:
-            capacity = self.capacity() if enabled and not busy else {"ready": False}
-        except (OSError, ValueError, subprocess.SubprocessError):
-            capacity = {"ready": False}
+        assigned = set()
         for job in pending:
+            model = models.job_model(job)
+            hotkey = self.image_hotkey if model == models.IMAJEV else self.hotkey
+            probe = self.image_capacity if model == models.IMAJEV else self.capacity
+            workers = (
+                self.store.rows("fez_training_workers", f"hotkey=eq.{hotkey}&enabled=eq.true")
+                if hotkey
+                else []
+            )
+            enabled = any(w["hotkey"] == hotkey and w["enabled"] for w in workers)
+            if model == models.IMAJEV and enabled:
+                enabled = (
+                    self.store.rpc(
+                        "zils_worker_qualified", {"p_hotkey": hotkey, "p_profile": model}
+                    )
+                    is True
+                )
+            busy = hotkey in assigned or (
+                self.store.rows(
+                    ASSIGNMENTS,
+                    f"select=job_id,{JOBS}!inner(status)&hotkey=eq.{hotkey}&"
+                    f"state=in.(ready,leased)&{JOBS}.status=in.(queued,running)&limit=1",
+                )
+                if hotkey
+                else False
+            )
+            try:
+                capacity = probe() if enabled and not busy and probe else {"ready": False}
+            except (OSError, ValueError, subprocess.SubprocessError):
+                capacity = {"ready": False}
             manifest = job.get("manifest") or {}
-            if (
-                manifest.get("data_access") != "approved-workers-training-export"
-                or models.job_model(job) != models.JEVK5
+            if manifest.get("data_access") != "approved-workers-training-export" or model not in (
+                models.JEVK5,
+                models.IMAJEV,
             ):
                 self.status(
                     job, "needs_review", "This run needs an operator review before training."
@@ -144,9 +180,9 @@ class Workflow:
             else:
                 # The RPC checks status and enabled workers again under a row lock.
                 self.store.rpc(
-                    "fez_approve_training_job", {"p_job": job["id"], "p_hotkeys": [self.hotkey]}
+                    "fez_approve_training_job", {"p_job": job["id"], "p_hotkeys": [hotkey]}
                 )
-                busy = True
+                assigned.add(hotkey)
 
 
 def gpu_capacity(min_free_mib, command, services=()):
@@ -186,6 +222,8 @@ def activate(release, config):
     ) as response:
         response.raise_for_status()
         identities = response.json().get("models", [])
+    if isinstance(identities, dict):
+        identities = list(identities.values())
     identity = {k: release[k] for k in ("release_id", "fingerprint")}
     if identity not in identities:
         raise ValueError("Serving runtime has not verified the accepted adapter")
@@ -279,6 +317,11 @@ def main():
         raise ValueError("Set a measured positive GPU memory requirement")
     root = Path(config["releases"])
     root.mkdir(mode=0o750, parents=True, exist_ok=True)
+    image = config.get("image")
+    if image:
+        Keypair(ss58_address=image["hotkey"])
+        if type(image.get("min_free_mib")) is not int or image["min_free_mib"] < 12288:
+            raise ValueError("Image training requires a measured capacity threshold")
     flow = Workflow(
         Supabase(),
         config["hotkey"],
@@ -287,6 +330,18 @@ def main():
             minimum, config.get("nvidia_smi", "nvidia-smi"), config.get("training_services", [])
         ),
         lambda release: activate(release, config),
+        image_hotkey=image["hotkey"] if image else None,
+        image_releases=image["releases"] if image else None,
+        image_activate=(lambda release: activate(release, image)) if image else None,
+        image_capacity=(
+            lambda: gpu_capacity(
+                image["min_free_mib"],
+                image.get("nvidia_smi", "nvidia-smi"),
+                image.get("training_services", []),
+            )
+        )
+        if image
+        else None,
     )
     with locked(root / ".workflow.lock"):
         while True:

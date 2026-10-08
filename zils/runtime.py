@@ -69,11 +69,17 @@ def locked(path, wait=False):
         yield
 
 
-def gpu_ready(device):
+def gpu_ready(device, *, model=None, minimum_mib=0):
     """Opt-in deployment capacity gate, also checked under the shared compute lock."""
-    if device != "cuda" or settings.get("ZILS_GPU_MIN_FREE_MIB") is None:
-        return True
-    minimum = int(settings.required("ZILS_GPU_MIN_FREE_MIB"))
+    if model == models.IMAJEV:
+        if device != "cuda":
+            return False
+        minimum = max(12288, int(settings.get("ZILS_IMAGE_MIN_FREE_MIB", "12288")))
+    else:
+        if device != "cuda" or settings.get("ZILS_GPU_MIN_FREE_MIB") is None:
+            return True
+        minimum = int(settings.required("ZILS_GPU_MIN_FREE_MIB"))
+    minimum = max(minimum, minimum_mib)
     if minimum < 1:
         raise ValueError("GPU memory requirement must be positive")
     try:
@@ -94,12 +100,41 @@ def gpu_ready(device):
         return False
 
 
-def run_child(command, log, device, timeout=3600):
+def run_child(command, log, device, timeout=3600, *, model=None, minimum_mib=0, check_lease=None):
+    image_environment = {
+        "PATH",
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "LC_CTYPE",
+        "TMPDIR",
+        "TMP",
+        "TEMP",
+        "CUDA_VISIBLE_DEVICES",
+        "CUDA_HOME",
+        "LD_LIBRARY_PATH",
+        "PYTHONPATH",
+        "HF_HOME",
+        "HF_HUB_CACHE",
+        "HUGGINGFACE_HUB_CACHE",
+        "XDG_CACHE_HOME",
+        "TRITON_CACHE_DIR",
+        "TORCH_HOME",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "PYTORCH_CUDA_ALLOC_CONF",
+        "PYTORCH_ALLOC_CONF",
+        "ZILS_IMAGE_REFERENCE",
+        "ZILS_COMPUTE_LOCK",
+        "ZILS_NVIDIA_SMI",
+    }
     environment = {
         **{
             k: v
             for k, v in os.environ.items()
             if k not in {"SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL"}
+            and (model != models.IMAJEV or k in image_environment)
         },
         "HF_HOME": os.environ.get("HF_HOME", str(ROOT / ".cache/huggingface")),
         "HF_HUB_OFFLINE": "1",
@@ -117,12 +152,29 @@ def run_child(command, log, device, timeout=3600):
             str(Path(tempfile.gettempdir()) / f"fez-compute-{os.getuid()}-{device}.lock"),
         )
     )
-    with locked(lock, wait=True), Path(log).open("ab") as output:
+    # Images defer immediately under contention; they never reserve a training attempt while waiting.
+    if model == models.IMAJEV:
+        try:
+            with locked(lock):
+                if not gpu_ready(device, model=model, minimum_mib=minimum_mib):
+                    raise CapacityUnavailable()
+                _run_child(command, log, environment, timeout, check_lease)
+        except RuntimeError as error:
+            if str(error) == "this service is already running":
+                raise CapacityUnavailable() from None
+            raise
+        return
+    with locked(lock, wait=True):
         deadline = time.monotonic() + timeout
         while not gpu_ready(device):
             if time.monotonic() >= deadline:
                 raise CapacityUnavailable()
             time.sleep(5)
+        _run_child(command, log, environment, timeout, check_lease)
+
+
+def _run_child(command, log, environment, timeout, check_lease=None):
+    with Path(log).open("ab") as output:
         process = subprocess.Popen(
             command,
             stdout=output,
@@ -132,7 +184,18 @@ def run_child(command, log, device, timeout=3600):
             cwd=ROOT,
         )
         try:
-            if process.wait(timeout=timeout):
+            deadline = time.monotonic() + timeout
+            while process.poll() is None:
+                if check_lease:
+                    check_lease()
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                try:
+                    process.wait(timeout=min(1, remaining))
+                except subprocess.TimeoutExpired:
+                    pass
+            if process.returncode:
                 raise RuntimeError(f"worker failed; inspect {log}")
         finally:
             try:
@@ -170,6 +233,11 @@ def request(config, path, message=None):
 
 
 def prepare_base(model=models.KEV):
+    if model == models.IMAJEV:
+        from .imajev import resolve_reference
+
+        base, _ = resolve_reference(Path(settings.required("ZILS_IMAGE_REFERENCE")))
+        return base
     if model == models.JEVK5:
         from .jevk5 import base_path
 

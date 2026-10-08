@@ -371,7 +371,11 @@ def file_hash(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def training_rows(cases):
+def training_rows(cases, assets=None):
+    if any("image" in case for case in cases):
+        from .image_jobs import training_rows as image_rows
+
+        return image_rows(cases, assets)
     rows = []
     for case in cases:
         question = case["question"]
@@ -421,8 +425,10 @@ def build(root, seed=None):
 def audit(root):
     root = Path(root)
     manifest = json.loads((root / "manifest.json").read_text())
-    from . import jobs
+    from . import image_jobs, jobs
 
+    if manifest.get("version") == image_jobs.VERSION:
+        return image_jobs.audit(root, manifest)
     if manifest.get("version") == jobs.VERSION:
         return jobs.audit(root, manifest)
     if manifest["version"] != VERSION or set(manifest["files"]) != set(FILES):

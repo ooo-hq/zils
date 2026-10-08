@@ -23,7 +23,7 @@ from bittensor_wallet import Keypair
 import zils
 from miner.queue import Client, run_once
 from tests.test_jobs import POLICY, examples
-from zils import cloud, coordinator, queue_protocol
+from zils import cloud, coordinator, models, queue_protocol
 from zils.cloud import APIError
 
 OWNER = "11111111-1111-4111-8111-111111111111"
@@ -47,7 +47,13 @@ class Store:
 
     def __init__(self):
         self.tables = {
-            name: [] for name in (coordinator.JOBS, coordinator.ASSIGNMENTS, "fez_training_workers")
+            name: []
+            for name in (
+                coordinator.JOBS,
+                coordinator.ASSIGNMENTS,
+                "fez_training_workers",
+                "zils_worker_profiles",
+            )
         }
         self.objects, self.tickets, self.nonces = {}, {}, set()
         self.url = None
@@ -62,7 +68,15 @@ class Store:
             value = values[0]
             if key in ("order", "limit", "select"):
                 continue
-            if value.startswith("eq.") and str(row.get(key)) != value[3:]:
+            if (
+                value.startswith("eq.")
+                and (
+                    str(row.get(key)).lower()
+                    if isinstance(row.get(key), bool)
+                    else str(row.get(key))
+                )
+                != value[3:]
+            ):
                 return False
             if value.startswith("not.in.") and row.get(key) in value[8:-1].split(","):
                 return False
@@ -84,10 +98,12 @@ class Store:
     def rpc(self, name, p):
         jobs = self.tables[coordinator.JOBS]
         assignments = self.tables[coordinator.ASSIGNMENTS]
-        if name == "fez_create_training_job":
+        if name in ("fez_create_training_job", "zils_create_profile_job", "zils_create_image_job"):
             row = {
                 "id": str(uuid.uuid4()),
                 "owner_id": p["p_owner"],
+                "model_profile": p.get("p_model"),
+                "image_intake": p.get("p_intake"),
                 "name": p["p_name"],
                 "acceptance": p["p_acceptance"],
                 "status": "uploading",
@@ -108,17 +124,22 @@ class Store:
                 raise APIError(409, "Replay.")
             self.nonces.add(nonce)
             return None
-        if name == "fez_claim_processing":
+        if name in ("fez_claim_processing", "zils_claim_profile_processing"):
             row = next(
                 (
                     j
                     for j in jobs
-                    if (j["status"] == "validating" and p["p_stage"] == "validating")
-                    or (
-                        j["status"] == "running"
-                        and p["p_stage"] == "evaluating"
-                        and all(
-                            a["state"] == "submitted" for a in assignments if a["job_id"] == j["id"]
+                    if models.job_model(j) in p.get("p_profiles", [models.KEV, models.JEVK5])
+                    and (
+                        (j["status"] == "validating" and p["p_stage"] == "validating")
+                        or (
+                            j["status"] == "running"
+                            and p["p_stage"] == "evaluating"
+                            and all(
+                                a["state"] == "submitted"
+                                for a in assignments
+                                if a["job_id"] == j["id"]
+                            )
                         )
                     )
                 ),
@@ -144,12 +165,35 @@ class Store:
                 {"job_id": row["id"], "hotkey": key, "state": "ready"} for key in p["p_hotkeys"]
             )
             return None
-        if name == "fez_claim_training":
+        if name in ("fez_claim_training", "zils_claim_profile_training"):
+
+            def qualified(model):
+                return any(
+                    q["hotkey"] == p["p_hotkey"]
+                    and q["profile_id"] == model
+                    and q["enabled"]
+                    and all(q[k] == v for k, v in models.profile_identity(model).items())
+                    for q in self.tables["zils_worker_profiles"]
+                )
+
+            profiles = p.get("p_supported_profiles")
+            if profiles is not None and any(not qualified(x) for x in profiles):
+                raise APIError(409, "Worker is not qualified for the advertised profile.")
+
+            def compatible(assignment):
+                job = next(j for j in jobs if j["id"] == assignment["job_id"])
+                model = models.job_model(job)
+                return job["status"] in ("queued", "running") and (
+                    model in profiles if profiles is not None else model != models.IMAJEV
+                )
+
             row = next(
                 (
                     a
                     for a in assignments
-                    if a["hotkey"] == p["p_hotkey"] and a["state"] in ("ready", "leased")
+                    if a["hotkey"] == p["p_hotkey"]
+                    and a["state"] in ("ready", "leased")
+                    and compatible(a)
                 ),
                 None,
             )
@@ -166,6 +210,17 @@ class Store:
             row = next(
                 a for a in assignments if a["job_id"] == p["p_job"] and a["hotkey"] == p["p_hotkey"]
             )
+            job = next((j for j in jobs if j["id"] == row["job_id"]), None)
+            if job and models.job_model(job) == models.IMAJEV:
+                allowed = any(
+                    q["hotkey"] == p["p_hotkey"]
+                    and q["profile_id"] == models.IMAJEV
+                    and q["enabled"]
+                    and all(q[k] == v for k, v in models.profile_identity(models.IMAJEV).items())
+                    for q in self.tables["zils_worker_profiles"]
+                )
+                if not allowed or job["status"] != "running":
+                    raise APIError(409, "Image lease or qualification is unavailable.")
             if row["lease_token"] != p["p_token"]:
                 raise APIError(409, "Wrong lease.")
             if name == "fez_submit_training":

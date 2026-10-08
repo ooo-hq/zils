@@ -322,3 +322,89 @@ print(json.dumps({'runtime': {'temperature': t}, 'predictions': [
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ImageIncumbentTest(unittest.TestCase):
+    def test_image_upgrade_keeps_incumbent_weights_and_serving_temperature(self):
+        import hashlib
+        import io
+        from unittest.mock import patch
+
+        from PIL import Image
+
+        from tests.image_flow_fixture import SCRIPT
+        from tests.test_image_jobs import fixture
+        from zils import benchmark, image_jobs, models, validator
+        from zils.runtime import run_child as child
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job, splits, assets = fixture()
+            previous_id = str(uuid.uuid4())
+            for name, temperature in (("reference", 1.0), ("comparison", 2.0)):
+                folder = root / name
+                folder.mkdir()
+                for artifact in models.IMAJEV_FILES:
+                    if artifact != "model.json":
+                        (folder / artifact).write_text(
+                            "stock" if name == "reference" else "trained"
+                        )
+                models.write_metadata(folder, model=models.IMAJEV, temperature=temperature)
+            sha = zils.checkpoint_hash(root / "comparison")
+            selection = {
+                "version": "zils-version-selection/v1",
+                "root_job_id": previous_id,
+                "previous": {
+                    "job_id": previous_id,
+                    "sha256": sha,
+                    "model_id": f"zils-adapter-{previous_id}-{sha}",
+                },
+            }
+            job["acceptance"] = {**job["acceptance"], "previous_job_id": previous_id}
+            job["selection"] = selection
+            images = root / "images"
+            images.mkdir()
+            for index, asset in enumerate(assets.values()):
+                output = io.BytesIO()
+                Image.new("RGB", (8, 8), (index % 2, index, 0)).save(output, format="PNG")
+                data = output.getvalue()
+                digest = hashlib.sha256(data).hexdigest()
+                asset.update(
+                    canonical_sha256=digest, pixel_sha256=digest, canonical_bytes=len(data)
+                )
+                (images / (digest + ".png")).write_bytes(data)
+            image_jobs.build(root / "benchmark", job, splits, assets, job["acceptance"])
+            manifest_sha = benchmark.file_hash(root / "benchmark/manifest.json")
+            config = {
+                "job_id": job["id"],
+                "job_sha256": manifest_sha,
+                "benchmark_sha256": manifest_sha,
+                "initial_sha256": zils.checkpoint_hash(root / "reference"),
+                "base_revision": models.spec(models.IMAJEV)["base_revision"],
+                "members": {},
+            }
+            runner = root / "runner"
+            runner.write_text(f"#!{sys.executable}\n" + SCRIPT)
+            runner.chmod(0o700)
+            with (
+                patch.dict("os.environ", {"ZILS_IMAGE_RUNTIME_PYTHON": str(runner)}),
+                patch(
+                    "zils.validator.run_child",
+                    side_effect=lambda command, log, device, timeout, **kw: child(
+                        command, log, "cpu", timeout
+                    ),
+                ),
+            ):
+                report = validator.evaluate_round(
+                    config,
+                    root,
+                    root,
+                    {},
+                    SimpleNamespace(runtime_python=str(runner), device="cpu"),
+                )
+            self.assertEqual(report["baseline"]["sha256"], sha)
+            self.assertEqual(report["baseline"]["runtime"]["temperature"], 2.0)
+            self.assertEqual(report["selection"], selection)
+            self.assertEqual(report["baseline_reference_sha256"], sha)
+            self.assertEqual(report["delivery"]["status"], "no_qualifying_model")
+            self.assertFalse(list(root.glob("evaluation-*/baseline-calibration.json")))

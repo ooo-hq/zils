@@ -24,7 +24,7 @@ VERSION = "zils-customer-adapter/v1"
 PROMPT_VERSION = "zils-training-decision-v1"
 RUNTIME_REVISION = "f26426d16f59e8bbe1470e5b162cc89329e29b29"
 FILES = (*models.JEVK5_FILES, "release.json", "manifest.json", "source.json")
-JSON_LIMIT = 256 * 1024
+JSON_LIMIT = 4 * 1024 * 1024
 SOURCE_FIELDS = (
     "id",
     "owner_id",
@@ -73,9 +73,24 @@ def _accepted(job):
     identifier(job["owner_id"])
     if job["status"] != "completed" or job["result"]["delivery"]["status"] != "accepted":
         raise ValueError("Only a completed accepted job can become a release")
-    spec = models.spec(models.JEVK5)
+    model = models.job_model(job)
+    if model not in (models.JEVK5, models.IMAJEV):
+        raise ValueError("This profile cannot publish a customer API release")
+    spec = models.spec(model)
     if job["manifest"].get("model") != spec or job["result"].get("model") != spec:
-        raise ValueError("Only the pinned JevK5 training contract is supported")
+        raise ValueError("Evaluated model differs from its frozen job")
+    if model == models.IMAJEV:
+        from .image_jobs import task_contract, verify_binding
+
+        if job.get("model_profile") != spec:
+            raise ValueError("An image release requires its frozen job profile")
+        verify_binding(job)
+        task_contract(job["manifest"])
+        if any(
+            asset["owner_id"] != job["owner_id"] or asset["job_id"] != job["id"]
+            for asset in job["manifest"]["assets"].values()
+        ):
+            raise ValueError("Image release owner or job binding changed")
     if job["manifest"]["acceptance"] != job["acceptance"]:
         raise ValueError("Job acceptance changed")
     selection = job["manifest"].get("selection")
@@ -116,7 +131,7 @@ def _accepted(job):
         {**r, "sha256": delivery["sha256"] if r["uid"] == delivery["uid"] else "0" * 64}
         for r in result["miners"]
     ]
-    if jobs.select(result["baseline"], candidates, job["acceptance"]) != delivery:
+    if jobs.select(result["baseline"], candidates, job["acceptance"], model=model) != delivery:
         raise ValueError("Recorded candidate does not satisfy the frozen acceptance policy")
     return delivery
 
@@ -124,7 +139,8 @@ def _accepted(job):
 def _manifest(root):
     job = _json(root / "source.json")
     delivery = _accepted(job)
-    spec = models.spec(models.JEVK5)
+    model = models.job_model(job)
+    spec = models.spec(model)
     manifest = _json(root / "manifest.json")
     if _hash(root / "manifest.json") != job["job_sha256"] or manifest != job["manifest"]:
         raise ValueError("Frozen training manifest changed")
@@ -155,7 +171,35 @@ def _manifest(root):
     date = datetime.fromisoformat(job["updated_at"])
     if date.tzinfo is None:
         raise ValueError("Completion timestamp requires a timezone")
-    for name in FILES:
+    files = (*models.candidate_files(model), "release.json", "manifest.json", "source.json")
+    extra = {}
+    if model == models.IMAJEV:
+        from .image_jobs import task_contract
+        from .image_metrics import public_metrics
+        from .imajev import validate_checkpoint
+
+        validate_checkpoint(root)
+        calibrated = meta.get("calibration") or {}
+        if (
+            calibrated.get("raw_checkpoint_sha256") != report["submitted_sha256"]
+            or calibrated.get("benchmark_manifest_sha256") != job["job_sha256"]
+            or calibrated.get("fit_split") != "calibration"
+            or calibrated.get("fit_cases") != manifest["counts"]["calibration"]
+        ):
+            raise ValueError("Image calibration provenance changed")
+        winner = next(row for row in job["result"]["miners"] if row["uid"] == delivery["uid"])
+        metrics = {
+            "baseline": public_metrics(job["result"]["baseline"]),
+            "candidate": public_metrics(winner),
+        }
+        if report.get("image_metrics") != metrics:
+            raise ValueError("Image release quality evidence changed")
+        extra = {
+            "task": task_contract(manifest),
+            "calibration": calibrated,
+            "image_metrics": metrics,
+        }
+    for name in files:
         path = root / name
         if path.is_symlink() or not path.is_file():
             raise ValueError("Release files must be regular files")
@@ -168,10 +212,13 @@ def _manifest(root):
         "model": spec,
         "checkpoint_sha256": checkpoint,
         "temperature": meta["temperature"],
-        "runtime_revision": RUNTIME_REVISION,
-        "prompt_version": PROMPT_VERSION,
+        "runtime_revision": spec["runtime_revision"]
+        if model == models.IMAJEV
+        else RUNTIME_REVISION,
+        "prompt_version": spec["prompt"] if model == models.IMAJEV else PROMPT_VERSION,
         "release_date": date.date().isoformat(),
-        "files": {n: _hash(root / n) for n in FILES},
+        "files": {n: _hash(root / n) for n in files},
+        **extra,
     }
     if "selection" in manifest:
         value["selection"] = manifest["selection"]
@@ -203,7 +250,10 @@ def publish(store, job_id, destination):
     ):
         return None
     delivery = _accepted(job)
+    model = models.job_model(job)
     source = {key: job[key] for key in SOURCE_FIELDS}
+    if model == models.IMAJEV:
+        source["model_profile"] = job["model_profile"]
     # Operational activation progress is mutable; the evaluation and completion time are not.
     source["result"] = {k: v for k, v in source["result"].items() if k != "workflow"}
     root = Path(destination)
@@ -225,10 +275,8 @@ def publish(store, job_id, destination):
                 JSON_LIMIT,
             )
             remaining = zils.MAX_ARTIFACT_BYTES
-            for name in (*models.JEVK5_FILES, "release.json"):
-                limit = (
-                    remaining if name == "adapter_model.safetensors" else min(remaining, JSON_LIMIT)
-                )
+            for name in (*models.candidate_files(model), "release.json"):
+                limit = remaining if name.endswith(".safetensors") else min(remaining, JSON_LIMIT)
                 remaining -= store.download(
                     MODEL_BUCKET, job["release_prefix"] + "/" + name, temporary / name, limit
                 )
@@ -263,6 +311,15 @@ def registry_entry(release, url, token_env, alias=None, *, name=None):
         "release_date": release["release_date"],
         "description": "Customer JevK5 adapter, accepted by held-out training evaluation",
     }
+    if release["model"] == models.spec(models.IMAJEV):
+        from .image_contract import IMAGE_CAPABILITIES
+
+        entry.update(
+            capabilities=IMAGE_CAPABILITIES,
+            profile=release["model"],
+            task=release["task"],
+            description="Private image model, accepted by held-out training evaluation",
+        )
     if name is not None:
         entry["aliases"].append(model_name(name, release["job_id"]))
     Registry([entry])
@@ -278,7 +335,11 @@ def merge_registry(current, entry):
     output, found = [], False
     for old in current["models"]:
         if old["id"] == entry["id"]:
-            if any(old[k] != entry[k] for k in entry if k != "aliases"):
+            normalized_old = Registry([old]).entries[0]
+            normalized_entry = Registry([entry]).entries[0]
+            if {k: v for k, v in normalized_old.items() if k != "aliases"} != {
+                k: v for k, v in normalized_entry.items() if k != "aliases"
+            }:
                 raise ValueError("An immutable release entry cannot be replaced")
             output.append(
                 {**entry, "aliases": list(dict.fromkeys([*old["aliases"], *entry["aliases"]]))}
