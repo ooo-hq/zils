@@ -53,6 +53,10 @@ at 11,741,954,048 reserved GPU bytes. The trained LoRA/head reloaded with zero m
 logit difference. These times apply to 32 photos at 442 tokens each, not the maximum
 customer dataset or context.
 
+These wall times were recorded before final review added a disposable download process
+to enforce network deadlines. That change adds transfer startup overhead; the recorded
+training-loop measurement and quality scores are unaffected.
+
 The live text PID, invocation, release identity and fingerprint were unchanged before
 and after. Once the private image runtime was resident alongside text, image training
 admission returned false. Sequential phases fit; concurrent persistent image serving

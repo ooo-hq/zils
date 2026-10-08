@@ -175,6 +175,11 @@ def main():
                 check=True,
                 capture_output=True,
             )
+            from tests.image_queue_database import cancellation_claim_races
+
+            cancellation_claim_races(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
             from tests.image_processing_database import run as processing_checks
 
             processing_checks(

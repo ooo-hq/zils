@@ -59,6 +59,9 @@ accepted version.
    checks, peak reserved bytes, probe/trainer SHA-256 and a 1–3,600 second deadline.
    Memory admission must be at least 12,288 MiB and peak reserved memory + 512 MiB.
    A small-image probe is not maximum-context qualification.
+   The existing worker-registration command automatically grants only the two
+   existing text profiles, including workers registered after migration. Image
+   qualification still requires the operator's measured evidence.
 3. Supply workers with the pinned reference using repeatable `miner.queue --reference`
    arguments and set `ZILS_IMAGE_RUNTIME_PYTHON` and `ZILS_IMAGE_REFERENCE`. Use one
    shared compute lock across training/evaluation services. Image subprocesses inherit

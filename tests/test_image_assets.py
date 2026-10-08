@@ -50,7 +50,7 @@ class CanonicalImageTest(unittest.TestCase):
             patch.object(cloud.time, "monotonic", side_effect=[0, 46]),
         ):
             with self.assertRaisesRegex(ValueError, "transfer-time"):
-                cloud.download(
+                cloud._download_stream(
                     "https://storage.example/image", Path(temp) / "photo", 1024, max_seconds=45
                 )
 

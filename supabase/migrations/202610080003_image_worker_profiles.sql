@@ -32,6 +32,20 @@ insert into public.zils_worker_profiles(hotkey,profile_id,profile_sha256,runtime
 select w.hotkey,p.id,p.profile_sha256,p.runtime_sha256,'legacy-text-migration',1,'{"legacy_text":true}'::jsonb
 from public.fez_training_workers w cross join public.zils_model_profiles p where p.id <> 'imajev-4b-v1';
 
+-- The existing operator registration command also supports workers added after migration.
+-- Updating a worker never overwrites a separately revoked profile qualification.
+create function public.zils_register_text_worker_profiles()
+returns trigger language plpgsql security definer set search_path='' as $$
+begin
+  insert into public.zils_worker_profiles(hotkey,profile_id,profile_sha256,runtime_sha256,verified_by,min_free_mib,evidence)
+  select new.hotkey,p.id,p.profile_sha256,p.runtime_sha256,'operator-text-registration',1,'{"legacy_text":true}'::jsonb
+  from public.zils_model_profiles p where p.id in ('kev-0.8b-v1','jevk5-4b-v0.3');
+  return new;
+end $$;
+revoke all on function public.zils_register_text_worker_profiles() from public,anon,authenticated;
+create trigger zils_text_worker_profiles after insert on public.fez_training_workers
+for each row execute function public.zils_register_text_worker_profiles();
+
 create function public.zils_worker_qualified(p_hotkey text,p_profile text)
 returns boolean language sql stable set search_path='' as $$
   select exists(select 1 from public.zils_worker_profiles q
@@ -52,7 +66,7 @@ begin
     where coalesce(j.model_profile->>'id', j.manifest->'model'->>'id', 'kev-0.8b-v1') <> 'imajev-4b-v1' and a.hotkey=p_hotkey and j.status in ('queued','running') and j.deadline > now()
       and (a.state='ready' or (a.state='leased' and (a.lease_until > now() or a.attempts < 3)))
     order by (a.state='leased' and a.lease_until > now()) desc, j.created_at
-    limit 1 for update of a skip locked;
+    limit 1 for update of j,a skip locked;
   if not found then return null; end if;
   if item.state <> 'leased' or item.lease_until <= now() then
     update public.fez_training_assignments set state='leased',lease_token=gen_random_uuid(),
@@ -76,7 +90,7 @@ begin
     where coalesce(j.model_profile->>'id', j.manifest->'model'->>'id', 'kev-0.8b-v1') = any(p_supported_profiles) and public.zils_worker_qualified(p_hotkey,coalesce(j.model_profile->>'id', j.manifest->'model'->>'id', 'kev-0.8b-v1')) and a.hotkey=p_hotkey and j.status in ('queued','running') and j.deadline > now()
       and (a.state='ready' or (a.state='leased' and (a.lease_until > now() or a.attempts < 3)))
     order by (a.state='leased' and a.lease_until > now()) desc, j.created_at
-    limit 1 for update of a skip locked;
+    limit 1 for update of j,a skip locked;
   if not found then return null; end if;
   if item.state <> 'leased' or item.lease_until <= now() then
     update public.fez_training_assignments set state='leased',lease_token=gen_random_uuid(),
