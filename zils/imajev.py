@@ -100,6 +100,69 @@ class ImageEngine:
         )
         self.engine.model.eval()
         self.device = device
+        self.active_fingerprint = self.manifest["fingerprint"]
+        self.temperature = self.manifest["temperature"]
+        self.active_signature = None
+
+    def activate_release(self, path, release):
+        import torch
+        from peft import get_peft_model_state_dict, set_peft_model_state_dict
+        from safetensors.torch import load_file
+
+        from .adapter_releases import read_release
+
+        previous, previous_signature = self.active_fingerprint, self.active_signature
+        self.active_fingerprint = None
+        path = Path(path)
+        stock = release.get("release_id") == self.manifest["release_id"]
+        files = (
+            [self.stock / name for name in PINS["adapter"]]
+            if stock
+            else [path / name for name in release["files"]]
+        )
+        if any(file.is_symlink() or not file.is_file() for file in files):
+            raise ValueError("Image release files are unavailable")
+        signature = tuple(
+            (
+                str(file),
+                file.stat().st_ino,
+                file.stat().st_size,
+                file.stat().st_mtime_ns,
+                file.stat().st_ctime_ns,
+            )
+            for file in files
+        )
+        if previous == release["fingerprint"] and previous_signature == signature:
+            self.active_fingerprint = previous
+            return
+        if stock:
+            if path.resolve() != self.reference.resolve() or release != self.manifest:
+                raise ValueError("Stock image release identity changed")
+            if any(
+                sha(self.stock / name) != expected for name, expected in PINS["adapter"].items()
+            ):
+                raise ValueError("Published image adapter or readout changed")
+            weights = load_file(str(self.stock / "adapter_model.safetensors"))
+            validate_tensors(weights, get_peft_model_state_dict(self.engine.model))
+            head = load_file(str(self.stock / "decision_readout.safetensors"))
+            validate_tensors(head, {"weight": self.engine.readout.weight})
+            loaded = set_peft_model_state_dict(self.engine.model, weights, adapter_name="default")
+            if loaded.unexpected_keys:
+                raise ValueError("Unexpected stock image weights")
+            with torch.no_grad():
+                self.engine.readout.weight.copy_(head["weight"].to(self.device))
+        else:
+            if read_release(path) != release or release["model"] != models.spec(models.IMAJEV):
+                raise ValueError("Private image release changed")
+            meta = load_checkpoint(self, path)
+            if meta["temperature"] != release["temperature"]:
+                raise ValueError("Private image calibration changed")
+        self.engine.model.requires_grad_(False)
+        self.engine.readout.requires_grad_(False)
+        self.engine.model.eval()
+        self.temperature = release["temperature"]
+        self.active_signature = signature
+        self.active_fingerprint = release["fingerprint"]
 
     def prepare(self, image, state, question):
         from PIL import Image
@@ -145,6 +208,8 @@ class ImageEngine:
     def predict(self, prepared, temperature=1.0):
         import torch
 
+        if self.active_fingerprint is None:
+            raise ValueError("No verified image release is active")
         if (
             type(temperature) not in (float, int)
             or not math.isfinite(temperature)
