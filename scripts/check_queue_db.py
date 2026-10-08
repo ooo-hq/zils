@@ -52,6 +52,8 @@ def main():
                 "tests/sql/api-assertions.sql",
                 "supabase/migrations/202610040002_decision_batches.sql",
                 "tests/sql/batch-assertions.sql",
+                "supabase/migrations/202610080001_training_comparisons.sql",
+                "tests/sql/comparison-assertions.sql",
             ):
                 result = subprocess.run(
                     [
