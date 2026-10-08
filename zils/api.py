@@ -11,7 +11,6 @@ from urllib.parse import urlsplit
 import requests
 
 from .api_store import Store, identifier, safe_cloud
-from .billing import Billing
 from .cloud import APIError, trusted_url
 from .decision_http import Server, make_handler
 from .decisions import DecisionError, decode_body, make_response, validate_request
@@ -283,6 +282,7 @@ def main():
     parser.add_argument("--origin", help="Exact optional dashboard CORS origin")
     args = parser.parse_args()
     from .batches import Batches
+    from .billing import Billing
 
     store = Store()
     registry = FileRegistry(args.registry)

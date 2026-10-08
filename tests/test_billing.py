@@ -337,6 +337,30 @@ class BillingTest(unittest.TestCase):
             self.assertEqual(self.fulfillments()[-1]["p_refunded"], reversal)
             self.assertGreater(self.fulfillments()[-1]["p_event_created"], 0)
 
+    def test_restricted_keys_match_mode_and_preserve_live_authorization(self):
+        for mode in ("test", "live"):
+            for prefix in ("sk", "rk"):
+                with self.subTest(mode=mode, prefix=prefix):
+                    billing = Billing(
+                        self.db,
+                        mode=mode,
+                        secret_key=f"{prefix}_{mode}_fixture",
+                        webhook_secret=SECRET,
+                        return_origin="https://app.example",
+                        allow_live=mode == "live",
+                        client=self.client,
+                    )
+                    self.assertIs(billing.client, self.client)
+        for mode, key, allow_live in (
+            ("live", "rk_live_fixture", False),
+            ("live", "rk_test_fixture", True),
+            ("test", "rk_live_fixture", False),
+            ("live", "pk_live_fixture", True),
+            ("live", "sk_org_fixture", True),
+        ):
+            with self.subTest(mode=mode, key=key), self.assertRaises(ValueError):
+                Billing(self.db, mode=mode, secret_key=key, allow_live=allow_live)
+
     def test_configuration_mode_failures_and_safe_sdk_errors(self):
         for settings in (
             {"mode": "live", "secret_key": "sk_live_secret"},
