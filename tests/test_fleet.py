@@ -237,8 +237,18 @@ else:
                             stderr=subprocess.STDOUT,
                             env={**os.environ, "FEZ_PYTHON": sys.executable},
                         )
+                # Two rounds repeatedly start CPU PyTorch subprocesses. Allow shared
+                # CI runners time to finish, with one deadline for the whole fleet.
+                deadline = time.monotonic() + 300
                 for process in processes:
-                    process.wait(timeout=100)
+                    try:
+                        process.wait(timeout=max(0, deadline - time.monotonic()))
+                    except subprocess.TimeoutExpired:
+                        details = "\n".join(
+                            f"{Path(log.name).parent.name}:\n{Path(log.name).read_text()}"
+                            for log in logs
+                        )
+                        self.fail("fleet did not finish within five minutes:\n" + details)
                 for process, log in zip(processes, logs):
                     log.flush()
                     self.assertEqual(process.returncode, 0, Path(log.name).read_text())
