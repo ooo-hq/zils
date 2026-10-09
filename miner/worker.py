@@ -146,7 +146,14 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
             check_lease=check_lease,
         )
     else:
-        run_child(command, work / "training.log", device)
+        run_child(
+            command,
+            work / "training.log",
+            device,
+            model=model,
+            minimum_mib=job.get("min_free_mib", 0),
+            check_lease=check_lease,
+        )
     frozen = work / ("artifacts-" + uuid.uuid4().hex)
     zils.stage(zils.submission(raw, config["uid"]), frozen)
     entry = zils.submission(frozen, config["uid"])

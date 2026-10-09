@@ -53,6 +53,8 @@ class Store:
                 coordinator.ASSIGNMENTS,
                 "fez_training_workers",
                 "zils_worker_profiles",
+                "zils_job_scheduling",
+                "zils_training_attempts",
             )
         }
         self.objects, self.tickets, self.nonces = {}, {}, set()

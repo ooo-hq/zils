@@ -163,7 +163,7 @@ begin
   perform pg_advisory_xact_lock(9135172401);
   select * into r from public.zils_worker_reservations where job_id=p_job and hotkey=p_hotkey and graded;
   if not found or r.lease_token is distinct from p_token then return jsonb_build_object('status','stale'); end if;
-  if p_outcome not in ('capacity_deferred','pending_review','abandoned') then raise exception 'invalid release outcome'; end if;
+  if p_outcome not in ('capacity_deferred','pending_review','abandoned','invalid_artifact') then raise exception 'invalid release outcome'; end if;
   update public.zils_training_attempts set finished_at=now(),outcome=p_outcome
     where job_id=p_job and hotkey=p_hotkey and lease_token=p_token and finished_at is null;
   update public.fez_training_assignments set state='failed',lease_token=null,lease_until=null,

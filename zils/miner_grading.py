@@ -351,3 +351,44 @@ def rank_candidates(job, workers, now):
         "exclusions": sorted(exclusions, key=lambda c: c["hotkey"]),
     }
     return {**result, "snapshot_sha256": digest(result)}
+
+
+def evaluation_observations(job, attempts, assignments, report):
+    """Bind evaluator validity to the uploaded artifact, before calibration changes it."""
+    if (
+        report.get("job_sha256") != job["job_sha256"]
+        or report.get("baseline", {}).get("status") != "evaluated"
+    ):
+        raise ValueError("Evaluation does not match the frozen job and baseline")
+    observations = []
+    for attempt in attempts:
+        assignment = next(
+            (
+                a
+                for a in assignments
+                if a["hotkey"] == attempt["hotkey"]
+                and a.get("lease_token") == attempt["lease_token"]
+                and a["state"] == "submitted"
+            ),
+            None,
+        )
+        if assignment is None or attempt.get("finished_at") is not None:
+            continue
+        uid = assignment["uid"]
+        submitted = report.get("submitted", {})
+        if (
+            submitted.get(uid, submitted.get(str(uid))) != attempt["sha256"]
+            or assignment["sha256"] != attempt["sha256"]
+        ):
+            raise ValueError("Evaluation artifact does not match the attempt")
+        row = next((r for r in report["miners"] if r["uid"] == uid), {})
+        observations.append(
+            {
+                "hotkey": attempt["hotkey"],
+                "lease_token": attempt["lease_token"],
+                "job_sha256": job["job_sha256"],
+                "sha256": attempt["sha256"],
+                "outcome": "valid" if row.get("status") == "evaluated" else "pending_review",
+            }
+        )
+    return observations
