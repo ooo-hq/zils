@@ -83,6 +83,24 @@ class ObjectCatalog:
             },
         )
 
+    def scan(self, limit=100, *, kind="all"):
+        before = datetime.now(timezone.utc).isoformat()
+        cursor = None
+        while True:
+            rows = self.db.rpc(
+                "zils_storage_pending",
+                {
+                    "p_before": before,
+                    "p_limit": limit,
+                    "p_kind": kind,
+                    "p_after": cursor,
+                },
+            )
+            yield from rows
+            if len(rows) < min(limit, 100) or not rows:
+                return
+            cursor = {key: rows[-1][key] for key in ("updated_at", "bucket", "path")}
+
 
 def legacy_expiry(url):
     """Read only a grant returned by trusted Supabase Storage, never a client token."""
@@ -313,7 +331,9 @@ class StorageRouter:
 
     def reap(self, limit=100, *, dry_run=False, eligible=None):
         legacy_removed = 0
-        for row in self.catalog.pending(limit):
+        for row in self.catalog.scan(limit, kind="deleting"):
+            if legacy_removed >= limit:
+                break
             if row["state"] != "deleting" or not expired(row["cleanup_after"]):
                 continue
             if row["provider"] == "supabase" or row.get("legacy_copy"):

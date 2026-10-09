@@ -1,7 +1,7 @@
 # DigitalOcean Spaces storage for Zils
 
-Status: approved design; implementation plan pending review. No Spaces resources
-or production changes have been made for this migration.
+Status: implementation and local review completed. Real-provider and hosted GPU
+verification are pending. Production storage has not been switched.
 
 ## Outcome and scope
 

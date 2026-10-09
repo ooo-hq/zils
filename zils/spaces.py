@@ -7,6 +7,7 @@ import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from itertools import chain
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -372,7 +373,11 @@ class SpacesStorage:
 
     def reap(self, limit=100, *, dry_run=False, eligible=None):
         removed, abandoned = 0, 0
-        for row in self.catalog.pending(limit):
+        for row in chain(
+            self.catalog.scan(limit, kind="deleting"), self.catalog.scan(limit, kind="incomplete")
+        ):
+            if removed + abandoned >= limit:
+                break
             if row["provider"] == "spaces" and row["state"] == "deleting":
                 if expired(row["cleanup_after"]):
                     if not dry_run:

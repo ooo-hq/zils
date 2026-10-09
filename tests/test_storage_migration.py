@@ -63,6 +63,47 @@ class MigrationTests(unittest.TestCase):
     tearDownClass = classmethod(fixture.SpacesTest.tearDownClass.__func__)
     setUp = fixture.SpacesTest.setUp
 
+    def test_migration_retains_outstanding_legacy_upload_expiry(self):
+        legacy = Legacy()
+        row = self.catalog.change(
+            self.bucket,
+            self.path,
+            "register_legacy",
+            str(uuid.uuid4()),
+            {"size_bytes": len(legacy.raw)},
+        )
+        self.db.sql(
+            f"update zils_storage_objects set grant_expires_at=now()+interval '2 hours' where generation={literal(row['generation'])}"
+        )
+        expiry = self.catalog.get(self.bucket, self.path)["grant_expires_at"]
+        self.assertEqual(self.copy(legacy)["copy_state"], "verified")
+        copied = self.catalog.get(self.bucket, self.path)
+        self.assertEqual(copied["grant_expires_at"], expiry)
+        deleting = self.catalog.change(self.bucket, self.path, "delete", str(uuid.uuid4()))
+        from zils.storage import timestamp
+
+        self.assertGreater(timestamp(deleting["cleanup_after"]), timestamp(expiry))
+
+    def test_deferred_upload_pages_do_not_starve_deletions_or_later_work(self):
+        # Insert expired but ineligible uploads ahead of a later cleanup target.
+        prefix = str(uuid.uuid4())
+        self.db.sql(
+            f"insert into zils_storage_objects(bucket,path,provider,physical_bucket,physical_key,state,token,max_bytes,updated_at,lease_until,grant_expires_at) select 'fez-training-data',{literal(prefix)}||'/'||n,'spaces','test-storage','deferred-'||{literal(prefix)}||'/'||n,'allocating',gen_random_uuid(),100,now()-interval '3 days',now()-interval '3 days',now()-interval '3 days' from generate_series(1,105) n"
+        )
+        row = self.catalog.change(
+            self.bucket, self.path, "register_legacy", str(uuid.uuid4()), {"size_bytes": 3}
+        )
+        self.catalog.change(self.bucket, self.path, "delete", str(uuid.uuid4()))
+        self.db.sql(
+            f"update zils_storage_objects set cleanup_after=now()-interval '1 second',lease_until=now()-interval '1 second',grant_expires_at=now()-interval '1 second' where generation={literal(row['generation'])}"
+        )
+        legacy = Legacy()
+        router = StorageRouter(self.db, legacy, self.store, self.catalog, "spaces")
+        visited = []
+        router.reap(eligible=lambda row: visited.append(row["path"]) or False)
+        self.assertEqual(self.catalog.get(self.bucket, self.path)["state"], "deleted")
+        self.assertGreaterEqual(len([p for p in visited if p.startswith(prefix)]), 105)
+
     def test_abandoned_upload_cleanup_is_dry_run_and_fenced(self):
         self.store.signed(self.bucket, self.path, upload=True)
         row = self.catalog.get(self.bucket, self.path)

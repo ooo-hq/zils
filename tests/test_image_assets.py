@@ -49,10 +49,11 @@ class CanonicalImageTest(unittest.TestCase):
             patch.object(cloud.requests, "get", return_value=response),
             patch.object(cloud.time, "monotonic", side_effect=[0, 46]),
         ):
-            with self.assertRaisesRegex(ValueError, "transfer-time"):
+            with self.assertRaises(cloud.APIError) as failure:
                 cloud._download_stream(
                     "https://storage.example/image", Path(temp) / "photo", 1024, max_seconds=45
                 )
+            self.assertEqual(failure.exception.status, 503)
 
     def module(self):
         self.assertIsNotNone(importlib.util.find_spec("zils.image_assets"), "canonicalizer missing")

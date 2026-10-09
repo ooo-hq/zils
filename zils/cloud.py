@@ -58,7 +58,7 @@ def download(url, destination, limit, headers=None, *, max_seconds=600):
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            raise ValueError("file exceeds its transfer-time limit") from None
+            raise APIError(503, "File download timed out; please retry.") from None
         try:
             result = json.loads(process.stdout)
         except ValueError:
@@ -90,8 +90,10 @@ def _download_stream(url, destination, limit, headers=None, *, max_seconds=600):
             with Path(destination).open("xb") as output:
                 for chunk in response.iter_content(1024 * 1024):
                     size += len(chunk)
-                    if size > limit or time.monotonic() - started > max_seconds:
-                        raise ValueError("file exceeds its size or transfer-time limit")
+                    if size > limit:
+                        raise ValueError("file exceeds its size limit")
+                    if time.monotonic() - started > max_seconds:
+                        raise APIError(503, "File download timed out; please retry.")
                     output.write(chunk)
             if declared is not None and size != int(declared):
                 raise ValueError("truncated file download")

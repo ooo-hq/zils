@@ -58,8 +58,9 @@ class DownloadDeadlineTest(unittest.TestCase):
             ):
                 target = Path(tmp) / "download"
                 started = time.monotonic()
-                with self.assertRaises((ValueError, APIError)):
+                with self.assertRaises(APIError) as failure:
                     download(origin + "/slow", target, 1024, max_seconds=0.4)
+                self.assertEqual(failure.exception.status, 503)
                 self.assertLess(time.monotonic() - started, 0.9)
                 self.assertFalse(target.exists())
 

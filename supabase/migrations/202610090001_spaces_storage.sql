@@ -111,7 +111,7 @@ begin
       case when provider_name='spaces' then p_values->>'physical_bucket' else p_bucket end,
       case when provider_name='spaces' then 'objects/'||generation_id||'/'||p_bucket||'/'||p_path else p_path end,
       case when p_action='register_legacy' then 'ready' when provider_name='spaces' then 'allocating' else 'uploading' end,
-      p_token,stamp+interval '300 seconds',stamp,cap,case when copying then r.size_bytes else size end,
+      p_token,stamp+interval '300 seconds',case when copying then greatest(stamp,r.grant_expires_at) else stamp end,cap,case when copying then r.size_bytes else size end,
       p_values->>'sha256',copying,copying)
     on conflict(bucket,path) do update set provider=excluded.provider,generation=excluded.generation,
       physical_bucket=excluded.physical_bucket,physical_key=excluded.physical_key,state=excluded.state,
@@ -220,15 +220,19 @@ exception when invalid_text_representation or numeric_value_out_of_range or chec
   or datetime_field_overflow then return '{"error":"invalid"}'::jsonb;
 end $$;
 
-create function public.zils_storage_pending(p_before timestamptz,p_limit integer default 100)
+create function public.zils_storage_pending(p_before timestamptz,p_limit integer default 100,
+  p_kind text default 'all',p_after jsonb default null)
 returns setof jsonb language sql security definer set search_path=public,pg_temp as $$
   select to_jsonb(o) from zils_storage_objects o
     where state not in ('ready','deleted') and lease_until<=least(p_before,clock_timestamp())
       and grant_expires_at<=least(p_before,clock_timestamp())
+      and (p_kind='all' or (p_kind='deleting' and state='deleting') or (p_kind='incomplete' and state<>'deleting'))
+      and (p_after is null or (updated_at,bucket,path)>
+        ((p_after->>'updated_at')::timestamptz,p_after->>'bucket',p_after->>'path'))
     order by updated_at,bucket,path limit greatest(0,least(p_limit,100));
 $$;
 revoke all on function public.zils_storage_object(text,text,text,uuid,jsonb),
-  public.zils_storage_pending(timestamptz,integer) from public,anon,authenticated;
+  public.zils_storage_pending(timestamptz,integer,text,jsonb) from public,anon,authenticated;
 grant execute on function public.zils_storage_object(text,text,text,uuid,jsonb),
-  public.zils_storage_pending(timestamptz,integer) to service_role;
+  public.zils_storage_pending(timestamptz,integer,text,jsonb) to service_role;
 commit;
