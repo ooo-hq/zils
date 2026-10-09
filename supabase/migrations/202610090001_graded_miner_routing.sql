@@ -45,7 +45,7 @@ create table public.zils_worker_reservations (
 create unique index zils_one_graded_assignment on public.zils_worker_reservations(job_id) where graded;
 create table public.zils_assignment_decisions (
   id uuid primary key default gen_random_uuid(), job_id uuid not null references public.fez_training_jobs,
-  decision jsonb not null, created_at timestamptz not null default now()
+  decision jsonb not null, input_snapshot jsonb not null, created_at timestamptz not null default now()
 );
 create index on public.zils_training_attempts(hotkey,finished_at desc);
 create index on public.zils_worker_qualifications(hotkey,created_at desc);
@@ -241,7 +241,7 @@ begin
   insert into public.fez_training_assignments(job_id,hotkey,uid) values(p_job,p_hotkey,w.uid)
     on conflict(job_id,hotkey) do update set state='ready',lease_token=null,lease_until=null,sha256=null;
   update public.fez_training_jobs set status='queued',deadline=coalesce(j.deadline,s.deadline),updated_at=now() where id=p_job;
-  insert into public.zils_assignment_decisions(job_id,decision) values(p_job,p_decision);
+  insert into public.zils_assignment_decisions(job_id,decision,input_snapshot) values(p_job,p_decision,snap);
   return jsonb_build_object('status','reserved','hotkey',p_hotkey);
 end $$;
 

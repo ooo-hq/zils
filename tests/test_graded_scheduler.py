@@ -133,6 +133,13 @@ class SchedulerTests(unittest.TestCase):
             ]
         )
 
+    def test_report_fingerprint_ignores_import_ids(self):
+        report = worker("mini")["reports"][0]
+        self.assertEqual(
+            graded_scheduler.report_fingerprint(report),
+            graded_scheduler.report_fingerprint({**report, "id": "another-import"}),
+        )
+
     def test_unconfigured_workload_context_is_an_exclusion(self):
         store = Store([worker("mini")], job(context=None))
         self.assertIsNone(

@@ -153,6 +153,7 @@ class GradingTests(unittest.TestCase):
 
     def test_invalid_evidence_cannot_create_grade(self):
         for key, value in [
+            ("expires_at", None),
             ("uniform_brier", 0),
             ("candidate_brier", float("nan")),
             ("accuracy", float("inf")),

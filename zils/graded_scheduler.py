@@ -48,6 +48,10 @@ def validate_config(config):
     return {**deepcopy(config), "qualification_slots": slots}
 
 
+def report_fingerprint(report):
+    return grading.digest({k: v for k, v in report.items() if k != "id"})
+
+
 def benchmark_binding(job):
     manifest = job["manifest"]
     if models.job_model(job) != models.JEVK5 or manifest.get("selection", {}).get("previous"):
@@ -155,7 +159,7 @@ def main():
                 "p_hotkey": args.hotkey,
                 "p_report": report,
                 "p_verified_by": args.verified_by,
-                "p_evidence_sha256": grading.digest(report),
+                "p_evidence_sha256": report_fingerprint(report),
             },
         )
     else:

@@ -6,6 +6,10 @@ and database schemas are unchanged. The operator explicitly configures the miner
 that may receive training data. Assignment requires a validated JevK5 job with
 recorded miner-export consent, an enabled miner, and available GPU capacity.
 
+For an approved pool selected by measured quality, reliability and turnaround,
+see [graded miner routing](miner-grading.md). It is opt-in; the fixed-worker
+configuration below remains the default.
+
 ## Job lifecycle
 
 1. The existing processor validates the uploaded examples and freezes the job.

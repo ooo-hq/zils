@@ -46,7 +46,8 @@ the API, training queue, miners, validators, and Bittensor testnet integration.
 A run can finish with `no_qualifying_model`. Training does not guarantee an
 improvement. See [acceptance criteria](docs/customer-jobs.md#inspect-the-result),
 [version selection](docs/version-selection.md), and
-[model activation](docs/automatic-training.md).
+[model activation](docs/automatic-training.md). Operators can opt into
+[miner grading and job assignment](docs/miner-grading.md) across an approved pool.
 
 ## Miner setup
 

@@ -39,6 +39,8 @@ def digest(value):
 
 
 def timestamp(value):
+    if not isinstance(value, (datetime, str)):
+        raise ValueError("timestamp must include a timezone")
     result = (
         value
         if isinstance(value, datetime)
@@ -347,6 +349,7 @@ def rank_candidates(job, workers, now):
             )
         )
     result = {
+        "evaluated_at": now.isoformat(),
         "policy_version": POLICY,
         "job_id": job["id"],
         "job_sha256": job["job_sha256"],
