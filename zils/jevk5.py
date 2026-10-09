@@ -143,8 +143,18 @@ class DecisionModel:
         self.meta = models.metadata(checkpoint)
         if self.meta is None:
             raise ValueError("JevK5 requires a versioned checkpoint")
-        if device != "cuda" or not torch.cuda.is_available() or not torch.cuda.is_bf16_supported():
-            raise OSError("JevK5 training and evaluation require a BF16-capable CUDA GPU")
+        supported = (
+            device == "cuda" and torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+        ) or (
+            device == "mps"
+            and torch.backends.mps.is_available()
+            and torch.backends.mps.is_macos_or_newer(14, 0)
+        )
+        if not supported:
+            raise OSError(
+                "JevK5 requires a BF16-capable CUDA GPU or Apple MPS on macOS 14 or newer"
+            )
+        self.device = device
         torch.set_num_threads(6)
         self.runtime = JevK5(
             str(base_path()), device=device, graphs=False, temperature=self.meta["temperature"]
@@ -187,8 +197,8 @@ class DecisionModel:
     def logits(self, ids, count):
         import torch
 
-        tokens = torch.tensor([ids], dtype=torch.long, device="cuda")
-        last = torch.tensor([len(ids) - 1], device="cuda")
+        tokens = torch.tensor([ids], dtype=torch.long, device=self.device)
+        last = torch.tensor([len(ids) - 1], device=self.device)
         return self.runtime._slot_logits(tokens, last)[0, :count].float()
 
     def predict(self, state, question):
@@ -197,10 +207,13 @@ class DecisionModel:
         ids, keys = encode(self.tokenizer, state, question)
         with torch.inference_mode():
             logits = self.logits(ids, len(keys))
+            # Metal has no float64 tensors. Keep the calibrated readout in float64 on CPU.
+            if self.device == "mps":
+                logits = logits.cpu()
             probabilities = (
                 torch.softmax(logits.double() / self.meta["temperature"], dim=0).cpu().tolist()
             )
-        torch.cuda.synchronize()
+        getattr(torch, self.device).synchronize()
         return dict(zip(keys, probabilities))
 
 
@@ -241,13 +254,14 @@ def train(args):
     random.Random(args.seed).shuffle(order)
     optimizer.zero_grad(set_to_none=True)
     losses = []
+    getattr(torch, args.device).synchronize()
     started = time.perf_counter()
     for step, index in enumerate(order):
         ids, label, count = rows[index]
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        with torch.autocast(args.device, dtype=torch.bfloat16):
             logits = model.logits(ids, count)
             loss = torch.nn.functional.cross_entropy(
-                logits[None], torch.tensor([label], device="cuda")
+                logits[None], torch.tensor([label], device=args.device)
             )
         if not torch.isfinite(loss):
             raise RuntimeError("nonfinite training loss")
@@ -278,6 +292,7 @@ def train(args):
     )
     config_path.write_text(json.dumps(config, indent=2) + "\n")
     models.write_metadata(output, temperature=1.0)
+    getattr(torch, args.device).synchronize()
     (output / "training_metrics.json").write_text(
         json.dumps(
             {
@@ -290,7 +305,18 @@ def train(args):
                 "max_tokens": MAX_TOKENS,
                 "mean_loss": sum(losses) / len(losses),
                 "training_seconds": time.perf_counter() - started,
-                "peak_gpu_allocated_bytes": torch.cuda.max_memory_allocated(),
+                "device": args.device,
+                "peak_gpu_allocated_bytes": (
+                    torch.cuda.max_memory_allocated() if args.device == "cuda" else None
+                ),
+                **(
+                    {
+                        "mps_allocated_bytes_after_training": torch.mps.current_allocated_memory(),
+                        "mps_driver_allocated_bytes_after_training": torch.mps.driver_allocated_memory(),
+                    }
+                    if args.device == "mps"
+                    else {}
+                ),
             },
             indent=2,
         )
@@ -309,7 +335,7 @@ def main():
     trainer = sub.add_parser("train")
     trainer.add_argument("--data", required=True)
     trainer.add_argument("--reference", required=True)
-    trainer.add_argument("--device", default="cuda")
+    trainer.add_argument("--device", choices=("cuda", "mps"), default="cuda")
     trainer.add_argument("--seed", required=True, type=int)
     trainer.add_argument("--out", required=True)
     args = parser.parse_args()

@@ -15,8 +15,10 @@ and testnet fleet remains on its existing Kev contract.
 Use Linux or WSL 2, Python 3.13, a BF16-capable NVIDIA GPU, its CUDA driver and
 the repository's pinned model/signing dependencies. The implementation was
 checked on an RTX 4090. Allow at least 25 GB free disk for models and packages;
-GPU requirements depend on input length. CPU and MPS execution are not supported
-by this JevK5 queue runtime. The coordinator API itself needs no GPU.
+GPU requirements depend on input length. Apple silicon miners can use
+[the MPS training setup](mac-miners.md); it produces the same adapter format for
+independent CUDA evaluation. CPU training remains unsupported. The coordinator
+API itself needs no GPU.
 
 From a fresh clone:
 
