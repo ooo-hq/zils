@@ -53,21 +53,41 @@ def rehearse(config: dict, dataset: Path, out: Path) -> dict:
     def token(name):
         return os.environ[config[name]]
 
-    def call(method, url, *, who="owner_token_env", body=None, statuses=(200,), timeout=30):
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise TimeoutError("Rehearsal deadline")
-        response = requests.request(
-            method,
-            url,
-            headers={"Authorization": "Bearer " + token(who)},
-            json=body,
-            timeout=min(timeout, remaining),
-            allow_redirects=False,
-        )
-        if response.status_code not in statuses:
-            raise RuntimeError("Unexpected rehearsal response")
-        return response.json() if response.content else {}
+    def call(
+        method, url, *, who="owner_token_env", body=None, statuses=(200,), timeout=30, retry=False
+    ):
+        # Reads and explicit idempotent operations may recover a lost response.
+        # Never replay creation, submission, or a billable prediction automatically.
+        attempts = 3 if method == "GET" or retry else 1
+        for attempt in range(attempts):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Rehearsal deadline")
+            status = None
+            try:
+                response = requests.request(
+                    method,
+                    url,
+                    headers={"Authorization": "Bearer " + token(who)},
+                    json=body,
+                    timeout=min(timeout, remaining),
+                    allow_redirects=False,
+                )
+            except (requests.ConnectionError, requests.Timeout):
+                if attempt + 1 == attempts:
+                    raise
+            else:
+                try:
+                    status = response.status_code
+                    if status in statuses:
+                        return response.json() if response.content else {}
+                    if status not in (502, 503, 504) or attempt + 1 == attempts:
+                        record("request_failed", method=method, status=status)
+                        raise RuntimeError("Unexpected rehearsal response")
+                finally:
+                    response.close()
+            record("transient_retry", method=method, status=status, attempt=attempt + 1)
+            time.sleep(min(2**attempt, max(0, deadline - time.monotonic())))
 
     def health(which):
         value = config[which]
@@ -108,7 +128,7 @@ def rehearse(config: dict, dataset: Path, out: Path) -> dict:
         aid = slot["asset"]["id"]
         created.append(aid)
         upload(slot["upload"], raw)
-        ready = call("POST", api + f"/v1/image-assets/{aid}/complete", body={})
+        ready = call("POST", api + f"/v1/image-assets/{aid}/complete", body={}, retry=True)
         if ready["state"] != "ready":
             raise ValueError("Photo was not finalized")
         call(

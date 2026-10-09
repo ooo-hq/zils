@@ -15,6 +15,52 @@ from zils.coordinator import Processor
 
 
 class ImageVerticalTest(unittest.TestCase):
+    def test_rehearsal_recovers_lost_finalization_reply_without_rewriting_the_image(self):
+        from tests.image_vertical_fixture import Storage, run
+        from zils.cloud import APIError
+
+        original = Storage.rpc
+        interrupted = False
+        finishes = {}
+
+        def lose_reply(store, name, values):
+            nonlocal interrupted
+            result = original(store, name, values)
+            if name == "zils_image_finish":
+                asset = values["p_asset"]
+                finishes[asset] = finishes.get(asset, 0) + 1
+                if not interrupted:
+                    interrupted = True
+                    raise APIError(503, "Supabase is unavailable; please retry.")
+            return result
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(Storage, "rpc", lose_reply):
+            result = run(Path(tmp) / "run", mode="negative")
+        self.assertTrue(interrupted)
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(max(finishes.values()), 1)
+        retries = [step for step in result["steps"] if step["name"] == "transient_retry"]
+        self.assertEqual(len(retries), 1)
+
+    def test_rehearsal_does_not_replay_a_billable_prediction_after_a_lost_reply(self):
+        from tests.image_vertical_fixture import run
+        from zils.api import Gateway
+        from zils.decisions import DecisionError
+
+        original = Gateway.evaluate
+        predictions = 0
+
+        def lose_reply(gateway, *args, **kwargs):
+            nonlocal predictions
+            original(gateway, *args, **kwargs)
+            predictions += 1
+            raise DecisionError(503, "service_unavailable", "Response interrupted.")
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(Gateway, "evaluate", lose_reply):
+            with self.assertRaises(RuntimeError):
+                run(Path(tmp) / "run", mode="accepted")
+        self.assertEqual(predictions, 1)
+
     def test_capacity_deferral_does_not_claim_an_image_ahead_of_ready_text(self):
         engine = object.__new__(Processor)
         engine.args = SimpleNamespace(device="cuda")
