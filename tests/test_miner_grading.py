@@ -141,6 +141,16 @@ class GradingTests(unittest.TestCase):
             r["expires_at"] = NOW.isoformat()
         self.assertEqual(grading.qualification_grade(reports, CONTEXT, NOW)["status"], "expired")
 
+    def test_recent_low_quality_runs_reduce_grade_instead_of_disappearing(self):
+        reports = [report(str(i)) for i in range(3)]
+        for i in range(3, 6):
+            bad = report(str(i), improvement=-0.2)
+            bad["verified_at"] = NOW.isoformat()
+            reports.append(bad)
+        grade = grading.qualification_grade(reports, CONTEXT, NOW)
+        self.assertNotEqual(grade["status"], "qualified")
+        self.assertLess(grade["quality_band"], 0)
+
     def test_invalid_evidence_cannot_create_grade(self):
         for key, value in [
             ("uniform_brier", 0),

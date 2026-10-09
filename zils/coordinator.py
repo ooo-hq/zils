@@ -912,6 +912,12 @@ class Processor:
         if selection:
             result["selection"] = report["selection"]
             result["baseline_reference_sha256"] = report["baseline_reference_sha256"]
+        scheduling = self.store.rows(
+            "zils_job_scheduling", f"job_id=eq.{job['id']}&purpose=eq.qualification"
+        )
+        qualification = scheduling[0]["benchmark"] if scheduling else None
+        if scheduling:
+            result["delivery"] = {"status": "qualification_complete"}
         prefix = None
         if result["delivery"]["status"] == "accepted":
             release = work / report["delivery"]["checkpoint"]
@@ -924,7 +930,9 @@ class Processor:
         return {
             "result": result,
             "release_prefix": prefix,
-            "grading_observations": evaluation_observations(job, attempts, assignments, report),
+            "grading_observations": evaluation_observations(
+                job, attempts, assignments, report, qualification=qualification
+            ),
         }
 
 

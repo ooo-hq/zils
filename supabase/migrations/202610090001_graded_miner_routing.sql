@@ -17,10 +17,13 @@ create table public.zils_worker_qualifications (
   evidence_sha256 text not null unique check(evidence_sha256 ~ '^[a-f0-9]{64}$'),
   created_at timestamptz not null default now()
 );
+create table public.zils_qualification_benchmarks (
+  context jsonb primary key, descriptor jsonb not null
+);
 create table public.zils_job_scheduling (
   job_id uuid primary key references public.fez_training_jobs,
   deadline timestamptz not null, purpose text not null default 'customer' check(purpose in ('customer','qualification')),
-  context jsonb, graded boolean not null default false,
+  context jsonb, benchmark jsonb, graded boolean not null default false,
   benchmark_sha256 text check(benchmark_sha256 ~ '^[a-f0-9]{64}$')
 );
 create table public.zils_training_attempts (
@@ -55,11 +58,11 @@ begin perform pg_advisory_xact_lock(9135172401); return null; end $$;
 do $$ declare t text; begin
   foreach t in array array['fez_training_jobs','fez_training_assignments','fez_training_workers',
     'zils_worker_profiles','zils_routing_policy','zils_worker_presence','zils_worker_qualifications',
-    'zils_job_scheduling','zils_training_attempts','zils_worker_reservations','zils_resource_cooldowns'] loop
+    'zils_job_scheduling','zils_training_attempts','zils_worker_reservations','zils_resource_cooldowns','zils_qualification_benchmarks'] loop
     execute format('create trigger zils_queue_mutex before insert or update or delete on public.%I for each statement execute function public.zils_queue_mutex()',t);
   end loop;
   foreach t in array array['zils_routing_policy','zils_worker_presence','zils_resource_cooldowns',
-    'zils_worker_qualifications','zils_job_scheduling','zils_training_attempts','zils_worker_reservations','zils_assignment_decisions'] loop
+    'zils_worker_qualifications','zils_job_scheduling','zils_training_attempts','zils_worker_reservations','zils_assignment_decisions','zils_qualification_benchmarks'] loop
     execute format('alter table public.%I enable row level security',t);
     execute format('revoke all on public.%I from public,anon,authenticated',t);
     execute format('grant select,insert,update,delete on public.%I to service_role',t);
@@ -187,6 +190,10 @@ begin
   for r in select * from public.zils_worker_reservations where graded and expires_at<=now() loop
     perform public.zils_release_graded_attempt(r.job_id,r.hotkey,r.lease_token,'abandoned');
   end loop;
+  update public.fez_training_jobs j set status='failed',error='Training scheduling deadline expired.',updated_at=now()
+    from public.zils_job_scheduling s, public.zils_routing_policy p where j.id=s.job_id and p.id and p.config->>'mode'='graded'
+      and j.status='awaiting_approval' and coalesce(j.deadline,s.deadline)<=now()
+      and p.config->'contexts' ? (j.manifest->'workload'->>'band');
 end $$;
 
 create function public.zils_reserve_graded_job(p_job uuid,p_hotkey text,p_decision jsonb) returns jsonb
@@ -274,18 +281,72 @@ for each row execute function public.zils_assignment_observation();
 
 create function public.zils_resource_claimable(p_job uuid,p_hotkey text) returns boolean language sql stable set search_path='' as $$
   select w.resource_id is null or exists(select 1 from public.zils_worker_reservations r
-    where r.resource_id=w.resource_id and r.job_id=p_job and r.hotkey=p_hotkey and r.expires_at>now())
+    where r.resource_id=w.resource_id and r.job_id=p_job and r.hotkey=p_hotkey and r.expires_at>now()
+      and (not r.graded or (public.zils_worker_qualified(p_hotkey,'jevk5-4b-v0.3') and exists(
+        select 1 from public.zils_job_scheduling s,public.zils_routing_policy c where s.job_id=p_job and c.id
+          and c.config->>'mode'='graded' and c.config->'pool' ? p_hotkey
+          and c.config->'contexts'->(s.context->>'band')=s.context))))
   from public.fez_training_workers w where w.hotkey=p_hotkey;
+$$;
+
+create function public.zils_configure_routing(p_config jsonb) returns jsonb language plpgsql set search_path='' as $$
+begin
+  perform pg_advisory_xact_lock(9135172401);
+  if p_config->>'mode'='graded' then
+    if p_config->>'policy_version' is distinct from 'zils-miner-routing/v1'
+      or jsonb_typeof(p_config->'pool') is distinct from 'array'
+      or jsonb_array_length(p_config->'pool') not between 1 and 256
+      or jsonb_typeof(p_config->'contexts') is distinct from 'object'
+      or p_config->'contexts'='{}'::jsonb
+      or not coalesce((p_config->>'qualification_slots')::int in (0,1),false)
+      or exists(select 1 from jsonb_array_elements_text(p_config->'pool') k where not exists(select 1 from public.fez_training_workers w where w.hotkey=k))
+      then raise exception 'invalid approved routing policy'; end if;
+  elsif p_config is distinct from '{"mode":"fixed"}'::jsonb then raise exception 'invalid routing mode'; end if;
+  insert into public.zils_routing_policy values(true,p_config) on conflict(id) do update set config=excluded.config;
+  return p_config;
+end $$;
+create function public.zils_bind_resource(p_hotkey text,p_resource uuid) returns void language plpgsql set search_path='' as $$
+begin
+  perform pg_advisory_xact_lock(9135172401);
+  if p_resource is null then raise exception 'require physical resource UUID'; end if;
+  update public.fez_training_workers set resource_id=p_resource where hotkey=p_hotkey;
+  if not found then raise exception 'unknown worker'; end if;
+end $$;
+create function public.zils_authorize_qualification(p_job uuid,p_benchmark jsonb) returns void language plpgsql set search_path='' as $$
+declare j public.fez_training_jobs; ctx jsonb:=p_benchmark->'context'; cfg jsonb;
+begin
+  perform pg_advisory_xact_lock(9135172401);
+  select * into j from public.fez_training_jobs where id=p_job and status='awaiting_approval' for update;
+  select config into cfg from public.zils_routing_policy where id;
+  if j.id is null or ctx is distinct from cfg->'contexts'->(j.manifest->'workload'->>'band')
+    or p_benchmark->>'benchmark_sha256' is distinct from ctx->>'benchmark_sha256'
+    or not coalesce((p_benchmark->>'min_accuracy')::numeric between 0 and 1,false)
+    or not coalesce((p_benchmark->>'quality_floor')::numeric between -2 and 2,false)
+    or exists(select 1 from public.fez_training_assignments where job_id=p_job)
+    then raise exception 'invalid qualification authorization'; end if;
+  insert into public.zils_qualification_benchmarks values(ctx,p_benchmark) on conflict do nothing;
+  if not exists(select 1 from public.zils_qualification_benchmarks where context=ctx and descriptor=p_benchmark) then
+    raise exception 'benchmark rubric changed without a new context'; end if;
+  update public.zils_job_scheduling set purpose='qualification',context=ctx,benchmark=p_benchmark,
+    benchmark_sha256=p_benchmark->>'benchmark_sha256' where job_id=p_job;
+  if not found then raise exception 'unverified workload'; end if;
+end $$;
+create function public.zils_next_qualification_job() returns jsonb language sql stable set search_path='' as $$
+  select jsonb_build_object('id',j.id) from public.fez_training_jobs j join public.zils_job_scheduling s on s.job_id=j.id
+  where j.status='awaiting_approval' and s.purpose='qualification' and s.deadline>now()
+    and not exists(select 1 from public.zils_worker_reservations r join public.zils_job_scheduling x using(job_id) where x.purpose='qualification')
+  order by j.created_at,j.id limit 1;
 $$;
 
 create function public.zils_record_graded_evaluation(p_job uuid,p_processor_token uuid,p_observations jsonb) returns void
 language plpgsql set search_path='' as $$
-declare j public.fez_training_jobs; o jsonb; a public.zils_training_attempts;
+declare j public.fez_training_jobs; o jsonb; a public.zils_training_attempts; s public.zils_job_scheduling; q jsonb; report jsonb;
 begin
   perform pg_advisory_xact_lock(9135172401);
   select * into j from public.fez_training_jobs where id=p_job and status='evaluating'
     and lease_token=p_processor_token and lease_until>now() for update;
   if not found then raise exception 'processing lease expired'; end if;
+  select * into s from public.zils_job_scheduling where job_id=p_job;
   if jsonb_typeof(p_observations) is distinct from 'array' then raise exception 'invalid observations'; end if;
   for o in select * from jsonb_array_elements(p_observations) loop
     select * into a from public.zils_training_attempts where job_id=p_job and hotkey=o->>'hotkey' and lease_token=(o->>'lease_token')::uuid;
@@ -295,6 +356,21 @@ begin
       if a.observation is distinct from o then raise exception 'terminal observation differs'; end if;
     else
       update public.zils_training_attempts set finished_at=now(),outcome=o->>'outcome',observation=o where id=a.id;
+      if s.purpose='qualification' and o->>'outcome'='valid' then
+        q:=o->'qualification';
+        if not coalesce((q->>'baseline_brier')::numeric between 0 and 2 and (q->>'candidate_brier')::numeric between 0 and 2
+          and (q->>'uniform_brier')::numeric>0 and (q->>'uniform_brier')::numeric<=2 and (q->>'accuracy')::numeric between 0 and 1
+          and (q->>'cases')::int=(j.manifest->'counts'->>'test')::int
+          and q->>'calibration_sha256'=j.manifest->'files'->>'calibration.jsonl'
+          and q->>'evaluated_sha256' ~ '^[a-f0-9]{64}$'
+          and s.context=a.context and s.benchmark_sha256=a.context->>'benchmark_sha256',false) then
+          raise exception 'unbound qualification metrics'; end if;
+        report:=q||jsonb_build_object('context',a.context,'artifact_valid',true,'verified_at',now(),'expires_at',now()+interval '30 days',
+          'min_accuracy',s.benchmark->'min_accuracy','quality_floor',s.benchmark->'quality_floor',
+          'seconds_per_token',extract(epoch from a.submitted_at-a.started_at)/a.total_tokens,
+          'capacity',j.manifest->'workload','job_id',j.id,'job_sha256',j.job_sha256,'submitted_sha256',a.sha256);
+        perform public.zils_import_qualification(a.hotkey,report,'queue-validator',encode(sha256(convert_to(o::text,'UTF8')),'hex'));
+      end if;
     end if;
   end loop;
 end $$;
@@ -460,6 +536,10 @@ returns void language plpgsql set search_path = '' as $$
 begin
   perform pg_advisory_xact_lock(9135172401);
   if p_status not in ('awaiting_approval','completed','failed') then raise exception 'invalid status'; end if;
+  if exists(select 1 from public.zils_job_scheduling where job_id=p_job and purpose='qualification') then
+    p_values:=p_values||jsonb_build_object('release_prefix',null,'result',coalesce(p_values->'result','{}')||
+      jsonb_build_object('delivery',jsonb_build_object('status','qualification_complete')));
+  end if;
   if p_values ? 'grading_observations' then
     perform public.zils_record_graded_evaluation(p_job,p_token,p_values->'grading_observations');
   end if;
@@ -507,7 +587,8 @@ do $$ declare f record; begin
     where n.nspname='public' and p.proname in ('zils_queue_mutex','zils_immutable_qualification','zils_schedule_job_state',
       'zils_worker_heartbeat','zils_import_qualification','zils_grading_snapshot','zils_release_graded_attempt',
       'zils_reap_graded','zils_reserve_graded_job','zils_guard_resource_mapping','zils_assignment_observation',
-      'zils_resource_claimable','zils_record_graded_evaluation','zils_attempt_immutable') loop
+      'zils_resource_claimable','zils_record_graded_evaluation','zils_attempt_immutable','zils_configure_routing',
+      'zils_bind_resource','zils_authorize_qualification','zils_next_qualification_job') loop
     execute format('revoke all on function %s from public,anon,authenticated',f.signature);
     execute format('grant execute on function %s to service_role',f.signature);
   end loop;

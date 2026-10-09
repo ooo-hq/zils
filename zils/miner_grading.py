@@ -161,14 +161,6 @@ def usable_reports(reports, context, now):
                     or not finite(report["quality_floor"], minimum=-2, maximum=2)
                 ):
                     continue
-                improvement = (report["baseline_brier"] - report["candidate_brier"]) / report[
-                    "uniform_brier"
-                ]
-                if (
-                    report["accuracy"] < report["min_accuracy"]
-                    or improvement < report["quality_floor"]
-                ):
-                    continue
             found[report["id"]] = report
         except (KeyError, TypeError, ValueError, OverflowError):
             continue
@@ -184,9 +176,21 @@ def qualification_grade(reports, context, now):
     ]
     # Decimal-looking measurements must not lose a whole band to binary rounding.
     band = math.floor(round(100 * median(improvements), 10)) if improvements else None
-    expired = any(r.get("context") == context for r in reports) and not current
+    passes_floor = (
+        bool(current)
+        and median(improvements) >= max(r["quality_floor"] for r in current)
+        and median(r["accuracy"] for r in current) >= max(r["min_accuracy"] for r in current)
+    )
+    expired = (
+        any(r.get("context") == context and r.get("kind") != "capacity" for r in reports)
+        and not current
+    )
     return {
-        "status": "qualified" if len(current) >= 3 else "expired" if expired else "provisional",
+        "status": "qualified"
+        if len(current) >= 3 and passes_floor
+        else "expired"
+        if expired
+        else "provisional",
         "quality_band": band,
         "quality_runs": len(current),
         "evidence_ids": [r["id"] for r in current],
@@ -238,7 +242,7 @@ def performance_grade(attempts, context, now):
 
 def rank_candidates(job, workers, now):
     now = timestamp(now)
-    context = job.get("context", {})
+    context = job.get("context") or {}
     workload = job.get("workload")
     candidates, exclusions = [], []
     invalid_job = None
@@ -291,6 +295,8 @@ def rank_candidates(job, workers, now):
         ]
         if not reason:
             reason = next((message for passed, message in checks if not passed), None)
+        if not reason and qualification and quality["status"] == "qualified":
+            reason = "already_qualified"
         envelope = [
             r
             for r in reports
@@ -353,13 +359,18 @@ def rank_candidates(job, workers, now):
     return {**result, "snapshot_sha256": digest(result)}
 
 
-def evaluation_observations(job, attempts, assignments, report):
+def evaluation_observations(job, attempts, assignments, report, *, qualification=None):
     """Bind evaluator validity to the uploaded artifact, before calibration changes it."""
     if (
         report.get("job_sha256") != job["job_sha256"]
         or report.get("baseline", {}).get("status") != "evaluated"
     ):
         raise ValueError("Evaluation does not match the frozen job and baseline")
+    if qualification is not None:
+        from .graded_scheduler import benchmark_binding
+
+        if benchmark_binding(job) != qualification["benchmark_sha256"]:
+            raise ValueError("Qualification dataset differs from its approved benchmark")
     observations = []
     for attempt in attempts:
         assignment = next(
@@ -391,4 +402,24 @@ def evaluation_observations(job, attempts, assignments, report):
                 "outcome": "valid" if row.get("status") == "evaluated" else "pending_review",
             }
         )
+        if qualification is not None and observations[-1]["outcome"] == "valid":
+            if (
+                not all(
+                    finite(value, maximum=2)
+                    for value in (report["baseline"]["brier"], row["brier"])
+                )
+                or not finite(row["uniform_brier"], minimum=1e-9, maximum=2)
+                or not finite(row["accuracy"], maximum=1)
+                or row["cases"] != job["manifest"]["counts"]["test"]
+            ):
+                raise ValueError("Invalid qualification metrics")
+            observations[-1]["qualification"] = {
+                "baseline_brier": report["baseline"]["brier"],
+                "candidate_brier": row["brier"],
+                "uniform_brier": row["uniform_brier"],
+                "accuracy": row["accuracy"],
+                "cases": row["cases"],
+                "calibration_sha256": job["manifest"]["files"]["calibration.jsonl"],
+                "evaluated_sha256": row["sha256"],
+            }
     return observations
