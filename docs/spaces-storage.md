@@ -39,8 +39,9 @@ on the website. Add the same exact origin to the image runtime using
 `--spaces-store-origin`; retain its explicit legacy `--image-store-origin` during
 migration. Authentication continues to use the Supabase URL.
 
-Use exact CORS origins for each website environment. Allow `PUT`, `GET`, `HEAD`,
-request header `Content-Type`, and expose `ETag`. Do not allow `*` origins or account
+Use exact CORS origins for each website environment. Allow `PUT`, `GET`, `HEAD` and
+request header `Content-Type`. The server reads `ETag`; browser uploads do not need
+it exposed. Do not allow `*` origins or account
 credentials. The browser sends neither authorization headers nor cookies to Spaces.
 CORS is not access control: private objects always require a signed grant.
 
@@ -61,6 +62,12 @@ replay, a lost catalog reply and a full checkpoint download/hash. It creates uni
 test objects and schedules their deletion through the catalog. Run cleanup after
 the grants and deletion grace expire. Local protocol fixtures do not establish
 real-provider compatibility; retain the real report before enabling writes.
+
+The preflight checks each CORS method separately because Spaces returns the requested
+method rather than the whole configured list. Repeating an already completed multipart
+request may return the original object idempotently. The check requires its original
+ETag, rejects stale part writes and verifies unchanged bytes; a provider error alone
+does not establish immutability.
 
 ## Copy existing files
 
@@ -104,6 +111,13 @@ current objects and active/accepted adapters are preserved. A failed catalog loo
 is an error, never permission to delete. Late writes to retired generations remain
 eligible for later orphan scans.
 
+Bucket-scoped application keys cannot configure lifecycle rules. An administrator can
+set an additional one-day incomplete-multipart abort rule using the
+[Spaces lifecycle API](https://docs.digitalocean.com/products/spaces/how-to/configure-lifecycle-rules/).
+Keep that administrative credential out of application services. Without a custom
+rule, [Spaces expires incomplete uploads after 30 days](https://docs.digitalocean.com/products/spaces/details/limits/);
+the application cleanup schedule remains necessary for its shorter retention policy.
+
 Existing image and bulk retention workers continue to decide which logical files
 expire. Explicit deletion hides a file immediately with a durable tombstone, then
 physical cleanup waits for outstanding grants. Those normal deletion paths also
@@ -130,6 +144,14 @@ accept objects above its configured size limit; keep image admission off if that
 limit would block model delivery.
 
 ## Production rollout gates
+
+An isolated hosted preflight transferred a 487,648,432-byte pinned image adapter
+through real Spaces and independently downloaded identical bytes and SHA-256.
+Anonymous reads and stale multipart part writes were denied, exact-origin CORS
+passed for all three configured methods, and a lost catalog commit reconciled.
+One existing dataset, model and image object also passed verified copying and
+rollback reads, with each Supabase source retained. These are storage checks;
+hosted signed-miner delivery and evaluation remain a separate gate.
 
 Ship the compatible website first. Apply the separately approved production catalog
 migration and deploy backend services with legacy writes. Verify sign-in, early
