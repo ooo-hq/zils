@@ -709,10 +709,11 @@ class Processor:
                 DATA_BUCKET, f"{job['id']}/inputs/{split}.jsonl", path, MAX_DATA_BYTES
             )
             splits[split] = benchmark.read_jsonl(path)
+        workload = None
         if model == models.JEVK5:
             from .jevk5 import validate_inputs
 
-            validate_inputs(splits)
+            workload = validate_inputs(splits)
         data = work / "benchmark"
         if model == models.IMAJEV:
             from .image_store import ImageStore
@@ -745,6 +746,7 @@ class Processor:
                 job["acceptance"],
                 allow_training_data_export=True,
                 model=model,
+                workload=workload,
                 selection=version_selection.freeze(self.store, job)
                 if model == models.JEVK5
                 else None,

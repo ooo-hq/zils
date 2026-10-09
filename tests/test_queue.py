@@ -365,7 +365,7 @@ class QueueTest(unittest.TestCase):
     def test_jevk5_upload_train_calibrate_and_download(self):
         from zils import models
 
-        with patch("zils.jevk5.validate_inputs"):
+        with patch("zils.jevk5.validate_inputs", return_value=None):
             self.queued_model_flow(models.JEVK5)
 
     def queued_model_flow(self, model):
