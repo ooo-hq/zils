@@ -328,6 +328,15 @@ class Service:
 
     def worker(self, path, message):
         hotkey, body = queue_protocol.verify(message, self.audience, path, self.store)
+        if path == "/v1/workers/heartbeat":
+            from .miner_presence import validate_presence
+
+            profiles = validate_presence(body)
+            return {
+                "received_at": self.store.rpc(
+                    "zils_worker_heartbeat", {"p_hotkey": hotkey, "p_profiles": profiles}
+                )
+            }
         if path == "/v1/workers/profiles":
             rows = self.store.rows("zils_worker_profiles", f"hotkey=eq.{hotkey}&enabled=eq.true")
             return {
@@ -452,6 +461,22 @@ class Service:
                 ]
             }
         if path.endswith("/defer"):
+            scheduling = self.store.rows(
+                "zils_job_scheduling", f"job_id=eq.{row['job_id']}&graded=eq.true"
+            )
+            if scheduling:
+                released = self.store.rpc(
+                    "zils_release_graded_attempt",
+                    {
+                        "p_job": row["job_id"],
+                        "p_hotkey": hotkey,
+                        "p_token": row["lease_token"],
+                        "p_outcome": "capacity_deferred",
+                    },
+                )
+                if released["status"] != "released":
+                    raise APIError(409, "Assignment lease expired.")
+                return {"status": "deferred"}
             # The signed worker can release only its own live lease. Capacity waiting is
             # not a failed training attempt; the job's original deadline remains in force.
             self.store.patch(
@@ -483,7 +508,23 @@ class Service:
             raise APIError(400, "Invalid checkpoint hash.")
         if row["state"] != "submitted":
             with tempfile.TemporaryDirectory(prefix="zils-submission-") as tmp:
-                self.fetch(row, Path(tmp), sha)
+                try:
+                    self.fetch(row, Path(tmp), sha)
+                except ValueError:
+                    scheduling = self.store.rows(
+                        "zils_job_scheduling", f"job_id=eq.{row['job_id']}&graded=eq.true"
+                    )
+                    if scheduling:
+                        self.store.rpc(
+                            "zils_release_graded_attempt",
+                            {
+                                "p_job": row["job_id"],
+                                "p_hotkey": hotkey,
+                                "p_token": row["lease_token"],
+                                "p_outcome": "invalid_artifact",
+                            },
+                        )
+                    raise
         self.store.rpc(
             "fez_submit_training",
             {
@@ -709,10 +750,11 @@ class Processor:
                 DATA_BUCKET, f"{job['id']}/inputs/{split}.jsonl", path, MAX_DATA_BYTES
             )
             splits[split] = benchmark.read_jsonl(path)
+        workload = None
         if model == models.JEVK5:
             from .jevk5 import validate_inputs
 
-            validate_inputs(splits)
+            workload = validate_inputs(splits)
         data = work / "benchmark"
         if model == models.IMAJEV:
             from .image_store import ImageStore
@@ -745,6 +787,7 @@ class Processor:
                 job["acceptance"],
                 allow_training_data_export=True,
                 model=model,
+                workload=workload,
                 selection=version_selection.freeze(self.store, job)
                 if model == models.JEVK5
                 else None,
@@ -869,13 +912,28 @@ class Processor:
         if selection:
             result["selection"] = report["selection"]
             result["baseline_reference_sha256"] = report["baseline_reference_sha256"]
+        scheduling = self.store.rows(
+            "zils_job_scheduling", f"job_id=eq.{job['id']}&purpose=eq.qualification"
+        )
+        qualification = scheduling[0]["benchmark"] if scheduling else None
+        if scheduling:
+            result["delivery"] = {"status": "qualification_complete"}
         prefix = None
         if result["delivery"]["status"] == "accepted":
             release = work / report["delivery"]["checkpoint"]
             prefix = f"{job['id']}/releases/{job['lease_token']}"
             for name in (*models.artifact_files(release), "release.json"):
                 self.store.upload(MODEL_BUCKET, prefix + "/" + name, release / name)
-        return {"result": result, "release_prefix": prefix}
+        from .miner_grading import evaluation_observations
+
+        attempts = self.store.rows("zils_training_attempts", f"job_id=eq.{job['id']}")
+        return {
+            "result": result,
+            "release_prefix": prefix,
+            "grading_observations": evaluation_observations(
+                job, attempts, assignments, report, qualification=qualification
+            ),
+        }
 
 
 def main():

@@ -10,6 +10,10 @@ Bittensor testnet fleet**, use [registration](bittensor-registration.md) and
 [bundle setup](mining.md). Queue assignments do not publish Bittensor weights
 or establish on-chain earnings.
 
+Operators can enable [graded job assignment](miner-grading.md) after qualification.
+Miners opt into signed availability only after the coordinator upgrade; existing
+configurations retain their current request flow.
+
 ## 1. Confirm access and hardware
 
 Get the following from the operator before downloading models:
