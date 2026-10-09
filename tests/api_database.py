@@ -66,7 +66,7 @@ class Database:
             + ",".join(name(k) + "=>" + literal(v) for k, v in args.items())
             + ")"
         )
-        if function == "zils_api_auth":
+        if function in ("zils_api_auth", "zils_storage_pending"):
             return self.sql("select coalesce(jsonb_agg(t),'[]'::jsonb) from " + call + " t")
         value = self.sql("select to_jsonb(" + call + ")")
         return value
