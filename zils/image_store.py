@@ -5,12 +5,13 @@ import hashlib
 import json
 import re
 import tempfile
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .api_store import identifier
-from .cloud import Supabase
+from .cloud import APIError, Supabase
 from .decisions import DecisionError, invalid
 from .image_assets import MAX_CANONICAL_BYTES, MAX_ENCODED_BYTES, canonicalize
 
@@ -118,10 +119,30 @@ class ImageStore:
 
     def complete(self, owner, asset_id):
         owner, asset_id = identifier(owner), identifier(asset_id)
+        request_token = str(uuid.uuid4())
+        try:
+            return self._complete(owner, asset_id, request_token)
+        except APIError:
+            # The claim may have committed even if its response was lost. Release
+            # only this request's token; completed images and other owners survive.
+            try:
+                self.db.rpc(
+                    "zils_image_release_finalize",
+                    {"p_owner": owner, "p_asset": asset_id, "p_token": request_token},
+                )
+            except APIError:
+                # A sustained outage still falls back to the existing lease expiry.
+                pass
+            raise
+
+    def _complete(self, owner, asset_id, request_token):
         row = self._get(owner, asset_id)
         if row["state"] == "ready":
             return public_asset(row)
-        lease = self.db.rpc("zils_image_claim_finalize", {"p_owner": owner, "p_asset": asset_id})
+        lease = self.db.rpc(
+            "zils_image_claim_finalize_request",
+            {"p_owner": owner, "p_asset": asset_id, "p_token": request_token},
+        )
         if not lease:
             self._get(owner, asset_id)
             raise DecisionError(

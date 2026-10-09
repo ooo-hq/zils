@@ -92,9 +92,17 @@ class Storage(QueueStore):
             return dict(row)
         if name == "zils_image_grant":
             return None
-        if name == "zils_image_claim_finalize":
-            row.update(state="verifying", finalize_token=str(uuid.uuid4()))
+        if name in ("zils_image_claim_finalize", "zils_image_claim_finalize_request"):
+            if row["state"] == "ready":
+                return dict(row)
+            if row["state"] == "verifying":
+                return dict(row) if row["finalize_token"] == args.get("p_token") else None
+            row.update(state="verifying", finalize_token=args.get("p_token", str(uuid.uuid4())))
             return dict(row)
+        if name == "zils_image_release_finalize":
+            if row["state"] == "verifying" and row["finalize_token"] == args["p_token"]:
+                row.update(state="uploading", finalize_token=None)
+            return None
         if name == "zils_image_finish":
             if row["finalize_token"] != args["p_token"]:
                 return None

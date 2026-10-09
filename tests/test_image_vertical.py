@@ -15,6 +15,26 @@ from zils.coordinator import Processor
 
 
 class ImageVerticalTest(unittest.TestCase):
+    def test_rehearsal_recovers_lost_claim_reply_without_waiting_for_lease_expiry(self):
+        from tests.image_vertical_fixture import Storage, run
+        from zils.cloud import APIError
+
+        original = Storage.rpc
+        interrupted = False
+
+        def lose_reply(store, name, values):
+            nonlocal interrupted
+            result = original(store, name, values)
+            if name.startswith("zils_image_claim_finalize") and not interrupted:
+                interrupted = True
+                raise APIError(503, "Supabase is unavailable; please retry.")
+            return result
+
+        with tempfile.TemporaryDirectory() as tmp, patch.object(Storage, "rpc", lose_reply):
+            result = run(Path(tmp) / "run", mode="negative")
+        self.assertTrue(interrupted)
+        self.assertEqual(result["status"], "completed")
+
     def test_rehearsal_recovers_lost_finalization_reply_without_rewriting_the_image(self):
         from tests.image_vertical_fixture import Storage, run
         from zils.cloud import APIError

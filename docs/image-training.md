@@ -61,9 +61,9 @@ Repeated submissions and settlement events do not create another charge.
 
 ## Worker and service setup
 
-1. Apply migrations through `202610080006_image_processing_profiles.sql` in order,
-   after the existing queue/API/billing/usage migrations. The four image migrations
-   use versions `202610080003` through `202610080006`; prepaid billing and usage
+1. Apply migrations through `202610080007_image_finalize_recovery.sql` in order,
+   before deploying the updated gateway. The five image migrations
+   use versions `202610080003` through `202610080007`; prepaid billing and usage
    reporting keep versions `202610080001` and `202610080002`. Install
    `requirements/api.txt` on the gateway and
    `requirements/imajev.txt` in the separate image runtime. Verify private bucket RLS,
@@ -116,6 +116,12 @@ and a relative `image` path. The driver snapshots and hashes source bytes/policy
 before creating a job, refuses an existing output directory, records each phase and
 retains redacted failures. It never cleans up unrelated assets/jobs or controls live
 services. Its own private evidence remains for inspection and normal retention.
+Reads and photo finalization retry temporary failures at most twice within the run's
+deadline; billable predictions and creation are never automatically replayed.
+Finalization uses a request-owned lease token. On a storage or database error, the
+gateway releases only that token so a retry can verify existing immutable bytes.
+Completed images and successor leases are preserved. If cleanup is also unavailable,
+the existing 20-minute lease expiry remains the fallback.
 
 The integration harness in `tests/image_vertical_fixture.py` uses the production
 coordinator, signed worker protocol, validator, publisher, image runtime and gateway
