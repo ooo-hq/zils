@@ -132,7 +132,9 @@ class Storage(QueueStore):
         )
         prefix = "upload/sign" if upload else "sign"
         result = {
-            "url": f"{self.url}/storage/v1/object/{prefix}/{bucket}/{path}?token=x.{payload}.x&ticket={ticket}"
+            "url": f"{self.url}/storage/v1/object/{prefix}/{bucket}/{path}?token=x.{payload}.x&ticket={ticket}",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=600)).isoformat(),
+            "provider": "supabase",
         }
         if upload:
             result.update(

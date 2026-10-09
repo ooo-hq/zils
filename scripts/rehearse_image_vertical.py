@@ -4,9 +4,10 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import requests
 
@@ -28,6 +29,39 @@ def verify_health_identity(reply, expected):
         if row.get("fingerprint") == expected:
             return {key: row.get(key) for key in ("fingerprint", "release_id")}
     raise ValueError("Runtime identity changed")
+
+
+def validate_upload_slot(slot, origins):
+    from zils.cloud import trusted_url
+
+    parsed = urlsplit(trusted_url(slot["url"]))
+    if (parsed.scheme, parsed.netloc) not in origins or slot.get("method") != "PUT":
+        raise ValueError("Unexpected storage destination")
+    headers = {"Content-Type": "application/octet-stream"}
+    identifier = r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"
+    if slot.get("provider") == "spaces":
+        prefix = r"/objects/" + identifier + "/"
+        query = parse_qs(parsed.query, keep_blank_values=True)
+        if (
+            query.get("partNumber") != ["1"]
+            or len(query.get("uploadId", [])) != 1
+            or not query["uploadId"][0]
+        ):
+            raise ValueError("Unexpected multipart upload")
+    else:
+        prefix = r"/storage/v1/object/upload/sign/"
+        headers["x-upsert"] = "false"
+    suffix = (
+        r"(?:zils-images/"
+        + identifier
+        + "/"
+        + identifier
+        + r"/source|fez-training-data/"
+        + identifier
+        + r"/inputs/(?:train|calibration|test)\.jsonl)"
+    )
+    if slot.get("headers") != headers or not re.fullmatch(prefix + suffix, parsed.path):
+        raise ValueError("Unexpected storage upload grant")
 
 
 def rehearse(config: dict, dataset: Path, out: Path) -> dict:
@@ -95,9 +129,7 @@ def rehearse(config: dict, dataset: Path, out: Path) -> dict:
         return verify_health_identity(reply, value["fingerprint"])
 
     def upload(slot, data):
-        parsed = urlsplit(slot["url"])
-        if (parsed.scheme, parsed.netloc) != storage_origin or parsed.username or parsed.password:
-            raise ValueError("Unexpected storage destination")
+        validate_upload_slot(slot, storage_origins)
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("Rehearsal deadline")
@@ -150,8 +182,15 @@ def rehearse(config: dict, dataset: Path, out: Path) -> dict:
 
         for endpoint in (api, coordinator, config["storage_url"]):
             trusted_url(endpoint)
-        storage = urlsplit(config["storage_url"])
-        storage_origin = storage.scheme, storage.netloc
+        storage_origins = set()
+        for raw in [
+            config["storage_url"],
+            *([config["legacy_storage_url"]] if config.get("legacy_storage_url") else []),
+        ]:
+            storage = urlsplit(trusted_url(raw))
+            if storage.path or storage.query:
+                raise ValueError("Storage configuration must contain exact origins")
+            storage_origins.add((storage.scheme, storage.netloc))
         policy = config["acceptance"]
         validate_policy(policy)
         rows, catalog, total = {}, {}, 0

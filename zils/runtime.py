@@ -134,7 +134,17 @@ def run_child(command, log, device, timeout=3600, *, model=None, minimum_mib=0, 
         **{
             k: v
             for k, v in os.environ.items()
-            if k not in {"SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_DB_URL"}
+            if k
+            not in {
+                "SUPABASE_SERVICE_ROLE_KEY",
+                "SUPABASE_DB_URL",
+                "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY",
+                "AWS_SESSION_TOKEN",
+                "AWS_SHARED_CREDENTIALS_FILE",
+                "AWS_CONFIG_FILE",
+            }
+            and not k.startswith(("ZILS_SPACES_", "FEZ_SPACES_"))
             and (model != models.IMAJEV or k in image_environment)
         },
         "HF_HOME": os.environ.get("HF_HOME", str(ROOT / ".cache/huggingface")),

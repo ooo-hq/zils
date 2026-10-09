@@ -124,6 +124,10 @@ class Database:
             raise ValueError("over limit")
         Path(destination).write_bytes(raw)
 
+    def remove(self, bucket, paths):
+        for path in paths:
+            self.objects.pop(path, None)
+
     def request(self, method, path, body=None):
         assert method == "DELETE"
         if path == "/storage/v1/object/" + BUCKET:

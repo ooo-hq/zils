@@ -183,6 +183,57 @@ class ImageVerticalTest(unittest.TestCase):
             ):
                 self.assertFalse(name in environment, name)
 
+    def test_text_and_image_children_cannot_inherit_spaces_or_aws_credentials(self):
+        from zils.runtime import run_child
+
+        keys = (
+            "ZILS_SPACES_ACCESS_KEY_ID",
+            "ZILS_SPACES_SECRET_ACCESS_KEY",
+            "FEZ_SPACES_SECRET_ACCESS_KEY",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "AWS_SHARED_CREDENTIALS_FILE",
+            "AWS_CONFIG_FILE",
+        )
+        for model in (models.IMAJEV, None):
+            with (
+                tempfile.TemporaryDirectory() as tmp,
+                patch.dict(
+                    "os.environ",
+                    {
+                        "ZILS_COMPUTE_LOCK": str(Path(tmp) / "lock"),
+                        **dict.fromkeys(keys, "private"),
+                    },
+                ),
+                patch("zils.runtime.gpu_ready", return_value=True),
+                patch("zils.runtime._run_child") as child,
+            ):
+                run_child(["python"], Path(tmp) / "log", "cuda", model=model)
+                self.assertTrue(all(key not in child.call_args.args[2] for key in keys))
+
+    def test_rehearsal_uploads_require_exact_storage_origin_and_safe_headers(self):
+        from scripts.rehearse_image_vertical import validate_upload_slot
+
+        origin = ("https", "private.nyc3.digitaloceanspaces.com")
+        slot = {
+            "url": "https://private.nyc3.digitaloceanspaces.com/objects/44444444-4444-4444-8444-444444444444/zils-images/11111111-1111-4111-8111-111111111111/22222222-2222-4222-8222-222222222222/source?uploadId=one&partNumber=1",
+            "method": "PUT",
+            "provider": "spaces",
+            "headers": {"Content-Type": "application/octet-stream"},
+        }
+        validate_upload_slot(slot, {origin})
+        for change in (
+            {"url": slot["url"].replace("private.nyc3", "foreign.nyc3")},
+            {"url": slot["url"] + "#fragment"},
+            {"url": slot["url"].replace("partNumber=1", "partNumber=2")},
+            {"url": slot["url"].replace("zils-images/", "private-documents/")},
+            {"headers": {**slot["headers"], "Authorization": "private"}},
+            {"method": "POST"},
+        ):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                validate_upload_slot({**slot, **change}, {origin})
+
     def test_rehearsal_accepts_text_list_and_image_dictionary_health_formats(self):
         from scripts.rehearse_image_vertical import verify_health_identity
 

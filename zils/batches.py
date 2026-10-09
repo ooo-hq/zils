@@ -265,9 +265,7 @@ class Worker:
         for row in self.db.rows(
             "zils_api_batches", f"finished_at=lt.{cutoff}&purged_at=is.null&limit=100"
         ):
-            self.db.request(
-                "DELETE", "/storage/v1/object/" + BUCKET, {"prefixes": [row["input_path"]]}
-            )
+            self.db.remove(BUCKET, [row["input_path"]])
             self.db.rpc("zils_api_batch_purge", {"p_id": row["id"]})
         metadata_cutoff = quote((now - timedelta(days=30)).isoformat(), safe="")
         self.db.request(
