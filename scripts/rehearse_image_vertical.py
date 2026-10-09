@@ -255,10 +255,10 @@ def rehearse(config: dict, dataset: Path, out: Path) -> dict:
             for row in rows[split]:
                 aid, _ = photo(snapshots / row["image"], "training", job_id)
                 data.append({**row, "image": {"asset_id": aid}})
-            upload(
-                created_job["uploads"][split],
-                ("".join(json.dumps(row) + "\n" for row in data)).encode(),
-            )
+            refreshed = call("POST", coordinator + f"/v1/jobs/{job_id}/uploads", body={})
+            slot = refreshed["uploads"][split]
+            if not slot.get("uploaded"):
+                upload(slot, ("".join(json.dumps(row) + "\n" for row in data)).encode())
             record("uploaded_" + split, count=len(data), other_owner_denied=True)
         call("POST", coordinator + f"/v1/jobs/{job_id}/submit", body={})
         record("submitted")

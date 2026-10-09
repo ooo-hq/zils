@@ -141,6 +141,7 @@ class ImageVerticalTest(unittest.TestCase):
                     "signing-secret",
                 ):
                     self.assertNotIn(forbidden, logs.getvalue())
+
                 self.assertEqual(result["status"], "completed")
                 self.assertTrue(result["text_unchanged"])
                 self.assertTrue(result["harness"]["worker_holdouts_denied"])
@@ -152,6 +153,13 @@ class ImageVerticalTest(unittest.TestCase):
                     )
                 if mode == "activation_failed":
                     self.assertEqual(result["workflow"]["state"], "activation_failed")
+
+    def test_photo_uploads_can_outlast_initial_dataset_grants(self):
+        from tests.image_vertical_fixture import run
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run(Path(tmp) / "run", mode="negative", expire_initial_grants=True)
+        self.assertEqual(result["status"], "completed")
 
     def test_image_children_receive_runtime_paths_but_no_account_or_signing_credentials(self):
         from zils.runtime import run_child

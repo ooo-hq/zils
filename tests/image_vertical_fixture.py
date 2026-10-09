@@ -62,6 +62,13 @@ class Storage(QueueStore):
         aid = args.get("p_asset")
         row = self.assets.get(aid)
         if name == "zils_image_create":
+            if getattr(self, "expire_initial_grants", False):
+                self.tickets = {
+                    key: value
+                    for key, value in self.tickets.items()
+                    if not (value[0] == cloud.DATA_BUCKET and value[2])
+                }
+                self.expire_initial_grants = False
             if args["p_job"] and not any(
                 j["id"] == args["p_job"] and j["owner_id"] == owner and j["status"] == "uploading"
                 for j in self.tables[coordinator.JOBS]
@@ -224,6 +231,7 @@ def run(
     stock=None,
     health=None,
     runtime_executable=None,
+    expire_initial_grants=False,
 ):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=False)
@@ -232,6 +240,7 @@ def run(
         dataset = root / "dataset"
         fixture_data(dataset)
     store = Storage()
+    store.expire_initial_grants = expire_initial_grants
     accounts = Accounts(store)
     key = Keypair.create_from_seed("0x" + "39" * 32)
     text_key = Keypair.create_from_seed("0x" + "42" * 32)
