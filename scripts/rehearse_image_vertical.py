@@ -174,6 +174,7 @@ def rehearse(config: dict, dataset: Path, out: Path) -> dict:
             who="other_token_env",
             body={},
             statuses=(404,),
+            retry=True,
         )
         return aid, ready
 

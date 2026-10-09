@@ -161,6 +161,14 @@ class ImageVerticalTest(unittest.TestCase):
             result = run(Path(tmp) / "run", mode="negative", expire_initial_grants=True)
         self.assertEqual(result["status"], "completed")
 
+    def test_owner_denial_check_recovers_transient_unavailability(self):
+        from tests.image_vertical_fixture import run
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run(Path(tmp) / "run", mode="negative", fail_owner_check=True)
+        self.assertEqual(result["status"], "completed")
+        self.assertTrue(any(step["name"] == "transient_retry" for step in result["steps"]))
+
     def test_image_children_receive_runtime_paths_but_no_account_or_signing_credentials(self):
         from zils.runtime import run_child
 

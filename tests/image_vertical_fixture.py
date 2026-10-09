@@ -93,6 +93,9 @@ class Storage(QueueStore):
             }
             self.assets[aid] = row
             return dict(row)
+        if name == "zils_image_get" and owner == OTHER and getattr(self, "fail_owner_check", False):
+            self.fail_owner_check = False
+            raise cloud.APIError(503, "Authentication is unavailable; please retry.")
         if row is None or row["owner_id"] != owner or row["state"] in ("deleted", "expired"):
             return None
         if name == "zils_image_get":
@@ -232,6 +235,7 @@ def run(
     health=None,
     runtime_executable=None,
     expire_initial_grants=False,
+    fail_owner_check=False,
 ):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=False)
@@ -241,6 +245,7 @@ def run(
         fixture_data(dataset)
     store = Storage()
     store.expire_initial_grants = expire_initial_grants
+    store.fail_owner_check = fail_owner_check
     accounts = Accounts(store)
     key = Keypair.create_from_seed("0x" + "39" * 32)
     text_key = Keypair.create_from_seed("0x" + "42" * 32)
