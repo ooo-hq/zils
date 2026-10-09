@@ -208,6 +208,7 @@ def main():
     parser.add_argument("--min-accuracy", type=float, required=True)
     parser.add_argument("--min-brier-improvement", type=float, default=0.0)
     parser.add_argument("--allow-training-data-export", action="store_true")
+    parser.add_argument("--model", choices=(models.KEV, models.JEVK5), default=models.KEV)
     args = parser.parse_args()
     try:
         manifest = build(
@@ -219,6 +220,7 @@ def main():
                 "min_brier_improvement": args.min_brier_improvement,
             },
             allow_training_data_export=args.allow_training_data_export,
+            model=args.model,
         )
         print(json.dumps({"job_id": manifest["job_id"], "counts": manifest["counts"]}))
     except (ValueError, OSError, KeyError, TypeError) as error:

@@ -5,8 +5,8 @@ but only the closed Bittensor fleet can publish weights to the chain.
 
 | Workflow | Model | Validator role |
 | --- | --- | --- |
-| [Hosted training queue](#jevk5-queue-validator) | JevK5 4B | Trusted processor validates datasets, evaluates candidates, and exports accepted models |
-| [Closed Bittensor testnet](#bittensor-testnet-validator) | Kev 0.8B | Registered validator scores the configured miner roster and explicitly publishes testnet weights |
+| [Hosted training queue](#jevk5-queue-validator) | JevK5 4B; qualified ImaJev 4B | Trusted processor validates datasets, evaluates candidates, and exports accepted models |
+| [Closed Bittensor testnet](#bittensor-testnet-validator) | One JevK5, ImaJev, or legacy Kev profile per fleet | Registered validator scores the configured miner roster and explicitly publishes testnet weights |
 
 There is no public, permissionless JevK5 validator onboarding in this repository.
 Queue validators need protected operator credentials. Testnet validators need
@@ -103,9 +103,15 @@ If pending jobs use Kev, retain its verified reference and add
 [model transition procedure](jevk5-queue.md#existing-jobs-and-rollback) rather
 than rewriting an existing job's model identity.
 
+For image jobs, install the isolated runtime, configure its environment, and
+complete [image qualification](image-training.md#worker-and-service-setup). Add
+`--additional-reference models/imajev-starting-checkpoint` to the processor.
+It selects the matching model for each frozen job; keep image admission off until
+evaluation and activation are verified. This does not change the primary text reference.
+
 ## Bittensor testnet validator
 
-This path uses the Kev fleet and private-network transport. It is a closed
+This path uses a model-pinned fleet and private-network transport. It is a closed
 rehearsal, not public miner discovery or an untrusted-checkpoint sandbox.
 
 ### 1. Register and check eligibility
@@ -123,10 +129,10 @@ SDK still enforces the chain's transaction requirements.
 
 ### 2. Prepare the registered fleet
 
-Use Linux or macOS and complete the
-[Kev repository setup](../README.md#repository-setup), including its downloaded
-`models/reference`. Install `requirements/testnet.txt` in `.venv-kev`.
-Create the benchmark and registered identity file using
+Complete the [fleet model setup](mining.md) for the operator-selected text or image
+profile, including the matching reference and qualified hardware.
+Install `requirements/testnet.txt` in `.venv-kev`.
+Create the frozen job and registered identity file using
 [testnet fleet setup](testnet.md#provision-the-registered-identities).
 Keep test/calibration data on the validator and distribute only each miner's
 assigned bundle. The validator host needs its hotkey, not the coldkey.

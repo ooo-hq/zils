@@ -7,8 +7,9 @@ assignment, customer job response and accepted release. Existing manifests that
 predate model identities retain the original Kev 0.8B contract.
 
 This changes the training workflow. It does not add a hosted prediction API or
-automatically approve customer-data exports or miner assignments. The local
-and testnet fleet remains on its existing Kev contract.
+automatically approve customer-data exports or miner assignments. Local and
+testnet fleets can use the same JevK5 profile through [fleet setup](mining.md);
+existing Kev jobs retain their original contract.
 
 ## Install and create the reference
 
@@ -46,8 +47,9 @@ checksums; it cannot select another model. Model processes run offline.
 
 For evaluator setup, acceptance checks, and recovery, follow
 [Run a validator](validators.md#jevk5-queue-validator). For chain participation,
-see [Bittensor registration](bittensor-registration.md); that separate fleet
-still uses Kev and testnet, not this JevK5 queue.
+see [Bittensor registration](bittensor-registration.md). The separate fleet can
+score a pinned text or image job on testnet; the hosted queue does not publish
+chain weights.
 
 Complete the Supabase resources, customer Auth, HTTPS edge and protected server
 environment setup in [Supabase training](supabase-training.md). Set

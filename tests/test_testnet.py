@@ -109,6 +109,42 @@ class TestnetTest(unittest.TestCase):
             ],
         }
         wallet = SimpleNamespace(hotkey=SimpleNamespace(ss58_address="validator"))
+        from zils import models
+
+        for model in (models.JEVK5, models.IMAJEV):
+            profiled = {**config, "model": models.spec(model)}
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaisesRegex(ValueError, "profile"):
+                    t.publish_round(
+                        config,
+                        tmp,
+                        {**report, "model": models.spec(model)},
+                        sub,
+                        wallet,
+                        publish=True,
+                    )
+                with self.assertRaisesRegex(ValueError, "profile"):
+                    t.publish_round(profiled, tmp, report, sub, wallet, publish=True)
+                wrong = models.IMAJEV if model == models.JEVK5 else models.JEVK5
+                with self.assertRaisesRegex(ValueError, "profile"):
+                    t.publish_round(
+                        profiled,
+                        tmp,
+                        {**report, "model": models.spec(wrong)},
+                        sub,
+                        wallet,
+                        publish=True,
+                    )
+                self.assertEqual(sub.calls, 0)
+                result = t.publish_round(
+                    profiled,
+                    tmp,
+                    {**report, "model": models.spec(model)},
+                    sub,
+                    wallet,
+                    publish=False,
+                )
+                self.assertEqual(result["status"], "dry_run")
         with tempfile.TemporaryDirectory() as tmp:
             work = Path(tmp)
             dry = t.publish_round(config, work, report, sub, wallet, publish=False)

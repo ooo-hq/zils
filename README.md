@@ -58,7 +58,8 @@ before installing dependencies:
 | --- | --- | --- |
 | **Customer training — JevK5 4B** | Linux or WSL 2, a BF16-capable NVIDIA GPU, an approved hotkey, and the coordinator URL | [Install, configure, and run a queued miner](docs/queue-miners.md) |
 | **Customer training on Mac — JevK5 4B** | Apple silicon, macOS 14+, an approved hotkey, and the coordinator URL; tested on M4 with 16 GiB | [Install and qualify an Apple GPU miner](docs/mac-miners.md) |
-| **Bittensor testnet — Kev 0.8B** | Operator-confirmed testnet registration, an assigned miner bundle, and private connectivity to the validator | [Register a miner](docs/bittensor-registration.md), then [install its bundle](docs/mining.md#set-up-each-machine-once) |
+| **Customer image training — ImaJev 4B** | Qualified CUDA hardware, the isolated image runtime, and operator approval for the image profile | [Add image support to a queue miner](docs/queue-miners.md#add-the-image-vertical) |
+| **Bittensor testnet — text or image** | Operator-confirmed registration, a model-pinned miner bundle, matching hardware, and private validator connectivity | [Register a miner](docs/bittensor-registration.md), then [install its bundle](docs/mining.md#set-up-each-machine-once) |
 
 For customer training, the guide creates `models/jevk5-reference` and
 `.private/queue-miner.json`. Start the configured worker from the repository root:
@@ -82,7 +83,7 @@ workflow and complete its configuration before starting:
 | Workflow | Requirements | Setup guide |
 | --- | --- | --- |
 | **Customer training — JevK5 4B** | A matching GPU/reference model, protected Supabase operator credentials, and the configured training project | [Queue validator setup](docs/validators.md#jevk5-queue-validator) |
-| **Bittensor testnet — Kev 0.8B** | A registered, eligible validator hotkey, an explicit miner roster, and private network access | [Testnet validator setup](docs/validators.md#bittensor-testnet-validator) |
+| **Bittensor testnet — text or image** | A registered, eligible validator hotkey, the matching model/runtime, an explicit miner roster, and private network access | [Testnet validator setup](docs/validators.md#bittensor-testnet-validator) |
 
 After completing queue validator setup, load its protected environment and
 start the evaluator from the repository root:
@@ -104,15 +105,17 @@ and publication. Keep evaluation data and service credentials on the validator.
 ## Bittensor training competition
 
 The closed testnet fleet trains candidates, scores their probability quality,
-and turns those scores into miner weights. The current recipe starts each
-candidate from the same Kev 0.8B reference for one epoch, using different seeds.
+and turns those scores into miner weights. Each fleet pins one job and one model:
+JevK5 4B text, ImaJev 4B image, or legacy Kev 0.8B. Candidates start from the same
+reference using that model's recipe and different seeds. Text and image scores
+are not pooled into a combined reward vector.
 See the [evaluation contract](docs/evaluation.md) for the reward calculation.
 
 The [first verified round](docs/testnet-round-001.md) used three miners on
 **testnet subnet 579** on September 25, 2026. That is a recorded experiment;
 confirm the current subnet and admission with the operator before registering.
 Mainnet participation, public miner discovery, and automatic promotion of subnet
-winners are not implemented. JevK5 customer training is a separate queue and
+winners are not implemented. Customer training is a separate queue and
 does not publish Bittensor weights.
 
 ## Setup
@@ -134,13 +137,14 @@ npx skills add ooo-hq/zils@zils-finetune
 Then ask: “Fine-tune a 4B Zils candidate on my labelled support tickets.”
 The skill covers training, calibration, baseline comparisons, and optional
 serving. Installation starts no training. Cloud runs require a Modal account
-and an agreed compute budget. These experiments do not change the testnet
-fleet's pinned 0.8B model contract.
+and an agreed compute budget. These experiments do not change any existing
+fleet's frozen model or job.
 
 ### Repository setup
 
-This setup prepares the **Kev 0.8B local/testnet fleet**. Use the guides above
-for JevK5 miners, validators, or API deployment.
+This setup prepares the **legacy Kev 0.8B local/testnet rehearsal**. Use the
+[fleet guide](docs/mining.md) for JevK5 and ImaJev fleets, or the guides above
+for queue miners, validators, and API deployment.
 
 Install Git, Python 3.13, and `uv` on macOS, Linux, or WSL 2. From the directory
 where you keep projects:
@@ -199,8 +203,10 @@ For separate machines, follow [private fleet setup](docs/mining.md#prepare-bundl
 
 Customer training and the decision API use pinned **JevK5 4B** weights and
 runtime revisions. See [model setup](docs/jevk5-queue.md#install-and-create-the-reference)
-and [API setup](docs/decision-api.md). The local/testnet fleet uses **Kev 0.8B**,
-based on Qwen3.5-0.8B-Base; its revisions are recorded in the
+and [API setup](docs/decision-api.md). Image workers use the pinned **ImaJev 4B**
+base, adapter, head, and runtime in [image training](docs/image-training.md).
+The local/testnet fleet selects the same profiles from the frozen job manifest.
+Legacy **Kev 0.8B**, based on Qwen3.5-0.8B-Base, remains supported; its revisions are recorded in the
 [experiment methodology](docs/experiments.md#runtime-and-reference-models).
 
 A fresh clone downloads upstream reference weights. Experimental adapters,

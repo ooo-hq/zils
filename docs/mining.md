@@ -1,8 +1,10 @@
-# Run a Kev fleet miner
+# Run a text or image fleet miner
 
-This guide covers the **Kev 0.8B local and Bittensor testnet fleet**.
-For customer training, use the [JevK5 queue miner guide](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md).
-The two workflows use different models, credentials, and startup commands.
+Local and Bittensor testnet fleets support **JevK5 4B text** and **ImaJev 4B image**
+jobs. Each fleet pins one frozen job and its matching model reference. Existing
+Kev 0.8B bundles remain supported. For workers that claim different customer jobs,
+use the [queue miner guide](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md).
+Queue and fleet miners use the same trainers but different credentials and startup commands.
 
 After the one-time setup below, run this in your assigned miner folder:
 
@@ -13,17 +15,26 @@ After the one-time setup below, run this in your assigned miner folder:
 The miner trains one candidate per round, submits its signed checkpoint, receives
 the validator's result, and waits for the next round. Stop with Ctrl+C, or use
 `./start-miner --rounds 1` for a single result. The first start downloads the
-pinned base model. Later starts reuse the cache.
+pinned text base model. Image miners require the separately installed, verified
+image runtime described below. Later starts reuse the cache.
 
 ## Prepare bundles on the validator
 
-From the repository root, after installing dependencies and downloading the
-reference as described in the [project README](https://github.com/ooo-hq/zils#setup):
+For a text fleet, complete the [JevK5 model setup](https://github.com/ooo-hq/zils/blob/main/docs/jevk5-queue.md#install-and-create-the-reference).
+Prepare authorized, independent training/calibration/test JSONL files using the
+[customer data format](https://github.com/ooo-hq/zils/blob/main/docs/customer-jobs.md#prepare-data).
+The following freezes those files and an example acceptance policy; choose your
+policy before evaluating candidates:
 
 ```bash
-.venv-kev/bin/python -m zils.benchmark build --out .private/benchmarks/local
+.venv-kev/bin/python -m zils.jobs --job-id text-v1 \
+  --model jevk5-4b-v0.3 --train .private/train.jsonl \
+  --calibration .private/calibration.jsonl --test .private/test.jsonl \
+  --min-accuracy 0.80 --min-brier-improvement 0.01 \
+  --allow-training-data-export --out .private/jobs/text-v1
 .venv-kev/bin/python -m zils.fleet init --out .private/fleet-local \
-  --benchmark .private/benchmarks/local --host VALIDATOR_PRIVATE_IPV4
+  --benchmark .private/jobs/text-v1 --checkpoint models/jevk5-reference \
+  --host VALIDATOR_PRIVATE_IPV4
 ```
 
 Replace `VALIDATOR_PRIVATE_IPV4` with the validator's numeric private address.
@@ -35,6 +46,36 @@ Only training data goes into a miner bundle. The validator keeps calibration
 cases, test cases, and full reports. Local bundles contain disposable signing
 keys and must stay private. [Testnet bundles](testnet.md) contain public wallet
 references instead; provision each hotkey separately.
+
+### Image fleets
+
+Complete the pinned runtime and maximum-context hardware qualification in
+[image training](https://github.com/ooo-hq/zils/blob/main/docs/image-training.md#worker-and-service-setup)
+for every participating miner and the validator. Use a fresh published starting
+checkpoint, not an earlier customer adapter. The operator supplies an audited
+image-job directory built by `zils.image_jobs.build`, its canonical image cache
+(`<sha256>.png`), and measured admission limits. Those are private inputs; fleet
+initialization does not download customer photos or resolve hosted predecessor jobs.
+
+```bash
+.venv-kev/bin/python -m zils.fleet init --out .private/fleet-image \
+  --benchmark .private/jobs/image-v1 --checkpoint models/imajev-starting-checkpoint \
+  --images .private/image-cache --min-free-mib QUALIFIED_FREE_MIB \
+  --max-seconds QUALIFIED_TRAINING_SECONDS --host VALIDATOR_PRIVATE_IPV4
+```
+
+Replace both qualification placeholders with the operator's measurements. Memory
+admission must cover peak reserved GPU memory plus 512 MiB and be at least
+12,288 MiB; the training deadline must be 1–3,600 seconds. Use limits sufficient
+for every host in this fleet. Bundles receive only training photos; calibration
+and test photos stay with the validator. Export verifies image hashes and sizes.
+
+Each model uses its own fleet directory and ports. Never combine text and image
+scores into one reward vector. Only one validator may publish for a hotkey/subnet;
+do not run competing vertical publishers that overwrite each other's weights.
+
+For a legacy Kev rehearsal, keep `zils.benchmark build` and `models/reference`.
+Do not relabel a Kev manifest as a different model.
 
 ## Set up each machine once
 
@@ -53,9 +94,26 @@ references instead; provision each hotkey separately.
    Allow validator TCP 8900 from the miner machines.
 4. Run `./start-miner --rounds 1`. It can start before the validator and will retry.
 
-The miner selects CUDA, then Apple MPS, then CPU. Use `--device cuda`, `mps`, or
-`cpu` to select explicitly. To reuse an environment or cache, set `ZILS_PYTHON`
+JevK5 needs a qualified CUDA or Apple MPS host. Image training requires qualified
+CUDA hardware; CPU fallback applies only to Kev. Use `--device cuda` or `mps`
+explicitly. To reuse an environment or cache, set `ZILS_PYTHON`
 to its absolute Python path and `HF_HOME` to the cache directory.
+
+For image bundles, also install and verify the isolated runtime on each host:
+
+```bash
+uv venv --python 3.13 .venv-image
+uv pip install --python .venv-image/bin/python --torch-backend=cu128 -r requirements/imajev.txt
+.venv-image/bin/python -m scripts.download_imajev --out models/imajev-reference
+export ZILS_IMAGE_RUNTIME_PYTHON="$PWD/.venv-image/bin/python"
+export ZILS_IMAGE_REFERENCE="$PWD/models/imajev-reference"
+./start-miner --device cuda --rounds 1
+```
+
+The validator needs these same image runtime variables. Set the shared
+`ZILS_COMPUTE_LOCK` and the qualified `ZILS_IMAGE_GPU_MEMORY_FRACTION` when sharing
+a GPU, as described in the image training guide. Low capacity makes a miner wait;
+it never permits a smaller unverified memory allowance.
 
 ### Windows / NVIDIA GPU
 

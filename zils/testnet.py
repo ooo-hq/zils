@@ -101,7 +101,7 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
     """Persist intent before signing. An interrupted submission is never retried automatically."""
     import bittensor as bt
 
-    from . import protocol as wire
+    from . import models, protocol as wire
 
     work = Path(work)
     report_hash = hashlib.sha256(
@@ -112,6 +112,10 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
     identities = {uid: item["hotkey"] for uid, item in config["members"].items()}
     if report.get("chain") != config["chain"] or report.get("identities") != identities:
         raise ValueError("report was not evaluated for this registered testnet fleet")
+    model = config.get("model", models.spec(models.KEV))
+    models.validate_spec(model)
+    if report.get("model", models.spec(models.KEV)) != model:
+        raise ValueError("Report differs from the testnet fleet model profile")
     for path in (receipt_path, attempt_path):
         if path.exists():
             saved = json.loads(path.read_text())

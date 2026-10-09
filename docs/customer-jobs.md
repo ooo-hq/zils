@@ -47,6 +47,7 @@ not customer data and cannot establish customer-task quality:
   --calibration .private/job-example-input/calibration.jsonl \
   --test .private/job-example-input/test.jsonl \
   --min-accuracy 0.80 --min-brier-improvement 0.01 \
+  --model jevk5-4b-v0.3 \
   --allow-training-data-export --out .private/jobs/example-decisions-v1
 ```
 
@@ -61,7 +62,7 @@ output directories and a new job version when changing inputs or thresholds.
 ```bash
 .venv-kev/bin/python -m zils.fleet init \
   --benchmark .private/jobs/example-decisions-v1 \
-  --checkpoint models/reference --host 127.0.0.1 \
+  --checkpoint models/jevk5-reference --host 127.0.0.1 \
   --out .private/fleet-example-decisions-v1
 .venv-kev/bin/python -m zils.fleet validator \
   --config .private/fleet-example-decisions-v1/validator/config.json --rounds 1
@@ -75,8 +76,11 @@ ZILS_PYTHON="$PWD/.venv-kev/bin/python" HF_HOME="$PWD/.cache/huggingface" \
 ```
 
 Repeat for `miner-2` and `miner-3`. Each bundle contains the job's training data;
-distribute it only to approved operators. The architecture and training recipe
-remain pinned to the existing 0.8B model and one-epoch recipe. No automatic model
+distribute it only to approved operators. The job freezes the selected model;
+the fleet rejects a mismatched reference. Use the [JevK5 setup](jevk5-queue.md)
+to create the text reference. Image fleets use an audited `zils.image_jobs` manifest
+and the [image fleet setup](mining.md#image-fleets). Legacy Kev jobs retain their
+original reference and recipe. No automatic model
 download, training, or chain transaction is triggered by building the job manifest.
 Fleet initialization requires the downloaded reference. Testnet fleets still
 use the existing explicit roster and publication flags.

@@ -14,15 +14,23 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 
 import zils
-from zils import models, protocol as wire
-from zils.runtime import digest, request, run_child, signed, signing_key
+from zils import models, protocol as wire, settings
+from zils.runtime import CapacityUnavailable, digest, request, run_child, signed, signing_key
 
 
 def train_candidate(config, directory, job, runtime, device, *, check_lease=None):
     directory = Path(directory)
+    model = models.checkpoint_model(directory / "reference")
+    if "model" in config and (
+        models.validate_spec(config["model"]) != model or job.get("model") != config["model"]
+    ):
+        raise ValueError("Training round differs from the installed model profile")
     for name in ("base_revision", "initial_sha256", "training_sha256"):
         if job.get(name) != config[name]:
             raise ValueError("validator round differs from the installed training configuration")
+    for name in ("min_free_mib", "max_seconds"):
+        if name in config and job.get(name) != config[name]:
+            raise ValueError("validator round differs from the installed capacity configuration")
     for name in ("job_id", "job_sha256"):
         if job.get(name) != config.get(name):
             raise ValueError("validator round differs from the installed customer job")
@@ -90,7 +98,6 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
         "--out",
         str(raw),
     ]
-    model = models.checkpoint_model(directory / "reference")
     if model == models.JEVK5:
         if config["base_revision"] != models.spec(models.JEVK5)["base_revision"]:
             raise ValueError("training model revision differs from its reference")
@@ -113,7 +120,7 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
         ]
     if model == models.IMAJEV:
         command = [
-            runtime,
+            settings.required("ZILS_IMAGE_RUNTIME_PYTHON"),
             "-u",
             "-m",
             "zils.imajev_runner",
@@ -173,13 +180,16 @@ def miner(config, directory, args):
     class Artifacts(wire.Handler):
         def do_GET(self):
             match = re.fullmatch(r"/artifacts/([a-f0-9]{32})/([^/]+)", self.path)
-            if not match or match[2] not in zils.ARTIFACT_FILES:
+            if not match:
                 self.reply(404, {"error": "unknown artifact"})
                 return
             try:
                 entry = json.loads(
                     (directory / "state/jobs" / match[1] / "candidate.json").read_text()
                 )
+                if match[2] not in models.artifact_files(entry["checkpoint"]):
+                    self.reply(404, {"error": "unknown artifact"})
+                    return
                 path = Path(entry["checkpoint"]) / match[2]
                 with path.open("rb") as source:
                     self.send_response(200)
@@ -248,6 +258,8 @@ def miner(config, directory, args):
                     raise RuntimeError(
                         f"validator rejected request (HTTP {error.code}); check config and validator log"
                     ) from error
+            except CapacityUnavailable:
+                pass
             except (URLError, TimeoutError, ConnectionError, http.client.HTTPException) as error:
                 message = str(error)
                 if message != last_error:

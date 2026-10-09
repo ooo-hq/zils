@@ -16,6 +16,8 @@ from bittensor_wallet import Keypair
 
 import zils
 
+from . import models
+
 BASE_REVISION = "dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68"
 MAX_ANNOUNCEMENT = 8192
 
@@ -140,7 +142,9 @@ def opener():
     return build_opener(ProxyHandler({}), NoRedirect())
 
 
-def fetch_checkpoint(claim, destination, expected_endpoint=None, round_scoped=False):
+def fetch_checkpoint(
+    claim, destination, expected_endpoint=None, round_scoped=False, *, model=models.KEV
+):
     endpoint_ok(
         claim["endpoint"], allowed=[expected_endpoint] if expected_endpoint is not None else None
     )
@@ -150,7 +154,8 @@ def fetch_checkpoint(claim, destination, expected_endpoint=None, round_scoped=Fa
     destination = Path(destination)
     destination.mkdir()
     started, total = time.monotonic(), 0
-    for name in zils.ARTIFACT_FILES:
+    files = models.candidate_files(model)
+    for name in files:
         with opener().open(claim["endpoint"] + prefix + name, timeout=5) as response:
             size = int(response.headers.get("Content-Length", "-1"))
             if not 0 <= size <= zils.MAX_ARTIFACT_BYTES - total:
@@ -159,12 +164,16 @@ def fetch_checkpoint(claim, destination, expected_endpoint=None, round_scoped=Fa
             with (destination / name).open("xb") as output:
                 while chunk := response.read(1024 * 1024):
                     received += len(chunk)
-                    if received > size or time.monotonic() - started > 30:
+                    if received > size or time.monotonic() - started > (
+                        300 if model == models.IMAJEV else 30
+                    ):
                         raise ValueError("artifact exceeds declared size or download deadline")
                     output.write(chunk)
             if received != size:
                 raise ValueError("truncated artifact")
             total += received
+    if models.checkpoint_model(destination) != model or models.artifact_files(destination) != files:
+        raise ValueError("Downloaded adapter differs from the required model profile")
     if zils.checkpoint_hash(destination) != claim["sha256"]:
         raise ValueError("downloaded checkpoint hash differs from signed announcement")
     return {"bytes": total, "download_ms": (time.monotonic() - started) * 1000}

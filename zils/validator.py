@@ -13,10 +13,12 @@ from urllib.parse import urlsplit
 import zils
 
 from . import models, protocol as wire, settings
-from .runtime import digest, locked, run_child, signed, signing_key, verified
+from .runtime import CapacityUnavailable, digest, locked, run_child, signed, signing_key, verified
 
 
-def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=None):
+def evaluate_round(
+    config, directory, work, registry, args, *, fetch_checkpoint=None, wait_for_capacity=False
+):
     from . import benchmark, calibrate, jobs
 
     if shutil.disk_usage(work).free < 2 * 1024**3:
@@ -40,9 +42,12 @@ def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=
         claim = message["claim"]
         path = attempt / f"raw-{uid}"
         try:
-            (fetch_checkpoint or wire.fetch_checkpoint)(
-                claim, path, expected_endpoint=claim["endpoint"], round_scoped=True
-            )
+            options = {"expected_endpoint": claim["endpoint"], "round_scoped": True}
+            if fetch_checkpoint is None:
+                options["model"] = model
+            (fetch_checkpoint or wire.fetch_checkpoint)(claim, path, **options)
+            if models.checkpoint_model(path) != model:
+                raise ValueError("Submission differs from the job model profile")
             entries.append(zils.submission(path, uid))
         except (ValueError, OSError, http.client.HTTPException) as error:
             failed[uid] = str(error)
@@ -73,13 +78,28 @@ def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=
         ]
         if model == models.IMAJEV:
             command.extend(["--images", str(directory / "images")])
-        run_child(
-            command,
-            attempt / f"{name}.log",
-            args.device,
-            timeout=120 + 600 * len(submissions),
-            **({"model": model} if model == models.IMAJEV else {}),
-        )
+        waiting = False
+        while True:
+            try:
+                run_child(
+                    command,
+                    attempt / f"{name}.log",
+                    args.device,
+                    timeout=120 + 600 * len(submissions),
+                    **(
+                        {"model": model, "minimum_mib": config.get("min_free_mib", 0)}
+                        if model == models.IMAJEV
+                        else {}
+                    ),
+                )
+                break
+            except CapacityUnavailable:
+                if not wait_for_capacity:
+                    raise
+                if not waiting:
+                    print("validator: waiting for evaluation capacity", flush=True)
+                    waiting = True
+                time.sleep(max(1, args.poll))
         return json.loads(report.read_text())
 
     baseline = None
@@ -145,6 +165,7 @@ def evaluate_round(config, directory, work, registry, args, *, fetch_checkpoint=
                 }
             )
     report.update(
+        model=models.spec(model),
         mode="private-lan-development",
         chain_write=False,
         benchmark_use="repeated-local-development",
@@ -345,6 +366,9 @@ def validator(config, directory, args):
                     job["chain"] = config["chain"]
                 if "job_id" in config:
                     job.update(job_id=config["job_id"], job_sha256=config["job_sha256"])
+                for name in ("model", "min_free_mib", "max_seconds"):
+                    if name in config:
+                        job[name] = config[name]
                 wire.write_json(work / "job.json", job)
             for name in (
                 "base_revision",
@@ -352,6 +376,9 @@ def validator(config, directory, args):
                 "training_sha256",
                 "job_id",
                 "job_sha256",
+                "model",
+                "min_free_mib",
+                "max_seconds",
             ):
                 if job.get(name) != config.get(name):
                     raise ValueError("pending round differs from the installed job configuration")
@@ -383,7 +410,7 @@ def validator(config, directory, args):
             report = (
                 json.loads((work / "report.json").read_text())
                 if (work / "report.json").exists()
-                else evaluate_round(config, directory, work, registry, args)
+                else evaluate_round(config, directory, work, registry, args, wait_for_capacity=True)
             )
             fields = (
                 "uid",
@@ -396,6 +423,7 @@ def validator(config, directory, args):
                 "p95_ms",
             )
             public = {
+                "model": report.get("model", models.spec(models.KEV)),
                 "kind": "result",
                 "round_id": job["round_id"],
                 "weights": {str(k): v for k, v in report["weights"].items()},
