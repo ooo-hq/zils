@@ -17,7 +17,7 @@ weights, calculate cross-job emissions, or establish model-quality improvements.
 The original local/testnet fleet commands remain supported.
 
 For the JevK5 4B hosted base, use the [JevK5 queue setup](jevk5-queue.md), including
-its CUDA requirement, model reference and artifact format. The commands below
+its CUDA or Apple MPS miner setup, model reference and artifact format. The commands below
 describe the legacy Kev runtime; use `ZILS_TRAINING_MODEL=kev-0.8b-v1` with those
 commands. Existing jobs retain their pinned model when the active base changes.
 

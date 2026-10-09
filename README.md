@@ -56,6 +56,7 @@ before installing dependencies:
 | Workflow | Requirements | Setup guide |
 | --- | --- | --- |
 | **Customer training — JevK5 4B** | Linux or WSL 2, a BF16-capable NVIDIA GPU, an approved hotkey, and the coordinator URL | [Install, configure, and run a queued miner](docs/queue-miners.md) |
+| **Customer training on Mac — JevK5 4B** | Apple silicon, macOS 14+, an approved hotkey, and the coordinator URL; tested on M4 with 16 GiB | [Install and qualify an Apple GPU miner](docs/mac-miners.md) |
 | **Bittensor testnet — Kev 0.8B** | Operator-confirmed testnet registration, an assigned miner bundle, and private connectivity to the validator | [Register a miner](docs/bittensor-registration.md), then [install its bundle](docs/mining.md#set-up-each-machine-once) |
 
 For customer training, the guide creates `models/jevk5-reference` and
@@ -67,7 +68,8 @@ For customer training, the guide creates `models/jevk5-reference` and
   --reference models/jevk5-reference --device cuda
 ```
 
-The queue miner uses outbound HTTPS and needs no Supabase service credential.
+Use `--device mps` on a qualified Mac. The queue miner uses outbound HTTPS and
+needs no Supabase service credential.
 For the testnet fleet, run `./start-miner --rounds 1` from the assigned,
 configured bundle. Joining either workflow requires operator approval.
 
