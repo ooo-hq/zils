@@ -150,8 +150,10 @@ through real Spaces and independently downloaded identical bytes and SHA-256.
 Anonymous reads and stale multipart part writes were denied, exact-origin CORS
 passed for all three configured methods, and a lost catalog commit reconciled.
 One existing dataset, model and image object also passed verified copying and
-rollback reads, with each Supabase source retained. These are storage checks;
-hosted signed-miner delivery and evaluation remain a separate gate.
+rollback reads, with each Supabase source retained. A separate hosted signed-miner
+run delivered the full adapter to actual GPU evaluation and passed account isolation
+and exact billing checks. Its candidate failed the unchanged quality thresholds and
+was not activated; see [the measured outcome](image-rollout.md#hosted-spaces-verification--2026-10-09).
 
 Ship the compatible website first. Apply the separately approved production catalog
 migration and deploy backend services with legacy writes. Verify sign-in, early

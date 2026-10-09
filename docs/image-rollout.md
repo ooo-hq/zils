@@ -109,9 +109,57 @@ missing candidate; this run does not establish refund behavior for failed delive
 The four live text services retained their process/invocation identities and model
 fingerprint. Isolated image services stopped after the 762.25-second run.
 
-No paid plan was purchased. Hosted candidate evaluation and accepted-model activation
-remain unverified. Storage must accommodate the full pinned adapter before retrying;
+No paid plan was purchased. At the end of that run, hosted candidate evaluation and
+accepted-model activation remained unverified. Storage had to accommodate the full
+pinned adapter before retrying;
 check both [global and bucket file limits](https://supabase.com/docs/guides/storage/uploads/file-limits).
+
+## Hosted Spaces verification — 2026-10-09
+
+A separate hosted run used private DigitalOcean Spaces for files while retaining
+real Supabase authentication, job records and test-mode billing. It used the same
+64-photo dataset split, pinned recipe and frozen acceptance policy described above.
+All photos and datasets uploaded, and a separately signed GPU miner downloaded the
+32 training photos, trained for eight optimizer steps and submitted its candidate
+on the first assignment attempt. The largest file was 487,648,432 bytes.
+
+The candidate reached actual evaluation with miner status `evaluated`. Unlike the
+earlier upload-limit failure, this result measures the trained candidate's quality.
+
+| Held-out result | Calibrated stock | Trained candidate |
+| --- | ---: | ---: |
+| Accuracy | 75% (15/20) | 75% (15/20) |
+| Defect recall | 50% (5/10) | 50% (5/10) |
+| False alarms | 0% (0/10) | 0% (0/10) |
+| Unknown decisions | 0/20 | 0/20 |
+| Full-distribution Brier loss | 0.351057 | 0.336692 |
+| Full-distribution log loss | 0.548583 | 0.483228 |
+
+The candidate correctly received **no qualifying model**: both accuracy and defect
+recall missed their frozen 80% minima. No threshold was relaxed and no trained model
+was activated. Successful activation of a genuinely qualifying trained candidate
+remains unverified.
+
+The training loop took 19.16 seconds, or 31.87 seconds including setup and save/reload.
+Peak reserved GPU memory was 11,653,873,664 bytes, with zero maximum save/reload logit
+difference. Upload-to-evaluated-result took 934.78 seconds; the full hosted run and
+follow-up access/billing checks took 985.30 seconds. These are small-dataset functional
+measurements, not a maximum-capacity or throughput benchmark.
+
+Stock image predictions passed with both the existing API key and a Supabase session.
+A second account could not access the first account's image. Test credit settled
+exactly $2 for the paid training run plus 30,996 nanodollars for 738 billable inference
+tokens, with no reservations or active jobs left. No real payment was taken. All four
+live text services and the served model identity remained unchanged; isolated image
+services stopped after completion. Production storage and image admission are unchanged.
+
+Earlier attempts stopped before training on an expired initial dataset grant or
+intermittent connection failures. The rehearsal now refreshes dataset grants after
+photo uploads, as the website already does, and retries safe finalization/ownership
+checks. Creation and billable prediction are not automatically replayed. The successful
+run also recovered transient connection failures; diagnostics recorded a host-level
+`Network is unreachable` error before connecting to Supabase. This does not establish
+production network reliability. Private failed and successful reports are retained.
 
 ## Billing integration
 
@@ -125,9 +173,9 @@ submission and insufficient-credit rollback. These checks do not use live paymen
 
 1. Configure and register a worker using the successful maximum-envelope offload
    configuration. The isolated capacity probe alone does not reserve serving capacity.
-2. Verify a fresh pinned installation and complete hosted candidate delivery/evaluation
-   after resolving the global storage limit. Hosted uploads, signed GPU training and
-   stock inference have passed; the full path has not.
+2. Deploy and verify the separately approved production storage and service configuration
+   with image admission disabled. Isolated hosted delivery, actual GPU evaluation and
+   stock inference now pass; production has not been switched.
 3. Obtain a qualifying real candidate under a policy frozen before evaluation; verify
    its owned API prediction and second-account denial without changing thresholds.
 4. Review migrations, private service configuration, cleanup and rollback described in

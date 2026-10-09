@@ -1,8 +1,8 @@
 # DigitalOcean Spaces storage for Zils
 
-Status: implementation, local review and real-provider verification completed.
-Hosted GPU delivery/evaluation verification is pending. Production storage has not
-been switched.
+Status: implementation, local review, real-provider checks and hosted GPU
+delivery/evaluation verification completed. The candidate failed unchanged quality
+thresholds and was not activated. Production storage has not been switched.
 
 ## Outcome and scope
 
