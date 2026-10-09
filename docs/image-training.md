@@ -76,6 +76,11 @@ Repeated submissions and settlement events do not create another charge.
    checks, peak reserved bytes, probe/trainer SHA-256 and a 1–3,600 second deadline.
    Memory admission must be at least 12,288 MiB and peak reserved memory + 512 MiB.
    A small-image probe is not maximum-context qualification.
+   Training saves activations in CPU memory to reduce GPU usage. Account for host
+   RAM in capacity checks. If sharing a GPU, set `ZILS_IMAGE_GPU_MEMORY_FRACTION`
+   to the tested CUDA allocator fraction (greater than 0 and at most 1), for example
+   `0.55` in the recorded 24 GB rehearsal. This caps one process's PyTorch allocator;
+   it does not reserve memory or replace the free-memory check and compute lock.
    The existing worker-registration command automatically grants only the two
    existing text profiles, including workers registered after migration. Image
    qualification still requires the operator's measured evidence.
