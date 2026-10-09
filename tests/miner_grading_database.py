@@ -301,6 +301,8 @@ def run(command):
     forged[0]["quality_band"] = 999
     denied(lambda: db.rpc("zils_worker_heartbeat", {"p_hotkey": key, "p_profiles": forged}))
     qualification_rounds(db)
+    fixed_lease_retries(db)
+    qualification_skips_blocked_job(db)
     print(
         "Graded routing: shared-resource races, lease fencing, cooldown, cancellation and RLS passed."
     )
@@ -315,6 +317,174 @@ def presence():
             "ready": True,
         }
     ]
+
+
+def fixed_lease_retries(db):
+    """Mapped fixed workers retain exclusive capacity through allowed lease retries."""
+    owner, resource = str(uuid.uuid4()), str(uuid.uuid4())
+    key, alias = "fixed-retry", "fixed-retry-alias"
+    db.sql(f"insert into auth.users(id) values({literal(owner)})")
+    for index, hotkey in enumerate((key, alias)):
+        db.sql(
+            f"insert into fez_training_workers(hotkey,uid,resource_id) values({literal(hotkey)},{63020 + index},{literal(resource)})"
+        )
+    identity = models.profile_identity(models.IMAJEV)
+    image_evidence = {
+        "examples": 4,
+        "max_pixels": 400000,
+        "max_input_tokens": 4096,
+        "decoder_verified": True,
+        "reload_verified": True,
+        "finite_gradients": True,
+        "peak_gpu_reserved_bytes": 11 * 1024**3,
+        "probe_sha256": "a" * 64,
+        "trainer_sha256": "b" * 64,
+        "max_seconds": 1200,
+    }
+    db.sql(
+        f"insert into zils_worker_profiles(hotkey,profile_id,profile_sha256,runtime_sha256,verified_by,min_free_mib,evidence) values({literal(key)},{literal(models.IMAJEV)},{literal(identity['profile_sha256'])},{literal(identity['runtime_sha256'])},'local-fixture',12288,{literal(image_evidence)})"
+    )
+    for model in (models.KEV, models.JEVK5, models.IMAJEV):
+        jid, competing = str(uuid.uuid4()), str(uuid.uuid4())
+        for job_id in (jid, competing):
+            db.sql(
+                f"insert into fez_training_jobs(id,owner_id,name,status,acceptance,manifest) values({literal(job_id)},{literal(owner)},'fixed-retry','awaiting_approval','{{}}',{literal({'model': models.spec(model)})})"
+            )
+        db.rpc("fez_approve_training_job", {"p_job": jid, "p_hotkeys": "{" + key + "}"})
+        deadline = db.rows("fez_training_jobs", f"id=eq.{jid}")[0]["deadline"]
+
+        def claim():
+            if model == models.KEV:
+                return db.rpc("fez_claim_training", {"p_hotkey": key})
+            return db.rpc(
+                "zils_claim_profile_training",
+                {"p_hotkey": key, "p_supported_profiles": "{" + model + "}"},
+            )
+
+        first = claim()
+        assert first["attempts"] == 1
+        db.sql(
+            f"update fez_training_assignments set lease_until=now()-interval '1 second' where job_id={literal(jid)}"
+        )
+        denied(
+            lambda: db.rpc(
+                "fez_renew_training",
+                {"p_job": jid, "p_hotkey": key, "p_token": first["lease_token"]},
+            )
+        )
+        denied(
+            lambda: db.rpc(
+                "fez_approve_training_job", {"p_job": competing, "p_hotkeys": "{" + alias + "}"}
+            )
+        )
+        second = claim()
+        assert second is not None, "fixed worker must reclaim an expired lease with retries left"
+        assert second["attempts"] == 2 and second["lease_token"] != first["lease_token"]
+        reservation = db.rows("zils_worker_reservations", f"job_id=eq.{jid}")[0]
+        assert reservation["expires_at"] == deadline
+        denied(
+            lambda: db.rpc(
+                "fez_submit_training",
+                {
+                    "p_job": jid,
+                    "p_hotkey": key,
+                    "p_token": first["lease_token"],
+                    "p_sha256": "f" * 64,
+                },
+            )
+        )
+        db.rpc(
+            "fez_submit_training",
+            {"p_job": jid, "p_hotkey": key, "p_token": second["lease_token"], "p_sha256": "f" * 64},
+        )
+        assert not db.rows("zils_worker_reservations", f"job_id=eq.{jid}")
+        db.sql(
+            f"update fez_training_jobs set status='failed',error='Cancelled by customer.' where owner_id={literal(owner)}"
+        )
+    print("Fixed mapped workers: expired leases retry without losing resource exclusivity.")
+
+
+def qualification_skips_blocked_job(db):
+    """A blocked older workload cannot starve a ready provisional miner."""
+    from zils.graded_scheduler import GradedScheduler, benchmark_binding
+
+    owner, resource, key = str(uuid.uuid4()), str(uuid.uuid4()), "qualification-later"
+    db.sql(f"insert into auth.users(id) values({literal(owner)})")
+    db.sql(
+        f"insert into fez_training_workers(hotkey,uid,resource_id) values({literal(key)},63022,{literal(resource)})"
+    )
+    contexts, jobs = {}, []
+    for index, length in enumerate((100, 600, 600)):
+        manifest = {
+            "model": models.spec(models.JEVK5),
+            "data_access": "approved-workers-training-export",
+            "files": {"calibration.jsonl": "a" * 64},
+            "counts": {"train": 1, "test": 1, "calibration": 1},
+            "workload": grading.workload_profile([length], model=models.JEVK5),
+        }
+        binding = benchmark_binding({"manifest": manifest, "initial_sha256": "e" * 64})
+        context = {**CONTEXT, "band": manifest["workload"]["band"], "benchmark_sha256": binding}
+        contexts[context["band"]] = context
+        jid = str(uuid.uuid4())
+        db.sql(
+            f"insert into fez_training_jobs(id,owner_id,name,status,acceptance,manifest,job_sha256,initial_sha256,created_at) values({literal(jid)},{literal(owner)},'qualification-order','awaiting_approval','{{}}',{literal(manifest)},{literal(grading.digest(jid))},{literal('e' * 64)},now()-interval '{3 - index} minutes')"
+        )
+        jobs.append((jid, context))
+    config = {
+        "mode": "graded",
+        "policy_version": grading.POLICY,
+        "pool": [key],
+        "contexts": contexts,
+        "qualification_slots": 1,
+    }
+    db.rpc("zils_configure_routing", {"p_config": config})
+    for jid, context in jobs:
+        db.rpc(
+            "zils_authorize_qualification",
+            {
+                "p_job": jid,
+                "p_benchmark": {
+                    "context": context,
+                    "benchmark_sha256": context["benchmark_sha256"],
+                    "min_accuracy": 0.8,
+                    "quality_floor": 0.0,
+                },
+            },
+        )
+    now = datetime.now(UTC)
+    capacity = {
+        **report("later-capacity"),
+        "kind": "capacity",
+        "context": jobs[1][1],
+        "capacity": {"examples": 100, "total_tokens": 20000, "max_tokens": 1024},
+        "verified_at": now.isoformat(),
+        "expires_at": (now + timedelta(days=7)).isoformat(),
+    }
+    db.rpc(
+        "zils_import_qualification",
+        {
+            "p_hotkey": key,
+            "p_report": capacity,
+            "p_verified_by": "local-fixture",
+            "p_evidence_sha256": grading.digest(capacity),
+        },
+    )
+    db.rpc("zils_worker_heartbeat", {"p_hotkey": key, "p_profiles": presence()})
+    scheduler = GradedScheduler(db, config)
+    now = datetime.now(UTC)
+    assert scheduler.preview({"id": jobs[0][0]}, now)["selected_hotkey"] is None
+    assert scheduler.preview({"id": jobs[1][0]}, now)["selected_hotkey"] == key
+    assert scheduler.tick_qualification(now)["status"] == "reserved", (
+        "blocked oldest qualification must not starve eligible work"
+    )
+    rows = db.rows("zils_worker_reservations")
+    assert len(rows) == 1 and rows[0]["job_id"] == jobs[1][0]
+    assert scheduler.tick_qualification(now)["status"] == "waiting"
+    assert len(db.rows("zils_worker_reservations")) == 1
+    db.sql(
+        f"update fez_training_jobs set status='failed',error='Cancelled by customer.' where owner_id={literal(owner)}"
+    )
+    print("Qualification scheduling: skips blocked oldest job and retains one active slot.")
 
 
 def qualification_rounds(db):

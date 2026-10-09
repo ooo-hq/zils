@@ -102,11 +102,13 @@ class GradedScheduler:
 
     def tick_qualification(self, now):
         self.store.rpc("zils_reap_graded", {})
+        result = {"status": "waiting"}
         if self.config["qualification_slots"]:
-            job = self.store.rpc("zils_next_qualification_job", {})
-            if job:
-                return self.assign(job, now, qualification=True)
-        return {"status": "waiting"}
+            for job in self.store.rpc("zils_pending_qualification_jobs", {}):
+                result = self.assign(job, now, qualification=True)
+                if result["status"] == "reserved":
+                    break
+        return result
 
 
 def main():

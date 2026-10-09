@@ -262,7 +262,9 @@ begin
   select * into r from public.zils_worker_reservations where job_id=new.job_id and hotkey=new.hotkey;
   if not found then return new; end if;
   if new.state='leased' then
-    update public.zils_worker_reservations set lease_token=new.lease_token,expires_at=new.lease_until where resource_id=r.resource_id;
+    -- Fixed assignments own the slot through their job deadline, including retries.
+    update public.zils_worker_reservations set lease_token=new.lease_token,
+      expires_at=case when r.graded then new.lease_until else r.expires_at end where resource_id=r.resource_id;
     if r.graded then
       select * into s from public.zils_job_scheduling where job_id=new.job_id;
       insert into public.zils_training_attempts(job_id,hotkey,resource_id,lease_token,context,total_tokens)
@@ -331,11 +333,11 @@ begin
     benchmark_sha256=p_benchmark->>'benchmark_sha256' where job_id=p_job;
   if not found then raise exception 'unverified workload'; end if;
 end $$;
-create function public.zils_next_qualification_job() returns jsonb language sql stable set search_path='' as $$
-  select jsonb_build_object('id',j.id) from public.fez_training_jobs j join public.zils_job_scheduling s on s.job_id=j.id
+create function public.zils_pending_qualification_jobs() returns jsonb language sql stable set search_path='' as $$
+  select coalesce(jsonb_agg(jsonb_build_object('id',j.id) order by j.created_at,j.id),'[]'::jsonb)
+  from public.fez_training_jobs j join public.zils_job_scheduling s on s.job_id=j.id
   where j.status='awaiting_approval' and s.purpose='qualification' and s.deadline>now()
-    and not exists(select 1 from public.zils_worker_reservations r join public.zils_job_scheduling x using(job_id) where x.purpose='qualification')
-  order by j.created_at,j.id limit 1;
+    and not exists(select 1 from public.zils_worker_reservations r join public.zils_job_scheduling x using(job_id) where x.purpose='qualification');
 $$;
 
 create function public.zils_record_graded_evaluation(p_job uuid,p_processor_token uuid,p_observations jsonb) returns void
@@ -588,7 +590,7 @@ do $$ declare f record; begin
       'zils_worker_heartbeat','zils_import_qualification','zils_grading_snapshot','zils_release_graded_attempt',
       'zils_reap_graded','zils_reserve_graded_job','zils_guard_resource_mapping','zils_assignment_observation',
       'zils_resource_claimable','zils_record_graded_evaluation','zils_attempt_immutable','zils_configure_routing',
-      'zils_bind_resource','zils_authorize_qualification','zils_next_qualification_job') loop
+      'zils_bind_resource','zils_authorize_qualification','zils_pending_qualification_jobs') loop
     execute format('revoke all on function %s from public,anon,authenticated',f.signature);
     execute format('grant execute on function %s to service_role',f.signature);
   end loop;

@@ -61,8 +61,8 @@ class SchedulerTests(unittest.TestCase):
 
         class Combined(WorkflowStore):
             def rpc(self, name, args):
-                if name in ("zils_reap_graded", "zils_next_qualification_job"):
-                    return None
+                if name in ("zils_reap_graded", "zils_pending_qualification_jobs"):
+                    return []
                 return graded.rpc(name, args)
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -165,3 +165,21 @@ class SchedulerTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             scheduler.qualification_candidate({"id": "job"}, NOW)
+
+    def test_qualification_skips_waiting_jobs_and_stops_after_one_reservation(self):
+        class QualificationStore:
+            def rpc(self, name, args):
+                if name == "zils_reap_graded":
+                    return None
+                if name == "zils_pending_qualification_jobs":
+                    return [{"id": key} for key in ("blocked", "eligible", "later")]
+                raise AssertionError(name)
+
+        scheduler = graded_scheduler.GradedScheduler(QualificationStore(), CONFIG)
+        with patch.object(
+            scheduler, "assign", side_effect=[{"status": "waiting"}, {"status": "reserved"}]
+        ) as assign:
+            self.assertEqual(scheduler.tick_qualification(NOW)["status"], "reserved")
+            self.assertEqual(
+                [call.args[0]["id"] for call in assign.call_args_list], ["blocked", "eligible"]
+            )
