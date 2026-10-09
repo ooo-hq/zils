@@ -50,6 +50,18 @@ Clients may upload only part 1. A trusted service checks and completes that part
 Old part grants cannot overwrite the completed object. Recovery uses its unique
 physical key and a database lease; uncertainty fails closed.
 
+Set `ZILS_WEB_ORIGIN` to the exact permitted HTTPS test frontend origin, then run:
+
+```sh
+.venv/bin/python -m scripts.check_spaces --source /path/to/checkpoint.safetensors --report .private/spaces-check.json
+```
+
+This uses real provider requests for anonymous denial, CORS, consumed multipart
+replay, a lost catalog reply and a full checkpoint download/hash. It creates unique
+test objects and schedules their deletion through the catalog. Run cleanup after
+the grants and deletion grace expire. Local protocol fixtures do not establish
+real-provider compatibility; retain the real report before enabling writes.
+
 ## Copy existing files
 
 Export `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` through your protected service
@@ -116,3 +128,15 @@ record selects its provider, so changing the write default preserves existing re
 Pending uploads continue on their recorded provider. Rollback cannot make Supabase
 accept objects above its configured size limit; keep image admission off if that
 limit would block model delivery.
+
+## Production rollout gates
+
+Ship the compatible website first. Apply the separately approved production catalog
+migration and deploy backend services with legacy writes. Verify sign-in, early
+access, key access, balances and live model identities. After isolated Spaces and
+GPU verification passes, review production inventory/dry-run and provision a separate
+private production bucket and scoped keys. Enabling production writes and copying
+files requires the production cutover approval. Update the website privacy statement
+when the deployed processor actually changes. Verify old/new object access and the
+same account/model checks after cutover. Keep image admission disabled until its
+independent launch gates pass; storage verification does not demonstrate model quality.

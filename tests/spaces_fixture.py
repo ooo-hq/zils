@@ -72,6 +72,8 @@ class S3:
         self.lose_completion = False
         self.lose_creation = False
         self.deny_lists = False
+        self.private = False
+        self.cors_origin = None
         self.lock = threading.RLock()
         fixture = self
 
@@ -102,6 +104,23 @@ class S3:
                 uid = query.get("uploadId", [None])[0]
                 upload = fixture.uploads.get(uid)
                 raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                if self.command == "OPTIONS":
+                    origin = self.headers.get("Origin")
+                    if fixture.cors_origin not in (origin, "*"):
+                        return self.reply(403)
+                    return self.reply(
+                        headers={
+                            "Access-Control-Allow-Origin": fixture.cors_origin,
+                            "Access-Control-Allow-Methods": "GET, HEAD, PUT",
+                            "Access-Control-Allow-Headers": "Content-Type",
+                        }
+                    )
+                if (
+                    fixture.private
+                    and not self.headers.get("Authorization")
+                    and "X-Amz-Signature" not in query
+                ):
+                    return self.fail("AccessDenied", 403)
                 if self.command == "POST" and "uploads" in query:
                     uid = str(uuid.uuid4())
                     fixture.uploads[uid] = {
@@ -205,7 +224,7 @@ class S3:
                 with fixture.lock:
                     self.dispatch()
 
-            do_GET = do_HEAD = do_PUT = do_POST = do_DELETE = handle_request
+            do_OPTIONS = do_GET = do_HEAD = do_PUT = do_POST = do_DELETE = handle_request
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)

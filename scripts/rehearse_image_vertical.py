@@ -21,6 +21,11 @@ def create_run_directory(destination: str | Path) -> Path:
     return root
 
 
+def require_evaluated(result):
+    if not any(row.get("status") == "evaluated" for row in result.get("miners", [])):
+        raise ValueError("No candidate reached actual evaluation")
+
+
 def verify_health_identity(reply, expected):
     entries = reply.get("models", [])
     if isinstance(entries, dict):
@@ -268,6 +273,7 @@ def rehearse(config: dict, dataset: Path, out: Path) -> dict:
                     break
             time.sleep(min(0.25, max(0, deadline - time.monotonic())))
         report["evaluation"] = job["result"]
+        require_evaluated(job["result"])
         report["workflow"] = job.get("workflow")
         record("evaluated", outcome=job["result"]["delivery"]["status"])
         accepted = job["result"]["delivery"]["status"] == "accepted"
