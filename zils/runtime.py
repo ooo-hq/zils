@@ -71,14 +71,29 @@ def locked(path, wait=False):
 
 def gpu_ready(device, *, model=None, minimum_mib=0):
     """Opt-in deployment capacity gate, also checked under the shared compute lock."""
+    if minimum_mib > 0 and device not in ("cuda", "mps"):
+        return False
+    if device == "mps" and minimum_mib > 0 and model != models.IMAJEV:
+        try:
+            output = subprocess.run(
+                ["/usr/bin/vm_stat"], capture_output=True, text=True, timeout=10, check=True
+            ).stdout
+            page_size = int(re.search(r"page size of (\d+) bytes", output).group(1))
+            pages = sum(
+                int(re.search(rf"{label}:\s+(\d+)", output).group(1))
+                for label in ("Pages free", "Pages inactive", "Pages speculative")
+            )
+            return pages * page_size >= minimum_mib * 1024**2
+        except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+            return False
     if model == models.IMAJEV:
         if device != "cuda":
             return False
         minimum = max(12288, int(settings.get("ZILS_IMAGE_MIN_FREE_MIB", "12288")))
     else:
-        if device != "cuda" or settings.get("ZILS_GPU_MIN_FREE_MIB") is None:
+        if device != "cuda" or (settings.get("ZILS_GPU_MIN_FREE_MIB") is None and minimum_mib == 0):
             return True
-        minimum = int(settings.required("ZILS_GPU_MIN_FREE_MIB"))
+        minimum = int(settings.get("ZILS_GPU_MIN_FREE_MIB", str(minimum_mib)))
     minimum = max(minimum, minimum_mib)
     if minimum < 1:
         raise ValueError("GPU memory requirement must be positive")
@@ -154,9 +169,11 @@ def run_child(command, log, device, timeout=3600, *, model=None, minimum_mib=0, 
         )
     )
     # Images defer immediately under contention; they never reserve a training attempt while waiting.
-    if model == models.IMAJEV:
+    if model == models.IMAJEV or minimum_mib > 0:
         try:
             with locked(lock):
+                if check_lease:
+                    check_lease()
                 if not gpu_ready(device, model=model, minimum_mib=minimum_mib):
                     raise CapacityUnavailable()
                 _run_child(command, log, environment, timeout, check_lease)
@@ -167,7 +184,11 @@ def run_child(command, log, device, timeout=3600, *, model=None, minimum_mib=0, 
         return
     with locked(lock, wait=True):
         deadline = time.monotonic() + timeout
+        if check_lease:
+            check_lease()
         while not gpu_ready(device):
+            if check_lease:
+                check_lease()
             if time.monotonic() >= deadline:
                 raise CapacityUnavailable()
             time.sleep(5)

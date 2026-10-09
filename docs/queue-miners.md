@@ -10,6 +10,10 @@ Bittensor testnet fleet**, use [registration](bittensor-registration.md) and
 [bundle setup](mining.md). Queue assignments do not publish Bittensor weights
 or establish on-chain earnings.
 
+Operators can enable [graded job assignment](miner-grading.md) after qualification.
+Miners opt into signed availability only after the coordinator upgrade; existing
+configurations retain their current request flow.
+
 ## 1. Confirm access and hardware
 
 Get the following from the operator before downloading models:
@@ -25,8 +29,9 @@ Get the following from the operator before downloading models:
 Use Linux or WSL 2 with Git, Python 3.13, `uv`, a BF16-capable NVIDIA GPU and its
 CUDA driver. Allow at least 25 GB of free disk for models and dependencies,
 plus space for assigned data and candidates. The runtime was checked on an
-RTX 4090; memory needs depend on input length. CPU and Apple MPS execution are
-unsupported for this workflow.
+RTX 4090; memory needs depend on input length. Apple silicon miners can instead
+follow the [Mac installation and qualification guide](mac-miners.md), including
+the measured limitations of a 16 GiB M4. CPU training is unsupported.
 
 The operator assigns a local queue UID. On-chain registration is not required
 for this queue, and a Bittensor UID alone does not authorize job access.

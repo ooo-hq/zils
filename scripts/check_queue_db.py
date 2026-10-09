@@ -242,6 +242,36 @@ def main():
             image_billing_checks(
                 [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
             )
+            from tests.miner_grading_database import run as grading_checks
+
+            migration = ROOT / "supabase/migrations/202610090001_graded_miner_routing.sql"
+            if migration.exists():
+                applied = subprocess.run(
+                    [
+                        tool("psql"),
+                        "-X",
+                        "-v",
+                        "ON_ERROR_STOP=1",
+                        "-h",
+                        str(socket),
+                        "-d",
+                        "postgres",
+                        "-f",
+                        str(migration),
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                if applied.returncode:
+                    raise RuntimeError(applied.stdout + applied.stderr)
+            grading_checks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
+            from tests.graded_queue_rehearsal import run as graded_http_rehearsal
+
+            graded_http_rehearsal(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
             # Image migrations replace queue functions: recheck production billing
             # after the full upgrade, including the cancellation/claim race.
             run_billing(

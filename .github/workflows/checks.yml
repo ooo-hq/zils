@@ -61,7 +61,11 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
-      - run: python -m pip install -r requirements/api.txt
+      - run: python -m pip install uv==0.12.19
+      - name: Install database rehearsal dependencies with CPU PyTorch
+        run: >-
+          uv pip install --system --torch-backend=cpu
+          -r requirements/model.txt -r requirements/rehearsal.txt -r requirements/api.txt
       - name: Install PostgreSQL
         run: sudo apt-get update && sudo apt-get install -y postgresql-16
       - name: Test migration and access control in a disposable cluster
