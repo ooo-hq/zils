@@ -1,7 +1,9 @@
 # Supabase training workflow
 
 The training service connects a customer dashboard to a shared pool of approved
-miners. Supabase provides Auth, Postgres job state, and private object storage.
+miners. Supabase provides Auth and Postgres job state. Private file storage defaults
+to Supabase; the optional [DigitalOcean Spaces provider](spaces-storage.md) keeps
+the same logical files and supports verified migration with legacy reads.
 The Python coordinator handles authorization and issues storage URLs; dataset
 and checkpoint bytes transfer directly to Storage. A separate processor validates
 data and runs the existing validator. Miners claim assigned jobs over outbound
@@ -27,7 +29,7 @@ Use macOS, Linux, or WSL 2, Python 3.13, and the [repository setup](../README.md
 Download the pinned model before starting the processor or miners. Use an
 existing Supabase project with Auth and Storage enabled. For a first private
 pilot, configure Auth for the intended customer accounts and redirect URLs.
-Choose a Storage plan/global file limit compatible with the configured limits:
+When using Supabase Storage, choose a plan/global file limit compatible with the configured limits:
 128 MiB per uploaded dataset split and 512 MiB per artifact, with a 512 MiB
 aggregate checkpoint limit. Project-wide limits may be lower than bucket limits.
 

@@ -2,13 +2,17 @@
 
 import hashlib
 import re
+import tempfile
+import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import settings
 from .cloud import APIError, download, upload
-from .storage import LIMITS, expired, object_path, timestamp
+from .storage import LIMITS, expired, fingerprint, object_path, timestamp
 
 
 def configured_client():
@@ -257,6 +261,92 @@ class SpacesStorage:
         if not self.exists(bucket, path):
             raise APIError(503, "Upload has not completed; please retry.")
 
+    @contextmanager
+    def _copy_lease(self, row):
+        stop, failures = threading.Event(), []
+
+        def renew():
+            while not stop.wait(60):
+                try:
+                    self._change(row, "renew")
+                except Exception:
+                    failures.append(True)
+                    return
+
+        def check():
+            if failures:
+                raise APIError(409, "Storage copy lease was lost.")
+            self._change(row, "renew")
+
+        check()
+        thread = threading.Thread(target=renew, daemon=True)
+        thread.start()
+        try:
+            yield check
+        finally:
+            stop.set()
+            thread.join()
+
+    def copy_verified(self, bucket, path, source: Path, sha256: str, token: str) -> dict:
+        row = self.catalog.get(bucket, path)
+        if (
+            not row
+            or row["token"] != token
+            or not row["legacy_readable"]
+            or row["sha256"] != sha256
+        ):
+            raise APIError(409, "Storage copy changed; retry.")
+        with self._copy_lease(row) as check:
+            size, actual = fingerprint(source)
+            if actual != sha256 or size != row["size_bytes"] or not 0 < size <= row["max_bytes"]:
+                raise APIError(422, "Storage source changed.")
+            if row["state"] == "allocating":
+                created = self._call(
+                    "create_multipart_upload",
+                    **self._location(row),
+                    ACL="private",
+                    ContentType="application/octet-stream",
+                    Metadata={"zils-generation": row["generation"]},
+                )
+                row = self._change(row, "bind", upload_id=created["UploadId"])
+            if row["state"] == "uploading":
+                with source.open("rb") as stream:
+                    part = self._call(
+                        "upload_part",
+                        **self._location(row),
+                        UploadId=row["upload_id"],
+                        PartNumber=1,
+                        Body=stream,
+                    )
+                check()
+                row = self._change(row, "seal", part_etag=part["ETag"], part_size=size)
+            if row["state"] != "sealing":
+                raise APIError(409, "Storage copy changed; retry.")
+            head = self._head(row)
+            if not head:
+                try:
+                    self._call(
+                        "complete_multipart_upload",
+                        **self._location(row),
+                        UploadId=row["upload_id"],
+                        MultipartUpload={"Parts": [{"PartNumber": 1, "ETag": row["part_etag"]}]},
+                    )
+                except APIError:
+                    if not self._head(row):
+                        raise
+                head = self._head(row)
+            self._verified_head(row, head)
+            with tempfile.TemporaryDirectory(prefix="zils-copy-verify-") as directory:
+                target = Path(directory) / "object"
+                url = self.client.generate_presigned_url(
+                    "get_object", Params=self._location(row), ExpiresIn=600
+                )
+                download(url, target, size, max_seconds=600)
+                if fingerprint(target) != (size, sha256):
+                    raise APIError(422, "Storage copy checksum mismatch.")
+            check()
+        return self._change(row, "commit", size_bytes=size, sha256=sha256)
+
     def _cleanup(self, row):
         if not expired(row["cleanup_after"]):
             return False
@@ -280,12 +370,37 @@ class SpacesStorage:
             if row["state"] == "deleting":
                 self._cleanup(row)
 
-    def reap(self, limit=100):
-        removed = 0
+    def reap(self, limit=100, *, dry_run=False, eligible=None):
+        removed, abandoned = 0, 0
         for row in self.catalog.pending(limit):
             if row["provider"] == "spaces" and row["state"] == "deleting":
-                row = self._change(row, "delete", token=str(uuid.uuid4()))
-                removed += int(self._cleanup(row))
+                if expired(row["cleanup_after"]):
+                    if not dry_run:
+                        row = self._change(row, "delete", token=str(uuid.uuid4()))
+                        self._cleanup(row)
+                    removed += 1
+            elif row["provider"] == "spaces" and eligible and eligible(row):
+                now = datetime.now(timezone.utc)
+                if (
+                    timestamp(row["updated_at"]) > now - timedelta(hours=24)
+                    or max(timestamp(row["lease_until"]), timestamp(row["grant_expires_at"]))
+                    > now - timedelta(seconds=300)
+                    or self._head(row)
+                ):
+                    continue
+                if not dry_run:
+                    self._change(row, "expire")
+                    if row["upload_id"]:
+                        try:
+                            self._call(
+                                "abort_multipart_upload",
+                                **self._location(row),
+                                UploadId=row["upload_id"],
+                            )
+                        except APIError as error:
+                            if error.status != 404:
+                                raise
+                abandoned += 1
         orphaned = 0
         for method, field, date_field in (
             ("list_multipart_uploads", "Uploads", "Initiated"),
@@ -300,6 +415,9 @@ class SpacesStorage:
                     if not self._orphan_safe(item["Key"], item[date_field]):
                         continue
                     location = {"Bucket": self.bucket, "Key": item["Key"]}
+                    if dry_run:
+                        orphaned += 1
+                        continue
                     if field == "Uploads":
                         try:
                             self._call(
@@ -320,7 +438,12 @@ class SpacesStorage:
                     }
                 else:
                     cursor = {"ContinuationToken": result["NextContinuationToken"]}
-        return {"removed": removed, "orphaned": orphaned}
+        return {
+            "removed": removed,
+            "orphaned": orphaned,
+            "abandoned": abandoned,
+            "dry_run": dry_run,
+        }
 
     def _orphan_safe(self, key, modified):
         if modified >= datetime.now(timezone.utc) - timedelta(hours=24):

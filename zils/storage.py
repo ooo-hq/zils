@@ -1,6 +1,7 @@
 """Private logical object identities, independent of authentication and file hosts."""
 
 import base64
+import hashlib
 import json
 import re
 import uuid
@@ -16,6 +17,12 @@ LIMITS = {
     "zils-images": 10 * 1024**2,
     "zils-api-batches": 25 * 1024**2,
 }
+
+
+def fingerprint(path):
+    with path.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
+    return path.stat().st_size, digest
 
 
 def object_path(bucket, path):
@@ -167,7 +174,7 @@ class SupabaseStorage:
                 size = (row.get("metadata") or {}).get("size")
                 if type(size) is not int or size < 1:
                     raise APIError(503, "Legacy storage size could not be verified.")
-                return {"size": size}
+                return {"size": size, "id": row.get("id"), "updated_at": row.get("updated_at")}
         return None
 
 
@@ -293,6 +300,8 @@ class StorageRouter:
             row = self.catalog.get(bucket, path)
             if row and row["provider"] == "spaces":
                 self.spaces.remove(bucket, [path])
+                if row.get("legacy_copy"):
+                    self.legacy.remove(bucket, [path])
             else:
                 row = self.catalog.change(bucket, path, "delete", str(uuid.uuid4()))
                 self.legacy.remove(bucket, [path])
@@ -301,6 +310,32 @@ class StorageRouter:
                     self.catalog.change(
                         bucket, path, "deleted", row["token"], {"generation": row["generation"]}
                     )
+
+    def reap(self, limit=100, *, dry_run=False, eligible=None):
+        legacy_removed = 0
+        for row in self.catalog.pending(limit):
+            if row["state"] != "deleting" or not expired(row["cleanup_after"]):
+                continue
+            if row["provider"] == "supabase" or row.get("legacy_copy"):
+                if not dry_run:
+                    row = self.catalog.change(
+                        row["bucket"], row["path"], "delete", str(uuid.uuid4())
+                    )
+                    self.legacy.remove(row["bucket"], [row["path"]])
+                    if row["provider"] == "supabase":
+                        self.catalog.change(
+                            row["bucket"],
+                            row["path"],
+                            "deleted",
+                            row["token"],
+                            {"generation": row["generation"]},
+                        )
+                    else:
+                        self.spaces._cleanup(row)
+                legacy_removed += 1
+        return self.spaces.reap(limit, dry_run=dry_run, eligible=eligible) | {
+            "legacy_removed": legacy_removed
+        }
 
 
 def storage_for(db):

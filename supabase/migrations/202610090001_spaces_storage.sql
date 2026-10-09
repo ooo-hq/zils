@@ -19,6 +19,7 @@ create table public.zils_storage_objects (
   size_bytes bigint check (size_bytes > 0 and size_bytes <= max_bytes),
   sha256 text check (sha256 ~ '^[a-f0-9]{64}$'),
   legacy_readable boolean not null default false,
+  legacy_copy boolean not null default false,
   updated_at timestamptz not null default now(),
   primary key (bucket,path),
   unique(provider,physical_bucket,physical_key)
@@ -105,18 +106,18 @@ begin
     end if;
     generation_id := gen_random_uuid();
     insert into zils_storage_objects(bucket,path,provider,generation,physical_bucket,physical_key,state,
-      token,lease_until,grant_expires_at,max_bytes,size_bytes,sha256,legacy_readable)
+      token,lease_until,grant_expires_at,max_bytes,size_bytes,sha256,legacy_readable,legacy_copy)
     values(p_bucket,p_path,provider_name,generation_id,
       case when provider_name='spaces' then p_values->>'physical_bucket' else p_bucket end,
       case when provider_name='spaces' then 'objects/'||generation_id||'/'||p_bucket||'/'||p_path else p_path end,
       case when p_action='register_legacy' then 'ready' when provider_name='spaces' then 'allocating' else 'uploading' end,
       p_token,stamp+interval '300 seconds',stamp,cap,case when copying then r.size_bytes else size end,
-      p_values->>'sha256',copying)
+      p_values->>'sha256',copying,copying)
     on conflict(bucket,path) do update set provider=excluded.provider,generation=excluded.generation,
       physical_bucket=excluded.physical_bucket,physical_key=excluded.physical_key,state=excluded.state,
       token=excluded.token,lease_until=excluded.lease_until,grant_expires_at=excluded.grant_expires_at,
       max_bytes=excluded.max_bytes,size_bytes=excluded.size_bytes,sha256=excluded.sha256,
-      legacy_readable=excluded.legacy_readable,upload_id=null,part_etag=null,part_size=null,updated_at=stamp
+      legacy_readable=excluded.legacy_readable,legacy_copy=excluded.legacy_copy,upload_id=null,part_etag=null,part_size=null,updated_at=stamp
     returning * into r;
     return to_jsonb(r);
   end if;
@@ -137,6 +138,22 @@ begin
   end if;
   if r.bucket is null or r.generation is distinct from (p_values->>'generation')::uuid then
     return '{"error":"conflict"}'::jsonb;
+  end if;
+  if p_action='expire' then
+    if r.token<>p_token or r.provider<>'spaces' or r.state not in ('allocating','uploading','sealing')
+      or greatest(r.lease_until,r.grant_expires_at)>stamp-interval '300 seconds'
+      or r.updated_at>stamp-interval '24 hours' then return '{"error":"conflict"}'::jsonb; end if;
+    insert into zils_storage_retired values(r.generation,to_jsonb(r),stamp+interval '24 hours') on conflict do nothing;
+    generation_id := gen_random_uuid();
+    update zils_storage_objects set generation=generation_id,
+      provider=case when r.legacy_readable then 'supabase' else 'spaces' end,
+      physical_bucket=case when r.legacy_readable then p_bucket else r.physical_bucket end,
+      physical_key=case when r.legacy_readable then p_path else 'objects/'||generation_id||'/'||p_bucket||'/'||p_path end,
+      state=case when r.legacy_readable then 'ready' else 'allocating' end,
+      token=gen_random_uuid(),lease_until=stamp,grant_expires_at=stamp,
+      upload_id=null,part_etag=null,part_size=null,legacy_readable=false,legacy_copy=false,updated_at=stamp
+      where bucket=p_bucket and path=p_path returning * into r;
+    return to_jsonb(r);
   end if;
   if p_action='seal' then
     if r.state='ready' then return to_jsonb(r); end if;
