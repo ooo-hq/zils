@@ -16,7 +16,7 @@ python3.13 -m venv .venv
 
 Prepare a private bucket per environment and bucket-scoped read/write credentials.
 Keep public access, CDN and bucket versioning disabled. Apply
-`supabase/migrations/202610090001_spaces_storage.sql` through your approved database
+`supabase/migrations/202610090002_spaces_storage.sql` through your approved database
 migration process before enabling the catalog. The catalog is service-only; browsers
 and miners must never receive its credentials or Spaces keys.
 

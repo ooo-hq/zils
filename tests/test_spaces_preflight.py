@@ -61,6 +61,21 @@ class PreflightProtocolTest(unittest.TestCase):
         result = self.run_check()
         self.assertTrue(result["passed"], result)
 
+    def test_cors_can_return_only_the_requested_method(self):
+        self.s3.private, self.s3.cors_origin = True, "https://frontend.example"
+        self.s3.cors_echo_method = True
+        result = self.run_check()
+        self.assertTrue(result["cors"], result)
+        self.s3.cors_denied_methods.add("HEAD")
+        self.assertFalse(self.run_check()["cors"])
+
+    def test_idempotent_completion_preserves_the_same_object(self):
+        self.s3.private, self.s3.cors_origin = True, "https://frontend.example"
+        self.s3.idempotent_completion = True
+        self.s3.completion_quotes = False
+        result = self.run_check()
+        self.assertTrue(result["multipart_immutable"], result)
+
     def test_public_read_and_bad_cors_fail(self):
         self.s3.private, self.s3.cors_origin = False, "*"
         result = self.run_check()

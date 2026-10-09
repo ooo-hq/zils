@@ -48,7 +48,7 @@ def database():
         try:
             for source in (
                 "tests/sql/queue-bootstrap.sql",
-                "supabase/migrations/202610090001_spaces_storage.sql",
+                "supabase/migrations/202610090002_spaces_storage.sql",
             ):
                 proc = subprocess.run([*command, "-f", source], capture_output=True, text=True)
                 if proc.returncode:
@@ -74,6 +74,11 @@ class S3:
         self.deny_lists = False
         self.private = False
         self.cors_origin = None
+        self.cors_echo_method = False
+        self.cors_denied_methods = set()
+        self.idempotent_completion = False
+        self.completion_quotes = True
+        self.completed = {}
         self.lock = threading.RLock()
         fixture = self
 
@@ -106,12 +111,18 @@ class S3:
                 raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 if self.command == "OPTIONS":
                     origin = self.headers.get("Origin")
-                    if fixture.cors_origin not in (origin, "*"):
+                    method = self.headers.get("Access-Control-Request-Method")
+                    if (
+                        fixture.cors_origin not in (origin, "*")
+                        or method in fixture.cors_denied_methods
+                    ):
                         return self.reply(403)
                     return self.reply(
                         headers={
                             "Access-Control-Allow-Origin": fixture.cors_origin,
-                            "Access-Control-Allow-Methods": "GET, HEAD, PUT",
+                            "Access-Control-Allow-Methods": method
+                            if fixture.cors_echo_method
+                            else "GET, HEAD, PUT",
                             "Access-Control-Allow-Headers": "Content-Type",
                         }
                     )
@@ -152,6 +163,20 @@ class S3:
                     )
                 if uid:
                     if not upload or upload["key"] != key:
+                        if (
+                            fixture.idempotent_completion
+                            and self.command == "POST"
+                            and uid in fixture.completed
+                        ):
+                            completed = fixture.completed[uid]
+                            if raw != completed["request"]:
+                                return self.fail("InternalError", 500)
+                            etag = completed["etag"]
+                            if not fixture.completion_quotes:
+                                etag = etag.strip('"')
+                            return self.reply(
+                                xml=f"<CompleteMultipartUploadResult><ETag>{escape(etag)}</ETag></CompleteMultipartUploadResult>"
+                            )
                         return self.fail("NoSuchUpload")
                     if self.command == "PUT":
                         number = int(query["partNumber"][0])
@@ -196,6 +221,7 @@ class S3:
                             "created": datetime.now(timezone.utc).isoformat(),
                         }
                         del fixture.uploads[uid]
+                        fixture.completed[uid] = {"request": raw, "etag": etag}
                         if fixture.lose_completion:
                             fixture.lose_completion = False
                             return self.fail("InternalError", 500)

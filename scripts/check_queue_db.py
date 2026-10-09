@@ -241,7 +241,7 @@ def main():
             from tests.storage_database import run as storage_checks
             from tests.storage_timeout_database import run as storage_timeout_checks
 
-            storage_migration = ROOT / "supabase/migrations/202610090001_spaces_storage.sql"
+            storage_migration = ROOT / "supabase/migrations/202610090002_spaces_storage.sql"
             subprocess.run(
                 [
                     tool("psql"),

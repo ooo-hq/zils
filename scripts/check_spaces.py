@@ -43,7 +43,7 @@ class LostCommitReply:
         return result
 
 
-def cors_allows(response, origin):
+def cors_allows(response, origin, method):
     headers = response.headers
     methods = {
         part.strip().upper() for part in headers.get("Access-Control-Allow-Methods", "").split(",")
@@ -54,7 +54,7 @@ def cors_allows(response, origin):
     return (
         response.status_code in (200, 204)
         and headers.get("Access-Control-Allow-Origin") == origin
-        and {"PUT", "GET", "HEAD"} <= methods
+        and method in methods
         and "content-type" in allowed
         and headers.get("Access-Control-Allow-Credentials", "").lower() != "true"
     )
@@ -93,10 +93,15 @@ def check(source, store, origin):
                 "Access-Control-Request-Method": "PUT",
                 "Access-Control-Request-Headers": "content-type",
             }
-            with requests.options(
-                grant["url"], headers=headers, timeout=(10, 30), allow_redirects=False
-            ) as response:
-                cors = cors_allows(response, origin)
+            cors = True
+            for method in ("PUT", "GET", "HEAD"):
+                with requests.options(
+                    grant["url"],
+                    headers=headers | {"Access-Control-Request-Method": method},
+                    timeout=(10, 30),
+                    allow_redirects=False,
+                ) as response:
+                    cors = cors_allows(response, origin, method) and cors
             wrong = "https://zils-storage-preflight.invalid"
             with requests.options(
                 grant["url"],
@@ -117,15 +122,18 @@ def check(source, store, origin):
                 if error.status != 503 or not proxy.lost:
                     raise
             report["catalog_recovery"] = proxy.lost and store.exists(namespace, paths[0])
-            # Real provider must reject a second completion on the consumed upload ID.
+            # A consumed ID may return its original completion idempotently.
+            committed = store.catalog.get(namespace, paths[0])
+            original_etag = store._head(committed)["ETag"]
             consumed = False
             try:
-                store._call(
+                repeated = store._call(
                     "complete_multipart_upload",
                     **store._location(pending),
                     UploadId=pending["upload_id"],
-                    MultipartUpload={"Parts": [{"PartNumber": 1, "ETag": '"' + "0" * 32 + '"'}]},
+                    MultipartUpload={"Parts": [{"PartNumber": 1, "ETag": committed["part_etag"]}]},
                 )
+                consumed = repeated.get("ETag", "").strip('"') == original_etag.strip('"')
             except APIError as error:
                 consumed = error.status == 404
             with requests.put(
