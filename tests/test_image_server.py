@@ -128,11 +128,43 @@ class ImageRuntimeTest(unittest.TestCase):
         _, result = rt.dispatch("POST", "/v1/systemone", "secret", self.envelope, "predict")
         self.assertEqual(result["predictions"]["inspection"]["input_tokens"], 442)
         self.assertEqual(result["predictions"]["inspection"]["probabilities"]["__unknown__"], 0.1)
+
         self.assertEqual(self.engine.executions, 1)
         self.engine.tokens = 4097
         with self.assertRaises(DecisionError) as ctx:
             rt.dispatch("POST", "/v1/systemone", "secret", self.envelope, "too-long")
         self.assertEqual(ctx.exception.status, 413)
+        self.assertEqual(self.engine.executions, 1)
+
+    def test_spaces_canonical_paths_are_allowed_only_on_the_configured_origin(self):
+        rt = self.module().ImageRuntime(
+            self.engine,
+            {"image-release": {"fingerprint": "a" * 64, "temperature": 1.0}},
+            "https://legacy.example",
+            spaces_store_origin=self.origin,
+            token="secret",
+            timeout=2,
+        )
+        self.addCleanup(rt.close)
+        body = copy.deepcopy(self.envelope)
+        path = (
+            "/objects/44444444-4444-4444-8444-444444444444/zils-images/11111111-1111-4111-8111-111111111111/"
+            + body["image"]["id"]
+            + "/canonical.png"
+        )
+        body["image"]["url"] = self.origin + path + "?X-Amz-Signature=fixture"
+        self.assertEqual(rt.dispatch("POST", "/v1/systemone", "secret", body, "spaces")[0], 200)
+        for invalid in (
+            "https://elsewhere.example" + path,
+            self.origin + path.replace("canonical.png", "source"),
+            self.origin + path.replace(body["image"]["id"], "55555555-5555-4555-8555-555555555555"),
+            self.origin + path.replace("/canonical.png", "%2fcanonical.png"),
+            self.origin + path + "#fragment",
+            self.origin + path + "?uploadId=part&partNumber=1",
+        ):
+            body["image"]["url"] = invalid
+            with self.subTest(url=invalid), self.assertRaises(DecisionError):
+                rt.dispatch("POST", "/v1/systemone", "secret", body, "invalid")
         self.assertEqual(self.engine.executions, 1)
 
     def test_timed_out_preparation_keeps_execution_slot_until_worker_finishes(self):

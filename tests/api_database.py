@@ -66,7 +66,7 @@ class Database:
             + ",".join(name(k) + "=>" + literal(v) for k, v in args.items())
             + ")"
         )
-        if function == "zils_api_auth":
+        if function in ("zils_api_auth", "zils_storage_pending"):
             return self.sql("select coalesce(jsonb_agg(t),'[]'::jsonb) from " + call + " t")
         value = self.sql("select to_jsonb(" + call + ")")
         return value
@@ -123,6 +123,10 @@ class Database:
         if len(raw) > limit:
             raise ValueError("over limit")
         Path(destination).write_bytes(raw)
+
+    def remove(self, bucket, paths):
+        for path in paths:
+            self.objects.pop(path, None)
 
     def request(self, method, path, body=None):
         assert method == "DELETE"

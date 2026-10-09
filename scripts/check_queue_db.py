@@ -238,6 +238,32 @@ def main():
                 [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
             )
             from tests.image_billing_database import run as image_billing_checks
+            from tests.storage_database import run as storage_checks
+            from tests.storage_timeout_database import run as storage_timeout_checks
+
+            storage_migration = ROOT / "supabase/migrations/202610090002_spaces_storage.sql"
+            subprocess.run(
+                [
+                    tool("psql"),
+                    "-X",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-h",
+                    str(socket),
+                    "-d",
+                    "postgres",
+                    "-f",
+                    str(storage_migration),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            storage_checks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
+            storage_timeout_checks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
 
             image_billing_checks(
                 [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]

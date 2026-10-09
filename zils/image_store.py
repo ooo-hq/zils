@@ -1,14 +1,11 @@
 """Owner-scoped immutable image uploads backed by fenced database transitions."""
 
-import base64
 import hashlib
-import json
 import re
 import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
 
 from .api_store import identifier
 from .cloud import APIError, Supabase
@@ -27,22 +24,6 @@ def public_asset(row):
     if row.get("canonical_sha256"):
         value.update(sha256=row["canonical_sha256"], width=row["width"], height=row["height"])
     return value
-
-
-def upload_expiry(url):
-    """Read the expiry of a grant returned by trusted Storage, never a client URL."""
-    try:
-        token = parse_qs(urlsplit(url).query)["token"][0]
-        payload = token.split(".")[1]
-        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
-        exp = claims["exp"]
-        if type(exp) is not int:
-            raise ValueError()
-        return datetime.fromtimestamp(exp, timezone.utc).isoformat()
-    except (KeyError, IndexError, ValueError, TypeError, OverflowError):
-        raise DecisionError(
-            503, "storage_unavailable", "Upload grant could not be verified."
-        ) from None
 
 
 class ImageStore:
@@ -85,7 +66,7 @@ class ImageStore:
         signed = self.db.signed(BUCKET, row["source_path"], upload=True)
         self.db.rpc(
             "zils_image_grant",
-            {"p_owner": owner, "p_asset": row["id"], "p_expires": upload_expiry(signed["url"])},
+            {"p_owner": owner, "p_asset": row["id"], "p_expires": signed["expires_at"]},
         )
         # A cancellation while Storage issued the grant must not restore access.
         self._get(owner, row["id"])
@@ -104,7 +85,7 @@ class ImageStore:
         signed = self.db.signed(BUCKET, row["source_path"], upload=True)
         self.db.rpc(
             "zils_image_grant",
-            {"p_owner": owner, "p_asset": asset_id, "p_expires": upload_expiry(signed["url"])},
+            {"p_owner": owner, "p_asset": asset_id, "p_expires": signed["expires_at"]},
         )
         self._get(owner, asset_id)
         return {"asset": public_asset(row), "uploaded": False, "upload": signed}

@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from .cloud import APIError, download, trusted_url
 from .decision_http import Server, make_handler
@@ -66,6 +66,7 @@ class ImageRuntime:
         timeout=30,
         reference=None,
         release_root=None,
+        spaces_store_origin=None,
     ):
         self.engine = engine
         self.releases = {
@@ -83,6 +84,11 @@ class ImageRuntime:
         parsed = urlsplit(self.origin)
         if parsed.path or parsed.query:
             raise ValueError("Image storage origin cannot contain a path")
+        self.spaces_origin = trusted_url(spaces_store_origin) if spaces_store_origin else None
+        if self.spaces_origin:
+            spaces = urlsplit(self.spaces_origin)
+            if spaces.path or spaces.query:
+                raise ValueError("Spaces storage origin cannot contain a path")
         self.serial = SerialEngine(_Execution(self), timeout=timeout)
 
     def refresh(self):
@@ -191,13 +197,34 @@ class ImageRuntime:
             if not isinstance(image, dict) or image["id"] != request["images"][0]["asset_id"]:
                 raise ValueError()
             parsed = urlsplit(image["url"])
-            if (
-                trusted_url(image["url"]).split("?", 1)[0] != self.origin + parsed.path
-                or not re.fullmatch(
-                    r"/storage/v1/object/sign/zils-images/[a-f0-9-]{36}/"
+            exact_url = trusted_url(image["url"]).split("?", 1)[0]
+            uuid_pattern = r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}"
+            legacy = exact_url == self.origin + parsed.path and re.fullmatch(
+                r"/storage/v1/object/sign/zils-images/"
+                + uuid_pattern
+                + "/"
+                + re.escape(image["id"])
+                + r"/canonical\.png",
+                parsed.path,
+            )
+            spaces = (
+                self.spaces_origin
+                and exact_url == self.spaces_origin + parsed.path
+                and re.fullmatch(
+                    r"/objects/"
+                    + uuid_pattern
+                    + r"/zils-images/"
+                    + uuid_pattern
+                    + "/"
                     + re.escape(image["id"])
                     + r"/canonical\.png",
                     parsed.path,
+                )
+            )
+            if (
+                not (legacy or spaces)
+                or {"uploadId", "partNumber"}.intersection(
+                    parse_qs(parsed.query, keep_blank_values=True)
                 )
                 or not re.fullmatch("[a-f0-9]{64}", image["sha256"])
                 or type(image["bytes"]) is not int
@@ -233,6 +260,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reference", type=Path, required=True)
     parser.add_argument("--image-store-origin", required=True)
+    parser.add_argument("--spaces-store-origin")
     parser.add_argument("--port", type=int, default=8931)
     parser.add_argument("--releases", type=Path)
     args = parser.parse_args()
@@ -258,6 +286,7 @@ def main():
         args.image_store_origin,
         reference=args.reference,
         release_root=args.releases,
+        spaces_store_origin=args.spaces_store_origin,
     )
     server = Server(
         ("127.0.0.1", args.port), make_handler(runtime.dispatch, body_limit=MAX_BODY + 4096)

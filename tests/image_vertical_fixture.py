@@ -62,6 +62,13 @@ class Storage(QueueStore):
         aid = args.get("p_asset")
         row = self.assets.get(aid)
         if name == "zils_image_create":
+            if getattr(self, "expire_initial_grants", False):
+                self.tickets = {
+                    key: value
+                    for key, value in self.tickets.items()
+                    if not (value[0] == cloud.DATA_BUCKET and value[2])
+                }
+                self.expire_initial_grants = False
             if args["p_job"] and not any(
                 j["id"] == args["p_job"] and j["owner_id"] == owner and j["status"] == "uploading"
                 for j in self.tables[coordinator.JOBS]
@@ -86,6 +93,9 @@ class Storage(QueueStore):
             }
             self.assets[aid] = row
             return dict(row)
+        if name == "zils_image_get" and owner == OTHER and getattr(self, "fail_owner_check", False):
+            self.fail_owner_check = False
+            raise cloud.APIError(503, "Authentication is unavailable; please retry.")
         if row is None or row["owner_id"] != owner or row["state"] in ("deleted", "expired"):
             return None
         if name == "zils_image_get":
@@ -132,7 +142,9 @@ class Storage(QueueStore):
         )
         prefix = "upload/sign" if upload else "sign"
         result = {
-            "url": f"{self.url}/storage/v1/object/{prefix}/{bucket}/{path}?token=x.{payload}.x&ticket={ticket}"
+            "url": f"{self.url}/storage/v1/object/{prefix}/{bucket}/{path}?token=x.{payload}.x&ticket={ticket}",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=600)).isoformat(),
+            "provider": "supabase",
         }
         if upload:
             result.update(
@@ -222,6 +234,8 @@ def run(
     stock=None,
     health=None,
     runtime_executable=None,
+    expire_initial_grants=False,
+    fail_owner_check=False,
 ):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=False)
@@ -230,6 +244,8 @@ def run(
         dataset = root / "dataset"
         fixture_data(dataset)
     store = Storage()
+    store.expire_initial_grants = expire_initial_grants
+    store.fail_owner_check = fail_owner_check
     accounts = Accounts(store)
     key = Keypair.create_from_seed("0x" + "39" * 32)
     text_key = Keypair.create_from_seed("0x" + "42" * 32)

@@ -162,6 +162,9 @@ def run(command):
                 + ".x",
                 "method": "PUT",
                 "headers": {"x-upsert": "false"},
+                "expires_at": datetime.fromtimestamp(
+                    int(time.time()) + 7200, timezone.utc
+                ).isoformat(),
             }
 
         def upload(self, bucket, path, source):

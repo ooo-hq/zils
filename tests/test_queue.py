@@ -283,15 +283,25 @@ class Store:
 
 class QueueTest(unittest.TestCase):
     def test_supabase_storage_contract_and_temporary_failure(self):
+        import base64
+        from datetime import datetime, timezone
+
+        expires = int(time.time()) + 7200
+        payload = (
+            base64.urlsafe_b64encode(json.dumps({"exp": expires}).encode()).decode().rstrip("=")
+        )
         response = Mock(status_code=200, content=b"{}")
         response.json.return_value = {
-            "url": "/object/upload/sign/fez-training-data/job/train.jsonl?token=fixture"
+            "url": f"/object/upload/sign/fez-training-data/job/train.jsonl?token=x.{payload}.x"
         }
         store = cloud.Supabase("https://project.supabase.co", "server-only-fixture")
         with patch("zils.cloud.requests.request", return_value=response) as request:
             result = store.signed(cloud.DATA_BUCKET, "job/train.jsonl", upload=True)
             self.assertEqual(result["method"], "PUT")
             self.assertEqual(result["headers"]["x-upsert"], "false")
+            self.assertEqual(
+                result["expires_at"], datetime.fromtimestamp(expires, timezone.utc).isoformat()
+            )
             self.assertNotIn("Authorization", result["headers"])
             self.assertEqual(
                 result["url"], "https://project.supabase.co/storage/v1" + response.json()["url"]

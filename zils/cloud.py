@@ -8,7 +8,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 import requests
 
@@ -58,7 +58,7 @@ def download(url, destination, limit, headers=None, *, max_seconds=600):
                 check=False,
             )
         except subprocess.TimeoutExpired:
-            raise ValueError("file exceeds its transfer-time limit") from None
+            raise APIError(503, "File download timed out; please retry.") from None
         try:
             result = json.loads(process.stdout)
         except ValueError:
@@ -90,8 +90,10 @@ def _download_stream(url, destination, limit, headers=None, *, max_seconds=600):
             with Path(destination).open("xb") as output:
                 for chunk in response.iter_content(1024 * 1024):
                     size += len(chunk)
-                    if size > limit or time.monotonic() - started > max_seconds:
-                        raise ValueError("file exceeds its size or transfer-time limit")
+                    if size > limit:
+                        raise ValueError("file exceeds its size limit")
+                    if time.monotonic() - started > max_seconds:
+                        raise APIError(503, "File download timed out; please retry.")
                     output.write(chunk)
             if declared is not None and size != int(declared):
                 raise ValueError("truncated file download")
@@ -201,55 +203,28 @@ class Supabase:
     def rpc(self, name, values):
         return self.request("POST", "/rest/v1/rpc/" + name, values)
 
+    @property
+    def storage(self):
+        if not hasattr(self, "_storage"):
+            from .storage import storage_for
+
+            self._storage = storage_for(self)
+        return self._storage
+
     def signed(self, bucket, path, *, upload=False):
-        route = "upload/sign" if upload else "sign"
-        data = self.request(
-            "POST",
-            f"/storage/v1/object/{route}/{bucket}/{quote(path, safe='/')}",
-            {} if upload else {"expiresIn": 600},
-            {"x-upsert": "false"},
-        )
-        relative = data["url"] if upload else data["signedURL"]
-        if not relative.startswith("/object/"):
-            raise APIError(503, "Unexpected storage response.")
-        result = {"url": self.url + "/storage/v1" + relative}
-        if upload:
-            result.update(
-                method="PUT",
-                headers={"Content-Type": "application/octet-stream", "x-upsert": "false"},
-            )
-        return result
+        return self.storage.signed(bucket, path, upload=upload)
 
     def download(self, bucket, path, destination, limit, *, max_seconds=600):
-        return download(
-            self.signed(bucket, path)["url"], destination, limit, max_seconds=max_seconds
-        )
+        return self.storage.download(bucket, path, destination, limit, max_seconds=max_seconds)
 
     def upload(self, bucket, path, source):
-        # Trusted processors use immutable, attempt-specific paths; never overwrite.
-        url = self.url + "/storage/v1/object/" + bucket + "/" + quote(path, safe="/")
-        upload(
-            url,
-            source,
-            {**self.headers, "Content-Type": "application/octet-stream", "x-upsert": "false"},
-            method="POST",
-        )
+        return self.storage.upload(bucket, path, source)
 
     def exists(self, bucket, path):
-        parent, name = path.rsplit("/", 1)
-        rows = self.request(
-            "POST",
-            f"/storage/v1/object/list/{bucket}",
-            {"prefix": parent, "search": name, "limit": 100},
-        )
-        return any(row["name"] == name for row in rows)
+        return self.storage.exists(bucket, path)
 
     def remove(self, bucket, paths):
-        if not isinstance(paths, list) or not 1 <= len(paths) <= 100:
-            raise ValueError("remove requires 1..100 exact object paths")
-        return self.request(
-            "DELETE", "/storage/v1/object/" + quote(bucket, safe=""), {"prefixes": paths}
-        )
+        return self.storage.remove(bucket, paths)
 
 
 def _download_worker():
