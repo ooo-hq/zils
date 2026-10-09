@@ -19,6 +19,7 @@ JevK5 4B; the testnet fleet uses Kev 0.8B and requires operator admission.
 | Select a first model or upgrade an active version | [Customer version selection](version-selection.md) |
 | Develop and evaluate checkpoints | [Local development](development.md), [evaluation contract](evaluation.md) |
 | Understand benchmark methodology | [Synthetic benchmark](benchmark.md) |
+| Reproduce a public-data adapter experiment | [Flight-delay experiment](flight-delay-001.md) |
 | Inspect measured results | [Experiment results](experiments.md), [public JevBench comparison](jevbench-public.md), [aggregate JSON](data/jevbench-public-001.json), [verified testnet round](testnet-round-001.md) |
 | Review planned capabilities | [Roadmap](roadmap.md) |
 
