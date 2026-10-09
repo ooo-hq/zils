@@ -56,7 +56,15 @@ def validate_splits(splits):
 
 
 def build(
-    root, job_id, splits, policy, *, allow_training_data_export=False, model=None, selection=None
+    root,
+    job_id,
+    splits,
+    policy,
+    *,
+    allow_training_data_export=False,
+    model=None,
+    selection=None,
+    workload=None,
 ):
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", job_id):
         raise ValueError("job ID must be 1..64 lowercase letters, digits or hyphens")
@@ -84,6 +92,12 @@ def build(
     }
     if model is not None:
         manifest["model"] = models.spec(model)
+    if workload is not None:
+        from .miner_grading import validate_workload
+
+        manifest["workload"] = validate_workload(
+            workload, model=model, examples=len(splits["train"])
+        )
     if selection is not None:
         from .version_selection import validate
 
@@ -129,6 +143,14 @@ def audit(root, manifest):
         raise ValueError("miner export differs from job training split")
     if manifest.get("counts") != {s: len(c) for s, c in splits.items()}:
         raise ValueError("job counts differ from data")
+    if "workload" in manifest:
+        from .miner_grading import validate_workload
+
+        validate_workload(
+            manifest["workload"],
+            model=models.job_model({"manifest": manifest}),
+            examples=len(splits["train"]),
+        )
     return splits
 
 

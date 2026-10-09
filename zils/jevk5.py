@@ -98,9 +98,15 @@ def validate_inputs(splits):
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(base_path(), local_files_only=True)
-    for rows in splits.values():
+    lengths = []
+    for split, rows in splits.items():
         for row in rows:
-            encode(tokenizer, row["state"], row["question"])
+            ids, _ = encode(tokenizer, row["state"], row["question"])
+            if split == "train":
+                lengths.append(len(ids))
+    from .miner_grading import workload_profile
+
+    return workload_profile(lengths, model=models.JEVK5)
 
 
 def save_adapter_weights(model, output):
