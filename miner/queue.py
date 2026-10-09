@@ -16,6 +16,7 @@ from miner.worker import train_candidate
 from zils import models, protocol, queue_protocol, settings
 from zils.cloud import MAX_DATA_BYTES, APIError, download, trusted_url, upload
 from zils.coordinator import identifier, lease_heartbeat
+from zils.miner_presence import presence_loop
 from zils.runtime import CapacityUnavailable, digest, gpu_ready, locked, prepare_base
 
 
@@ -47,7 +48,9 @@ class Client:
             response.close()
 
 
-def run_once(client, state, reference, runtime, device, *, references=None):
+def run_once(
+    client, state, reference, runtime, device, *, references=None, busy=None, minimum_mib=0
+):
     if not gpu_ready(device):
         return False
     claim = None
@@ -72,6 +75,8 @@ def run_once(client, state, reference, runtime, device, *, references=None):
     assignment = client.call("claim", claim)["assignment"]
     if assignment is None:
         return False
+    if busy is not None:
+        busy.set()
     job_id = identifier(assignment["job_id"])
     token = identifier(assignment["lease_token"])
     auth = {"job_id": job_id, "lease_token": token}
@@ -123,7 +128,7 @@ def run_once(client, state, reference, runtime, device, *, references=None):
                     temporary.rename(training)
                 finally:
                     temporary.unlink(missing_ok=True)
-            job = {**config, "round_id": uuid.UUID(job_id).hex}
+            job = {**config, "round_id": uuid.UUID(job_id).hex, "min_free_mib": minimum_mib}
             if model == models.IMAJEV:
                 download_images(client, auth, training, directory / "images")
                 runtime = settings.required("ZILS_IMAGE_RUNTIME_PYTHON")
@@ -135,17 +140,19 @@ def run_once(client, state, reference, runtime, device, *, references=None):
                 job,
                 runtime,
                 device,
-                **({"check_lease": check_lease} if model == models.IMAJEV else {}),
+                check_lease=check_lease,
             )
             check_lease()
             urls = client.call("uploads", auth)["uploads"]
             for name in models.artifact_files(entry["checkpoint"]):
+                check_lease()
                 if not urls[name].get("uploaded"):
                     upload(
                         urls[name]["url"],
                         Path(entry["checkpoint"]) / name,
                         urls[name].get("headers"),
                     )
+            check_lease()
             client.call("submit", {**auth, "sha256": entry["sha256"]})
             print(f"Submitted candidate for job {job_id}.", flush=True)
     except CapacityUnavailable:
@@ -158,6 +165,9 @@ def run_once(client, state, reference, runtime, device, *, references=None):
         except Exception:
             pass
         raise
+    finally:
+        if busy is not None:
+            busy.clear()
     return True
 
 
@@ -241,11 +251,27 @@ def main():
             references[model] = Path(path).resolve()
             if not args.no_download:
                 prepare_base(model)
-        with locked(state / "queue-worker.lock"):
+        enabled = config.get("graded_scheduling", False)
+        if type(enabled) is not bool:
+            raise ValueError("graded_scheduling must be true or false")
+        minimum = config.get("graded_min_free_mib", 0) if enabled else 0
+        with (
+            locked(state / "queue-worker.lock"),
+            presence_loop(
+                client, references, args.device, enabled=enabled, minimum_mib=minimum
+            ) as busy,
+        ):
             while True:
                 try:
                     run_once(
-                        client, state, None, args.runtime_python, args.device, references=references
+                        client,
+                        state,
+                        None,
+                        args.runtime_python,
+                        args.device,
+                        references=references,
+                        busy=busy,
+                        minimum_mib=minimum,
                     )
                 except (
                     APIError,

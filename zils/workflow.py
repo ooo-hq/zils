@@ -35,6 +35,7 @@ class Workflow:
         image_capacity=None,
         image_releases=None,
         image_activate=None,
+        routing=None,
     ):
         self.store, self.hotkey, self.releases = store, hotkey, Path(releases)
         self.capacity, self.activate = capacity, activate
@@ -42,6 +43,10 @@ class Workflow:
         self.image_releases, self.image_activate = image_releases, image_activate
         self.accepted_offset = 0
         self.pending_offset = 0
+        from .graded_scheduler import GradedScheduler, validate_config
+
+        policy = validate_config(routing) if routing is not None else {"mode": "fixed"}
+        self.grading = GradedScheduler(store, policy) if policy["mode"] == "graded" else None
 
     def status(self, job, state, message, **extra):
         result = job.get("result") or {}
@@ -120,6 +125,8 @@ class Workflow:
                     "activation_failed",
                     "Training passed. API activation will retry automatically.",
                 )
+        if self.grading:
+            self.grading.tick_qualification(datetime.now(timezone.utc))
         pending = self.store.rows(
             JOBS,
             f"status=eq.awaiting_approval&order=created_at.asc,id.asc&limit=100&offset={self.pending_offset}",
@@ -130,6 +137,17 @@ class Workflow:
         assigned = set()
         for job in pending:
             model = models.job_model(job)
+            if (
+                self.grading
+                and model == models.JEVK5
+                and (job.get("manifest") or {}).get("workload")
+            ):
+                outcome = self.grading.assign(job, datetime.now(timezone.utc))
+                if outcome["status"] != "reserved":
+                    self.status(
+                        job, "waiting_worker", "Waiting for a qualified, available training worker."
+                    )
+                continue
             hotkey = self.image_hotkey if model == models.IMAJEV else self.hotkey
             probe = self.image_capacity if model == models.IMAJEV else self.capacity
             workers = (
@@ -330,6 +348,7 @@ def main():
             minimum, config.get("nvidia_smi", "nvidia-smi"), config.get("training_services", [])
         ),
         lambda release: activate(release, config),
+        routing=config.get("routing"),
         image_hotkey=image["hotkey"] if image else None,
         image_releases=image["releases"] if image else None,
         image_activate=(lambda release: activate(release, image)) if image else None,
