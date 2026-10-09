@@ -145,9 +145,6 @@ def main():
                 check=True,
                 capture_output=True,
             )
-            image_checks(
-                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
-            )
             subprocess.run(
                 [
                     tool("psql"),
@@ -205,6 +202,30 @@ def main():
                 ],
                 check=True,
                 capture_output=True,
+            )
+            subprocess.run(
+                [
+                    tool("psql"),
+                    "-X",
+                    "-v",
+                    "ON_ERROR_STOP=1",
+                    "-h",
+                    str(socket),
+                    "-d",
+                    "postgres",
+                    "-f",
+                    str(ROOT / "supabase/migrations/202610080007_image_finalize_recovery.sql"),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            image_checks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
+            )
+            from tests.image_recovery_database import run as recovery_checks
+
+            recovery_checks(
+                [tool("psql"), "-X", "-v", "ON_ERROR_STOP=1", "-h", str(socket), "-d", "postgres"]
             )
             from tests.image_queue_database import cancellation_claim_races
 

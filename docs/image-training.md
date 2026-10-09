@@ -61,9 +61,9 @@ Repeated submissions and settlement events do not create another charge.
 
 ## Worker and service setup
 
-1. Apply migrations through `202610080006_image_processing_profiles.sql` in order,
-   after the existing queue/API/billing/usage migrations. The four image migrations
-   use versions `202610080003` through `202610080006`; prepaid billing and usage
+1. Apply migrations through `202610080007_image_finalize_recovery.sql` in order,
+   before deploying the updated gateway. The five image migrations
+   use versions `202610080003` through `202610080007`; prepaid billing and usage
    reporting keep versions `202610080001` and `202610080002`. Install
    `requirements/api.txt` on the gateway and
    `requirements/imajev.txt` in the separate image runtime. Verify private bucket RLS,
@@ -76,6 +76,11 @@ Repeated submissions and settlement events do not create another charge.
    checks, peak reserved bytes, probe/trainer SHA-256 and a 1–3,600 second deadline.
    Memory admission must be at least 12,288 MiB and peak reserved memory + 512 MiB.
    A small-image probe is not maximum-context qualification.
+   Training saves activations in CPU memory to reduce GPU usage. Account for host
+   RAM in capacity checks. If sharing a GPU, set `ZILS_IMAGE_GPU_MEMORY_FRACTION`
+   to the tested CUDA allocator fraction (greater than 0 and at most 1), for example
+   `0.55` in the recorded 24 GB rehearsal. This caps one process's PyTorch allocator;
+   it does not reserve memory or replace the free-memory check and compute lock.
    The existing worker-registration command automatically grants only the two
    existing text profiles, including workers registered after migration. Image
    qualification still requires the operator's measured evidence.
@@ -111,6 +116,12 @@ and a relative `image` path. The driver snapshots and hashes source bytes/policy
 before creating a job, refuses an existing output directory, records each phase and
 retains redacted failures. It never cleans up unrelated assets/jobs or controls live
 services. Its own private evidence remains for inspection and normal retention.
+Reads and photo finalization retry temporary failures at most twice within the run's
+deadline; billable predictions and creation are never automatically replayed.
+Finalization uses a request-owned lease token. On a storage or database error, the
+gateway releases only that token so a retry can verify existing immutable bytes.
+Completed images and successor leases are preserved. If cleanup is also unavailable,
+the existing 20-minute lease expiry remains the fallback.
 
 The integration harness in `tests/image_vertical_fixture.py` uses the production
 coordinator, signed worker protocol, validator, publisher, image runtime and gateway

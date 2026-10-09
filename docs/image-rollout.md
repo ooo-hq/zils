@@ -1,7 +1,7 @@
 # Image vertical rollout evidence — 2026-10-08
 
-Implementation is staged in isolated backend/frontend branches. **Production image
-admissions remain off.** No production migration, registry update, model deployment,
+The image vertical is merged; worker memory and upload-recovery follow-ups are staged.
+**Production image admissions remain off.** No production migration, registry update, model deployment,
 worker qualification, paid GPU allocation or live text-service interruption occurred.
 
 ## Verified behavior
@@ -83,6 +83,36 @@ Private evidence is retained in the implementation workspace under
 the successful rehearsal kept the same dataset and policy. Raw photos, credentials,
 private prediction reports and host details are excluded from this document.
 
+## Hosted Supabase verification — 2026-10-09
+
+An isolated hosted project received the image migrations, including request-owned
+upload recovery. A real Supabase account uploaded and verified all 64 dataset photos;
+a temporary finalization failure recovered on retry. A separate signed GPU worker
+downloaded the 32 training photos and trained the pinned recipe for eight optimizer
+steps. Training took 19.36 seconds (37.44 seconds including setup and save/reload),
+reserved 11,653,873,664 GPU bytes at peak, and reloaded with zero logit difference.
+
+The trained adapter did **not** reach evaluation. Its largest file was 487,648,432
+bytes, while the project's global upload limit was 50 MiB. The private model bucket's
+512 MiB setting does not override that global limit. Increasing the global setting
+was rejected with HTTP 402 because the project requires a paid plan. All three
+assignment attempts failed, leaving the evaluator's candidate status `missing`.
+The resulting `no_qualifying_model` is an infrastructure failure, not a measurement
+of this candidate's quality. The earlier measured recall failure above is a separate
+run and must not be substituted for these missing results.
+
+Real stock image predictions passed with both a Supabase session and the existing
+API key. A second account could not use the first account's image. Test-mode credit
+deductions matched 738 billable input tokens exactly, and no reservations remained.
+The included training run was consumed after the completed evaluation despite the
+missing candidate; this run does not establish refund behavior for failed delivery.
+The four live text services retained their process/invocation identities and model
+fingerprint. Isolated image services stopped after the 762.25-second run.
+
+No paid plan was purchased. Hosted candidate evaluation and accepted-model activation
+remain unverified. Storage must accommodate the full pinned adapter before retrying;
+check both [global and bucket file limits](https://supabase.com/docs/guides/storage/uploads/file-limits).
+
 ## Billing integration
 
 The image branch now includes the deployed prepaid billing and Google/email account
@@ -95,7 +125,9 @@ submission and insufficient-credit rollback. These checks do not use live paymen
 
 1. Configure and register a worker using the successful maximum-envelope offload
    configuration. The isolated capacity probe alone does not reserve serving capacity.
-2. Verify a fresh pinned installation and the complete path against staging Supabase.
+2. Verify a fresh pinned installation and complete hosted candidate delivery/evaluation
+   after resolving the global storage limit. Hosted uploads, signed GPU training and
+   stock inference have passed; the full path has not.
 3. Obtain a qualifying real candidate under a policy frozen before evaluation; verify
    its owned API prediction and second-account denial without changing thresholds.
 4. Review migrations, private service configuration, cleanup and rollback described in

@@ -5,6 +5,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 from tests.api_database import Database, literal
+from zils import models
 from zils.cloud import APIError
 
 
@@ -225,9 +226,7 @@ def run(command):
         raise AssertionError("interruption not exercised")
     assert row["canonical_path"] in blobs.objects
     blobs.rpc = original_rpc
-    db.sql(
-        f"update zils_image_assets set finalize_until=now()-interval '1 second' where id={literal(aid)}"
-    )
+    assert db.rpc("zils_image_get", {"p_owner": owner, "p_asset": aid})["state"] == "uploading"
     assert service.complete(owner, aid)["state"] == "ready"
     service.delete_unused(owner, aid)
     assert service.cleanup()["removed"] == 0  # upload grant can still produce a late source
@@ -240,7 +239,7 @@ def run(command):
     # Training assets respect frozen job identity, reference protection and terminal retention.
     job = str(uuid.uuid4())
     db.sql(
-        f"insert into fez_training_jobs(id,owner_id,name,acceptance,model_profile) values({literal(job)},{literal(owner)},'image-fixture','{{}}','{{\"id\":\"imajev-4b-v1\"}}')"
+        f"insert into fez_training_jobs(id,owner_id,name,acceptance,model_profile) values({literal(job)},{literal(owner)},'image-fixture','{{}}',{literal(models.spec(models.IMAJEV))})"
     )
     draft = service.create(
         owner, "training", job, "train.png", len(raw), hashlib.sha256(raw).hexdigest()

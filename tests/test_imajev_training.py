@@ -1,9 +1,12 @@
 """Image continuation must use the published checkpoint and correct gradients."""
 
+import os
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import torch
 
@@ -11,6 +14,46 @@ from zils import imajev, models
 
 
 class TrainingTest(unittest.TestCase):
+    def test_saved_activations_are_offloaded_without_changing_gradients(self):
+        parameter = torch.tensor(1.5, requires_grad=True)
+        active = False
+        original = torch.autograd.graph.save_on_cpu
+
+        @contextmanager
+        def offload(*, pin_memory):
+            nonlocal active
+            self.assertTrue(pin_memory)
+            with original(pin_memory=pin_memory):
+                active = True
+                try:
+                    yield
+                finally:
+                    active = False
+
+        def loss(x):
+            self.assertTrue(active, "Image activations must be offloaded during the forward pass")
+            return (parameter * x - 2).square()
+
+        with patch.object(torch.autograd.graph, "save_on_cpu", offload):
+            imajev.accumulate_gradients([4, 5], loss)
+        self.assertFalse(active)
+        self.assertAlmostEqual(parameter.grad.item(), 4 * (4 * 1.5 - 2) + 5 * (5 * 1.5 - 2))
+
+    def test_operator_gpu_budget_is_validated_before_allocation(self):
+        with patch.object(torch.cuda, "set_per_process_memory_fraction") as apply:
+            with patch.dict(os.environ, {"ZILS_IMAGE_GPU_MEMORY_FRACTION": "0.55"}):
+                imajev.configure_gpu_memory()
+            apply.assert_called_once_with(0.55)
+            apply.reset_mock()
+            for value in ("0", "-1", "1.1", "nan", "inf", ""):
+                with (
+                    self.subTest(value=value),
+                    patch.dict(os.environ, {"ZILS_IMAGE_GPU_MEMORY_FRACTION": value}),
+                    self.assertRaises(ValueError),
+                ):
+                    imajev.configure_gpu_memory()
+            apply.assert_not_called()
+
     def test_partial_accumulation_is_the_mean_of_the_actual_two_examples(self):
         groups = imajev.accumulation_batches(list(range(6)), 4)
         self.assertEqual([len(x) for x in groups], [4, 2])

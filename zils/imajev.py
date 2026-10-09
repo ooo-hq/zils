@@ -68,6 +68,19 @@ def resolve_reference(reference):
     return root / "base", root / "adapter"
 
 
+def configure_gpu_memory():
+    import torch
+
+    from . import settings
+
+    value = settings.get("ZILS_IMAGE_GPU_MEMORY_FRACTION")
+    if value is not None:
+        fraction = float(value)
+        if not math.isfinite(fraction) or not 0 < fraction <= 1:
+            raise ValueError("Image GPU memory fraction must be greater than 0 and at most 1")
+        torch.cuda.set_per_process_memory_fraction(fraction)
+
+
 class ImageEngine:
     def __init__(self, reference, device, *, trainable=False):
         import torch
@@ -76,6 +89,7 @@ class ImageEngine:
 
         if device != "cuda" or not torch.cuda.is_available() or not torch.cuda.is_bf16_supported():
             raise ValueError("The image profile requires a BF16-capable CUDA GPU")
+        configure_gpu_memory()
         self.reference = Path(reference)
         self.manifest = verify_reference(reference)
         base, stock = self.reference / "base", self.reference / "adapter"
@@ -298,12 +312,14 @@ def accumulate_gradients(rows, loss_for_example):
     if not rows:
         raise ValueError("An accumulation group cannot be empty")
     losses = []
-    for row in rows:
-        loss = loss_for_example(row)
-        if not bool(torch.isfinite(loss)):
-            raise ValueError("Nonfinite image training loss")
-        (loss / len(rows)).backward()
-        losses.append(float(loss.detach()))
+    # Keep saved forward activations in host RAM, as in the qualified 24 GB GPU run.
+    with torch.autograd.graph.save_on_cpu(pin_memory=True):
+        for row in rows:
+            loss = loss_for_example(row)
+            if not bool(torch.isfinite(loss)):
+                raise ValueError("Nonfinite image training loss")
+            (loss / len(rows)).backward()
+            losses.append(float(loss.detach()))
     return losses
 
 

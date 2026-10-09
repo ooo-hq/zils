@@ -141,6 +141,7 @@ def run_child(command, log, device, timeout=3600, *, model=None, minimum_mib=0, 
         "PYTORCH_CUDA_ALLOC_CONF",
         "PYTORCH_ALLOC_CONF",
         "ZILS_IMAGE_REFERENCE",
+        "ZILS_IMAGE_GPU_MEMORY_FRACTION",
         "ZILS_COMPUTE_LOCK",
         "ZILS_NVIDIA_SMI",
     }
