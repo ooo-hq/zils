@@ -1,4 +1,4 @@
-"""Validator-owned JevK5 inference worker; accepts no labels or model code from miners."""
+"""Validator-owned text adapter inference worker; accepts no labels or model code from miners."""
 
 import argparse
 import importlib.metadata
@@ -21,13 +21,14 @@ def main():
     requests = json.load(sys.stdin)
     with redirect_stdout(sys.stderr):
         from zils import models
-        from zils.jevk5 import DecisionModel
 
-        spec = models.spec(models.JEVK5)
+        model_id = models.checkpoint_model(args.checkpoint)
+        engine = models.text_runtime(model_id)
+        spec = models.spec(model_id)
         if (args.base, args.base_revision) != (spec["base"], spec["base_revision"]):
-            raise ValueError("JevK5 base differs from its pinned revision")
+            raise ValueError("Text base differs from its pinned revision")
         started = time.perf_counter()
-        model = DecisionModel(args.checkpoint, args.device)
+        model = engine.DecisionModel(args.checkpoint, args.device)
         load_ms = (time.perf_counter() - started) * 1000
         predictions = []
         for row in requests:
@@ -48,7 +49,11 @@ def main():
             "dtype": "bfloat16",
             "device": args.device,
             "model_load_ms": load_ms,
-            "jevk5": importlib.metadata.version("jevk5"),
+            **(
+                {"jevk5": importlib.metadata.version("jevk5")}
+                if model_id == models.JEVK5
+                else {"runtime_revision": spec["runtime_revision"]}
+            ),
             "torch": importlib.metadata.version("torch"),
             "transformers": importlib.metadata.version("transformers"),
         }

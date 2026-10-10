@@ -5,7 +5,7 @@ submits signed artifacts for independent evaluation. It connects to the
 coordinator over outbound HTTPS. It needs an approved hotkey and model hardware;
 it does not need Supabase credentials or an inbound public server.
 
-The initial setup below is for **JevK5 4B text training**; add **ImaJev 4B image
+The initial setup below is for **H2O Lightning 4B text training**; add **ImaJev 4B image
 training** with the steps below. For a **Bittensor testnet fleet**, use
 [registration](bittensor-registration.md) and
 [bundle setup](mining.md). Queue assignments do not publish Bittensor weights
@@ -20,7 +20,7 @@ configurations retain their current request flow.
 Get the following from the operator before downloading models:
 
 - The coordinator's exact HTTPS base URL and confirmation that it uses
-  `jevk5-4b-v0.3`.
+  `h2o-lightning-4b-v1.2.3`.
 - Approval for your hotkey's public SS58 address. The operator registers the
   worker and approves assignments through [miner administration](https://github.com/ooo-hq/zils-platform/blob/main/docs/supabase-training.md#approve-miners-and-run-a-queued-miner).
 - The wallet name, hotkey name, and local wallet directory for the hotkey you
@@ -30,9 +30,10 @@ Get the following from the operator before downloading models:
 Use Linux or WSL 2 with Git, Python 3.13, `uv`, a BF16-capable NVIDIA GPU and its
 CUDA driver. Allow at least 25 GB of free disk for models and dependencies,
 plus space for assigned data and candidates. The runtime was checked on an
-RTX 4090; memory needs depend on input length. Apple silicon miners can instead
-follow the [Mac installation and qualification guide](mac-miners.md), including
-the measured limitations of a 16 GiB M4. CPU training is unsupported.
+RTX 4090; memory needs depend on input length. H2O uses the isolated CUDA runtime
+below. Apple silicon miners retain the
+[JevK5 installation guide](mac-miners.md) for explicitly assigned legacy jobs.
+H2O CPU and Apple MPS training are unsupported.
 
 The operator assigns a local queue UID. On-chain registration is not required
 for this queue, and a Bittensor UID alone does not authorize job access.
@@ -49,14 +50,18 @@ uv pip install --python .venv-kev/bin/python --torch-backend=cu128 \
   -r requirements/model.txt -r requirements/rehearsal.txt \
   -r requirements/testnet.txt
 .venv-kev/bin/python -c 'import torch; assert torch.cuda.is_available(); assert torch.cuda.is_bf16_supported()'
-.venv-kev/bin/python -m zils.jevk5 reference --out models/jevk5-reference
+uv venv --python 3.12 .venv-h2o
+uv pip install --python .venv-h2o/bin/python --torch-backend=cu130 -r requirements/h2o.txt
+export ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"
+.venv-h2o/bin/python -m zils.h2o reference --out models/h2o-reference
 ```
 
 The Bittensor SDK is installed here to read the wallet hotkey; these commands
 send no chain transactions. The reference command downloads and verifies the
-pinned base weights and writes `models/jevk5-reference/model.json`.
-See [model identity and cache options](jevk5-queue.md#install-and-create-the-reference)
-when reusing an existing download.
+pinned base weights and writes `models/h2o-reference/model.json`.
+See the [H2O model contract](h2o-queue.md) for the immutable revision, runtime,
+and cache override. The operator must explicitly qualify this hotkey for H2O;
+an existing JevK5 approval does not qualify it for H2O.
 
 ## 3. Configure your worker
 
@@ -97,12 +102,13 @@ for both services before starting.
 
 ## 4. Start the miner
 
-Run from the repository root:
+Run from the repository root (also set this environment variable in a service supervisor):
 
 ```bash
+export ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"
 .venv-kev/bin/python -m miner.queue \
   --config .private/queue-miner.json --state .private/queue-miner \
-  --reference models/jevk5-reference --device cuda
+  --reference models/h2o-reference --device cuda
 ```
 
 The worker checks for assigned work every ten seconds. It can remain quiet when
@@ -127,7 +133,7 @@ hold a given state directory. Use a service supervisor for continuous operation.
 wait for the next available job.
 
 If a job references a different base model, stop and resolve the operator's
-configuration using the [model transition guide](jevk5-queue.md#existing-jobs-and-rollback).
+configuration using the [model transition guide](h2o-queue.md#existing-jobs).
 Do not change model identifiers or hashes to make an incompatible reference pass.
 
 ## Add the image vertical
@@ -149,7 +155,7 @@ export ZILS_IMAGE_RUNTIME_PYTHON="$PWD/.venv-image/bin/python"
 export ZILS_IMAGE_REFERENCE="$PWD/models/imajev-reference"
 .venv-kev/bin/python -m miner.queue \
   --config .private/queue-miner.json --state .private/queue-miner \
-  --reference models/jevk5-reference \
+  --reference models/h2o-reference \
   --reference models/imajev-starting-checkpoint --device cuda
 ```
 

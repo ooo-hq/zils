@@ -55,23 +55,27 @@ def finite(value, minimum=0, maximum=math.inf):
     return type(value) in (int, float) and math.isfinite(value) and minimum <= value <= maximum
 
 
-def trainer_identity():
+def trainer_identity(model=models.JEVK5):
     root = Path(__file__).resolve().parents[1]
     return digest(
         {
             name: hashlib.sha256((root / name).read_bytes()).hexdigest()
-            for name in ("zils/jevk5.py", "requirements/model.txt", "requirements/jevk5-source.txt")
+            for name in (
+                ("zils/h2o.py", "zils/jevk5.py", "zils/h2o-pins.json", "requirements/h2o.txt")
+                if model == models.H2O
+                else ("zils/jevk5.py", "requirements/model.txt", "requirements/jevk5-source.txt")
+            )
         }
     )
 
 
 def workload_profile(token_lengths, *, model):
     if (
-        model != models.JEVK5
+        model not in models.TEXT_ADAPTER_MODELS
         or not token_lengths
         or any(type(n) is not int or not 1 <= n <= 2048 for n in token_lengths)
     ):
-        raise ValueError("workload requires encoded JevK5 training inputs of 1..2048 tokens")
+        raise ValueError("workload requires encoded text adapter training inputs of 1..2048 tokens")
     maximum = max(token_lengths)
     return {
         "model": model,
@@ -114,7 +118,7 @@ def valid_context(context):
     if (
         not isinstance(context, dict)
         or set(context) != CONTEXT_KEYS
-        or context["model"] != models.JEVK5
+        or context["model"] not in models.TEXT_ADAPTER_MODELS
     ):
         return False
     return (
@@ -428,7 +432,9 @@ def evaluation_observations(job, attempts, assignments, report, *, qualification
 
 def benchmark_binding(job):
     manifest = job["manifest"]
-    if models.job_model(job) != models.JEVK5 or manifest.get("selection", {}).get("previous"):
+    if models.job_model(job) not in models.TEXT_ADAPTER_MODELS or manifest.get("selection", {}).get(
+        "previous"
+    ):
         raise ValueError("Qualification requires the pinned base, not a customer predecessor")
     return digest(
         {k: manifest[k] for k in ("model", "files", "counts", "workload")}

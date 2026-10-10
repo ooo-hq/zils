@@ -19,7 +19,7 @@ and the guarded Bittensor testnet integration.
 
 | Role | Guide |
 | --- | --- |
-| Run a JevK5 miner on NVIDIA hardware | [Queued miners](docs/queue-miners.md) |
+| Run an H2O miner on NVIDIA hardware | [Queued miners](docs/queue-miners.md) |
 | Run a JevK5 miner on Apple silicon | [Mac miners](docs/mac-miners.md) |
 | Run a qualified ImaJev image miner | [Image queue setup](docs/queue-miners.md#add-the-image-vertical), [image fleet setup](docs/mining.md#image-fleets) |
 | Join the closed Bittensor testnet fleet | [Registration](docs/bittensor-registration.md), then [miner setup](docs/mining.md) |
@@ -27,7 +27,7 @@ and the guarded Bittensor testnet integration.
 | Develop or evaluate the subnet | [Local development](docs/development.md), [evaluation contract](docs/evaluation.md) |
 
 Both workflows require operator admission. Customer workers and closed Bittensor
-fleets support JevK5 4B text and qualified ImaJev 4B image jobs; legacy Kev 0.8B
+fleets support H2O Lightning 4B text and qualified ImaJev 4B image jobs; JevK5 and Kev 0.8B
 jobs remain supported. Each fleet pins one job and model. Text and image scores
 are not combined into one reward vector. Queue evaluation does not publish
 chain weights. Mainnet participation and public miner discovery are not implemented.
@@ -48,16 +48,17 @@ The platform uses this repository's evaluation code as a dependency. See
 
 ## Miner setup
 
-Use [queued miner setup](docs/queue-miners.md) to create a verified JevK5 reference
+Use [queued miner setup](docs/queue-miners.md) to create a verified H2O reference
 and private hotkey configuration. Then, from this repository:
 
 ```sh
+export ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"
 .venv-kev/bin/python -m miner.queue \
   --config .private/queue-miner.json --state .private/queue-miner \
-  --reference models/jevk5-reference --device cuda
+  --reference models/h2o-reference --device cuda
 ```
 
-Use `--device mps` only on a [qualified Mac](docs/mac-miners.md). The miner uses
+H2O requires CUDA. Legacy JevK5 supports [qualified Macs](docs/mac-miners.md). The miner uses
 outbound HTTPS and receives only approved training data and signed upload URLs.
 Keep calibration/test data and operator service credentials off miner accounts.
 For the separate testnet fleet, run `./start-miner --rounds 1` from its assigned

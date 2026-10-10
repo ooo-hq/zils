@@ -13,8 +13,8 @@ remain unimplemented. The existing synthetic fleet remains supported.
 
 ## Prepare data
 
-Complete the Python 3.13 [JevK5 setup](jevk5-queue.md#install-and-create-the-reference),
-including creation of `models/jevk5-reference` on a qualified host. Work from the
+Complete the Python 3.13 [H2O setup](queue-miners.md#2-install-and-verify-the-reference),
+including creation of `models/h2o-reference` on a qualified host. Work from the
 repository root; the setup guide identifies supported CUDA and Apple MPS hardware.
 Use only data authorized for training and for export to the configured miners.
 The export flag records an operator decision; it does not provide encryption,
@@ -48,7 +48,7 @@ not customer data and cannot establish customer-task quality:
   --calibration .private/job-example-input/calibration.jsonl \
   --test .private/job-example-input/test.jsonl \
   --min-accuracy 0.80 --min-brier-improvement 0.01 \
-  --model jevk5-4b-v0.3 \
+  --model h2o-lightning-4b-v1.2.3 \
   --allow-training-data-export --out .private/jobs/example-decisions-v1
 ```
 
@@ -63,7 +63,7 @@ output directories and a new job version when changing inputs or thresholds.
 ```bash
 .venv-kev/bin/python -m zils.fleet init \
   --benchmark .private/jobs/example-decisions-v1 \
-  --checkpoint models/jevk5-reference --host 127.0.0.1 \
+  --checkpoint models/h2o-reference --host 127.0.0.1 \
   --out .private/fleet-example-decisions-v1
 .venv-kev/bin/python -m zils.fleet validator \
   --config .private/fleet-example-decisions-v1/validator/config.json --rounds 1

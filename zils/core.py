@@ -14,7 +14,7 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-from . import ROOT, models
+from . import ROOT, models, settings
 
 ARTIFACT_FILES = ("adapter_config.json", "adapter_model.safetensors", "head.pt")
 MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
@@ -215,6 +215,7 @@ def evaluate(args):
     runner = Path(__file__).with_name(
         {
             models.JEVK5: "jevk5_runner.py",
+            models.H2O: "jevk5_runner.py",
             models.IMAJEV: "imajev_runner.py",
             models.KEV: "kev_runner.py",
         }[model]
@@ -264,7 +265,9 @@ def evaluate(args):
                 if models.checkpoint_model(checkpoint) != model:
                     raise ValueError("checkpoint belongs to a different model")
                 command = [
-                    args.runner_python,
+                    settings.required("ZILS_H2O_RUNTIME_PYTHON")
+                    if model == models.H2O
+                    else args.runner_python,
                     str(runner),
                     "--checkpoint",
                     str(checkpoint),

@@ -208,7 +208,11 @@ def main():
     parser.add_argument("--min-accuracy", type=float, required=True)
     parser.add_argument("--min-brier-improvement", type=float, default=0.0)
     parser.add_argument("--allow-training-data-export", action="store_true")
-    parser.add_argument("--model", choices=(models.KEV, models.JEVK5), default=models.KEV)
+    parser.add_argument(
+        "--model",
+        choices=(models.KEV, *models.TEXT_ADAPTER_MODELS),
+        default=models.DEFAULT_TRAINING_MODEL,
+    )
     args = parser.parse_args()
     try:
         manifest = build(
