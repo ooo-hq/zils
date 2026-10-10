@@ -11,6 +11,7 @@ your role.
 | Operate a validator | [Validator setup](validators.md), [evaluation contract](evaluation.md) |
 | Join the testnet | [Registration](bittensor-registration.md), [testnet operation](testnet.md) |
 | Prepare models or training data | [JevK5 reference](jevk5-queue.md), [customer data contract](customer-jobs.md), [version selection](version-selection.md) |
+| Compare tuned open models and miner hardware tradeoffs | [Official Jev comparisons and B300 research](model-research.md) |
 | Develop and inspect evidence | [Development](development.md), [benchmark](benchmark.md), [experiments](experiments.md), [JevBench](jevbench-public.md), [recorded testnet round](testnet-round-001.md) |
 
 [Repository boundaries](repositories.md) explains where hosted services, client

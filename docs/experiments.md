@@ -3,9 +3,11 @@
 These are development measurements, not release certifications. No experiment
 below promoted a Fez release or published chain weights. Different datasets have
 different difficulty and aggregation rules; compare models within a result table.
-The latest external comparison is the [public JevBench report](jevbench-public.md).
+For the October support/chess comparisons with official TypeSafe Jev and the
+B300 H2O/2B/4B/9B follow-ups, read [tuned open model research](model-research.md).
+The [public JevBench report](jevbench-public.md) belongs to the earlier Kev line.
 
-Experiments were recorded on September 24, 2026 (US Eastern). Historical private
+The historical experiments below were recorded on September 24, 2026 (US Eastern). Historical private
 corpora, raw reports, and experimental checkpoint files are not distributed in
 this repository, so a fresh clone cannot exactly reproduce those runs. Public
 examples and the benchmark generator support new experiments. The JevBench report
