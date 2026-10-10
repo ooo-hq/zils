@@ -45,47 +45,20 @@ checksums; it cannot select another model. Model processes run offline.
 
 ## Configure the services
 
-For evaluator setup, acceptance checks, and recovery, follow
-[Run a validator](validators.md#jevk5-queue-validator). For chain participation,
-see [Bittensor registration](bittensor-registration.md). The separate fleet can
-score a pinned text or image job on testnet; the hosted queue does not publish
-chain weights.
+Follow [queued miner setup](queue-miners.md) to connect an approved miner.
+The miner receives training data and signed upload URLs; never install a
+Supabase service key on a miner. Use separate operating-system identities and
+state directories when miners share hardware with a trusted evaluator.
 
-Complete the Supabase resources, customer Auth, HTTPS edge and protected server
-environment setup in [Supabase training](supabase-training.md). Set
-`ZILS_TRAINING_MODEL=jevk5-4b-v0.3` in the API and processor environments. Start
-the API with the existing `python -m zils.coordinator serve` command and the
-processor with:
+When identities share one GPU, set the same `ZILS_COMPUTE_LOCK` path in an
+administrator-owned directory with group read/write access. Miners must not be
+able to replace its parent directory. Without this setting, locking is per user
+and device.
 
-```sh
-.venv-kev/bin/python -m zils.coordinator process \
-  --state .private/queue-processor --reference models/jevk5-reference --device cuda
-```
-
-Use a persistent service supervisor for deployment. The processor refuses to
-start if its reference does not match the configured active model. The read-only
-`GET /v1/config` response identifies that active model; it is configuration, not
-a miner-health or inference-availability signal.
-
-On an approved miner, create the protected hotkey/wallet configuration described
-in the queue guide, download the same reference, and run:
-
-```sh
-.venv-kev/bin/python -m miner.queue \
-  --config .private/queue-miner.json --state .private/queue-miner \
-  --reference models/jevk5-reference --device cuda
-```
-
-The miner receives only approved training exports and signed storage URLs. It
-must not receive the processor's Supabase credential or calibration/test data.
-Run miner and processor under separate operating-system identities if they share
-a machine, with separate private state directories and environment files.
-
-When multiple identities share one GPU, configure the same `ZILS_COMPUTE_LOCK`
-path for them. Pre-create it in an administrator-owned directory with group
-read/write access for the service identities; do not make the parent directory
-writable by miners. Without this override the existing per-user/device lock is
-used. Other applications need their own resource coordination.
+Hosted API and processor deployment lives in
+[zils-platform](https://github.com/ooo-hq/zils-platform/blob/main/docs/jevk5-queue.md#configure-the-services).
+Bittensor validation is a separate [testnet workflow](validators.md). Each fleet
+scores one pinned text or image job; the hosted queue does not publish chain weights.
 
 ## Data and training contract
 
@@ -119,25 +92,14 @@ customer model.
 
 ## Existing jobs and rollback
 
-Keep existing job rows, manifests, references and release files unchanged. The
-API determines old download filenames from each job's model, not today's active
-setting. To evaluate older pending jobs with the new processor, also provide
-`--additional-reference models/reference` and retain that Kev base cache. Miners
-must use a reference matching their assigned job; an incompatible miner refuses
-the assignment instead of training another model.
-
-Before changing the active model, finish or inventory in-flight work and prepare
-the appropriate miners and references. Change the API environment and primary
-processor reference together. Rollback uses the same procedure with
-`ZILS_TRAINING_MODEL=kev-0.8b-v1` and the Kev reference, retaining JevK5 as an
-additional reference if any JevK5 jobs still need evaluation. Do not change a
-prepared job's identity or rewrite its historical result.
+Retain the reference and base cache matching every in-flight job. Miners reject
+an assignment whose frozen model identity differs from their reference. Never
+rewrite a prepared job or historical result to match a new model setting.
+Hosted processor transitions are documented in the platform repository.
 
 ## Verification
 
-`make check` covers both model formats through signed upload, training fixtures,
-calibration, acceptance and version-correct downloads, plus the original local
-and testnet contracts. Fixture tests establish workflow behavior, not model
-quality. Verify actual GPU training, artifact reload and held-out evaluation on
-authorized data before operational cutover. Neither a successful workflow nor
-a synthetic accuracy score establishes customer-task reliability.
+`make check` covers model identities, signed submissions, training fixtures,
+calibration, acceptance, and the original local/testnet contracts. Hosted
+upload-to-result integration is tested in zils-platform. Fixture results do not
+establish model quality or GPU capacity; qualify actual hardware before joining.

@@ -50,7 +50,7 @@ references instead; provision each hotkey separately.
 ### Image fleets
 
 Complete the pinned runtime and maximum-context hardware qualification in
-[image training](https://github.com/ooo-hq/zils/blob/main/docs/image-training.md#worker-and-service-setup)
+[image training](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md#worker-and-service-setup)
 for every participating miner and the validator. Use a fresh published starting
 checkpoint, not an earlier customer adapter. The operator supplies an audited
 image-job directory built by `zils.image_jobs.build`, its canonical image cache

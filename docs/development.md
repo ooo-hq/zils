@@ -12,19 +12,15 @@ the testnet tests:
 ```bash
 uv pip install --python .venv-kev/bin/python \
   -r requirements/dev.txt -r requirements/model.txt \
-  -r requirements/rehearsal.txt -r requirements/testnet.txt -r requirements/api.txt
+  -r requirements/rehearsal.txt -r requirements/testnet.txt -r requirements/images.txt
 uv pip install --python .venv-kev/bin/python --no-deps -r requirements/jevk5-source.txt
 make check
 ```
 
-`make check` runs Ruff linting, a formatting check, and the full Python suite.
-When `website/package.json` is present, it also runs the website checks; install
-Node.js 22+ and npm for that part.
-Its dependency preflight fails if an optional runtime is missing, so integration
-tests cannot silently skip because the SDK or model library was not installed.
-Use `make lint` for the fast checks, `make format` to sort imports and format
-Python, and `make test` for the suite. Override `PYTHON` to use another environment,
-for example `make check PYTHON=python` in an activated virtual environment.
+`make check` runs Ruff linting, formatting, and miner/validator tests. Node.js,
+Stripe, hosted database credentials, and the SDK repositories are not required.
+Use `make lint` for fast checks, `make format` to format Python, and `make test`
+for the suite. Override `PYTHON` for your environment.
 
 The process tests run real HTTP, signatures, checkpoint transfer, calibration,
 and restart handling. Training and inference use fixture workers; chain RPC is
@@ -33,19 +29,10 @@ establish model quality or GPU performance.
 
 ## Continuous integration
 
-[GitHub Actions](https://github.com/ooo-hq/zils/actions/workflows/checks.yml) runs
-lint/format checks and the full Python suite on pull requests and pushes to
-`main`. CI installs CPU PyTorch and runs model workers offline. When website
-source is present, a separate job checks JavaScript syntax, runs its tests, and
-builds the static site. Separate jobs exercise the training/API migrations and
-bulk worker in disposable PostgreSQL, and the official Python/JavaScript
-TypeSafe clients against the local gateway. See [API verification](decision-api.md#verification-and-measured-scope).
-Run the same website checks locally with
-`make check-website` using Node.js 22+ and npm.
-
-The workflow uses read-only repository permissions and pinned Action revisions.
-Repository branch-protection settings determine whether these checks are required
-before merging; the workflow itself does not change those settings.
+GitHub Actions runs linting and the subnet tests with Python 3.13 and CPU
+PyTorch. Model workers run offline; chain RPC is faked. The workflow has
+read-only repository permissions and pins Action revisions. Hosted database,
+API, billing, and SDK checks live with their respective repositories.
 
 ## Score the reference checkpoint
 
@@ -109,15 +96,9 @@ can take several minutes; the command allows up to 30 minutes per checkpoint.
 This rehearsal submits existing checkpoints. The [persistent fleet](mining.md)
 trains a new candidate each round. Neither local mode writes chain weights.
 
-## Optional image vertical
+## Image models
 
-Read [image decisions](image-decisions.md) and [image training](image-training.md).
-Both feature flags default off. Run `python -m unittest tests.test_image_vertical -v`
-for the isolated upload-to-private-prediction contract, including negative and failed
-activation paths. `make check-queue-db` verifies real PostgreSQL worker/profile and
-processing-capacity intersections. The ordinary suite never starts a GPU job.
-
-Explicit CUDA state-switching verification uses `python -m tests.test_image_adapter_gpu
---stock PATH --adapter PATH --images PATH --out NEW_PATH`. The full rehearsal driver
-requires explicit isolated services and authorized data; its output never overwrites
-earlier evidence. No command above authorizes production migration or service interruption.
+Image model contracts, training, calibration, and validation stay in this
+repository. Hosted upload, serving, and database integration checks live in
+[zils-platform](https://github.com/ooo-hq/zils-platform). No ordinary test
+starts real GPU training; optional hardware checks require explicit fixtures.

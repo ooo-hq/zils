@@ -22,7 +22,7 @@ Get the following from the operator before downloading models:
 - The coordinator's exact HTTPS base URL and confirmation that it uses
   `jevk5-4b-v0.3`.
 - Approval for your hotkey's public SS58 address. The operator registers the
-  worker and approves assignments through [miner administration](supabase-training.md#approve-miners-and-run-a-queued-miner).
+  worker and approves assignments through [miner administration](https://github.com/ooo-hq/zils-platform/blob/main/docs/supabase-training.md#approve-miners-and-run-a-queued-miner).
 - The wallet name, hotkey name, and local wallet directory for the hotkey you
   control. Provision the hotkey privately on the miner host; keep the coldkey
   and recovery phrases off the host and out of the repository.
@@ -132,7 +132,7 @@ Do not change model identifiers or hashes to make an incompatible reference pass
 
 ## Add the image vertical
 
-Complete [image runtime installation and worker qualification](image-training.md#worker-and-service-setup)
+Complete [image runtime installation and worker qualification](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md#worker-and-service-setup)
 before advertising image support. The operator must approve this hotkey for the
 exact `imajev-4b-v1` profile/runtime hashes using maximum-context measurements.
 Registering a text worker or downloading image weights does not grant that approval.

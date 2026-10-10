@@ -370,8 +370,6 @@ def evaluation_observations(job, attempts, assignments, report, *, qualification
     ):
         raise ValueError("Evaluation does not match the frozen job and baseline")
     if qualification is not None:
-        from .graded_scheduler import benchmark_binding
-
         if benchmark_binding(job) != qualification["benchmark_sha256"]:
             raise ValueError("Qualification dataset differs from its approved benchmark")
     observations = []
@@ -426,3 +424,13 @@ def evaluation_observations(job, attempts, assignments, report, *, qualification
                 "evaluated_sha256": row["sha256"],
             }
     return observations
+
+
+def benchmark_binding(job):
+    manifest = job["manifest"]
+    if models.job_model(job) != models.JEVK5 or manifest.get("selection", {}).get("previous"):
+        raise ValueError("Qualification requires the pinned base, not a customer predecessor")
+    return digest(
+        {k: manifest[k] for k in ("model", "files", "counts", "workload")}
+        | {"initial_sha256": job["initial_sha256"]}
+    )

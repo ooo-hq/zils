@@ -45,38 +45,6 @@ def validate(selection, previous_job_id=None, *, current_job_id=None):
     return selection
 
 
-def freeze(store, job):
-    from .adapter_releases import _accepted
-
-    previous_id = job["acceptance"].get("previous_job_id")
-    selection = {"version": VERSION, "root_job_id": job["id"], "previous": None}
-    if previous_id is not None:
-        rows = store.rows("fez_training_jobs", f"id=eq.{job_id(previous_id)}")
-        if len(rows) != 1 or rows[0]["owner_id"] != job["owner_id"]:
-            raise ValueError("Previous model is unavailable to this customer")
-        parent = rows[0]
-        from . import models
-
-        # Historical callers without a frozen profile retain their existing path.
-        if job.get("model_profile") is not None and models.job_model(job) != models.job_model(
-            parent
-        ):
-            raise ValueError("Previous model belongs to a different profile family")
-        delivery = _accepted(parent)
-        model_id = f"zils-adapter-{previous_id}-{delivery['sha256']}"
-        workflow = parent["result"].get("workflow") or {}
-        if workflow.get("state") != "ready" or workflow.get("model_id") != model_id:
-            raise ValueError("Previous model must have completed API activation")
-        lineage = parent["manifest"].get("selection")
-        selection["root_job_id"] = lineage["root_job_id"] if lineage else previous_id
-        selection["previous"] = {
-            "job_id": previous_id,
-            "model_id": model_id,
-            "sha256": delivery["sha256"],
-        }
-    return validate(selection, previous_id, current_job_id=job["id"])
-
-
 def check_promotion(current, entry, selection):
     """Called under the registry lock immediately before moving the task alias."""
     previous = selection.get("previous")

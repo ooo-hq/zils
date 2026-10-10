@@ -15,3 +15,7 @@ runs/
 !.env.example
 # Local PC bootstrap contains this operator's SSH configuration.
 /setup-windows-ssh.ps1
+
+*.egg-info/
+build/
+dist/

@@ -17,8 +17,11 @@ from unittest.mock import patch
 from PIL import Image
 
 import zils
-from tests.image_flow_fixture import SCRIPT as IMAGE_SCRIPT
-from tests.test_image_jobs import POLICY as IMAGE_POLICY, fixture as image_fixture
+from tests.fixture_images import (
+    POLICY as IMAGE_POLICY,
+    SCRIPT as IMAGE_SCRIPT,
+    fixture as image_fixture,
+)
 from tests.test_jobs import POLICY, examples
 from zils import fleet, image_jobs, jobs, models, protocol, validator
 from zils.runtime import CapacityUnavailable, run_child
