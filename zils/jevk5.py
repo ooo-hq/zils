@@ -130,7 +130,7 @@ def load_adapter_weights(model, checkpoint):
         or not torch.isfinite(tensors[k]).all()
         for k in expected
     ):
-        raise ValueError("adapter tensors differ from the pinned JevK5 recipe")
+        raise ValueError("adapter tensors differ from the pinned LoRA recipe")
     set_peft_model_state_dict(model, {k: v.to(expected[k].dtype) for k, v in tensors.items()})
 
 
@@ -141,7 +141,7 @@ class DecisionModel:
         from peft import LoraConfig, get_peft_model
 
         self.meta = models.metadata(checkpoint)
-        if self.meta is None:
+        if self.meta is None or self.meta["model"] != models.JEVK5:
             raise ValueError("JevK5 requires a versioned checkpoint")
         supported = (
             device == "cuda" and torch.cuda.is_available() and torch.cuda.is_bf16_supported()
@@ -194,6 +194,9 @@ class DecisionModel:
         if self.peft is not None:
             self.peft.eval()
 
+    def encode(self, state, question):
+        return encode(self.tokenizer, state, question)
+
     def logits(self, ids, count):
         import torch
 
@@ -217,7 +220,7 @@ class DecisionModel:
         return dict(zip(keys, probabilities))
 
 
-def train(args):
+def train(args, *, model_id=models.JEVK5):
     import torch
 
     torch.manual_seed(args.seed)
@@ -225,7 +228,8 @@ def train(args):
     output = Path(args.out)
     if output.exists():
         raise FileExistsError("training output exists; preserve the previous attempt")
-    model = DecisionModel(args.reference, args.device, train=True)
+    engine = models.text_runtime(model_id)
+    model = engine.DecisionModel(args.reference, args.device, train=True)
     rows = []
     for line in Path(args.data).read_text().splitlines():
         if not line.strip():
@@ -236,10 +240,15 @@ def train(args):
         question = dict(row["questions"]["decision"])
         label = question.pop("label")
         label = str(label).lower() if type(label) is bool else str(label)
-        ids, keys = encode(model.tokenizer, row["state"], question)
+        ids, keys = model.encode(row["state"], question)
         if label not in keys:
             raise ValueError("training label is not an allowed outcome")
-        rows.append((ids, keys.index(label), len(keys)))
+        temperature = (
+            model.encoder.contract.temperature_by_type[question["type"]]
+            if model_id == models.H2O
+            else 1.0
+        )
+        rows.append((ids, keys.index(label), len(keys), temperature))
     if not rows:
         raise ValueError("training export is empty")
     params = [p for p in model.peft.parameters() if p.requires_grad]
@@ -257,9 +266,9 @@ def train(args):
     getattr(torch, args.device).synchronize()
     started = time.perf_counter()
     for step, index in enumerate(order):
-        ids, label, count = rows[index]
+        ids, label, count, temperature = rows[index]
         with torch.autocast(args.device, dtype=torch.bfloat16):
-            logits = model.logits(ids, count)
+            logits = model.logits(ids, count) / temperature
             loss = torch.nn.functional.cross_entropy(
                 logits[None], torch.tensor([label], device=args.device)
             )
@@ -287,22 +296,22 @@ def train(args):
     config_path = output / "adapter_config.json"
     config = json.loads(config_path.read_text())
     config.update(
-        base_model_name_or_path=models.spec(models.JEVK5)["base"],
-        revision=models.spec(models.JEVK5)["base_revision"],
+        base_model_name_or_path=models.spec(model_id)["base"],
+        revision=models.spec(model_id)["base_revision"],
     )
     config_path.write_text(json.dumps(config, indent=2) + "\n")
-    models.write_metadata(output, temperature=1.0)
+    models.write_metadata(output, temperature=1.0, model=model_id)
     getattr(torch, args.device).synchronize()
     (output / "training_metrics.json").write_text(
         json.dumps(
             {
-                "model": models.spec(models.JEVK5),
+                "model": models.spec(model_id),
                 "examples": len(rows),
                 "optimizer_steps": math.ceil(len(rows) / 4),
                 "epochs": 1,
                 "learning_rate": 2e-5,
                 "seed": args.seed,
-                "max_tokens": MAX_TOKENS,
+                "max_tokens": engine.MAX_TOKENS,
                 "mean_loss": sum(losses) / len(losses),
                 "training_seconds": time.perf_counter() - started,
                 "device": args.device,

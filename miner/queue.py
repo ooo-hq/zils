@@ -129,6 +129,9 @@ def run_once(
                 finally:
                     temporary.unlink(missing_ok=True)
             job = {**config, "round_id": uuid.UUID(job_id).hex, "min_free_mib": minimum_mib}
+            if model == models.H2O:
+                job["min_free_mib"] = assignment["min_free_mib"]
+                job["max_seconds"] = assignment["max_seconds"]
             if model == models.IMAJEV:
                 download_images(client, auth, training, directory / "images")
                 runtime = settings.required("ZILS_IMAGE_RUNTIME_PYTHON")

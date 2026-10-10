@@ -8,6 +8,9 @@ from pathlib import Path
 
 KEV = "kev-0.8b-v1"
 JEVK5 = "jevk5-4b-v0.3"
+H2O = "h2o-lightning-4b-v1.2.3"
+DEFAULT_TRAINING_MODEL = H2O
+TEXT_ADAPTER_MODELS = (JEVK5, H2O)
 IMAJEV = "imajev-4b-v1"
 SPECS = {
     KEV: {
@@ -21,6 +24,17 @@ SPECS = {
         "name": "JevK5 4B",
         "base": "alibiserikbay/JevK5",
         "base_revision": "c4f7fdb3aeab5582336406e78d3bef11bf98833d",
+    },
+    H2O: {
+        "id": H2O,
+        "name": "H2O Lightning 4B",
+        "base": "h2oai/h2o-lightning-4b",
+        "base_revision": "acaf0d4ea251e54de928c75ef4352670d33192d3",
+        "runtime_revision": "h2o-torch210-cu130-fla052/v1",
+        "prompt": "h2o-native-v1.2.3",
+        "max_input_tokens": 2048,
+        "recipe": "h2o-language-lora16-adamw/v1",
+        "calibration": "native-then-heldout-temperature/v1",
     },
     IMAJEV: {
         "id": IMAJEV,
@@ -78,6 +92,8 @@ def profile_identity(model):
             ).read_text(),
             "recipe": profile["recipe"],
         }
+    if model == H2O:
+        runtime = json.loads(Path(__file__).with_name("h2o-pins.json").read_text())
     return {"profile_sha256": digest(profile), "runtime_sha256": digest(runtime)}
 
 
@@ -100,7 +116,7 @@ def job_model(job):
 
 def candidate_files(model):
     spec(model)
-    return {KEV: KEV_FILES, JEVK5: JEVK5_FILES, IMAJEV: IMAJEV_FILES}[model]
+    return {KEV: KEV_FILES, JEVK5: JEVK5_FILES, H2O: JEVK5_FILES, IMAJEV: IMAJEV_FILES}[model]
 
 
 def metadata(checkpoint):
@@ -114,13 +130,16 @@ def metadata(checkpoint):
         not isinstance(value, dict)
         or set(value) - {"version", "model", "kind", "temperature", "calibration", "profile"}
         or value.get("version") != VERSION
-        or value.get("model") not in (JEVK5, IMAJEV)
+        or value.get("model") not in (*TEXT_ADAPTER_MODELS, IMAJEV)
         or value.get("kind") not in ("base", "adapter")
     ):
         raise ValueError("invalid model metadata")
     if value["model"] == IMAJEV:
         if value.get("profile") != spec(IMAJEV) or value["kind"] != "adapter":
             raise ValueError("image metadata differs from the pinned profile")
+    elif value["model"] == H2O:
+        if value.get("profile") != spec(H2O):
+            raise ValueError("H2O metadata differs from the pinned profile")
     elif "profile" in value:
         raise ValueError("legacy metadata cannot contain an image profile")
     temperature = value.get("temperature")
@@ -142,7 +161,7 @@ def artifact_files(checkpoint):
         return KEV_FILES
     if (Path(checkpoint) / "head.pt").exists():
         raise ValueError("checkpoint mixes model formats")
-    if value["model"] == JEVK5 and any(
+    if value["model"] in TEXT_ADAPTER_MODELS and any(
         (Path(checkpoint) / name).exists() for name in IMAJEV_FILES[2:4]
     ):
         raise ValueError("checkpoint mixes model formats")
@@ -151,7 +170,7 @@ def artifact_files(checkpoint):
 
 def write_metadata(checkpoint, *, kind="adapter", temperature=1.0, calibration=None, model=JEVK5):
     value = {"version": VERSION, "model": model, "kind": kind, "temperature": temperature}
-    if model == IMAJEV:
+    if model in (H2O, IMAJEV):
         value["profile"] = spec(model)
     if calibration is not None:
         value["calibration"] = calibration
@@ -193,3 +212,11 @@ def set_temperature(checkpoint, value, calibration=None):
             write_meta(checkpoint, legacy)
     finally:
         path.chmod(0o444)
+
+
+def text_runtime(model):
+    import importlib
+
+    if model not in TEXT_ADAPTER_MODELS:
+        raise ValueError("unsupported text adapter runtime")
+    return importlib.import_module(".h2o" if model == H2O else ".jevk5", __package__)

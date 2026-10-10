@@ -1,0 +1,28 @@
+{
+  "files": {
+    "model.safetensors": "2d51561f221e1549d91bd1c38b3512a1435dd32950d454a9f040f1d4d11497b6",
+    "config.json": "9217764b18e7182502c371c4309ec1757e1ba8d9ef2b9b1efbaf94de2d331bba",
+    "generation_config.json": "731e41edbcd0336b21c36d03fdf6fc54977dfc28cd9396491999ca8ddb052c42",
+    "tokenizer.json": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+    "tokenizer_config.json": "316230d6a809701f4db5ea8f8fc862bc3a6f3229c937c174e674ff3ca0a64ac8",
+    "chat_template.jinja": "a4aee8afcf2e0711942cf848899be66016f8d14a889ff9ede07bca099c28f715",
+    "serve_config.json": "cdd4cd628c8b0ebbeffa0fde8c739ec32f9f9726b7b2539ffb1831d608eb2488",
+    "h2o_lightning_shim.py": "91a15e3003668547f1d3ea361a80ac9e6852e3a072a9043608044efd365dc512",
+    "LICENSE": "bbedc3fda3305820b977265f01b8619d87570a6739de3a5582c3464840f1e57a",
+    "README.md": "3e08c3b8550ce1fa924d58f26eae9c025abcdae408f6ea7acd159cda8388aa87"
+  },
+  "python": "3.12",
+  "packages": {
+    "torch": "2.10.0",
+    "transformers": "5.17.0",
+    "peft": "0.21.0",
+    "accelerate": "1.15.0",
+    "flash-linear-attention": "0.5.2",
+    "fla-core": "0.5.2",
+    "causal-conv1d": "1.7.0"
+  },
+  "cuda": "13.0",
+  "attention": "sdpa",
+  "backbone_dtype": "bfloat16",
+  "readout_dtype": "float32"
+}

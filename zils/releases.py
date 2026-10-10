@@ -66,7 +66,7 @@ def _accepted(job):
     if job["status"] != "completed" or job["result"]["delivery"]["status"] != "accepted":
         raise ValueError("Only a completed accepted job can become a release")
     model = models.job_model(job)
-    if model not in (models.JEVK5, models.IMAJEV):
+    if model not in (*models.TEXT_ADAPTER_MODELS, models.IMAJEV):
         raise ValueError("This profile cannot publish a customer API release")
     spec = models.spec(model)
     if job["manifest"].get("model") != spec or job["result"].get("model") != spec:
@@ -138,7 +138,12 @@ def _manifest(root):
         raise ValueError("Frozen training manifest changed")
     checkpoint = zils.checkpoint_hash(root)
     meta = models.metadata(root)
-    if checkpoint != delivery["sha256"] or meta is None or meta["kind"] != "adapter":
+    if (
+        checkpoint != delivery["sha256"]
+        or meta is None
+        or meta["kind"] != "adapter"
+        or meta["model"] != model
+    ):
         raise ValueError("Accepted adapter bytes or model identity changed")
     report = _json(root / "release.json")
     expected = {
@@ -205,9 +210,11 @@ def _manifest(root):
         "checkpoint_sha256": checkpoint,
         "temperature": meta["temperature"],
         "runtime_revision": spec["runtime_revision"]
-        if model == models.IMAJEV
+        if model in (models.H2O, models.IMAJEV)
         else RUNTIME_REVISION,
-        "prompt_version": spec["prompt"] if model == models.IMAJEV else PROMPT_VERSION,
+        "prompt_version": spec["prompt"]
+        if model in (models.H2O, models.IMAJEV)
+        else PROMPT_VERSION,
         "release_date": date.date().isoformat(),
         "files": {n: _hash(root / n) for n in files},
         **extra,

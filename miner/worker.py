@@ -98,14 +98,14 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
         "--out",
         str(raw),
     ]
-    if model == models.JEVK5:
-        if config["base_revision"] != models.spec(models.JEVK5)["base_revision"]:
+    if model in models.TEXT_ADAPTER_MODELS:
+        if config["base_revision"] != models.spec(model)["base_revision"]:
             raise ValueError("training model revision differs from its reference")
         command = [
             runtime,
             "-u",
             "-m",
-            "zils.jevk5",
+            "zils.h2o" if model == models.H2O else "zils.jevk5",
             "train",
             "--data",
             str(directory / "miner-training.jsonl"),
@@ -138,6 +138,8 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
             "--out",
             str(raw),
         ]
+    if model == models.H2O:
+        command[0] = settings.required("ZILS_H2O_RUNTIME_PYTHON")
     print(
         f"miner {config['uid']}: training round {job['round_id']} on {device}; log {work / 'training.log'}",
         flush=True,
@@ -159,6 +161,7 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
             device,
             model=model,
             minimum_mib=job.get("min_free_mib", 0),
+            timeout=job.get("max_seconds", 3600),
             check_lease=check_lease,
         )
     frozen = work / ("artifacts-" + uuid.uuid4().hex)

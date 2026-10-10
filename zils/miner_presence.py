@@ -15,7 +15,7 @@ def validate_presence(body):
         raise APIError(400, "Presence contains only installed profiles and readiness.")
     profiles = body["profiles"]
     if not isinstance(profiles, list) or not 1 <= len(profiles) <= len(models.SPECS):
-        raise APIError(400, "Advertise 1–3 installed profiles.")
+        raise APIError(400, "Advertise distinct installed profiles.")
     seen = set()
     for profile in profiles:
         if (
@@ -52,7 +52,7 @@ def presence_payload(references, device, *, minimum_mib=0, busy=False):
             {
                 "model": model,
                 **models.profile_identity(model),
-                "trainer_sha256": trainer_identity(),
+                "trainer_sha256": trainer_identity(model),
                 "ready": ready,
             }
         )
