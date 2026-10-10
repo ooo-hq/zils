@@ -7,8 +7,9 @@ assignment, customer job response and accepted release. Existing manifests that
 predate model identities retain the original Kev 0.8B contract.
 
 This changes the training workflow. It does not add a hosted prediction API or
-automatically approve customer-data exports or miner assignments. The local
-and testnet fleet remains on its existing Kev contract.
+automatically approve customer-data exports or miner assignments. Local and
+testnet fleets can use the same JevK5 profile through [fleet setup](mining.md);
+existing Kev jobs retain their original contract.
 
 ## Install and create the reference
 
@@ -56,7 +57,8 @@ and device.
 
 Hosted API and processor deployment lives in
 [zils-platform](https://github.com/ooo-hq/zils-platform/blob/main/docs/jevk5-queue.md#configure-the-services).
-Bittensor validation is a separate [testnet workflow](validators.md).
+Bittensor validation is a separate [testnet workflow](validators.md). Each fleet
+scores one pinned text or image job; the hosted queue does not publish chain weights.
 
 ## Data and training contract
 

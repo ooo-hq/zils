@@ -14,9 +14,15 @@ its setup moved to
 Only approved operators should receive its service credentials. Miners need no
 platform installation or database credential.
 
+For image jobs, install the isolated runtime, configure its environment, and
+complete [image qualification](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md#worker-and-service-setup). Add
+`--additional-reference models/imajev-starting-checkpoint` to the processor.
+It selects the matching model for each frozen job; keep image admission off until
+evaluation and activation are verified. This does not change the primary text reference.
+
 ## Bittensor testnet validator
 
-This path uses the Kev fleet and private-network transport. It is a closed
+This path uses a model-pinned fleet and private-network transport. It is a closed
 rehearsal, not public miner discovery or an untrusted-checkpoint sandbox.
 
 ### 1. Register and check eligibility
@@ -34,10 +40,10 @@ SDK still enforces the chain's transaction requirements.
 
 ### 2. Prepare the registered fleet
 
-Use Linux or macOS and complete the
-[Kev repository setup](../README.md#repository-setup), including its downloaded
-`models/reference`. Install `requirements/testnet.txt` in `.venv-kev`.
-Create the benchmark and registered identity file using
+Complete the [fleet model setup](mining.md) for the operator-selected text or image
+profile, including the matching reference and qualified hardware.
+Install `requirements/testnet.txt` in `.venv-kev`.
+Create the frozen job and registered identity file using
 [testnet fleet setup](testnet.md#provision-the-registered-identities).
 Keep test/calibration data on the validator and distribute only each miner's
 assigned bundle. The validator host needs its hotkey, not the coldkey.

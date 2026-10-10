@@ -21,14 +21,16 @@ and the guarded Bittensor testnet integration.
 | --- | --- |
 | Run a JevK5 miner on NVIDIA hardware | [Queued miners](docs/queue-miners.md) |
 | Run a JevK5 miner on Apple silicon | [Mac miners](docs/mac-miners.md) |
+| Run a qualified ImaJev image miner | [Image queue setup](docs/queue-miners.md#add-the-image-vertical), [image fleet setup](docs/mining.md#image-fleets) |
 | Join the closed Bittensor testnet fleet | [Registration](docs/bittensor-registration.md), then [miner setup](docs/mining.md) |
 | Run a validator | [Validator setup](docs/validators.md) |
 | Develop or evaluate the subnet | [Local development](docs/development.md), [evaluation contract](docs/evaluation.md) |
 
-Both workflows require operator admission. The customer training queue uses
-JevK5 4B; the closed Bittensor fleet uses Kev 0.8B. Queue evaluation does not
-publish chain weights. Mainnet participation and public miner discovery are
-not implemented.
+Both workflows require operator admission. Customer workers and closed Bittensor
+fleets support JevK5 4B text and qualified ImaJev 4B image jobs; legacy Kev 0.8B
+jobs remain supported. Each fleet pins one job and model. Text and image scores
+are not combined into one reward vector. Queue evaluation does not publish
+chain weights. Mainnet participation and public miner discovery are not implemented.
 
 ## Repository scope
 
@@ -95,8 +97,9 @@ uv pip install --python .venv-kev/bin/python \
 .venv-kev/bin/python -m scripts.download_models
 ```
 
-JevK5 operators should use the [JevK5 reference setup](docs/jevk5-queue.md#install-and-create-the-reference)
-instead. References are downloaded from pinned upstream revisions. Private
+For JevK5 and ImaJev fleets, follow the [model-specific fleet setup](docs/mining.md).
+JevK5 queue miners use the [JevK5 reference setup](docs/jevk5-queue.md#install-and-create-the-reference).
+References are downloaded from pinned upstream revisions. Private
 checkpoints, wallets, datasets, and generated bundles are excluded from Git.
 
 ## Development

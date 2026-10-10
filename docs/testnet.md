@@ -61,7 +61,9 @@ entry for each machine:
 `777` is an example only; use the operator-confirmed subnet ID. Each miner UID
 must be the value returned by the chain for that hotkey, not a local queue ID.
 
-Create or reuse the local benchmark described in the [miner guide](mining.md).
+Create a frozen JevK5 text or ImaJev image job and its matching reference using
+the [miner guide](mining.md#prepare-bundles-on-the-validator). Legacy Kev benchmarks
+remain supported. A fleet and its round scores always belong to one model profile.
 Replace `VALIDATOR_PRIVATE_IPV4` with the validator's numeric private address.
 Generate a fresh fleet. Match `--miner-ports` to the roster's order and count
 (use `8901 8902 8903` for three miners). The output folder names use chain UIDs.
@@ -70,7 +72,7 @@ The command copies public wallet references into bundles, **never key files**:
 ```bash
 .venv-kev/bin/python -m zils.fleet init --out .private/testnet-fleet \
   --host VALIDATOR_PRIVATE_IPV4 --miner-ports 8901 \
-  --benchmark .private/benchmarks/local \
+  --benchmark .private/jobs/text-v1 --checkpoint models/jevk5-reference \
   --testnet-identities .private/testnet-identities.json
 .venv-kev/bin/python -m zils.testnet preflight \
   --config .private/testnet-fleet/validator/config.json
@@ -81,6 +83,13 @@ hotkey separately. [mining.md](mining.md) covers the model environment, private
 networking and startup command. A changed or deregistered UID stops the chain
 path; regenerate the roster with current registrations. Scores are never
 silently reassigned to a replacement hotkey.
+
+For an image fleet, use the image job/reference and add the verified image cache
+and measured capacity arguments from [image fleet setup](mining.md#image-fleets).
+The same registered identities can be used in a later vertical-specific rehearsal,
+but only one process may publish weights for the validator hotkey/subnet. There
+is no cross-vertical reward aggregation. Reports carry the frozen model profile;
+the publisher rejects a report from a different profile.
 
 ## Run one round
 

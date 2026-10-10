@@ -3,7 +3,9 @@
 **Confirm the testnet subnet ID with the Zils operator before registering.**
 This guide joins an existing subnet; a miner does not create a subnet.
 
-Zils currently connects its **Kev 0.8B closed fleet** to Bittensor testnet.
+Zils connects a **closed, model-pinned fleet** to Bittensor testnet. The operator
+selects JevK5 4B text, ImaJev 4B image, or a legacy Kev 0.8B job and qualifies
+the participating hardware. Registration alone does not select a model.
 The [verified round on subnet 579](testnet-round-001.md) is a historical result,
 not an invitation to register on that subnet today. The fleet rejects mainnet.
 The current [JevK5 queue](jevk5-queue.md) uses approved hotkeys and local queue

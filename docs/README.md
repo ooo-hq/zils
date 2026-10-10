@@ -1,7 +1,9 @@
 # Miner and validator documentation
 
 This repository covers workers, evaluation, signed protocols, and testnet
-participation. Start with the guide matching your role.
+participation. Customer workers and fleets support JevK5 text and qualified
+ImaJev image jobs, with one model pinned per job. Start with the guide matching
+your role.
 
 | Task | Guide |
 | --- | --- |
