@@ -44,7 +44,7 @@ class InternalNamesTest(unittest.TestCase):
         self.assertEqual(runtime.canonical({}), b"fez-fleet/v1\0{}")
 
     def test_cli_and_direct_runners(self):
-        for module in ("zils", "zils.coordinator", "zils.workflow"):
+        for module in ("zils", "miner.queue", "zils.fleet"):
             with self.subTest(module=module):
                 result = subprocess.run(
                     [sys.executable, "-m", module, "--help"],

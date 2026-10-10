@@ -1,8 +1,10 @@
 """Hotkey authentication for the training queue, bound to one service and request."""
 
 import json
+import threading
 import time
 import uuid
+from contextlib import contextmanager
 
 from bittensor_wallet import Keypair
 
@@ -54,3 +56,40 @@ def verify(message, audience, path, store):
         raise APIError(401, "Invalid worker signature or request timestamp.") from None
     store.rpc("fez_worker_nonce", {"p_hotkey": payload["hotkey"], "p_nonce": payload["nonce"]})
     return payload["hotkey"], payload["body"]
+
+
+def identifier(value):
+    try:
+        if str(uuid.UUID(value)) != value:
+            raise ValueError()
+    except (ValueError, TypeError, AttributeError):
+        raise APIError(400, "Invalid job or lease identifier.") from None
+    return value
+
+
+@contextmanager
+def lease_heartbeat(renew, interval=60):
+    stopped, errors = threading.Event(), []
+
+    def keep_alive():
+        while not stopped.wait(interval):
+            try:
+                renew()
+            except Exception as error:
+                errors.append(error)
+                return
+
+    renew()
+    thread = threading.Thread(target=keep_alive, daemon=True)
+    thread.start()
+
+    def check_lease():
+        if errors:
+            raise APIError(409, "Lease renewal failed; this attempt must be retried.")
+
+    try:
+        yield check_lease
+        check_lease()
+    finally:
+        stopped.set()
+        thread.join(timeout=35)

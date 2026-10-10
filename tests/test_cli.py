@@ -23,7 +23,6 @@ class CLITest(unittest.TestCase):
                 "miner",
                 "zils.fleet",
                 "scripts.rehearsal",
-                "zils.coordinator",
                 "miner.queue",
             ]
         for module in modules:

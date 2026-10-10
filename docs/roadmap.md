@@ -1,58 +1,23 @@
-# Next milestones
+# Subnet milestones
 
-The local training loop and guarded testnet integration are implemented. The
-[first registered training-to-chain round](testnet-round-001.md) completed on
-testnet subnet 579, including verification after commit–reveal.
-Public discovery, isolated untrusted-model evaluation, benchmark refresh, and
-model release/promotion rules remain work for an open competition.
+The local training loop and guarded Bittensor testnet integration are implemented.
+The [first registered training-to-chain round](testnet-round-001.md) recorded a
+completed commit–reveal cycle. That evidence does not establish current uptime,
+open participation, mainnet support, or production model quality.
 
-## Customer jobs
+Work remaining for an open competition:
 
-The experimental [customer job workflow](customer-jobs.md) freezes authorized
-data and acceptance criteria, binds submissions to a job, compares candidates
-against a calibrated starting checkpoint, and exports qualifying artifacts
-locally. Each fleet configuration currently pins one job.
+1. Public miner discovery and admission rules.
+2. Isolated evaluation of hostile checkpoints and stronger operational boundaries.
+3. Refreshed held-out benchmarks with comparable quality and performance scoring.
+4. Explicit model promotion and rollback policy for subnet winners.
+5. Verifiable public miner/validator health and chain-result reporting.
 
-The [Supabase training queue](supabase-training.md) now connects private uploads,
-approved-miner assignments, expiring claims, and accepted-model downloads.
-It has been tested locally with fixture models and a disposable PostgreSQL
-database. A live Supabase smoke test verified authentication, customer isolation,
-private uploads, processor validation, and cancellation. Real queued training
-remains unverified.
+Customer-job data contracts, calibration, and acceptance are shared with the
+hosted platform. Hosted account management, APIs, billing, storage, and serving
+belong to [zils-platform](https://github.com/ooo-hq/zils-platform); SDKs and agent
+interfaces belong to [zils-sdk](https://github.com/ooo-hq/zils-sdk).
 
-The separate [Zils decision API](decision-api.md) now implements authenticated
-shared JevK5 inference and durable bulk jobs. Local database, SDK, and real GPU
-checks passed; hosted deployment and automatic adapter promotion remain unverified
-or unimplemented. Miners continue to train candidates, not serve bulk requests.
-
-Next steps include real queued-training validation, rewards across different jobs,
-independent final evaluation, confidential compute, retention controls, billing,
-and authenticated inference deployment with release approval and rollback.
-
-The [automatic training workflow](automatic-training.md) now implements approved
-miner assignment gated on GPU capacity and verified activation of accepted
-customer adapters. Deployment requires explicit miner and hardware configuration;
-it does not provision capacity or weaken evaluation thresholds. Shared/private
-serving can use one base, and updated registries reload without per-customer
-service restarts. See the workflow guide for verification scope and remaining
-operational requirements.
-
-## Dashboard plans
-
-Planned dashboard capabilities:
-
-- Current winning Zils checkpoint, version/hash, download, and winner history.
-- Decision accuracy, Brier probability score, and highly confident mistakes;
-  show dataset/rubric versions and comparable evaluation settings.
-- Median and p95 response latency, with the measured hardware and timing scope.
-- Submission queue, evaluation progress, and per-round candidate comparisons.
-- Miner/validator health and published chain weights/reward allocation, with
-  testnet status clearly labeled.
-
-Use Teutonic's visibility into model progress as inspiration. Zils's dashboard
-should report its decision-model results; percentages from different benchmark
-suites must not be presented as directly comparable.
-
-The [public model page](https://zils.ai/model) presents recorded benchmark results
-and the verified testnet round. Live subnet views require an explicit public
-aggregate feed; unavailable data stays labeled.
+The [public model page](https://zils.ai/model) presents recorded research and
+subnet evidence. Live views require an explicit aggregate feed; unavailable
+information must remain labeled as unavailable.

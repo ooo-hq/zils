@@ -21,7 +21,7 @@ Get the following from the operator before downloading models:
 - The coordinator's exact HTTPS base URL and confirmation that it uses
   `jevk5-4b-v0.3`.
 - Approval for your hotkey's public SS58 address. The operator registers the
-  worker and approves assignments through [miner administration](supabase-training.md#approve-miners-and-run-a-queued-miner).
+  worker and approves assignments through [miner administration](https://github.com/ooo-hq/zils-platform/blob/main/docs/supabase-training.md#approve-miners-and-run-a-queued-miner).
 - The wallet name, hotkey name, and local wallet directory for the hotkey you
   control. Provision the hotkey privately on the miner host; keep the coldkey
   and recovery phrases off the host and out of the repository.
