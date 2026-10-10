@@ -81,6 +81,7 @@ def public_job(job):
             else None
         )
     result["selection"] = (job.get("manifest") or {}).get("selection")
+    result["jev_comparison"] = job.get("jev_comparison")
     return result
 
 
@@ -232,6 +233,19 @@ class Service:
                         **({"p_intake": intake} if intake is not None else {}),
                     },
                 )
+                if body.get("allow_jev_comparison") is True and selected != models.IMAJEV:
+                    job = self.store.patch(
+                        JOBS,
+                        f"id=eq.{job['id']}&owner_id=eq.{owner}&status=eq.uploading",
+                        {
+                            "jev_comparison": {
+                                "status": "pending",
+                                "model": "jev-1.13.0",
+                                "run_id": str(uuid.uuid4()),
+                                "authorized_at": datetime.now(timezone.utc).isoformat(),
+                            }
+                        },
+                    )[0]
                 return self.uploads(job)
         match = re.fullmatch(
             r"/v1/jobs/([a-f0-9-]+)(?:/(uploads|submit|downloads|cancel|image-assets))?", path

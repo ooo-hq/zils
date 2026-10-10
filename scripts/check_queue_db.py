@@ -47,6 +47,7 @@ def main():
             for source in (
                 "tests/sql/queue-bootstrap.sql",
                 "supabase/migrations/202609300001_training_jobs.sql",
+                "supabase/migrations/202610090003_jev_comparison.sql",
                 "tests/sql/queue-assertions.sql",
                 "supabase/migrations/202610040001_decision_api.sql",
                 "tests/sql/api-assertions.sql",

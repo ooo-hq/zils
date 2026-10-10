@@ -5,11 +5,17 @@ insert into storage.objects(bucket_id) values ('fez-training-data'),('fez-traini
 set role service_role;
 select id as job from public.fez_create_training_job('11111111-1111-4111-8111-111111111111','test-job','{"min_accuracy":0.8,"min_brier_improvement":0.01}') \gset
 select id as other from public.fez_create_training_job('22222222-2222-4222-8222-222222222222','other-job','{"min_accuracy":0.8,"min_brier_improvement":0.01}') \gset
+update public.fez_training_jobs set jev_comparison='{"status":"completed","accuracy":0.75}' where id=:'job';
 reset role;
 set role authenticated;
 select set_config('request.jwt.claim.sub','11111111-1111-4111-8111-111111111111',false);
 do $$ begin
   if (select count(*) from public.fez_training_jobs)<>1 then raise exception 'tenant isolation failed'; end if;
+  if (select jev_comparison->>'accuracy' from public.fez_training_jobs) <> '0.75' then raise exception 'owner comparison read failed'; end if;
+  begin
+    update public.fez_training_jobs set jev_comparison='{"status":"completed","accuracy":1}';
+    raise exception 'customer forged Jev results';
+  exception when insufficient_privilege then null; end;
   if (select count(*) from storage.objects)<>1 then raise exception 'private storage restriction failed'; end if;
   begin
     perform public.fez_claim_training('worker-a');
