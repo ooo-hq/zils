@@ -1,4 +1,0 @@
-requests==2.34.2
-stripe==16.0.0
-boto3==1.43.110
--r images.txt

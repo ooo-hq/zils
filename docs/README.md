@@ -1,32 +1,20 @@
-# Documentation
+# Miner and validator documentation
 
-Zils provides a decision API, customer model training, and a closed Bittensor
-testnet training fleet. Start with the [repository README](../README.md) for an
-overview, then choose the guide for your role below. Customer training uses
-JevK5 4B; the testnet fleet uses Kev 0.8B and requires operator admission.
+This repository covers workers, evaluation, signed protocols, and testnet
+participation. Start with the guide matching your role.
 
-| Task | Documentation |
+| Task | Guide |
 | --- | --- |
-| Serve typed decisions and bulk jobs | [Zils decision API](decision-api.md) |
-| Classify photos or train an image model | [Image decisions](image-decisions.md), [image training](image-training.md), [rollout evidence](image-rollout.md) |
-| Test prepaid credit and Stripe Checkout | [Prepaid billing](billing.md) |
-| Run a JevK5 miner | [JevK5 miner setup](queue-miners.md) |
-| Register on Bittensor testnet | [Miner registration](bittensor-registration.md), [closed fleet setup](testnet.md) |
-| Run a validator | [Queue and Bittensor validators](validators.md) |
-| Train on authorized business data | [Customer decision jobs](customer-jobs.md) |
-| Connect customer uploads to approved miners | [Supabase training queue](supabase-training.md) |
-| Automatically train and activate customer adapters | [Automatic training workflow](automatic-training.md) |
-| Select a first model or upgrade an active version | [Customer version selection](version-selection.md) |
-| Develop and evaluate checkpoints | [Local development](development.md), [evaluation contract](evaluation.md) |
-| Understand benchmark methodology | [Synthetic benchmark](benchmark.md) |
-| Inspect measured results | [Experiment results](experiments.md), [public JevBench comparison](jevbench-public.md), [aggregate JSON](data/jevbench-public-001.json), [verified testnet round](testnet-round-001.md) |
-| Review planned capabilities | [Roadmap](roadmap.md) |
+| Operate a miner | [Queued miners](queue-miners.md), [Mac miners](mac-miners.md), [closed fleet](mining.md) |
+| Operate a validator | [Validator setup](validators.md), [evaluation contract](evaluation.md) |
+| Join the testnet | [Registration](bittensor-registration.md), [testnet operation](testnet.md) |
+| Prepare models or training data | [JevK5 reference](jevk5-queue.md), [customer data contract](customer-jobs.md), [version selection](version-selection.md) |
+| Develop and inspect evidence | [Development](development.md), [benchmark](benchmark.md), [experiments](experiments.md), [JevBench](jevbench-public.md), [recorded testnet round](testnet-round-001.md) |
 
-Example paths in setup guides are relative to the repository root. Private
-datasets, wallets, generated bundles, checkpoints, and raw experiment records
-are excluded from Git. Reports identify where private inputs prevent exact
-reproduction from a public checkout; measured hardware is included where it
-affects interpretation.
+[Repository boundaries](repositories.md) explains where hosted services, client
+SDKs, and the website live. [Miner grading](miner-grading.md) describes the
+quality/assignment policy. [Roadmap](roadmap.md) identifies remaining subnet work.
 
-Zils was formerly named Fez. Historical experiment reports and aggregate JSON
-retain their original names and identifiers to preserve the evidence record.
+Paths in operator examples are relative to this repository. Keep private data,
+wallets, generated bundles, and checkpoints outside Git. Historical reports
+retain the former Fez names and identifiers to preserve their evidence.

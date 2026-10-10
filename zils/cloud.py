@@ -1,4 +1,4 @@
-"""Small Supabase REST client; server credentials never travel to workers or browsers."""
+"""Bounded worker file transfers; no hosted storage or account dependencies."""
 
 import json
 import math
@@ -126,105 +126,6 @@ def upload(url, source, headers=None, method="PUT"):
             response.close()
     except requests.RequestException:
         raise APIError(503, "File upload interrupted; please retry.") from None
-
-
-class Supabase:
-    def __init__(self, url=None, key=None):
-        self.url = trusted_url(url or os.environ["SUPABASE_URL"])
-        self.key = key or os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-        self.headers = {"apikey": self.key, "Authorization": f"Bearer {self.key}"}
-
-    def request(self, method, path, body=None, headers=None):
-        try:
-            response = requests.request(
-                method,
-                self.url + path,
-                json=body,
-                headers={**self.headers, **(headers or {})},
-                timeout=(10, 30),
-                allow_redirects=False,
-            )
-        except requests.RequestException:
-            raise APIError(503, "Supabase is unavailable; please retry.") from None
-        try:
-            if not 200 <= response.status_code < 300:
-                # Never send database details, storage tokens or upstream URLs to a caller.
-                if response.status_code in (400, 409, 422):
-                    try:
-                        detail = response.json()
-                    except ValueError:
-                        detail = None
-                    if isinstance(detail, dict) and detail.get("code") == "P0402":
-                        raise APIError(
-                            402,
-                            "Add credit or resolve your payment issue before submitting this job.",
-                        )
-                    raise APIError(409, "Operation conflicts with the current job or lease state.")
-                raise APIError(503, "Supabase request failed; check service configuration.")
-            return response.json() if response.content else None
-        finally:
-            response.close()
-
-    def user(self, token):
-        if not isinstance(token, str) or not token or len(token) > 8192:
-            raise APIError(401, "Sign in to continue.")
-        try:
-            response = requests.get(
-                self.url + "/auth/v1/user",
-                headers={
-                    "apikey": self.key,
-                    "Authorization": "Bearer " + token,
-                },
-                timeout=(10, 20),
-                allow_redirects=False,
-            )
-        except requests.RequestException:
-            raise APIError(503, "Authentication is unavailable; please retry.") from None
-        try:
-            if response.status_code in (401, 403):
-                raise APIError(401, "Your session has expired; sign in again.")
-            if response.status_code != 200:
-                raise APIError(503, "Authentication is unavailable; please retry.")
-            user = response.json()
-            if not user.get("id") or user.get("is_anonymous"):
-                raise APIError(401, "Sign in with a verified account.")
-            return user["id"]
-        finally:
-            response.close()
-
-    def rows(self, table, query=""):
-        return self.request("GET", f"/rest/v1/{table}?{query}")
-
-    def patch(self, table, query, values):
-        return self.request(
-            "PATCH", f"/rest/v1/{table}?{query}", values, {"Prefer": "return=representation"}
-        )
-
-    def rpc(self, name, values):
-        return self.request("POST", "/rest/v1/rpc/" + name, values)
-
-    @property
-    def storage(self):
-        if not hasattr(self, "_storage"):
-            from .storage import storage_for
-
-            self._storage = storage_for(self)
-        return self._storage
-
-    def signed(self, bucket, path, *, upload=False):
-        return self.storage.signed(bucket, path, upload=upload)
-
-    def download(self, bucket, path, destination, limit, *, max_seconds=600):
-        return self.storage.download(bucket, path, destination, limit, max_seconds=max_seconds)
-
-    def upload(self, bucket, path, source):
-        return self.storage.upload(bucket, path, source)
-
-    def exists(self, bucket, path):
-        return self.storage.exists(bucket, path)
-
-    def remove(self, bucket, paths):
-        return self.storage.remove(bucket, paths)
 
 
 def _download_worker():

@@ -7,7 +7,7 @@ local workflow, not a hosted customer service or a published model release.
 
 This page describes the local bundle workflow, where one fleet configuration
 pins one job. For a shared pool that claims different customer jobs without
-regenerating bundles, use the [Supabase training queue](supabase-training.md).
+regenerating bundles, use the [Supabase training queue](https://github.com/ooo-hq/zils-platform/blob/main/docs/supabase-training.md).
 It adds private uploads and approved-miner assignments; cross-job chain rewards
 remain unimplemented. The existing synthetic fleet remains supported.
 
@@ -67,7 +67,7 @@ output directories and a new job version when changing inputs or thresholds.
   --config .private/fleet-example-decisions-v1/validator/config.json --rounds 1
 ```
 
-In separate terminals, start each miner as in the [fleet setup](../README.md#run-a-local-fleet):
+In separate terminals, start each miner as in the [fleet setup](../README.md#miner-setup):
 
 ```bash
 ZILS_PYTHON="$PWD/.venv-kev/bin/python" HF_HOME="$PWD/.cache/huggingface" \
@@ -111,6 +111,6 @@ no model meets the delivery criteria. Scores from different customer jobs must
 not be pooled as if they measured the same task. Repeated rounds reuse test data;
 acceptance is a measured threshold on that set, not a guarantee of generalization
 or statistical significance. Reserve independent final evaluation data for real
-deployment decisions. The separate [Zils decision API](decision-api.md) serves approved shared JevK5
+deployment decisions. The separate [Zils decision API](https://github.com/ooo-hq/zils-platform/blob/main/docs/decision-api.md) serves approved shared JevK5
 weights in a local pilot. Deployment of these training artifacts, automated release
 approval/rollback, billing, and cross-job reward allocation remain future work.

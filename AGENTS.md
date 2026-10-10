@@ -13,9 +13,17 @@ engineers, operators, and investors who have no access to the maintainer's setup
 - Keep the implementation small and inspect existing code before adding a new
   dependency or abstraction. Verify commands, links, and claims before publishing.
 
+# Repository boundary
+
+This repository is for miners, validators, and their shared model, evaluation,
+and protocol contracts. Hosted APIs, billing, database/storage adapters and
+orchestration live in `zils-platform`. Client SDKs, CLI and MCP live in `zils-sdk`;
+the website lives in `zils-web`. Do not add product services or their dependencies
+here. Keep signed protocol versions and model identities stable during moves.
+
 # Architecture references
 
-- Read `docs/customer-jobs.md` for customer data, acceptance criteria, and export rules.
-- Read `docs/supabase-training.md` for the hosted queue, trust boundaries, and setup.
-- Read `docs/roadmap.md` for limitations and planned capabilities. Hosted customer
-  inference is planned; the training queue does not deploy prediction endpoints.
+- Read `docs/repositories.md` for ownership and dependency direction.
+- Read `docs/evaluation.md` and `docs/customer-jobs.md` for data and acceptance.
+- Read `docs/validators.md`, `docs/mining.md`, and `docs/queue-miners.md` for operators.
+- Read `docs/roadmap.md` for limits. Mainnet and public discovery are not implemented.

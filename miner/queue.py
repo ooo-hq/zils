@@ -15,8 +15,8 @@ import zils
 from miner.worker import train_candidate
 from zils import models, protocol, queue_protocol, settings
 from zils.cloud import MAX_DATA_BYTES, APIError, download, trusted_url, upload
-from zils.coordinator import identifier, lease_heartbeat
 from zils.miner_presence import presence_loop
+from zils.queue_protocol import identifier, lease_heartbeat
 from zils.runtime import CapacityUnavailable, digest, gpu_ready, locked, prepare_base
 
 

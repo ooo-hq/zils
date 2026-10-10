@@ -123,7 +123,7 @@ class ImageEngine:
         from peft import get_peft_model_state_dict, set_peft_model_state_dict
         from safetensors.torch import load_file
 
-        from .adapter_releases import read_release
+        from .releases import read_release
 
         previous, previous_signature = self.active_fingerprint, self.active_signature
         self.active_fingerprint = None
