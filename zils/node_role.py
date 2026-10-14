@@ -52,7 +52,12 @@ def units_for(role):
 
 def check(path, root=Path("/etc/zils-node")):
     role = load_role(path)
-    missing = [str(p) for p in required_files(role) if not p.is_file()]
+    files = required_files(role)
+    root = Path(root).resolve()
+    for p in files:
+        if not p.resolve().is_relative_to(root):
+            raise ValueError(f"identity path {p} resolves outside root {root}")
+    missing = [str(p) for p in files if not p.is_file()]
     if missing:
         raise ValueError("refusing role; missing identity files: " + ", ".join(missing))
     return units_for(role)

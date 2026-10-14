@@ -60,7 +60,7 @@ class NodeRoleTest(unittest.TestCase):
     def test_unknown_role_and_missing_field_are_named(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            with self.assertRaisesRegex(ValueError, "role"):
+            with self.assertRaisesRegex(ValueError, "role must be one of"):
                 node_role.check(write(root / "a.json", {"role": "serve-h2o"}), root=root)
             role = self.miner()
             del role["coordinator"]
@@ -73,6 +73,17 @@ class NodeRoleTest(unittest.TestCase):
             role = self.miner()
             role["wallet"]["path"] = str(root / "wallets")
             with self.assertRaisesRegex(ValueError, "hotkeys/gpu4090"):
+                node_role.check(write(root / "role.json", role), root=root)
+
+    def test_identity_files_outside_root_are_refused(self):
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
+            root = Path(tmp)
+            wallets = Path(outside) / "wallets"
+            (wallets / "fez-testnet/hotkeys").mkdir(parents=True)
+            (wallets / "fez-testnet/hotkeys/gpu4090").write_text("{}")
+            role = self.miner()
+            role["wallet"]["path"] = str(wallets)
+            with self.assertRaisesRegex(ValueError, "root"):
                 node_role.check(write(root / "role.json", role), root=root)
 
     def test_examples_validate_against_schema_fields(self):
