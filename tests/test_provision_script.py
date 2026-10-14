@@ -2,12 +2,12 @@
 
 import os
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/provision_node.sh"
-PYTHON = "/Users/ken/Projects/OOO/Zils/zils/.venv-kev/bin/python"
 PHASES = [
     "driver",
     "accounts",
@@ -97,7 +97,7 @@ class ProvisionScriptTest(unittest.TestCase):
         self.assertNotIn("scripts/qualify_node.py", text)
         env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
         result = subprocess.run(
-            [PYTHON, "-m", "scripts.qualify_node", "--help"],
+            [sys.executable, "-m", "scripts.qualify_node", "--help"],
             cwd=ROOT,
             env=env,
             capture_output=True,

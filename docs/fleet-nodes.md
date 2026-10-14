@@ -78,7 +78,7 @@ capacity controller) until a `serve-image` node exists; it is the only host
 where two serving runtimes share a card.
 
 Role switching is editing `role.json` and re-running `scripts/apply_role.sh`, never an in-place edit
-of units. A node that changes role loses its state directory on purpose.
+of units. State under /var/lib/zils-node is kept across role changes; remove it by hand if a different role must start clean.
 
 ## Boot-time injection
 
@@ -152,7 +152,7 @@ already-provisioned one (see the [runbook](fleet-node-runbook.md)):
    `requirements/*.txt` pins; no network after this step except references.
 4. References downloaded and verified against `h2o-pins.json`.
 5. Units installed, all disabled.
-6. `scripts/qualify_node.py` run; its report is the proof the image is good.
+6. `python -m scripts.qualify_node run`; its report is the proof the image is good.
 7. Writes `/etc/zils-node/image.json`: subnet revision, platform revision,
    pins hash, qualification report hash, build time.
 
