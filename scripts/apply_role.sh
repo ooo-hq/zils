@@ -24,6 +24,14 @@ for p in [etc] + ([wallets] + list(wallets.rglob("*")) if wallets.exists() else 
     shutil.chown(p, group="zils-compute")
     if p != etc:
         p.chmod(0o750 if p.is_dir() else 0o640)
+# The fleet config directory is group-writable for the validator unit.
+fleet = etc / "fleet"
+if fleet.is_dir():
+    for p in [fleet] + list(fleet.rglob("*")):
+        if p.is_symlink():
+            continue
+        shutil.chown(p, group="zils-compute")
+        p.chmod(0o770 if p.is_dir() else 0o640)
 PY
 for f in "$ROOT"/deploy/units/*.service; do
   install -m 0644 "$f" /etc/systemd/system/
@@ -33,6 +41,7 @@ for f in "$ROOT"/deploy/units/*.service; do
   unit=$(basename "$f")
   if [[ " ${WANTED[*]} " == *" $unit "* ]]; then
     systemctl enable --now "$unit"
+    systemctl restart "$unit"
   else
     systemctl disable --now "$unit" 2>/dev/null || true
   fi

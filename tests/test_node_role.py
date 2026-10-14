@@ -42,7 +42,8 @@ class NodeRoleTest(unittest.TestCase):
             root = Path(tmp)
             (root / "wallets/fez-testnet/hotkeys").mkdir(parents=True)
             (root / "wallets/fez-testnet/hotkeys/validator").write_text("{}")
-            (root / "fleet-config.json").write_text("{}")
+            (root / "fleet/validator").mkdir(parents=True)
+            (root / "fleet/validator/config.json").write_text("{}")
             role = {
                 "role": "fleet-validator",
                 "hotkey": "5HTAVUuHxV81VbYoX7DYFzebdyA1SRk3zazdZiiBN7zCcpxy",
@@ -51,11 +52,18 @@ class NodeRoleTest(unittest.TestCase):
                     "hotkey": "validator",
                     "path": str(root / "wallets"),
                 },
-                "fleet_config": str(root / "fleet-config.json"),
+                "fleet_config": str(root / "fleet/validator/config.json"),
                 "device": "cuda",
             }
             path = write(root / "role.json", role)
             self.assertEqual(node_role.check(path, root=root), ["zils-fleet-validator.service"])
+            (root / "fleet-config.json").write_text("{}")
+            role["fleet_config"] = str(root / "fleet-config.json")
+            path = write(root / "role.json", role)
+            with self.assertRaisesRegex(
+                ValueError, "fleet_config must be .*fleet/validator/config.json"
+            ):
+                node_role.check(path, root=root)
 
     def test_unknown_role_and_missing_field_are_named(self):
         with tempfile.TemporaryDirectory() as tmp:

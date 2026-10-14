@@ -53,6 +53,11 @@ def units_for(role):
 def check(path, root=Path("/etc/zils-node")):
     role = load_role(path)
     files = required_files(role)
+    if role["role"] == "fleet-validator":
+        # The unit hard-codes this path, so any other fleet_config would be ignored.
+        required = Path(root) / "fleet/validator/config.json"
+        if Path(role["fleet_config"]) != required:
+            raise ValueError(f"fleet_config must be {required}")
     root = Path(root).resolve()
     for p in files:
         if not p.resolve().is_relative_to(root):

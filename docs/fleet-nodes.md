@@ -1,6 +1,6 @@
 # Fleet nodes on DigitalOcean
 
-Status: design, 14 October 2026. Nothing below is implemented yet.
+Status: design, 14 October 2026; phase 1 (node image, miner and fleet-validator roles, provisioning, runbook) is implemented on this branch; serving roles and release delivery are not.
 
 Zils needs more than one CUDA host. The single RTX 4090 trains, serves H2O
 text adapters and serves image models, and those workloads evict each other.
@@ -77,17 +77,19 @@ The 4090 keeps the `training-host` layout it has today (miner + image serving +
 capacity controller) until a `serve-image` node exists; it is the only host
 where two serving runtimes share a card.
 
-Role switching is a reboot with a different `role.json`, never an in-place edit
+Role switching is editing `role.json` and re-running `scripts/apply_role.sh`, never an in-place edit
 of units. A node that changes role loses its state directory on purpose.
 
 ## Boot-time injection
 
 Secrets and identity are delivered once per boot through cloud-init user data
-or an operator script over Tailscale, written with mode 0600 under
-`/etc/zils-node/`, and never copied into snapshots:
+or an operator script over Tailscale, written under `/etc/zils-node/` (env
+files mode 0600, wallet files as below), and never copied into snapshots:
 
-- `hotkey/` wallet files for this node only (coldkeys stay on the
-  administration workstation, as the registration guide requires).
+- Wallet hotkey files under `/etc/zils-node/wallets/<wallet>/hotkeys/` for this
+  node only, group `zils-compute`, files 0640 and directories 0750 so the
+  service user can read them (`apply_role.sh` enforces this); coldkeys stay on
+  the administration workstation, as the registration guide requires.
 - `runtime.env` (`ZILS_RUNTIME_TOKEN`), `spaces.env` (read-only key for the
   release bucket), `supabase.env` (validator only), `tunnel/` SSH key.
 - `role.json`.
@@ -158,7 +160,7 @@ Rebuild paths:
 
 - **Script**: bare droplet → provisioned node in 20–40 minutes. Authoritative.
 - **Snapshot**: after step 7 on a node with no secrets injected, take a
-  DigitalOcean snapshot named by the `image.json` hash. New nodes boot from it
+  DigitalOcean snapshot named from `pins_sha256_16` and the short `subnet_commit` in `image.json`. New nodes boot from it
   in minutes and run only boot-time injection plus role start. A snapshot is
   retired whenever `subnet-ref.txt` or the H2O pins change; the script makes
   the next one.

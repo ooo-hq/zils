@@ -44,6 +44,19 @@ class NodeUnitsTest(unittest.TestCase):
         text = (ROOT / "deploy/units/zils-node.env.example").read_text()
         self.assertNotIn("SUPABASE", text)
 
+    def test_env_example_paths_are_ones_the_provisioner_creates(self):
+        script = (ROOT / "scripts/provision_node.sh").read_text()
+        text = (ROOT / "deploy/units/zils-node.env.example").read_text()
+        found = re.findall(r"^[A-Z_0-9]+=(/\S*)$", text, re.MULTILINE)
+        self.assertTrue(found)
+        for path in found:
+            with self.subTest(path=path):
+                made = path.startswith(("/var/lib/zils-node", "/var/lock/zils-training")) or (
+                    path.startswith("/opt/zils/") and path[len("/opt/zils/") :] in script
+                )
+                self.assertTrue(made, path)
+        self.assertNotIn("ZILS_H2O_BASE_DIR", text)
+
     def test_lock_directory_is_recreated_at_boot(self):
         lines = (ROOT / "deploy/tmpfiles.d/zils-node.conf").read_text().splitlines()
         self.assertEqual(len(lines), 1)

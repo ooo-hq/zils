@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts/provision_node.sh"
+PYTHON = "/Users/ken/Projects/OOO/Zils/zils/.venv-kev/bin/python"
 PHASES = [
     "driver",
     "accounts",
@@ -80,7 +81,7 @@ class ProvisionScriptTest(unittest.TestCase):
         qualify = text[text.index("phase qualify") : text.index("phase image")]
         clear = qualify.index('rm -rf "$STATE/qualification/adapter"')
         self.assertIn('"$STATE/qualification/train.jsonl"', qualify)
-        self.assertLess(clear, qualify.index("scripts/qualify_node.py"))
+        self.assertLess(clear, qualify.index("-m scripts.qualify_node"))
 
     def test_service_user_can_read_node_config_and_owns_caches(self):
         text = SCRIPT.read_text()
@@ -89,6 +90,33 @@ class ProvisionScriptTest(unittest.TestCase):
         for cache in ("triton", "inductor", "hf"):
             self.assertIn(f'"$STATE/cache/{cache}"', text)
         self.assertIn('chown -R zilsminer:zilsminer "$STATE/cache"', text)
+
+    def test_qualifier_runs_as_a_module_that_can_import_zils(self):
+        text = SCRIPT.read_text()
+        self.assertIn("-m scripts.qualify_node", text)
+        self.assertNotIn("scripts/qualify_node.py", text)
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        result = subprocess.run(
+            [PYTHON, "-m", "scripts.qualify_node", "--help"],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_qualify_runs_in_the_unit_sandbox_as_the_service_user(self):
+        text = SCRIPT.read_text()
+        qualify = text[text.index("phase qualify") : text.index("phase image")]
+        for item in (
+            "systemd-run",
+            "User=zilsminer",
+            "ProtectSystem=strict",
+            "EnvironmentFile=/etc/zils-node/node.env",
+        ):
+            self.assertIn(item, qualify)
+        self.assertLess(qualify.index("chown -R zilsminer:zilsminer"), qualify.index("systemd-run"))
 
     def test_apt_does_not_request_unavailable_interpreters(self):
         text = SCRIPT.read_text()

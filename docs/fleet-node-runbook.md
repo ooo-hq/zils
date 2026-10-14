@@ -33,8 +33,18 @@ them in `zils_worker_profiles` for this image hash. The image hash is
 
 ## Snapshot (no secrets on the node yet)
 
-    NAME="zils-node-$(ssh root@<ip> cat /etc/zils-node/image.json | python3 -c 'import json,sys;print(json.load(sys.stdin)["pins_sha256_16"])')"
+    NAME="zils-node-$(ssh root@<ip> cat /etc/zils-node/image.json | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d["pins_sha256_16"]+"-"+d["subnet_commit"][:7])')"
     doctl compute droplet-action snapshot <droplet-id> --snapshot-name "$NAME" --wait
+
+The name is `zils-node-<pins_sha256_16>-<first 7 of subnet_commit>`.
+
+## Boot a node from the snapshot
+
+    doctl compute snapshot list --format ID,Name
+    doctl compute droplet create zils-node-1 --region nyc2 --size gpu-4000adax1-20gb \
+      --image <SNAPSHOT_ID> --ssh-keys <SSH_KEY_ID> --tag-names zils-fleet --wait
+
+Provisioning is already done on such a node; only "Assign a role" remains.
 
 ## Assign a role
 
@@ -52,7 +62,18 @@ the role check refuses the file until they match. Then:
     ssh root@<ip> /opt/zils/scripts/apply_role.sh
 
 `apply_role.sh` also re-groups everything under `/etc/zils-node/wallets` to
-`zils-compute` (files 0640, directories 0750) so the service user can read it.
+`zils-compute` (files 0640, directories 0750) so the service user can read it,
+and does the same for `/etc/zils-node/fleet` when it exists (directories 0770,
+files 0640). The `fleet-validator` role is installed but has no runbook path
+yet; it waits for the H2O fleet support change named in `docs/fleet-nodes.md`.
+
+## Verify
+
+    ssh root@<ip> systemctl status zils-queue-miner --no-pager
+    ssh root@<ip> journalctl -u zils-queue-miner -n 50 --no-pager
+
+A healthy start shows the unit active (running) and the miner polling for
+assignments.
 
 ## Destroy
 
