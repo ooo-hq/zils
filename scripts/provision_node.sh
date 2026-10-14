@@ -9,6 +9,7 @@ ROOT=/opt/zils
 STATE=/var/lib/zils-node
 MARKERS=$STATE/markers
 DRY="${ZILS_NODE_DRY_RUN:-0}"
+case "$DRY" in 1|true|yes) DRY=1;; *) DRY=0;; esac
 
 phase() { echo "phase: $1"; }
 done_marker() { [ "$DRY" = 1 ] || touch "$MARKERS/$1"; }
@@ -28,8 +29,10 @@ if ! skip accounts; then
     getent group zils-compute >/dev/null || groupadd zils-compute
     id zilsminer >/dev/null 2>&1 || useradd --system --home-dir /var/lib/zils-node --shell /usr/sbin/nologin -G zils-compute zilsminer
     install -d -m 0750 -o zilsminer -g zilsminer $STATE $STATE/queue-miner $STATE/cache $STATE/qualification $MARKERS
+    install -d -m 0750 -o zilsminer -g zilsminer "$STATE/cache/triton" "$STATE/cache/inductor" "$STATE/cache/hf"
     install -d -m 0770 -o root -g zils-compute /var/lock/zils-training
-    install -d -m 0750 /etc/zils-node /etc/zils-node/fleet
+    install -d -m 0750 -o root -g zils-compute /etc/zils-node
+    install -d -m 0770 -o root -g zils-compute /etc/zils-node/fleet
   fi
   done_marker accounts
 fi
@@ -37,9 +40,10 @@ fi
 phase source
 if ! skip source; then
   if [ "$DRY" = 0 ]; then
-    apt-get update -q && apt-get install -y -q git python3.13 python3.13-venv curl >/dev/null
+    apt-get update -q && apt-get install -y -q git curl >/dev/null
+    export UV_NO_MODIFY_PATH=1
     command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
-    export PATH="$HOME/.local/bin:$PATH"
+    export PATH="${HOME:-/root}/.local/bin:$PATH"
     if [ ! -d $ROOT/.git ]; then git clone -q https://github.com/ooo-hq/zils.git $ROOT; fi
     git -C $ROOT fetch -q origin && git -C $ROOT checkout -q "$ZILS_SUBNET_REF"
     chown -R root:zils-compute $ROOT && chmod -R g+rX $ROOT
@@ -50,7 +54,7 @@ fi
 phase environments
 if ! skip environments; then
   if [ "$DRY" = 0 ]; then
-    export PATH="$HOME/.local/bin:$PATH"
+    export PATH="${HOME:-/root}/.local/bin:$PATH"
     cd $ROOT
     [ -x .venv-kev/bin/python ] || uv venv --python 3.13 .venv-kev
     uv pip install -q --python .venv-kev/bin/python --torch-backend=cu128 -r requirements/model.txt -r requirements/rehearsal.txt -r requirements/testnet.txt
@@ -65,7 +69,6 @@ phase references
 if ! skip references; then
   if [ "$DRY" = 0 ]; then
     cd $ROOT
-    install -d -m 0750 -o root -g zils-compute $STATE/cache/hf
     [ -f models/h2o-reference/model.json ] || HF_HOME=$STATE/cache/hf .venv-h2o/bin/python -m zils.h2o reference --out models/h2o-reference
     chown -R root:zils-compute models && chmod -R g+rX models
   fi
@@ -91,7 +94,10 @@ if ! skip qualify; then
   if [ "$DRY" = 0 ]; then
     cd $ROOT
     set -a; . /etc/zils-node/node.env; set +a
+    # A failed run leaves its adapter and training data behind; clear them so the phase is retryable.
+    rm -rf "$STATE/qualification/adapter" "$STATE/qualification/train.jsonl"
     .venv-kev/bin/python scripts/qualify_node.py --root $ROOT --runtime-python $ROOT/.venv-h2o/bin/python --out $STATE/qualification
+    chown -R zilsminer:zilsminer "$STATE/cache"
   fi
   done_marker qualify
 fi

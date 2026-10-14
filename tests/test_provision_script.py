@@ -54,3 +54,43 @@ class ProvisionScriptTest(unittest.TestCase):
         )
         for item in forbidden:
             self.assertNotIn(item, text, item)
+
+    def test_dry_run_accepts_truthy_words(self):
+        env = {**os.environ, "ZILS_NODE_DRY_RUN": "yes"}
+        result = subprocess.run(
+            ["bash", str(SCRIPT)], env=env, capture_output=True, text=True, timeout=60
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        phases = [
+            line.split(":")[1].strip()
+            for line in result.stdout.splitlines()
+            if line.startswith("phase:")
+        ]
+        self.assertEqual(phases, PHASES)
+
+    def test_dry_run_is_normalised_and_every_mutation_is_guarded(self):
+        text = SCRIPT.read_text()
+        self.assertIn('case "$DRY" in 1|true|yes) DRY=1;; *) DRY=0;; esac', text)
+        # Each phase body (and the final image step) only mutates behind a "$DRY" = 0 guard.
+        self.assertEqual(text.count('if [ "$DRY" = 0 ]; then'), 8)
+        self.assertNotIn("DRY:-1", text)
+
+    def test_qualify_clears_stale_adapter_before_running(self):
+        text = SCRIPT.read_text()
+        qualify = text[text.index("phase qualify") : text.index("phase image")]
+        clear = qualify.index('rm -rf "$STATE/qualification/adapter"')
+        self.assertIn('"$STATE/qualification/train.jsonl"', qualify)
+        self.assertLess(clear, qualify.index("scripts/qualify_node.py"))
+
+    def test_service_user_can_read_node_config_and_owns_caches(self):
+        text = SCRIPT.read_text()
+        self.assertIn("-o root -g zils-compute /etc/zils-node\n", text)
+        self.assertIn("-m 0770 -o root -g zils-compute /etc/zils-node/fleet", text)
+        for cache in ("triton", "inductor", "hf"):
+            self.assertIn(f'"$STATE/cache/{cache}"', text)
+        self.assertIn('chown -R zilsminer:zilsminer "$STATE/cache"', text)
+
+    def test_apt_does_not_request_unavailable_interpreters(self):
+        text = SCRIPT.read_text()
+        self.assertNotIn("python3.13", text.split("apt-get install", 1)[1].splitlines()[0])
+        self.assertNotIn("$HOME/", text)
