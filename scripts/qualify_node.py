@@ -7,6 +7,7 @@ happen in the real environment. Mirrors the 10 October 2026 RTX 4090 check.
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -44,7 +45,7 @@ print(json.dumps({"ok": all(abs(sum(p.values()) - 1) < 1e-7 for p in probes), "m
 
 def nvidia(run):
     result = run(
-        ["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
+        ["nvidia-smi", "--id=0", "--query-gpu=name,driver_version", "--format=csv,noheader"],
         capture_output=True,
         text=True,
         timeout=30,
@@ -55,7 +56,7 @@ def nvidia(run):
 
 def free_memory_mib(run):
     result = run(
-        ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+        ["nvidia-smi", "--id=0", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
         capture_output=True,
         text=True,
         timeout=30,
@@ -80,18 +81,13 @@ def synthetic_rows(path):
 
 def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None):
     out.mkdir(parents=True, exist_ok=True)
+    (out / "qualification.json").unlink(missing_ok=True)  # never leave a stale passing report
     report = {
         "model": models.H2O,
         **models.profile_identity(models.H2O),
         "trainer_sha256": trainer_identity(models.H2O),
-        "gpu": nvidia(run),
         "completed_at": None,
     }
-    free = free_memory_mib(run) if free_mib is None else free_mib
-    report["gpu"]["free_mib_at_start"] = free
-    report["capacity_ok"] = free >= FLOOR_MIB and (
-        free_mib is not None or gpu_ready("cuda", model=models.H2O)
-    )
 
     def finish(code):
         report["completed_at"] = datetime.now(timezone.utc).isoformat()
@@ -100,86 +96,120 @@ def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None):
             sys.exit(code)
         return report
 
-    if not report["capacity_ok"]:
-        report["error"] = f"free GPU memory {free} MiB is below the {FLOOR_MIB} MiB floor"
-        return finish(2)
-    env_root = str(root)
-    verify = run(
-        [
-            runtime_python,
-            "-c",
-            "from zils.h2o import verify_runtime; verify_runtime(); print('ok')",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=300,
-        cwd=env_root,
-    )
-    report["runtime_verified"] = verify.returncode == 0 and "ok" in verify.stdout
-    if not report["runtime_verified"]:
-        report["error"] = verify.stderr[-2000:]
-        return finish(3)
-    reference = out / "reference"
-    if not reference.exists():
+    adapter = out / "adapter"
+    if adapter.exists():
+        report["error"] = "adapter directory exists; use a fresh --out or remove it"
+        return finish(5)
+    stage = "gpu query"
+    try:
+        report["gpu"] = nvidia(run)
+        free = free_memory_mib(run) if free_mib is None else free_mib
+        report["gpu"]["free_mib_at_start"] = free
+        report["capacity_ok"] = free >= FLOOR_MIB and (
+            free_mib is not None or gpu_ready("cuda", model=models.H2O)
+        )
+        if not report["capacity_ok"]:
+            report["error"] = f"free GPU memory {free} MiB is below the {FLOOR_MIB} MiB floor"
+            return finish(2)
+        env_root = str(root)
+        stage = "runtime check"
+        verify = run(
+            [
+                runtime_python,
+                "-c",
+                "from zils.h2o import verify_runtime; verify_runtime(); print('ok')",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=env_root,
+        )
+        report["runtime_verified"] = verify.returncode == 0 and "ok" in verify.stdout
+        if not report["runtime_verified"]:
+            report["error"] = verify.stderr[-2000:]
+            return finish(3)
+        stage = "reference"
+        reference = out / "reference"
+        if not (reference / "model.json").exists():
+            shutil.rmtree(reference, ignore_errors=True)  # half-written reference
+            run(
+                [runtime_python, "-m", "zils.h2o", "reference", "--out", str(reference)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=3600,
+                cwd=env_root,
+            )
+        stage = "train"
+        data = out / "train.jsonl"
+        examples = synthetic_rows(data)
         run(
-            [runtime_python, "-m", "zils.h2o", "reference", "--out", str(reference)],
+            [
+                runtime_python,
+                "-m",
+                "zils.h2o",
+                "train",
+                "--data",
+                str(data),
+                "--reference",
+                str(reference),
+                "--out",
+                str(adapter),
+                "--seed",
+                "771",
+                "--device",
+                "cuda",
+            ],
             check=True,
+            capture_output=True,
+            text=True,
             timeout=3600,
             cwd=env_root,
         )
-    data = out / "train.jsonl"
-    examples = synthetic_rows(data)
-    adapter = out / "adapter"
-    run(
-        [
-            runtime_python,
-            "-m",
-            "zils.h2o",
-            "train",
-            "--data",
-            str(data),
-            "--reference",
-            str(reference),
-            "--out",
-            str(adapter),
-            "--seed",
-            "771",
-            "--device",
-            "cuda",
-        ],
-        check=True,
-        timeout=3600,
-        cwd=env_root,
-    )
-    metrics = json.loads((adapter / "training_metrics.json").read_text())
-    probe = run(
-        [
-            runtime_python,
-            "-c",
-            RELOAD_PREDICT,
-            str(adapter),
-            json.dumps(STATE),
-            json.dumps(QUESTIONS),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=900,
-        cwd=env_root,
-    )
-    reload = (
-        json.loads(probe.stdout)
-        if probe.returncode == 0
-        else {"ok": False, "max_prompt_tokens": None}
-    )
-    report["training"] = {
-        "examples": examples,
-        "optimizer_steps": metrics["optimizer_steps"],
-        "seconds": metrics["training_seconds"],
-        "peak_gpu_mib": metrics["peak_gpu_allocated_bytes"] // 2**20,
-        "max_prompt_tokens": reload["max_prompt_tokens"],
-    }
-    report["reload_predict_ok"] = bool(reload["ok"])
-    return finish(0 if report["reload_predict_ok"] else 4)
+        metrics = json.loads((adapter / "training_metrics.json").read_text())
+        stage = "reload probe"
+        probe = run(
+            [
+                runtime_python,
+                "-c",
+                RELOAD_PREDICT,
+                str(adapter),
+                json.dumps(STATE),
+                json.dumps(QUESTIONS),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=900,
+            cwd=env_root,
+        )
+        if probe.returncode != 0:
+            report["error"] = probe.stderr[-2000:]
+        reload = (
+            json.loads(probe.stdout)
+            if probe.returncode == 0
+            else {"ok": False, "max_prompt_tokens": None}
+        )
+        report["training"] = {
+            "examples": examples,
+            "optimizer_steps": metrics["optimizer_steps"],
+            "seconds": metrics["training_seconds"],
+            "peak_gpu_mib": metrics["peak_gpu_allocated_bytes"] // 2**20,
+            "max_prompt_tokens": reload["max_prompt_tokens"],
+        }
+        report["reload_predict_ok"] = bool(reload["ok"])
+        return finish(0 if report["reload_predict_ok"] else 4)
+    except (
+        subprocess.CalledProcessError,
+        subprocess.TimeoutExpired,
+        OSError,
+        ValueError,  # includes json.JSONDecodeError
+        KeyError,
+    ) as exc:
+        detail = getattr(exc, "stderr", None) or exc
+        if isinstance(detail, bytes):
+            detail = detail.decode(errors="replace")
+        report["error"] = f"{stage}: {str(detail)[-2000:]}"
+        return finish(5)
 
 
 def main(argv=None):
