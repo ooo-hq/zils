@@ -69,6 +69,10 @@ class FleetTest(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 r.endpoint_ok(url, allowed=[url])
+        # Tailscale addresses are an overlay LAN, accepted only when pinned.
+        r.endpoint_ok("http://100.108.80.3:8900", allowed=["http://100.108.80.3:8900"])
+        with self.assertRaises(ValueError):
+            r.endpoint_ok("http://100.108.80.3:8900", allowed=["http://100.108.80.4:8900"])
         payload = {"kind": "round", "round_id": "a" * 32, "status": "collecting"}
         message = runtime.signed(payload, key)
         self.assertEqual(runtime.verified(message, key.ss58_address), payload)
