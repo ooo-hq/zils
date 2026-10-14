@@ -43,10 +43,10 @@ secrets. Roles differ only in which services are enabled.
 | --- | --- |
 | Droplet | DigitalOcean GPU Droplet, RTX 4000 Ada (20 GB) to start; RTX 6000 Ada / L40S (48 GB) if a node must serve image models and H2O together. Ubuntu LTS with the NVIDIA driver compatible with CUDA 13.0. |
 | Accounts | `zilsminer` (training), `zilsapi` (serving), group `zils-compute`; no interactive login for either. |
-| Source | `ooo-hq/zils` at the revision in the platform's `subnet-ref.txt`; `ooo-hq/zils-platform` at its main for validator and serving roles. Both read-only to service users. |
+| Source | `ooo-hq/zils` at the revision in the platform's `subnet-ref.txt`. `ooo-hq/zils-platform` at its main only on operator-owned nodes taking a serving or `hosted-validator` role, installed by a separate platform step. Both read-only to service users. |
 | Environments | `.venv-kev` (Python 3.13, cu128: miner client, fleet, testnet SDK 11.1.0), `.venv-h2o` (Python 3.12, cu130: pinned H2O runtime), `.venv-image` (optional, Imajev pins), `.venv-platform` (validator and serving roles). |
 | References | `models/h2o-reference` verified against `zils/h2o-pins.json`; `models/imajev-reference` only on image-capable nodes. Reference caches are part of the snapshot. |
-| Units | `zils-queue-miner`, `zils-fleet-miner`, `zils-h2o-adapter.socket` + runtime + proxy, `zils-image-runtime`, `zils-capacity`, `zils-training-processor`, `zils-fleet-validator`, `zils-*-tunnel`. All installed, all disabled; the role enables a subset. |
+| Units | From `zils`: `zils-queue-miner`, `zils-fleet-miner`, `zils-fleet-validator`. From `zils-platform` (operator nodes only): `zils-h2o-adapter.socket` + runtime + proxy, `zils-image-runtime`, `zils-release-sync`, `zils-training-processor`, `zils-workflow`, `zils-*-tunnel`. All installed, all disabled; the role enables a subset. |
 | Qualification | `scripts/qualify_node.py` output: profile identity, `trainer_sha256`, kernel check, peak GPU memory for a 2,048-token training step and an adapter reload, timing. Stored on the node and copied to the operator for `zils_worker_profiles` registration. |
 
 Not in the image: hotkeys, coldkeys, runtime tokens, Supabase credentials,
@@ -62,7 +62,16 @@ user data) and selects the role. A node runs exactly one role.
 | `miner` | `zils-queue-miner` (customer jobs via coordinator HTTPS, approved hotkey); optionally `zils-fleet-miner` for a chain round using an assigned bundle | hotkey, coordinator URL, bundle when in a round | Testnet UID for its hotkey when it joins a round |
 | `serve-h2o` | `zils-h2o-adapter` socket/runtime/proxy, resident with no idle shutdown; `zils-release-sync` (new, see below); `zils-h2o-tunnel` to the gateway | runtime token, Spaces read credential, tunnel key | None |
 | `serve-image` | `zils-image-runtime`, `zils-image-tunnel` | as above | None |
-| `validator` | `zils-training-processor` (hosted evaluation), `zils-fleet-validator` + `zils.testnet` publisher for chain rounds; `zils-workflow` if it also activates releases | Supabase service credential, validator hotkey, roster | Validator UID with permit |
+| `fleet-validator` | `zils-fleet-validator` (`zils.fleet validator`) and the `zils.testnet` publisher for chain rounds. Pure `zils`; no platform code or credential. | validator hotkey, roster, frozen job and reference | Validator UID with permit |
+| `hosted-validator` | `fleet-validator` plus the platform add-on: `zils-training-processor` (customer-job evaluation) and `zils-workflow` (assignment, activation). Only on nodes the operator owns. | the above plus the Supabase service credential | as above |
+
+Repository boundary: `zils` is what any miner or validator operator runs, so
+`provision_node.sh` must produce a qualified `miner` or `fleet-validator`
+node with nothing from `zils-platform`. Serving roles and `hosted-validator`
+are a second, platform-owned install step on nodes the operator controls;
+they import platform code and carry hosted credentials. This matches the
+subnet's boundary test, which forbids miners and validators from importing
+platform modules.
 
 The 4090 keeps the `training-host` layout it has today (miner + image serving +
 capacity controller) until a `serve-image` node exists; it is the only host
@@ -185,8 +194,9 @@ unverified until the first node runs `qualify_node.py`.
 3. **Miner nodes**: two `miner` nodes approved as queue workers; they take
    real customer jobs. Run the first multi-host H2O chain round with them
    after the H2O fleet support change; the 4090's processor stays validator.
-4. **Validator node**: move the processor and publisher off the 4090 so the
-   4090 becomes an ordinary miner or is retired.
+4. **Validator node**: a `fleet-validator` node from `zils`, with the
+   platform `hosted-validator` add-on moving the processor and workflow off
+   the 4090, which then becomes an ordinary miner or is retired.
 5. Mainnet gates are unchanged by this document: open-miner data policy,
    emissions design, and the code's mainnet rejection.
 
