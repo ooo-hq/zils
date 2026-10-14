@@ -9,6 +9,7 @@ and client tooling belong in separate repositories.
 | [zils-platform](https://github.com/ooo-hq/zils-platform) | `zils_platform/` APIs, queue orchestration, billing, storage, serving; migrations and service integration tests |
 | [zils-sdk](https://github.com/ooo-hq/zils-sdk) | Python and TypeScript packages, CLI, MCP, client documentation and contract tests |
 | [zils-web](https://github.com/ooo-hq/zils-web) | Website and customer-facing application |
+| [zils-docs](https://github.com/ooo-hq/zils-docs) | Public documentation website (`docs.zils.ai`) |
 
 Dependencies flow from the platform into the subnet's shared code. Miners and
 validators must not import platform, SDK, Stripe, or storage-provider modules.
