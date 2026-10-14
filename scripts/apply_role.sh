@@ -9,7 +9,14 @@ if [ "${#WANTED[@]}" -eq 0 ]; then echo "role check selected no units" >&2; exit
 import json, os, pathlib, shutil
 role = json.loads(pathlib.Path("/etc/zils-node/role.json").read_text())
 if role["role"] == "miner":
-    cfg = {"coordinator": role["coordinator"], "hotkey": role["hotkey"], "wallet": role["wallet"]}
+    # Presence lets graded routing see the node; the floor matches the H2O profile row.
+    cfg = {
+        "coordinator": role["coordinator"],
+        "hotkey": role["hotkey"],
+        "wallet": role["wallet"],
+        "graded_scheduling": True,
+        "graded_min_free_mib": 12288,
+    }
     p = "/etc/zils-node/queue-miner.json"
     fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
     os.fchmod(fd, 0o640)
