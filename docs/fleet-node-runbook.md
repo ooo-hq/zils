@@ -64,8 +64,12 @@ the role check refuses the file until they match. Then:
 `apply_role.sh` also re-groups everything under `/etc/zils-node/wallets` to
 `zils-compute` (files 0640, directories 0750) so the service user can read it,
 and does the same for `/etc/zils-node/fleet` when it exists (directories 0770,
-files 0640). The `fleet-validator` role is installed but has no runbook path
-yet; it waits for the H2O fleet support change named in `docs/fleet-nodes.md`.
+files 0640). The miner config it writes enables graded presence
+(`graded_scheduling`, `graded_min_free_mib` 12288), so the node heartbeats to the
+coordinator; it still receives customer jobs only after the operator binds a
+resource and qualifies it (platform `docs/miner-grading.md`). The
+`fleet-validator` role is installed but has no runbook path yet; the first
+multi-host H2O round in `docs/fleet-nodes.md` is its acceptance test.
 
 ## Verify
 

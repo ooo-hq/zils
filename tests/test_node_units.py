@@ -70,3 +70,8 @@ class NodeUnitsTest(unittest.TestCase):
         text = (ROOT / "scripts/apply_role.sh").read_text()
         self.assertIn("zils.node_role check", text)
         self.assertNotIn("systemctl enable zils-queue-miner", text)
+
+    def test_apply_script_enables_graded_presence_for_miners(self):
+        text = (ROOT / "scripts/apply_role.sh").read_text()
+        self.assertIn('"graded_scheduling": True', text)
+        self.assertIn('"graded_min_free_mib": 12288', text)
