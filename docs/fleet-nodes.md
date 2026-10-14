@@ -24,8 +24,8 @@ Two properties are required of every node:
 - Fleet bundles, the validator and testnet publication are documented in
   [mining.md](mining.md), [validators.md](validators.md),
   [testnet.md](testnet.md) and [bittensor-registration.md](bittensor-registration.md).
-  `zils.fleet` and `zils.testnet` are pinned to JevK5, ImaJev and Kev jobs;
-  tests cover only those, and no H2O chain round has been run.
+  `zils.fleet` and `zils.testnet` accept H2O, JevK5, ImaJev and Kev jobs; the
+  fleet round and publisher tests cover H2O, but no H2O chain round has been run.
 - Hosted serving on the 4090 uses a socket-activated H2O adapter runtime, a
   host-local capacity controller that pauses image serving while H2O is
   resident, and SSH tunnels to the gateway. That layout is the reference
@@ -136,10 +136,10 @@ administration workstation; the node receives only the hotkey). The roster
 file lists chain UIDs; a changed registration regenerates the roster.
 
 Gate: the first H2O fleet round is a verification, not a rollout. `zils.fleet
-init` currently takes a JevK5 or ImaJev reference and the publisher's tests
-cover those profiles only. Expect an `H2O fleet support` change in this
-repository (job model `h2o-lightning-4b-v1.2.3`, bundle recipe, publisher test)
-before the round, and treat its first successful round as the acceptance test.
+init` takes an H2O reference, the fleet miner trains with `zils.h2o` under
+`ZILS_H2O_RUNTIME_PYTHON`, and the fleet round and publisher tests cover the
+`h2o-lightning-4b-v1.2.3` profile. Treat the first successful multi-host round
+as the acceptance test.
 
 ## Provisioning and rebuild
 

@@ -61,7 +61,7 @@ entry for each machine:
 `777` is an example only; use the operator-confirmed subnet ID. Each miner UID
 must be the value returned by the chain for that hotkey, not a local queue ID.
 
-Create a frozen JevK5 text or ImaJev image job and its matching reference using
+Create a frozen H2O text or ImaJev image job and its matching reference using
 the [miner guide](mining.md#prepare-bundles-on-the-validator). Legacy Kev benchmarks
 remain supported. A fleet and its round scores always belong to one model profile.
 Replace `VALIDATOR_PRIVATE_IPV4` with the validator's numeric private address.
@@ -72,7 +72,7 @@ The command copies public wallet references into bundles, **never key files**:
 ```bash
 .venv-kev/bin/python -m zils.fleet init --out .private/testnet-fleet \
   --host VALIDATOR_PRIVATE_IPV4 --miner-ports 8901 \
-  --benchmark .private/jobs/text-v1 --checkpoint models/jevk5-reference \
+  --benchmark .private/jobs/text-v1 --checkpoint models/h2o-reference \
   --testnet-identities .private/testnet-identities.json
 .venv-kev/bin/python -m zils.testnet preflight \
   --config .private/testnet-fleet/validator/config.json
