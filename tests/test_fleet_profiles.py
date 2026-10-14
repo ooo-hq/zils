@@ -53,7 +53,7 @@ def image_dataset(root):
 
 class FleetProfilesTest(unittest.TestCase):
     def test_each_vertical_completes_a_signed_training_and_evaluation_round(self):
-        for model in (models.JEVK5, models.IMAJEV):
+        for model in (models.JEVK5, models.H2O, models.IMAJEV):
             with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 options = {}
@@ -88,13 +88,13 @@ class FleetProfilesTest(unittest.TestCase):
 from pathlib import Path
 from zils import models
 if '-m' in sys.argv:
-    assert sys.argv[sys.argv.index('-m')+1]=='zils.jevk5'
+    assert sys.argv[sys.argv.index('-m')+1]==TRAINER
     rows=[json.loads(s) for s in Path(sys.argv[sys.argv.index('--data')+1]).read_text().splitlines()]
     assert all(set(r)=={'state','questions'} for r in rows)
     out=Path(sys.argv[sys.argv.index('--out')+1]);out.mkdir()
     (out/'adapter_config.json').write_text('{}')
     (out/'adapter_model.safetensors').write_text('trained')
-    models.write_metadata(out)
+    models.write_metadata(out, model=MODEL)
 else:
     path=Path(sys.argv[sys.argv.index('--checkpoint')+1])
     p=.9 if (path/'adapter_model.safetensors').read_text()=='trained' else .5
@@ -104,9 +104,14 @@ else:
     print(json.dumps({'runtime':{'temperature':temp},'predictions':[
       {'id':r['id'],'probabilities':{'true':a/(a+b),'false':b/(a+b)},'elapsed_ms':1} for r in rows]}))
 """
+                trainer = "zils.h2o" if model == models.H2O else "zils.jevk5"
                 runtime.write_text(
                     f"#!{sys.executable}\n"
-                    + (IMAGE_SCRIPT if model == models.IMAJEV else text_script)
+                    + (
+                        IMAGE_SCRIPT
+                        if model == models.IMAJEV
+                        else f"TRAINER={trainer!r}\nMODEL={model!r}\n" + text_script
+                    )
                 )
                 runtime.chmod(0o700)
                 capacity = root / "nvidia-smi"
@@ -115,6 +120,7 @@ else:
                 env = {
                     **os.environ,
                     "ZILS_IMAGE_RUNTIME_PYTHON": str(runtime),
+                    "ZILS_H2O_RUNTIME_PYTHON": str(runtime),
                     "ZILS_NVIDIA_SMI": str(capacity),
                     "ZILS_COMPUTE_LOCK": str(root / "gpu.lock"),
                     "ZILS_PYTHON": sys.executable,
@@ -137,7 +143,7 @@ else:
                                 [
                                     *command,
                                     "--device",
-                                    "cuda" if model == models.IMAJEV else "cpu",
+                                    "cpu" if model == models.JEVK5 else "cuda",
                                     "--runtime-python",
                                     str(runtime),
                                     "--no-download",
@@ -330,7 +336,7 @@ else:
             self.assertFalse((root / "fleet").exists())
 
     def test_transfer_uses_expected_profile_and_rejects_cross_profile_metadata(self):
-        for model in (models.JEVK5, models.IMAJEV):
+        for model in (models.JEVK5, models.H2O, models.IMAJEV):
             with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 source = checkpoint(root / "source", model)

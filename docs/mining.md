@@ -1,8 +1,8 @@
 # Run a text or image fleet miner
 
-Local and Bittensor testnet fleets support **JevK5 4B text** and **ImaJev 4B image**
-jobs. Each fleet pins one frozen job and its matching model reference. Existing
-Kev 0.8B bundles remain supported. For workers that claim different customer jobs,
+Local and Bittensor testnet fleets support **H2O Lightning 4B text** and
+**ImaJev 4B image** jobs. Each fleet pins one frozen job and its matching model
+reference. Existing JevK5 4B text and Kev 0.8B bundles remain supported. For workers that claim different customer jobs,
 use the [queue miner guide](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md).
 Queue and fleet miners use the same trainers but different credentials and startup commands.
 
@@ -20,7 +20,10 @@ image runtime described below. Later starts reuse the cache.
 
 ## Prepare bundles on the validator
 
-For a text fleet, complete the [JevK5 model setup](https://github.com/ooo-hq/zils/blob/main/docs/jevk5-queue.md#install-and-create-the-reference).
+For a text fleet, create the H2O reference with the
+[queue miner setup](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md#2-install-and-verify-the-reference)
+(a legacy JevK5 fleet uses the [JevK5 model setup](https://github.com/ooo-hq/zils/blob/main/docs/jevk5-queue.md#install-and-create-the-reference)
+with `--model jevk5-4b-v0.3` and `models/jevk5-reference` below).
 Prepare authorized, independent training/calibration/test JSONL files using the
 [customer data format](https://github.com/ooo-hq/zils/blob/main/docs/customer-jobs.md#prepare-data).
 The following freezes those files and an example acceptance policy; choose your
@@ -28,12 +31,12 @@ policy before evaluating candidates:
 
 ```bash
 .venv-kev/bin/python -m zils.jobs --job-id text-v1 \
-  --model jevk5-4b-v0.3 --train .private/train.jsonl \
+  --model h2o-lightning-4b-v1.2.3 --train .private/train.jsonl \
   --calibration .private/calibration.jsonl --test .private/test.jsonl \
   --min-accuracy 0.80 --min-brier-improvement 0.01 \
   --allow-training-data-export --out .private/jobs/text-v1
 .venv-kev/bin/python -m zils.fleet init --out .private/fleet-local \
-  --benchmark .private/jobs/text-v1 --checkpoint models/jevk5-reference \
+  --benchmark .private/jobs/text-v1 --checkpoint models/h2o-reference \
   --host VALIDATOR_PRIVATE_IPV4
 ```
 
@@ -94,10 +97,25 @@ Do not relabel a Kev manifest as a different model.
    Allow validator TCP 8900 from the miner machines.
 4. Run `./start-miner --rounds 1`. It can start before the validator and will retry.
 
-JevK5 needs a qualified CUDA or Apple MPS host. Image training requires qualified
-CUDA hardware; CPU fallback applies only to Kev. Use `--device cuda` or `mps`
+H2O needs a qualified CUDA host and the isolated runtime below on every miner
+and the validator. JevK5 needs a qualified CUDA or Apple MPS host. Image training
+requires qualified CUDA hardware; CPU fallback applies only to Kev. Use `--device cuda` or `mps`
 explicitly. To reuse an environment or cache, set `ZILS_PYTHON`
 to its absolute Python path and `HF_HOME` to the cache directory.
+
+For H2O bundles, install the isolated runtime on each host and export it before
+every start (the validator needs the same variable):
+
+```bash
+uv venv --python 3.12 .venv-h2o
+uv pip install --python .venv-h2o/bin/python --torch-backend=cu130 -r requirements/h2o.txt
+export ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"
+./start-miner --device cuda --rounds 1
+```
+
+H2O training waits until at least 12,288 MiB of GPU memory is free
+(`ZILS_H2O_MIN_FREE_MIB` raises that floor). Neither side silently substitutes
+the JevK5 runtime. See the [H2O model contract](h2o-queue.md) for the pins.
 
 For image bundles, also install and verify the isolated runtime on each host:
 
