@@ -70,7 +70,7 @@ class ProvisionScriptTest(unittest.TestCase):
 
     def test_dry_run_is_normalised_and_every_mutation_is_guarded(self):
         text = SCRIPT.read_text()
-        self.assertIn('case "$DRY" in 1|true|yes) DRY=1;; *) DRY=0;; esac', text)
+        self.assertIn('case "$DRY" in 0|"") DRY=0;; *) DRY=1;; esac', text)
         # Each phase body (and the final image step) only mutates behind a "$DRY" = 0 guard.
         self.assertEqual(text.count('if [ "$DRY" = 0 ]; then'), 8)
         self.assertNotIn("DRY:-1", text)
@@ -94,3 +94,13 @@ class ProvisionScriptTest(unittest.TestCase):
         text = SCRIPT.read_text()
         self.assertNotIn("python3.13", text.split("apt-get install", 1)[1].splitlines()[0])
         self.assertNotIn("$HOME/", text)
+
+    def test_managed_interpreters_live_where_the_service_user_can_exec_them(self):
+        text = SCRIPT.read_text()
+        self.assertIn("UV_PYTHON_INSTALL_DIR=/opt/uv-python", text)
+        self.assertIn("chmod -R a+rX /opt/uv-python", text)
+        env = text[text.index("phase environments") : text.index("phase references")]
+        self.assertLess(
+            env.index("UV_PYTHON_INSTALL_DIR"), env.index("uv venv"), "export before any uv call"
+        )
+        self.assertLess(env.index("requirements/h2o.txt"), env.index("chmod -R a+rX"))

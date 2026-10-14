@@ -9,7 +9,7 @@ ROOT=/opt/zils
 STATE=/var/lib/zils-node
 MARKERS=$STATE/markers
 DRY="${ZILS_NODE_DRY_RUN:-0}"
-case "$DRY" in 1|true|yes) DRY=1;; *) DRY=0;; esac
+case "$DRY" in 0|"") DRY=0;; *) DRY=1;; esac
 
 phase() { echo "phase: $1"; }
 done_marker() { [ "$DRY" = 1 ] || touch "$MARKERS/$1"; }
@@ -41,7 +41,7 @@ phase source
 if ! skip source; then
   if [ "$DRY" = 0 ]; then
     apt-get update -q && apt-get install -y -q git curl >/dev/null
-    export UV_NO_MODIFY_PATH=1
+    export UV_NO_MODIFY_PATH=1 UV_PYTHON_INSTALL_DIR=/opt/uv-python
     command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
     export PATH="${HOME:-/root}/.local/bin:$PATH"
     if [ ! -d $ROOT/.git ]; then git clone -q https://github.com/ooo-hq/zils.git $ROOT; fi
@@ -55,12 +55,15 @@ phase environments
 if ! skip environments; then
   if [ "$DRY" = 0 ]; then
     export PATH="${HOME:-/root}/.local/bin:$PATH"
+    export UV_PYTHON_INSTALL_DIR=/opt/uv-python
     cd $ROOT
     [ -x .venv-kev/bin/python ] || uv venv --python 3.13 .venv-kev
     uv pip install -q --python .venv-kev/bin/python --torch-backend=cu128 -r requirements/model.txt -r requirements/rehearsal.txt -r requirements/testnet.txt
     .venv-kev/bin/python -c 'import torch; assert torch.cuda.is_available(); assert torch.cuda.is_bf16_supported()'
     [ -x .venv-h2o/bin/python ] || uv venv --python 3.12 .venv-h2o
     uv pip install -q --python .venv-h2o/bin/python --torch-backend=cu130 -r requirements/h2o.txt
+    # The venvs symlink into the managed interpreters; the service user must be able to exec them.
+    chmod -R a+rX /opt/uv-python
   fi
   done_marker environments
 fi
