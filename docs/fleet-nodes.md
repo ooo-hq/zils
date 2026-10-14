@@ -141,8 +141,8 @@ before the round, and treat its first successful round as the acceptance test.
 
 ## Provisioning and rebuild
 
-`scripts/provision_node.sh` (new, this repository) is idempotent and runs on
-a bare droplet or an already-provisioned one:
+`scripts/provision_node.sh` is idempotent and runs on a bare droplet or an
+already-provisioned one (see the [runbook](fleet-node-runbook.md)):
 
 1. OS packages, driver check (`nvidia-smi` reports a CUDA 13-compatible driver).
 2. Accounts, groups, directories, permissions.
