@@ -38,6 +38,12 @@ H2O CPU and Apple MPS training are unsupported.
 The operator assigns a local queue UID. On-chain registration is not required
 for this queue, and a Bittensor UID alone does not authorize job access.
 
+Operators standing up a rented node can run `scripts/provision_node.sh` in
+place of step 2 (it performs the same installation and writes a qualification
+report) and configure the worker through `/etc/zils-node/role.json` and
+`scripts/apply_role.sh` in place of steps 3–4. See
+[fleet nodes](fleet-nodes.md) and the [runbook](fleet-node-runbook.md).
+
 ## 2. Install and verify the reference
 
 From a fresh clone:
