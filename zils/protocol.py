@@ -29,6 +29,10 @@ def canonical(claim):
     )
 
 
+# Tailscale/CGNAT space: a trusted overlay, not public, but not RFC 1918 either.
+TAILSCALE = ipaddress.IPv4Network("100.64.0.0/10")
+
+
 def endpoint_ok(endpoint, allowed=None):
     match = (
         re.fullmatch(r"http://([0-9.]+):([1-9][0-9]{0,4})", endpoint)
@@ -43,7 +47,7 @@ def endpoint_ok(endpoint, allowed=None):
             raise ValueError("remote endpoints require an explicit pin")
     elif (
         endpoint not in allowed
-        or not (address.is_private or address.is_loopback)
+        or not (address.is_private or address.is_loopback or address in TAILSCALE)
         or address.is_link_local
         or address.is_unspecified
         or address.is_multicast

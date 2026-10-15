@@ -40,7 +40,8 @@ policy before evaluating candidates:
   --host VALIDATOR_PRIVATE_IPV4
 ```
 
-Replace `VALIDATOR_PRIVATE_IPV4` with the validator's numeric private address.
+Replace `VALIDATOR_PRIVATE_IPV4` with the validator's numeric private address
+(RFC 1918 or a Tailscale `100.64.0.0/10` address; public addresses are refused).
 Use new output paths or reuse an existing audited benchmark. The default ports
 are 8900 for the validator and 8901–8903 for three miners. Assign one
 `miner-N.tar.gz` to each machine.
