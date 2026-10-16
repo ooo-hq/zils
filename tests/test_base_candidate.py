@@ -105,7 +105,7 @@ class BaseCandidateTest(unittest.TestCase):
             good = candidate(root / "good", saved)
             with (
                 patch("zils.h2o.PINS", pins_for_fixture()),
-                patch("zils.h2o.base_path", return_value=parent),
+                patch("zils.h2o.pinned_base_path", return_value=parent),
             ):
                 validate_candidate(good)
                 narrower = candidate(

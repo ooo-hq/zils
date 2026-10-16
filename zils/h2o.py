@@ -29,6 +29,17 @@ PINS = json.loads(Path(__file__).with_name("h2o-pins.json").read_text())
 
 
 def base_path(download=False):
+    """The weights every H2O load uses: the pinned release, or, for the validator's adapter regression
+    suite only, a verified base candidate named by ZILS_H2O_CANDIDATE_BASE (weights intentionally unpinned)."""
+    candidate = settings.get("ZILS_H2O_CANDIDATE_BASE")
+    if candidate:
+        path = Path(candidate).resolve(strict=True)
+        validate_candidate(path)
+        return path
+    return pinned_base_path(download)
+
+
+def pinned_base_path(download=False):
     from huggingface_hub import snapshot_download
 
     override = settings.get("ZILS_H2O_BASE_DIR")
@@ -199,7 +210,7 @@ def validate_candidate(checkpoint):
     if config_path.is_symlink() or not config_path.is_file() or config_path.stat().st_size > 65536:
         raise ValueError("base candidate configuration must be a bounded regular file")
     candidate = json.loads(config_path.read_text())
-    parent = json.loads((base_path() / "config.json").read_text())
+    parent = json.loads((pinned_base_path() / "config.json").read_text())
     if (
         not isinstance(candidate, dict)
         or candidate.get("architectures") != parent.get("architectures")
