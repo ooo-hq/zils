@@ -1,6 +1,5 @@
 """Model identity, artifact integrity and legacy compatibility at the queue interface."""
 
-import importlib.util
 import json
 import subprocess
 import sys
@@ -198,7 +197,6 @@ class ModelTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "pinned profile"):
                 models.metadata(tmp)
 
-    @unittest.skipUnless(importlib.util.find_spec("zils.d3"), "zils.d3 arrives in Task 2")
     def test_text_runtime_and_interpreter_lookup(self):
         self.assertEqual(models.text_runtime(models.D3).__name__, "zils.d3")
         self.assertEqual(models.runtime_python_env(models.D3), "ZILS_D3_RUNTIME_PYTHON")
