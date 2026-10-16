@@ -55,10 +55,10 @@ class BaseCandidateTest(unittest.TestCase):
             (root / "adapter_model.safetensors").write_bytes(b"lora")
             with self.assertRaisesRegex(ValueError, "mixes"):
                 models.artifact_files(root)
-            with self.assertRaisesRegex(ValueError, "H2O profile only"):
+            with self.assertRaisesRegex(ValueError, "H2O and d3 profiles only"):
                 models.candidate_files(models.JEVK5, "candidate")
             (Path(tmp) / "jev").mkdir()
-            with self.assertRaisesRegex(ValueError, "H2O profile only"):
+            with self.assertRaisesRegex(ValueError, "H2O and d3 profiles only"):
                 models.write_metadata(Path(tmp) / "jev", kind="candidate", model=models.JEVK5)
 
     def test_download_transfers_every_candidate_file_under_its_own_budget(self):

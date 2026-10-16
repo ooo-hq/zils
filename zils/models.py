@@ -1,6 +1,7 @@
 """Pinned model identities and checkpoint formats; legacy Kev artifacts stay readable."""
 
 import hashlib
+import importlib
 import json
 import math
 from copy import deepcopy
@@ -9,8 +10,12 @@ from pathlib import Path
 KEV = "kev-0.8b-v1"
 JEVK5 = "jevk5-4b-v0.3"
 H2O = "h2o-lightning-4b-v1.2.3"
+D3 = "d3-mini-4.5b-v1"
 DEFAULT_TRAINING_MODEL = H2O
-TEXT_ADAPTER_MODELS = (JEVK5, H2O)
+TEXT_ADAPTER_MODELS = (JEVK5, H2O, D3)
+TEXT_RUNTIME_MODULES = {H2O: ".h2o", D3: ".d3"}  # default ".jevk5"
+RUNTIME_PYTHON_ENV = {H2O: "ZILS_H2O_RUNTIME_PYTHON", D3: "ZILS_D3_RUNTIME_PYTHON"}
+PINS_FILES = {H2O: "h2o-pins.json", D3: "d3-pins.json"}
 IMAJEV = "imajev-4b-v1"
 SPECS = {
     KEV: {
@@ -56,6 +61,18 @@ SPECS = {
         "calibration": "full-native-temperature/v1",
     },
 }
+SPECS[D3] = {
+    "id": D3,
+    "name": "d3-mini 4.5B",
+    "base": "zils-ai/d3-mini-4.5b-v1",
+    "base_revision": "b54402a963373cc44713f18c9596c580e31cc68b",
+    "runtime_revision": "d3-vendor-runtime-a475367/v1",
+    "prompt": "d3-native-v1",
+    "max_input_tokens": 4096,
+    "recipe": "d3-language-lora16-adamw/v1",
+    "calibration": "native-then-heldout-temperature/v1",
+    "inputs": {"images": 4, "video": True},
+}
 KEV_FILES = ("adapter_config.json", "adapter_model.safetensors", "head.pt")
 JEVK5_FILES = ("adapter_config.json", "adapter_model.safetensors", "model.json")
 # A base candidate (Option 5) carries full H2O weights plus the parent's contract files unchanged.
@@ -69,6 +86,34 @@ H2O_CONTRACT_FILES = (
     "LICENSE",
 )
 CANDIDATE_FILES = ("model.json", "config.json", "model.safetensors", *H2O_CONTRACT_FILES)
+D3_CONTRACT_FILES = (
+    "config.json",
+    "decision_config.json",
+    "preprocessor_config.json",
+    "video_preprocessor_config.json",
+    "chat_template.jinja",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "vocab.json",
+    "merges.txt",
+    "readout.safetensors",
+    "d3_runtime.py",
+    "d3_format.py",
+    "d3_kernels.py",
+    "d3_fast.py",
+    "d3_engine.py",
+    "modeling_d3.py",
+    "pipeline_d3.py",
+    "LICENSE",
+    "NOTICE",
+)
+D3_CANDIDATE_FILES = (
+    "model.json",
+    "model-00001-of-00002.safetensors",
+    "model-00002-of-00002.safetensors",
+    "model.safetensors.index.json",
+    *D3_CONTRACT_FILES,
+)
 MAX_ADAPTER_BYTES = 512 * 1024 * 1024
 MAX_CANDIDATE_BYTES = 10 * 1024**3
 IMAJEV_FILES = (
@@ -85,6 +130,14 @@ def spec(model):
     if model not in SPECS:
         raise ValueError("unsupported model identity")
     return deepcopy(SPECS[model])
+
+
+def pins(model):
+    return json.loads(Path(__file__).with_name(PINS_FILES[model]).read_text())
+
+
+def runtime_python_env(model):
+    return RUNTIME_PYTHON_ENV.get(model)
 
 
 def profile_identity(model):
@@ -105,8 +158,8 @@ def profile_identity(model):
             ).read_text(),
             "recipe": profile["recipe"],
         }
-    if model == H2O:
-        runtime = json.loads(Path(__file__).with_name("h2o-pins.json").read_text())
+    if model in PINS_FILES:
+        runtime = pins(model)
     return {"profile_sha256": digest(profile), "runtime_sha256": digest(runtime)}
 
 
@@ -130,10 +183,16 @@ def job_model(job):
 def candidate_files(model, kind="adapter"):
     spec(model)
     if kind == "candidate":
-        if model != H2O:
-            raise ValueError("base candidates are supported for the H2O profile only")
-        return CANDIDATE_FILES
-    return {KEV: KEV_FILES, JEVK5: JEVK5_FILES, H2O: JEVK5_FILES, IMAJEV: IMAJEV_FILES}[model]
+        if model not in (H2O, D3):
+            raise ValueError("base candidates are supported for the H2O and d3 profiles only")
+        return D3_CANDIDATE_FILES if model == D3 else CANDIDATE_FILES
+    return {
+        KEV: KEV_FILES,
+        JEVK5: JEVK5_FILES,
+        H2O: JEVK5_FILES,
+        D3: JEVK5_FILES,
+        IMAJEV: IMAJEV_FILES,
+    }[model]
 
 
 def artifact_budget(kind="adapter"):
@@ -160,14 +219,14 @@ def metadata(checkpoint):
         or value.get("kind") not in ("base", "adapter", "candidate")
     ):
         raise ValueError("invalid model metadata")
-    if value["kind"] == "candidate" and value["model"] != H2O:
-        raise ValueError("base candidates are supported for the H2O profile only")
+    if value["kind"] == "candidate" and value["model"] not in (H2O, D3):
+        raise ValueError("base candidates are supported for the H2O and d3 profiles only")
     if value["model"] == IMAJEV:
         if value.get("profile") != spec(IMAJEV) or value["kind"] != "adapter":
             raise ValueError("image metadata differs from the pinned profile")
-    elif value["model"] == H2O:
-        if value.get("profile") != spec(H2O):
-            raise ValueError("H2O metadata differs from the pinned profile")
+    elif value["model"] in PINS_FILES:
+        if value.get("profile") != spec(value["model"]):
+            raise ValueError("profile metadata differs from the pinned profile")
     elif "profile" in value:
         raise ValueError("legacy metadata cannot contain an image profile")
     temperature = value.get("temperature")
@@ -196,13 +255,13 @@ def artifact_files(checkpoint):
     if value["kind"] == "candidate":
         if (Path(checkpoint) / "adapter_model.safetensors").exists():
             raise ValueError("checkpoint mixes model formats")
-        return CANDIDATE_FILES
+        return candidate_files(value["model"], "candidate")
     return ("model.json",) if value["kind"] == "base" else candidate_files(value["model"])
 
 
 def write_metadata(checkpoint, *, kind="adapter", temperature=1.0, calibration=None, model=JEVK5):
     value = {"version": VERSION, "model": model, "kind": kind, "temperature": temperature}
-    if model in (H2O, IMAJEV):
+    if model in (*PINS_FILES, IMAJEV):
         value["profile"] = spec(model)
     if calibration is not None:
         value["calibration"] = calibration
@@ -247,8 +306,6 @@ def set_temperature(checkpoint, value, calibration=None):
 
 
 def text_runtime(model):
-    import importlib
-
     if model not in TEXT_ADAPTER_MODELS:
         raise ValueError("unsupported text adapter runtime")
-    return importlib.import_module(".h2o" if model == H2O else ".jevk5", __package__)
+    return importlib.import_module(TEXT_RUNTIME_MODULES.get(model, ".jevk5"), __package__)
