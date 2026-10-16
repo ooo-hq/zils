@@ -424,6 +424,40 @@ else:
                 self.assertEqual(jobs_seen[0]["min_free_mib"], 14000)
                 self.assertEqual(jobs_seen[0]["max_seconds"], 900)
 
+    def test_queue_miner_refuses_to_start_with_a_reference_it_cannot_run(self):
+        from miner import queue
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "config.json"
+            seed = "0x" + "11" * 32
+            config.write_text(json.dumps({"coordinator": "https://example.test", "seed": seed}))
+            reference = checkpoint(root / "d3-reference", models.D3)
+            env = {
+                k: v
+                for k, v in os.environ.items()
+                if k not in ("ZILS_D3_RUNTIME_PYTHON", "FEZ_D3_RUNTIME_PYTHON")
+            }
+            cases = (
+                (reference, "ZILS_D3_RUNTIME_PYTHON"),
+                (root / "missing-reference", "missing-reference"),
+            )
+            for path, message in cases:
+                argv = ["queue", "--config", str(config), "--state", str(root / "state")]
+                argv += ["--reference", str(path), "--no-download", "--once"]
+                with (
+                    self.subTest(reference=path.name),
+                    patch.dict(os.environ, env, clear=True),
+                    patch.object(sys, "argv", argv),
+                    patch("miner.queue.run_once") as run_once,
+                    patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                    self.assertRaises(SystemExit) as stop,
+                ):
+                    queue.main()
+                self.assertEqual(stop.exception.code, 1)
+                self.assertIn(message, stderr.getvalue())
+                run_once.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -118,11 +118,15 @@ Run from the repository root (also set this environment variable in a service su
 
 ```bash
 export ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"
-export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"  # when serving d3 jobs
 .venv-kev/bin/python -m miner.queue \
   --config .private/queue-miner.json --state .private/queue-miner \
-  --reference models/h2o-reference --reference models/d3-reference --device cuda
+  --reference models/h2o-reference --device cuda
 ```
+
+Add `--reference models/d3-reference` and export
+`ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"` only if you provisioned the
+d3 runtime in step 2. The miner refuses to start when a `--reference` directory
+is missing or its runtime interpreter variable is unset.
 
 The worker checks for assigned work every ten seconds. It can remain quiet when
 no assignment is available or a configured capacity gate is waiting for GPU

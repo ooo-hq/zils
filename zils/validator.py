@@ -120,6 +120,8 @@ def evaluate_round(
             fitted_baseline = source
             # An upgrade may change base: the frozen release runs on the base it was trained on.
             baseline_model = models.checkpoint_model(source)
+            if baseline_model != model and selection.get("base_change") is not True:
+                raise ValueError("cross-profile upgrade requires base_change")
         else:
             raw = attempt / "baseline-raw"
             zils.stage(entry, raw)

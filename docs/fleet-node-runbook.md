@@ -26,6 +26,11 @@ The script fetches its own Python interpreters through `uv` into
 `zils-compute`. `ZILS_NODE_DRY_RUN=1` previews the phases without changing
 anything, and provisioning takes 20–40 minutes over one SSH session; if it
 drops, rerun the same command, every finished phase is skipped.
+The d3 environment, reference and qualification steps live inside the existing
+`environments`, `references` and `qualify` phases, so they run only on a fresh
+provision; a node or snapshot provisioned before d3 support needs a rebuild, or
+a manual run of those three steps, before `apply_role.sh` installs the
+queue-miner unit that references `models/d3-reference`.
 
 Record `profile_sha256`, `runtime_sha256`, `trainer_sha256`,
 `training.peak_gpu_mib` and `gpu.free_mib_at_start` from both reports (H2O and

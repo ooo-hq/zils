@@ -24,7 +24,11 @@ A d3 candidate keeps the files listed as `models.D3_CONTRACT_FILES` byte-identic
 (config, tokenizer, readout, vendor runtime modules, `LICENSE`, `NOTICE`) and
 the 4,096-token input limit; its weights are the two `model-0000N-of-00002.safetensors`
 shards plus `model.safetensors.index.json`, and its `model.json` is written with
-`write_metadata(path, kind="candidate", model=zils.models.D3)`.
+`write_metadata(path, kind="candidate", model=zils.models.D3)`. Before loading a
+d3 candidate the validator checks that its index `weight_map` names exactly the
+parent index's tensors, maps them only to those two shard file names, and that
+each shard holds exactly the tensors the index assigns to it; transformers then
+rejects any tensor whose shape differs from the parent.
 
 The validator refuses a candidate whose contract files differ from the parent
 hashes, whose `architectures` or `text_config` differ structurally from the

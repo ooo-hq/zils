@@ -185,6 +185,30 @@ def validate_candidate(checkpoint):
             with path.open("rb") as stream:
                 if hashlib.file_digest(stream, "sha256").hexdigest() != PINS["files"][name]:
                     raise ValueError(f"base candidate {name} differs from the pinned parent")
+    # Weights must load exactly: the parent's tensor names, held in the two pinned shard files.
+    from safetensors import SafetensorError, safe_open
+
+    index = "model.safetensors.index.json"
+    shards = ("model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors")
+    parent = json.loads((pinned_base_path() / index).read_text())["weight_map"]
+    mapped = json.loads((checkpoint / index).read_text())
+    mapped = mapped.get("weight_map") if isinstance(mapped, dict) else None
+    if not isinstance(mapped, dict):
+        raise ValueError("base candidate index has no weight_map")
+    if extra := sorted(set(mapped) ^ set(parent)):
+        raise ValueError(f"base candidate index keys differ from the pinned parent: {extra[0]}")
+    for key, shard in mapped.items():
+        if shard not in shards:
+            raise ValueError(f"base candidate index maps {key} outside the pinned shards")
+    for shard in shards:
+        try:
+            with safe_open(checkpoint / shard, framework="pt") as stream:
+                held = set(stream.keys())
+        except SafetensorError as error:
+            raise ValueError(f"base candidate {shard} is not a safetensors file: {error}") from None
+        wrong = sorted(held ^ {key for key, value in mapped.items() if value == shard})
+        if wrong:
+            raise ValueError(f"base candidate {shard} tensors differ from its index: {wrong[0]}")
 
 
 class DecisionModel:

@@ -14,7 +14,7 @@ import zils
 from tests.test_fleet_profiles import checkpoint
 from tests.test_jobs import POLICY, examples
 from zils import benchmark, jobs, models, validator
-from zils.version_selection import VERSION, check_promotion
+from zils.version_selection import VERSION, check_promotion, validate
 
 RUNTIME = """import json, sys
 from pathlib import Path
@@ -52,7 +52,7 @@ class CrossProfileTest(unittest.TestCase):
             "ZILS_D3_RUNTIME_PYTHON": str(runtime),
         }
 
-    def round(self, previous_model, job_model=models.D3, env=None):
+    def round(self, previous_model, job_model=models.D3, env=None, base_change=None):
         root = self.root
         previous = checkpoint(root / "previous", previous_model)
         sha = zils.checkpoint_hash(previous)
@@ -67,6 +67,8 @@ class CrossProfileTest(unittest.TestCase):
                 "sha256": sha,
             },
         }
+        if base_change is not None:
+            selection["base_change"] = base_change
         directory = root / "validator"
         data = directory / "benchmark"
         manifest = jobs.build(
@@ -107,7 +109,7 @@ class CrossProfileTest(unittest.TestCase):
         return [c[c.index("--base-revision") + 1] for c in calls]
 
     def test_previous_release_on_another_base_is_scored_on_its_own_base(self):
-        manifest, report = self.round(models.H2O)
+        manifest, report = self.round(models.H2O, base_change=True)
         self.assertEqual(report["delivery"]["status"], "accepted", report)
         self.assertEqual(report["baseline_model"], models.H2O)
         self.assertEqual(report["model"]["id"], models.D3)
@@ -119,7 +121,12 @@ class CrossProfileTest(unittest.TestCase):
         env = {k: v for k, v in self.env.items() if k not in ("ZILS_H2O_RUNTIME_PYTHON",)}
         env.pop("FEZ_H2O_RUNTIME_PYTHON", None)
         with self.assertRaisesRegex(RuntimeError, "ZILS_H2O_RUNTIME_PYTHON"):
-            self.round(models.H2O, env=env)
+            self.round(models.H2O, env=env, base_change=True)
+        self.assertFalse(self.record.exists())
+
+    def test_cross_profile_upgrade_without_base_change_is_refused_before_evaluation(self):
+        with self.assertRaisesRegex(ValueError, "requires base_change"):
+            self.round(models.H2O)
         self.assertFalse(self.record.exists())
 
     def test_same_profile_upgrade_records_the_job_model(self):
@@ -155,6 +162,16 @@ class CrossProfileTest(unittest.TestCase):
         check_promotion(current, entry, {**selection, "base_change": True})
         legacy = {key: value for key, value in incumbent.items() if key != "profile"}
         check_promotion({"models": [legacy]}, entry, selection)
+        image = {**entry, "profile": models.spec(models.IMAJEV)}
+        with self.assertRaisesRegex(ValueError, "cannot move between model profiles"):
+            check_promotion({"models": [legacy]}, image, selection)
+
+    def test_selection_base_change_must_be_true(self):
+        selection = {"version": VERSION, "root_job_id": str(uuid.uuid4()), "previous": None}
+        validate({**selection, "base_change": True})
+        for value in (False, "true"):
+            with self.assertRaisesRegex(ValueError, "Invalid frozen version selection"):
+                validate({**selection, "base_change": value})
 
 
 if __name__ == "__main__":

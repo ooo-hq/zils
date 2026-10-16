@@ -23,6 +23,21 @@ class FakeBackbone(torch.nn.Module):
         return SimpleNamespace(last_hidden_state=hidden)
 
 
+SHARDS = ("model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors")
+INDEX = "model.safetensors.index.json"
+
+
+def weights(root, weight_map, tensors=None):
+    """Tiny shards and an index; tensors[shard] overrides the keys a shard actually holds."""
+    from safetensors.torch import save_file
+
+    root.mkdir(exist_ok=True)
+    (root / INDEX).write_text(json.dumps({"metadata": {}, "weight_map": weight_map}))
+    for shard in SHARDS:
+        keys = (tensors or {}).get(shard, [k for k, v in weight_map.items() if v == shard])
+        save_file({key: torch.zeros(1) for key in keys}, str(root / shard))
+
+
 class D3ModuleTest(unittest.TestCase):
     def test_pins_and_constants(self):
         self.assertEqual(d3.MAX_TOKENS, 4096)
@@ -144,13 +159,24 @@ class D3ModuleTest(unittest.TestCase):
         for word in ("reference", "train", "parity"):
             self.assertIn(word, out)
 
-    def test_candidate_hashes_only_contract_files(self):
+    def candidate(self, root):
+        """A pinned-base fixture and a candidate whose contract files equal the patched pins."""
+        parent = {"a.weight": SHARDS[0], "b.weight": SHARDS[1]}
+        weights(root / "base", parent)
+        candidate = root / "candidate"
+        candidate.mkdir()
+        models.write_metadata(candidate, kind="candidate", model=models.D3)
+        for name in models.D3_CONTRACT_FILES:
+            (candidate / name).write_bytes(name.encode())
+        weights(candidate, parent)
         pins = {name: hashlib.sha256(name.encode()).hexdigest() for name in d3.PINS["files"]}
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(d3.PINS["files"], pins):
-            models.write_metadata(tmp, kind="candidate", model=models.D3)
-            for name in models.D3_CANDIDATE_FILES[1:]:
-                (Path(tmp) / name).write_bytes(name.encode())
-            (Path(tmp) / "model-00001-of-00002.safetensors").write_bytes(b"new weights")
+        self.enterContext(patch.dict(d3.PINS["files"], pins))
+        self.enterContext(patch("zils.d3.pinned_base_path", return_value=root / "base"))
+        return candidate, parent
+
+    def test_candidate_hashes_only_contract_files(self):
+        with tempfile.TemporaryDirectory() as root:
+            tmp, _ = self.candidate(Path(root))
             d3.validate_candidate(tmp)  # MODEL_MANIFEST.json, requirements.txt, d3_server.py absent
             for extra, make in (
                 ("extra.py", lambda path: path.write_text("")),
@@ -163,6 +189,20 @@ class D3ModuleTest(unittest.TestCase):
             (Path(tmp) / "d3_runtime.py").write_bytes(b"changed")
             with self.assertRaisesRegex(ValueError, "d3_runtime.py differs"):
                 d3.validate_candidate(tmp)
+
+    def test_candidate_weights_must_load_exactly(self):
+        with tempfile.TemporaryDirectory() as root:
+            candidate, parent = self.candidate(Path(root))
+            d3.validate_candidate(candidate)
+            for message, weight_map, tensors in (
+                ("index keys differ.*c.weight", {**parent, "c.weight": SHARDS[0]}, None),
+                ("outside the pinned shards", {**parent, "b.weight": "x/" + SHARDS[1]}, None),
+                ("differ from its index.*c.weight", parent, {SHARDS[0]: ["a.weight", "c.weight"]}),
+            ):
+                with self.subTest(message=message):
+                    weights(candidate, weight_map, tensors)
+                    with self.assertRaisesRegex(ValueError, message):
+                        d3.validate_candidate(candidate)
 
     def test_parity_reports_and_rejects_drift(self):
         reference = [0.7, 0.3]
