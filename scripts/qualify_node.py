@@ -22,7 +22,8 @@ from zils.runtime import gpu_ready
 FLOOR_MIB = 12288
 STATE = {"ticket": "Please help with payment.", "history": "payment issue " * 950}
 H2O_CAP = 2048
-OVERHEAD_TOKENS = 131  # the measured H2O prompt is 2 * 950 + 131 = 2,031 tokens
+PHRASE = "payment issue "
+HEADROOM_TOKENS = 200  # d3 rows target the cap minus this; the encoder refuses anything over
 QUESTIONS = [
     {
         "type": "choice",
@@ -47,6 +48,20 @@ print(json.dumps({"ok": all(abs(sum(p.values()) - 1) < 1e-7 for p in probes), "m
 """
 
 
+SIZING_PROBE = """# sizing probe
+import json, sys
+from zils.d3 import Encoder, base_path
+ticket, questions = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+encoder = Encoder(base_path())
+def tokens(question, repeats):
+    state = {"ticket": ticket, "history": "payment issue " * repeats}
+    return len(encoder.encode(state, question)[0])
+base = [tokens(q, 0) for q in questions]
+per = [(tokens(q, 100) - b) / 100 for q, b in zip(questions, base)]
+print(json.dumps({"overhead": max(base), "per_repeat": max(per)}))
+"""
+
+
 def nvidia(run):
     result = run(
         ["nvidia-smi", "--id=0", "--query-gpu=name,driver_version", "--format=csv,noheader"],
@@ -68,8 +83,11 @@ def free_memory_mib(run):
     return int(result.stdout.strip().splitlines()[0])
 
 
-def state_of(tokens):
-    return dict(STATE, history="payment issue " * ((tokens - OVERHEAD_TOKENS) // 2))
+def repeats_for(target_tokens, overhead, per_repeat):
+    """Repeats of PHRASE that bring a row to about target_tokens, from measured token costs."""
+    if per_repeat <= 0:
+        raise ValueError(f"measured {per_repeat} tokens per repeat")
+    return max(0, int((target_tokens - overhead) // per_repeat))
 
 
 def synthetic_rows(path, state):
@@ -87,10 +105,10 @@ def synthetic_rows(path, state):
     return rows
 
 
-def parity_cases(path, rows):
-    """The six training rows plus choice rows near 1,000, 2,000 and 4,000 tokens."""
+def parity_cases(path, rows, states):
+    """The six training rows plus one choice row per extra state (about 1,000, 2,000, cap - 200)."""
     cases = [{"state": r["state"], "question": QUESTIONS[i % 3]} for i, r in enumerate(rows)]
-    cases += [{"state": state_of(n), "question": QUESTIONS[0]} for n in (1000, 2000, 4000)]
+    cases += [{"state": s, "question": QUESTIONS[0]} for s in states]
     path.write_text(
         "".join(json.dumps(dict(case, id=f"case-{n}")) + "\n" for n, case in enumerate(cases))
     )
@@ -159,10 +177,28 @@ def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None, model=
                 timeout=3600,
                 cwd=env_root,
             )
+        if model == models.D3:
+            stage = "sizing"
+            sized = run(
+                [runtime_python, "-c", SIZING_PROBE, json.dumps(STATE["ticket"])]
+                + [json.dumps(QUESTIONS)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=600,
+                cwd=env_root,
+            )
+            report["sizing"] = json.loads(sized.stdout)
+
+            def history(target):
+                return PHRASE * repeats_for(target, **report["sizing"])
+
+            state = dict(STATE, history=history(cap - HEADROOM_TOKENS))
+        else:
+            # H2O's 950 repeats fill its 2,048-token cap.
+            state = dict(STATE, history=STATE["history"] * (cap // H2O_CAP))
         stage = "train"
         data = out / "train.jsonl"
-        # H2O's 950 repeats fill its 2,048-token cap; other caps scale by whole multiples.
-        state = dict(STATE, history=STATE["history"] * (cap // H2O_CAP))
         rows = synthetic_rows(data, state)
         examples = len(rows)
         run(
@@ -222,7 +258,8 @@ def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None, model=
         if model == models.D3 and report["reload_predict_ok"]:
             stage = "parity"
             cases = out / "parity.jsonl"
-            parity_cases(cases, rows)
+            targets = (1000, 2000, cap - HEADROOM_TOKENS)
+            parity_cases(cases, rows, [dict(STATE, history=history(n)) for n in targets])
             checked = run(
                 [runtime_python, "-m", module, "parity"]
                 + ["--reference", str(reference), "--cases", str(cases)],
