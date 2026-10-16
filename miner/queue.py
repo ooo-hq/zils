@@ -129,7 +129,7 @@ def run_once(
                 finally:
                     temporary.unlink(missing_ok=True)
             job = {**config, "round_id": uuid.UUID(job_id).hex, "min_free_mib": minimum_mib}
-            if model == models.H2O:
+            if model in models.PINS_FILES:
                 job["min_free_mib"] = assignment["min_free_mib"]
                 job["max_seconds"] = assignment["max_seconds"]
             if model == models.IMAJEV:

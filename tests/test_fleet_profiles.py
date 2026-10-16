@@ -369,6 +369,61 @@ else:
                         with self.assertRaisesRegex(ValueError, "profile|adapter"):
                             protocol.fetch_checkpoint(claim, root / "bad", model=model)
 
+    def test_queue_job_carries_capacity_limits_for_pinned_profiles(self):
+        import uuid
+
+        from miner import queue
+
+        class Stop(Exception):
+            pass
+
+        for model in (models.H2O, models.D3):
+            with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                reference = checkpoint(root / "reference", model)
+                training = b"{}\n"
+                job_id = str(uuid.uuid4())
+                assignment = {
+                    "job_id": job_id,
+                    "lease_token": str(uuid.uuid4()),
+                    "uid": 1,
+                    "model": models.spec(model),
+                    "base_revision": models.spec(model)["base_revision"],
+                    "initial_sha256": zils.checkpoint_hash(reference),
+                    "training_sha256": hashlib.sha256(training).hexdigest(),
+                    "job_sha256": "c" * 64,
+                    "training": {"url": "https://example.test/training"},
+                    "min_free_mib": 14000,
+                    "max_seconds": 900,
+                }
+
+                class Client:
+                    url = "https://example.test"
+                    key = SimpleNamespace(ss58_address="hotkey")
+
+                    def call(self, name, payload=None):
+                        return {"assignment": assignment} if name == "claim" else {}
+
+                jobs_seen = []
+
+                def train(config, directory, job, runtime, device, **options):
+                    jobs_seen.append(job)
+                    raise Stop()
+
+                with (
+                    patch("miner.queue.gpu_ready", return_value=True),
+                    patch(
+                        "miner.queue.download", lambda url, path, limit: path.write_bytes(training)
+                    ),
+                    patch("miner.queue.train_candidate", train),
+                    patch("miner.queue.lease_heartbeat") as heartbeat,
+                    self.assertRaises(Stop),
+                ):
+                    heartbeat.return_value.__enter__.return_value = lambda: None
+                    queue.run_once(Client(), root / "state", reference, sys.executable, "cuda")
+                self.assertEqual(jobs_seen[0]["min_free_mib"], 14000)
+                self.assertEqual(jobs_seen[0]["max_seconds"], 900)
+
 
 if __name__ == "__main__":
     unittest.main()
