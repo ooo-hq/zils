@@ -114,6 +114,9 @@ export ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"
 ./start-miner --device cuda --rounds 1
 ```
 
+For d3 bundles (`d3-mini-4.5b-v1`), do the same with `.venv-d3`,
+`requirements/d3.txt` and `ZILS_D3_RUNTIME_PYTHON`.
+
 H2O training waits until at least 12,288 MiB of GPU memory is free
 (`ZILS_H2O_MIN_FREE_MIB` raises that floor). Neither side silently substitutes
 the JevK5 runtime. See the [H2O model contract](h2o-queue.md) for the pins.

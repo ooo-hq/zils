@@ -30,7 +30,7 @@ Get the following from the operator before downloading models:
 Use Linux or WSL 2 with Git, Python 3.13, `uv`, a BF16-capable NVIDIA GPU and its
 CUDA driver. Allow at least 25 GB of free disk for models and dependencies,
 plus space for assigned data and candidates. The runtime was checked on an
-RTX 4090; memory needs depend on input length. H2O uses the isolated CUDA runtime
+RTX 4090; memory needs depend on input length. H2O and d3 use isolated CUDA runtimes
 below. Apple silicon miners retain the
 [JevK5 installation guide](mac-miners.md) for explicitly assigned legacy jobs.
 H2O CPU and Apple MPS training are unsupported.
@@ -60,11 +60,17 @@ uv venv --python 3.12 .venv-h2o
 uv pip install --python .venv-h2o/bin/python --torch-backend=cu130 -r requirements/h2o.txt
 export ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"
 .venv-h2o/bin/python -m zils.h2o reference --out models/h2o-reference
+# Only for d3-mini-4.5b-v1 (4,096-token inputs; 9.1 GB reference):
+uv venv --python 3.12 .venv-d3
+uv pip install --python .venv-d3/bin/python --torch-backend=cu130 -r requirements/d3.txt
+export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
+.venv-d3/bin/python -m zils.d3 reference --out models/d3-reference
 ```
 
 The Bittensor SDK is installed here to read the wallet hotkey; these commands
 send no chain transactions. The reference command downloads and verifies the
-pinned base weights and writes `models/h2o-reference/model.json`.
+pinned base weights and writes `models/h2o-reference/model.json`
+(`models/d3-reference/model.json` for d3).
 See the [H2O model contract](h2o-queue.md) for the immutable revision, runtime,
 and cache override. The operator must explicitly qualify this hotkey for H2O;
 an existing JevK5 approval does not qualify it for H2O.
@@ -112,9 +118,10 @@ Run from the repository root (also set this environment variable in a service su
 
 ```bash
 export ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"
+export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"  # when serving d3 jobs
 .venv-kev/bin/python -m miner.queue \
   --config .private/queue-miner.json --state .private/queue-miner \
-  --reference models/h2o-reference --device cuda
+  --reference models/h2o-reference --reference models/d3-reference --device cuda
 ```
 
 The worker checks for assigned work every ten seconds. It can remain quiet when

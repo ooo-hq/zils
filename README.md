@@ -58,7 +58,10 @@ export ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"
   --reference models/h2o-reference --device cuda
 ```
 
-H2O requires CUDA. Legacy JevK5 supports [qualified Macs](docs/mac-miners.md). The miner uses
+For d3, also pass `--reference models/d3-reference` and export
+`ZILS_D3_RUNTIME_PYTHON` as described in the queued miner setup.
+
+H2O and d3 require CUDA. Legacy JevK5 supports [qualified Macs](docs/mac-miners.md). The miner uses
 outbound HTTPS and receives only approved training data and signed upload URLs.
 Keep calibration/test data and operator service credentials off miner accounts.
 For the separate testnet fleet, run `./start-miner --rounds 1` from its assigned

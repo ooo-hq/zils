@@ -67,6 +67,8 @@ main() {
       .venv-kev/bin/python -c 'import torch; assert torch.cuda.is_available(); assert torch.cuda.is_bf16_supported()'
       [ -x .venv-h2o/bin/python ] || uv venv --python 3.12 .venv-h2o
       uv pip install -q --python .venv-h2o/bin/python --torch-backend=cu130 -r requirements/h2o.txt
+      [ -x .venv-d3/bin/python ] || uv venv --python 3.12 .venv-d3
+      uv pip install -q --python .venv-d3/bin/python --torch-backend=cu130 -r requirements/d3.txt
       # The venvs symlink into the managed interpreters; the service user must be able to exec them.
       [ -d /opt/uv-python ] && chmod -R a+rX /opt/uv-python || true
     fi
@@ -78,6 +80,7 @@ main() {
     if [ "$DRY" = 0 ]; then
       cd $ROOT
       [ -f models/h2o-reference/model.json ] || HF_HOME=$STATE/cache/hf .venv-h2o/bin/python -m zils.h2o reference --out models/h2o-reference
+      [ -f models/d3-reference/model.json ] || HF_HOME=$STATE/cache/hf .venv-d3/bin/python -m zils.d3 reference --out models/d3-reference
       chown -R root:zils-compute models && chmod -R g+rX models
     fi
     done_marker references
@@ -104,13 +107,17 @@ main() {
       chown -R zilsminer:zilsminer "$STATE/cache" "$STATE/qualification"
       # A failed run leaves its adapter and training data behind; clear them so the phase is retryable.
       rm -rf "$STATE/qualification/adapter" "$STATE/qualification/train.jsonl"
+      rm -rf "$STATE/qualification-d3/adapter" "$STATE/qualification-d3/train.jsonl"
       # Run as the service user inside the unit sandbox; EnvironmentFile supplies node.env.
-      systemd-run --wait --pipe --collect -p User=zilsminer -p Group=zilsminer \
-        -p SupplementaryGroups=zils-compute -p WorkingDirectory=$ROOT \
-        -p EnvironmentFile=/etc/zils-node/node.env -p ProtectSystem=strict \
-        -p "ReadWritePaths=$STATE /var/lock/zils-training" -p PrivateTmp=yes -p NoNewPrivileges=yes \
-        $ROOT/.venv-kev/bin/python -m scripts.qualify_node --root $ROOT \
-        --runtime-python $ROOT/.venv-h2o/bin/python --out $STATE/qualification
+      qualify_runtime() {
+        systemd-run --wait --pipe --collect -p User=zilsminer -p Group=zilsminer \
+          -p SupplementaryGroups=zils-compute -p WorkingDirectory=$ROOT \
+          -p EnvironmentFile=/etc/zils-node/node.env -p ProtectSystem=strict \
+          -p "ReadWritePaths=$STATE /var/lock/zils-training" -p PrivateTmp=yes -p NoNewPrivileges=yes \
+          $ROOT/.venv-kev/bin/python -m scripts.qualify_node --root $ROOT "$@"
+      }
+      qualify_runtime --runtime-python $ROOT/.venv-h2o/bin/python --out $STATE/qualification
+      qualify_runtime --model d3-mini-4.5b-v1 --runtime-python $ROOT/.venv-d3/bin/python --out $STATE/qualification-d3
     fi
     done_marker qualify
   fi
@@ -119,9 +126,10 @@ main() {
   if [ "$DRY" = 0 ]; then
     cd $ROOT
     PINS=$(sha256sum zils/h2o-pins.json requirements/h2o.txt | sha256sum | cut -c1-16)
+    D3_PINS=$(sha256sum zils/d3-pins.json requirements/d3.txt | sha256sum | cut -c1-16)
     Q=$(sha256sum $STATE/qualification/qualification.json | cut -c1-16)
-    printf '{"subnet_ref":"%s","subnet_commit":"%s","pins_sha256_16":"%s","qualification_sha256_16":"%s","built_at":"%s"}\n' \
-      "$ZILS_SUBNET_REF" "$(git rev-parse HEAD)" "$PINS" "$Q" "$(date -u +%FT%TZ)" > /etc/zils-node/image.json
+    printf '{"subnet_ref":"%s","subnet_commit":"%s","pins_sha256_16":"%s","d3_pins_sha256_16":"%s","qualification_sha256_16":"%s","built_at":"%s"}\n' \
+      "$ZILS_SUBNET_REF" "$(git rev-parse HEAD)" "$PINS" "$D3_PINS" "$Q" "$(date -u +%FT%TZ)" > /etc/zils-node/image.json
     echo "image: $(cat /etc/zils-node/image.json)"
   fi
   echo "provisioned; apply a role with: scripts/apply_role.sh after writing /etc/zils-node/role.json"

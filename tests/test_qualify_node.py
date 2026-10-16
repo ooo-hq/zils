@@ -37,6 +37,13 @@ class QualifyNodeTest(unittest.TestCase):
                     )
                 )
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
+            if "zils.d3 parity" in text:
+                cases = Path(command[command.index("--cases") + 1]).read_text().splitlines()
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({"cases": len(cases), "max_difference": 2.5e-8}),
+                    stderr="",
+                )
             if "reload_predict" in text:
                 return SimpleNamespace(
                     returncode=0,
@@ -65,6 +72,54 @@ class QualifyNodeTest(unittest.TestCase):
         self.assertEqual(report["training"]["max_prompt_tokens"], 2031)
         self.assertTrue(any("verify_runtime" in " ".join(map(str, c)) for c in calls))
         self.assertTrue(all("--id=0" in c for c in calls if c[0] == "nvidia-smi"))
+
+    def test_d3_uses_its_module_and_cap_and_checks_parity(self):
+        calls = []
+        rows = []
+        run = self.fake_run(calls)
+
+        def recording_run(command, **kwargs):
+            if "--data" in command:
+                data = Path(command[command.index("--data") + 1])
+                rows.extend(json.loads(line) for line in data.read_text().splitlines())
+            return run(command, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(__file__).resolve().parents[1]
+            report = qualify_node.qualify(
+                root,
+                "python3.12",
+                Path(tmp) / "q",
+                run=recording_run,
+                free_mib=19500,
+                model=models.D3,
+            )
+        text = [" ".join(map(str, c)) for c in calls]
+        self.assertEqual(report["model"], models.D3)
+        self.assertEqual(
+            report["profile_sha256"], models.profile_identity(models.D3)["profile_sha256"]
+        )
+        self.assertEqual(report["parity"], {"cases": 9, "max_difference": 2.5e-8})
+        self.assertTrue(report["reload_predict_ok"])
+        self.assertTrue(any("zils.d3 reference" in c for c in text))
+        self.assertTrue(any("zils.d3 train" in c for c in text))
+        self.assertTrue(any("from zils.d3 import verify_runtime" in c for c in text))
+        self.assertTrue(any("from zils.d3 import DecisionModel" in c for c in text))
+        self.assertFalse(any("zils.h2o" in c for c in text))
+        longest = max(len(row["state"]["history"].split()) for row in rows)
+        self.assertGreater(longest, 3000)  # sized to the 4,096-token cap, not H2O's 2,048
+        self.assertEqual(len(rows), 6)
+
+    def test_h2o_report_has_no_parity_and_keeps_2048_rows(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(__file__).resolve().parents[1]
+            report = qualify_node.qualify(
+                root, "python3.12", Path(tmp) / "q", run=self.fake_run(calls), free_mib=19500
+            )
+        self.assertNotIn("parity", report)
+        self.assertEqual(qualify_node.STATE["history"], "payment issue " * 950)
+        self.assertFalse(any("parity" in " ".join(map(str, c)) for c in calls))
 
     def test_below_floor_stops_before_training(self):
         calls = []
