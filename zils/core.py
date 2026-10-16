@@ -14,10 +14,10 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-from . import ROOT, models, settings
+from . import ROOT, models, sandbox, settings
 
 ARTIFACT_FILES = ("adapter_config.json", "adapter_model.safetensors", "head.pt")
-MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
+MAX_ARTIFACT_BYTES = models.MAX_ADAPTER_BYTES
 BASE = "Qwen/Qwen3.5-0.8B-Base"
 RUBRIC = "fez-decisions/v1"
 
@@ -135,13 +135,14 @@ def weight_vector(rows):
 def checkpoint_hash(path):
     path = Path(path)
     records, total = [], 0
+    budget = models.artifact_budget(models.artifact_kind(path))
     for name in models.artifact_files(path):
         artifact = path / name
         if artifact.is_symlink() or not artifact.is_file():
             raise ValueError(f"checkpoint requires a regular, non-symlink {name}")
         total += artifact.stat().st_size
-        if total > MAX_ARTIFACT_BYTES:
-            raise ValueError("checkpoint exceeds 512 MiB adapter budget")
+        if total > budget:
+            raise ValueError(f"checkpoint exceeds its {budget // 1024**2} MiB artifact budget")
         with artifact.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         records.append([name, digest])
@@ -282,7 +283,7 @@ def evaluate(args):
                     command.extend(["--base", base, "--base-revision", args.base_revision])
                 try:
                     result = subprocess.run(
-                        command,
+                        sandbox.wrap(command),
                         input=json.dumps(requests, allow_nan=False),
                         text=True,
                         capture_output=True,
@@ -324,6 +325,7 @@ def evaluate(args):
         "dataset_sha256": hashlib.sha256(
             json.dumps(cases, sort_keys=True, allow_nan=False).encode()
         ).hexdigest(),
+        "sandbox": sandbox.mode(),
         "miners": rows,
         "weights": weight_vector(rows),
     }

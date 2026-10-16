@@ -29,6 +29,17 @@ PINS = json.loads(Path(__file__).with_name("h2o-pins.json").read_text())
 
 
 def base_path(download=False):
+    """The weights every H2O load uses: the pinned release, or, for the validator's adapter regression
+    suite only, a verified base candidate named by ZILS_H2O_CANDIDATE_BASE (weights intentionally unpinned)."""
+    candidate = settings.get("ZILS_H2O_CANDIDATE_BASE")
+    if candidate:
+        path = Path(candidate).resolve(strict=True)
+        validate_candidate(path)
+        return path
+    return pinned_base_path(download)
+
+
+def pinned_base_path(download=False):
     from huggingface_hub import snapshot_download
 
     override = settings.get("ZILS_H2O_BASE_DIR")
@@ -172,6 +183,43 @@ def validate_adapter_config(checkpoint, targets):
         raise ValueError("Adapter architecture differs from the pinned H2O recipe")
 
 
+VOLATILE_CONFIG_KEYS = {
+    "dtype",
+    "torch_dtype",
+    "use_cache",
+    "transformers_version",
+    "_name_or_path",
+}
+
+
+def _structural(config):
+    return {k: v for k, v in config.items() if k not in VOLATILE_CONFIG_KEYS}
+
+
+def validate_candidate(checkpoint):
+    """A base candidate changes weights only: contract files and text architecture equal the parent."""
+    checkpoint = Path(checkpoint)
+    for name in models.H2O_CONTRACT_FILES:
+        path = checkpoint / name
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(f"base candidate requires a regular {name}")
+        with path.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != PINS["files"][name]:
+                raise ValueError(f"base candidate {name} differs from the pinned parent")
+    config_path = checkpoint / "config.json"
+    if config_path.is_symlink() or not config_path.is_file() or config_path.stat().st_size > 65536:
+        raise ValueError("base candidate configuration must be a bounded regular file")
+    candidate = json.loads(config_path.read_text())
+    parent = json.loads((pinned_base_path() / "config.json").read_text())
+    if (
+        not isinstance(candidate, dict)
+        or candidate.get("architectures") != parent.get("architectures")
+        or not isinstance(candidate.get("text_config"), dict)
+        or _structural(candidate["text_config"]) != _structural(parent["text_config"])
+    ):
+        raise ValueError("base candidate architecture differs from the pinned parent")
+
+
 class DecisionModel:
     def __init__(self, checkpoint, device, train=False):
         import torch
@@ -181,6 +229,9 @@ class DecisionModel:
         self.meta = models.metadata(checkpoint)
         if self.meta is None or self.meta["model"] != models.H2O:
             raise ValueError("H2O requires an H2O checkpoint")
+        candidate = self.meta["kind"] == "candidate"
+        if candidate and train:
+            raise ValueError("adapters train on the pinned base, not on a base candidate")
         if device != "cuda" or not torch.cuda.is_available() or not torch.cuda.is_bf16_supported():
             raise OSError("H2O requires a BF16-capable CUDA GPU")
         verify_runtime()
@@ -190,6 +241,9 @@ class DecisionModel:
         torch.backends.cudnn.allow_tf32 = False
         torch.set_float32_matmul_precision("highest")
         root = base_path()
+        if candidate:
+            validate_candidate(checkpoint)
+            root = Path(checkpoint)
         self.encoder = Encoder(root)
         self.tokenizer = self.encoder.tokenizer
         self.base, info = Qwen3_5ForConditionalGeneration.from_pretrained(

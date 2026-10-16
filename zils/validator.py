@@ -1,5 +1,6 @@
 """Collect checkpoints, calibrate and score them, and optionally publish testnet weights."""
 
+import collections
 import http.client
 import json
 import re
@@ -233,11 +234,40 @@ def evaluate_round(
     return report
 
 
+def admission_settings(config):
+    """Static member allowlist with private transport, or chain-derived members with public endpoints."""
+    mode = config.get("admission", "members")
+    public = bool(config.get("public_endpoints"))
+    if mode not in ("members", "chain"):
+        raise ValueError("admission must be 'members' or 'chain'")
+    if mode == "chain" and ("chain" not in config or not public):
+        raise ValueError("chain admission requires a testnet configuration and public_endpoints")
+    if mode == "members" and public and any("port" not in m for m in config["members"].values()):
+        raise ValueError("members need artifact ports")
+    return mode, public
+
+
 def validator(config, directory, args):
     key = signing_key(config)
-    members = {int(uid): item["hotkey"] for uid, item in config["members"].items()}
+    admission, public_endpoints = admission_settings(config)
+    members = (
+        {int(uid): item["hotkey"] for uid, item in config["members"].items()}
+        if admission == "members"
+        else {}
+    )
     condition = threading.Condition()
     current, registry, acks = {}, {}, set()
+    recent = collections.defaultdict(collections.deque)
+
+    def throttled(address):
+        now, queue = time.time(), recent[address]
+        while queue and now - queue[0] > 60:
+            queue.popleft()
+        if len(queue) >= wire.SUBMITS_PER_MINUTE:
+            return True
+        queue.append(now)
+        return False
+
     rounds = directory / "state/rounds"
     rounds.mkdir(mode=0o700, parents=True, exist_ok=True)
 
@@ -268,6 +298,9 @@ def validator(config, directory, args):
                     raise ValueError("message must be an object")
                 with condition:
                     if self.path == "/submit":
+                        if public_endpoints and throttled(self.client_address[0]):
+                            self.send(429, {"error": "too many submissions from this address"})
+                            return
                         if current.get("status") != "collecting":
                             self.send(409, {"error": "round is not collecting"})
                             return
@@ -282,10 +315,14 @@ def validator(config, directory, args):
                                 409, {"error": "round has changed; request the current round"}
                             )
                             return
-                        # Pin downloads to the authenticated caller's TCP source address and assigned artifact port.
-                        endpoint = (
-                            f"http://{self.client_address[0]}:{config['members'][str(uid)]['port']}"
+                        # Pin downloads to the authenticated caller's TCP source address. The artifact port
+                        # is the operator-assigned one for static members, or the signed claim's for public miners.
+                        port = (
+                            wire.endpoint_port(claim.get("endpoint"))[1]
+                            if public_endpoints
+                            else config["members"][str(uid)]["port"]
                         )
+                        endpoint = f"http://{self.client_address[0]}:{port}"
                         updated = dict(registry)
                         wire.register(
                             message,
@@ -294,6 +331,7 @@ def validator(config, directory, args):
                             updated,
                             endpoints={uid: endpoint},
                             job_sha256=config.get("job_sha256"),
+                            public=public_endpoints,
                         )
                         path = rounds / current["round_id"] / "submissions" / f"{uid}.json"
                         if not path.exists():
@@ -384,6 +422,14 @@ def validator(config, directory, args):
                     raise ValueError("pending round differs from the installed job configuration")
             if chain_state is not None and not (work / "chain-snapshot.json").exists():
                 wire.write_json(work / "chain-snapshot.json", chain_state)
+            if admission == "chain":
+                # Membership is the chain snapshot frozen with this round, never a live lookup mid-round.
+                snapshot = json.loads((work / "chain-snapshot.json").read_text())
+                with condition:
+                    members.clear()
+                    members.update(
+                        {int(uid): hotkey for uid, hotkey in snapshot["members"].items()}
+                    )
             with condition:
                 registry.clear()
                 acks.clear()
@@ -399,6 +445,7 @@ def validator(config, directory, args):
                         registry,
                         endpoints={c["uid"]: c["endpoint"]},
                         job_sha256=config.get("job_sha256"),
+                        public=public_endpoints,
                     )
                 while len(registry) < len(members) and time.time() < job["deadline"]:
                     condition.wait(min(1, max(0.01, job["deadline"] - time.time())))

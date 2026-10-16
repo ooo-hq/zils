@@ -20,6 +20,28 @@ complete [image qualification](https://github.com/ooo-hq/zils-platform/blob/main
 It selects the matching model for each frozen job; keep image admission off until
 evaluation and activation are verified. This does not change the primary text reference.
 
+## Open admission (experimental, not enabled anywhere)
+
+The default validator admits only the static `members` allowlist and pins each
+miner's artifact endpoint to a private or Tailscale address. Two settings relax
+this for an open competition, and both must be set together with a `chain`
+section:
+
+- `"admission": "chain"` derives the member list at each round start from the
+  subnet's registered hotkeys at the preflight block, excluding the validator's
+  own hotkey, and freezes it in the round's `chain-snapshot.json`.
+- `"public_endpoints": true` accepts globally routable IPv4 artifact endpoints.
+  The validator still pins the download to the submitting connection's source
+  address; only the port comes from the signed claim. Private, loopback,
+  link-local, multicast and reserved addresses are refused in this mode, and
+  submissions are throttled per source address (30 per minute).
+
+Registration on the subnet is the admission check; there is no further vetting.
+Every submission is still hash-verified, size-bounded, and scored in the
+isolated runner described in [evaluation](evaluation.md). The validator must be
+reachable on a public address for miners to announce; firewall everything but
+its announcement port and keep the artifact transport read-only.
+
 ## Bittensor testnet validator
 
 This path uses a model-pinned fleet and private-network transport. It is a closed

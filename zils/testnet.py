@@ -57,7 +57,15 @@ def preflight(config, sub):
     validator_uid = query("Uids", netuid, validator)
     if validator_uid is None or query("Keys", netuid, validator_uid) != validator:
         raise ValueError("validator registration is missing or changed")
-    members = config.get("members", {str(config.get("uid")): {"hotkey": config.get("hotkey")}})
+    if config.get("admission") == "chain":
+        # Open admission: every hotkey registered on the subnet at this block, except the validator's own.
+        members = {}
+        for uid in range(int(query("SubnetworkN", netuid) or 0)):
+            hotkey = query("Keys", netuid, uid)
+            if hotkey and hotkey != validator:
+                members[str(uid)] = {"hotkey": hotkey}
+    else:
+        members = config.get("members", {str(config.get("uid")): {"hotkey": config.get("hotkey")}})
     seen = {validator}
     for uid, item in members.items():
         hotkey = item["hotkey"]
