@@ -1,7 +1,11 @@
 """Option 5 base candidates: full H2O weights with the parent's contract files, at the artifact interface."""
 
+import contextlib
 import hashlib
+import io
 import json
+import runpy
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -125,6 +129,68 @@ class BaseCandidateTest(unittest.TestCase):
                     validate_candidate(edited)
                 with self.assertRaisesRegex(ValueError, "pinned base"):
                     DecisionModel(good, "cuda", train=True)
+
+    def test_promote_base_targets_the_chosen_profile(self):
+        for model, prefix, validator in (
+            (models.H2O, "h2o-lightning-4b", "zils.h2o.validate_candidate"),
+            (models.D3, "d3-mini-4.5b", "zils.d3.validate_candidate"),
+        ):
+            with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                weights = root / "candidate"
+                weights.mkdir()
+                for name in models.candidate_files(model, "candidate"):
+                    (weights / name).write_text(name)
+                models.write_metadata(weights, kind="candidate", model=model)
+                digest = zils.checkpoint_hash(weights)
+                decision = root / "decision.json"
+                decision.write_text(json.dumps({"confirmed_winner": {"sha256": digest}}))
+                argv = [
+                    "promote_base.py",
+                    "--model",
+                    model,
+                    "--candidate",
+                    str(weights),
+                    "--decision",
+                    str(decision),
+                    "--round",
+                    "3",
+                    "--staging",
+                    str(root / "staging"),
+                ]
+                out = io.StringIO()
+                with (
+                    patch.object(sys, "argv", argv),
+                    patch(validator) as validate,
+                    contextlib.redirect_stdout(out),
+                ):
+                    runpy.run_path(
+                        str(Path(__file__).parents[1] / "scripts/promote_base.py"),
+                        run_name="__main__",
+                    )
+                validate.assert_called_once_with(weights)
+                result = json.loads(out.getvalue())
+                entry = result["proposed_spec_entry"]
+                self.assertEqual(entry["id"], f"{prefix}-zils-r3")
+                self.assertEqual(result["repo"], f"zils-ai/{prefix}-zils-r3")
+                self.assertEqual(entry["parent"]["id"], model)
+                self.assertEqual(entry["base"], result["repo"])
+                self.assertEqual(entry["max_input_tokens"], models.spec(model)["max_input_tokens"])
+
+    def test_promote_base_refuses_a_candidate_of_another_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            weights = root / "candidate"
+            weights.mkdir()
+            models.write_metadata(weights, kind="candidate", model=models.H2O)
+            decision = root / "decision.json"
+            decision.write_text(json.dumps({"confirmed_winner": {"sha256": "x"}}))
+            argv = ["promote_base.py", "--model", models.D3, "--candidate", str(weights)]
+            argv += ["--decision", str(decision), "--round", "1", "--staging", str(root / "s")]
+            with patch.object(sys, "argv", argv), self.assertRaisesRegex(SystemExit, "not a d3"):
+                runpy.run_path(
+                    str(Path(__file__).parents[1] / "scripts/promote_base.py"), run_name="__main__"
+                )
 
 
 if __name__ == "__main__":

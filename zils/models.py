@@ -15,6 +15,7 @@ DEFAULT_TRAINING_MODEL = H2O
 TEXT_ADAPTER_MODELS = (JEVK5, H2O, D3)
 TEXT_RUNTIME_MODULES = {H2O: ".h2o", D3: ".d3"}  # default ".jevk5"
 RUNTIME_PYTHON_ENV = {H2O: "ZILS_H2O_RUNTIME_PYTHON", D3: "ZILS_D3_RUNTIME_PYTHON"}
+CANDIDATE_BASE_ENV = {H2O: "ZILS_H2O_CANDIDATE_BASE", D3: "ZILS_D3_CANDIDATE_BASE"}
 PINS_FILES = {H2O: "h2o-pins.json", D3: "d3-pins.json"}
 IMAJEV = "imajev-4b-v1"
 SPECS = {
@@ -138,6 +139,12 @@ def pins(model):
 
 def runtime_python_env(model):
     return RUNTIME_PYTHON_ENV.get(model)
+
+
+def candidate_base_env(model):
+    if model not in CANDIDATE_BASE_ENV:
+        raise ValueError("profile has no base-candidate support")
+    return CANDIDATE_BASE_ENV[model]
 
 
 def profile_identity(model):

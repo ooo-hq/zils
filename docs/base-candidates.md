@@ -1,7 +1,8 @@
 # Base candidates
 
-A base candidate is a full-weight replacement for the pinned text base,
-H2O Lightning 4B v1.2.3. Miners may train it however they like; validators
+A base candidate is a full-weight replacement for a pinned text base, per
+profile: H2O Lightning 4B v1.2.3 today, and d3-mini-4.5b-v1 once it is promoted.
+Everything below describes H2O unless it says d3. Miners may train it however they like; validators
 score it on a sealed holdout against the current base and, for a pending
 winner, retrain a fixed suite of reference adapters on both. Nothing in this
 document is live: open admission is off by default, no round has been run, and
@@ -18,6 +19,12 @@ Only the weights change. A candidate must keep:
   `h2o_lightning_shim.py`, `generation_config.json`, `LICENSE`);
 - the 2,048-token input limit, the answer-token readout and the pinned runtime
   (`zils/h2o-pins.json`).
+
+A d3 candidate keeps the files listed as `models.D3_CONTRACT_FILES` byte-identical
+(config, tokenizer, readout, vendor runtime modules, `LICENSE`, `NOTICE`) and
+the 4,096-token input limit; its weights are the two `model-0000N-of-00002.safetensors`
+shards plus `model.safetensors.index.json`, and its `model.json` is written with
+`write_metadata(path, kind="candidate", model=zils.models.D3)`.
 
 The validator refuses a candidate whose contract files differ from the parent
 hashes, whose `architectures` or `text_config` differ structurally from the
@@ -59,6 +66,34 @@ different miners are rejected.
 
 Per-case results are never returned; you learn aggregate metrics only. The
 round's questions are published after the round closes and are not reused.
+
+## Validator and publisher tooling
+
+The reference-adapter suite and the publication helper take the profile with
+`--model` (`h2o-lightning-4b-v1.2.3`, the default, or `d3-mini-4.5b-v1`):
+
+```bash
+python -m zils.regression_suite --model h2o-lightning-4b-v1.2.3 --suite SUITE \
+  --incumbent models/h2o-reference --candidate CANDIDATE --out OUT
+python -m zils.regression_suite --model d3-mini-4.5b-v1 --suite SUITE \
+  --incumbent models/d3-reference --candidate CANDIDATE --out OUT
+
+python scripts/promote_base.py --model h2o-lightning-4b-v1.2.3 --candidate CANDIDATE \
+  --decision decision.json --round N --staging STAGING
+python scripts/promote_base.py --model d3-mini-4.5b-v1 --candidate CANDIDATE \
+  --decision decision.json --round N --staging STAGING
+```
+
+Each run uses that profile's trainer, interpreter (`ZILS_H2O_RUNTIME_PYTHON` or
+`ZILS_D3_RUNTIME_PYTHON`) and candidate override (`ZILS_H2O_CANDIDATE_BASE` or
+`ZILS_D3_CANDIDATE_BASE`). To compare a base on a different profile from the
+incumbent, give `--incumbent-model`, `--incumbent`, `--candidate-model` and
+`--candidate` (a reference directory of the candidate profile) instead of
+`--model`; each side then trains every suite job with its own profile and
+`--candidate-runtime-python` selects the candidate profile's interpreter. The
+verdict rule is the same. `promote_base.py` proposes ids
+`h2o-lightning-4b-zils-r<N>` or `d3-mini-4.5b-zils-r<N>` and the matching
+`zils-ai/` repository.
 
 ## Starting points
 

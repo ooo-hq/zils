@@ -144,6 +144,13 @@ class ModelTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "regular"):
                 zils.checkpoint_hash(root)
 
+    def test_candidate_base_env_names_the_profile_override(self):
+        self.assertEqual(models.candidate_base_env(models.H2O), "ZILS_H2O_CANDIDATE_BASE")
+        self.assertEqual(models.candidate_base_env(models.D3), "ZILS_D3_CANDIDATE_BASE")
+        for model in (models.JEVK5, models.IMAJEV):
+            with self.assertRaisesRegex(ValueError, "no base-candidate support"):
+                models.candidate_base_env(model)
+
     def test_d3_profile_is_pinned_and_unique(self):
         spec = models.spec(models.D3)
         self.assertEqual(spec["base_revision"], models.pins(models.D3)["revision"])
