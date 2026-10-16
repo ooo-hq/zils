@@ -14,7 +14,7 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-from . import ROOT, models, settings
+from . import ROOT, models, sandbox, settings
 
 ARTIFACT_FILES = ("adapter_config.json", "adapter_model.safetensors", "head.pt")
 MAX_ARTIFACT_BYTES = models.MAX_ADAPTER_BYTES
@@ -283,7 +283,7 @@ def evaluate(args):
                     command.extend(["--base", base, "--base-revision", args.base_revision])
                 try:
                     result = subprocess.run(
-                        command,
+                        sandbox.wrap(command),
                         input=json.dumps(requests, allow_nan=False),
                         text=True,
                         capture_output=True,
@@ -325,6 +325,7 @@ def evaluate(args):
         "dataset_sha256": hashlib.sha256(
             json.dumps(cases, sort_keys=True, allow_nan=False).encode()
         ).hexdigest(),
+        "sandbox": sandbox.mode(),
         "miners": rows,
         "weights": weight_vector(rows),
     }
