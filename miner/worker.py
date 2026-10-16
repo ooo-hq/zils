@@ -105,7 +105,7 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
             runtime,
             "-u",
             "-m",
-            "zils.h2o" if model == models.H2O else "zils.jevk5",
+            "zils" + models.TEXT_RUNTIME_MODULES.get(model, ".jevk5"),
             "train",
             "--data",
             str(directory / "miner-training.jsonl"),
@@ -138,8 +138,8 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
             "--out",
             str(raw),
         ]
-    if model == models.H2O:
-        command[0] = settings.required("ZILS_H2O_RUNTIME_PYTHON")
+    if model in models.TEXT_ADAPTER_MODELS and (env := models.runtime_python_env(model)):
+        command[0] = settings.required(env)
     print(
         f"miner {config['uid']}: training round {job['round_id']} on {device}; log {work / 'training.log'}",
         flush=True,

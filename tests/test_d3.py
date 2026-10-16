@@ -179,6 +179,21 @@ class D3ModuleTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "c1"):
             d3.parity(model, [case])
 
+    def test_capacity_floor_and_cuda_requirement(self):
+        from zils.runtime import gpu_ready
+
+        self.assertFalse(gpu_ready("mps", model=models.D3, minimum_mib=1))
+        self.assertFalse(gpu_ready("cpu", model=models.D3))
+        with patch("zils.runtime.subprocess.run", return_value=SimpleNamespace(stdout="12288")):
+            self.assertTrue(gpu_ready("cuda", model=models.D3))
+        with patch("zils.runtime.subprocess.run", return_value=SimpleNamespace(stdout="12287")):
+            self.assertFalse(gpu_ready("cuda", model=models.D3))
+        with (
+            patch.dict(os.environ, {"ZILS_D3_MIN_FREE_MIB": "14000"}),
+            patch("zils.runtime.subprocess.run", return_value=SimpleNamespace(stdout="13000")),
+        ):
+            self.assertFalse(gpu_ready("cuda", model=models.D3))
+
 
 if __name__ == "__main__":
     unittest.main()

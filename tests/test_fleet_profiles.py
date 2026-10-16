@@ -53,7 +53,7 @@ def image_dataset(root):
 
 class FleetProfilesTest(unittest.TestCase):
     def test_each_vertical_completes_a_signed_training_and_evaluation_round(self):
-        for model in (models.JEVK5, models.H2O, models.IMAJEV):
+        for model in (models.JEVK5, models.H2O, models.IMAJEV, models.D3):
             with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 options = {}
@@ -104,7 +104,7 @@ else:
     print(json.dumps({'runtime':{'temperature':temp},'predictions':[
       {'id':r['id'],'probabilities':{'true':a/(a+b),'false':b/(a+b)},'elapsed_ms':1} for r in rows]}))
 """
-                trainer = "zils.h2o" if model == models.H2O else "zils.jevk5"
+                trainer = "zils" + models.TEXT_RUNTIME_MODULES.get(model, ".jevk5")
                 runtime.write_text(
                     f"#!{sys.executable}\n"
                     + (
@@ -121,6 +121,7 @@ else:
                     **os.environ,
                     "ZILS_IMAGE_RUNTIME_PYTHON": str(runtime),
                     "ZILS_H2O_RUNTIME_PYTHON": str(runtime),
+                    "ZILS_D3_RUNTIME_PYTHON": str(runtime),
                     "ZILS_NVIDIA_SMI": str(capacity),
                     "ZILS_COMPUTE_LOCK": str(root / "gpu.lock"),
                     "ZILS_PYTHON": sys.executable,

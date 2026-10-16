@@ -125,6 +125,20 @@ class GradingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 grading.workload_profile(lengths, model=models.JEVK5)
 
+    def test_workload_cap_follows_the_profile(self):
+        self.assertEqual(grading.workload_profile([4096], model=models.D3)["band"], "tokens-4096")
+        with self.assertRaisesRegex(ValueError, "1..4096"):
+            grading.workload_profile([4097], model=models.D3)
+        with self.assertRaisesRegex(ValueError, "1..2048"):
+            grading.workload_profile([4096], model=models.H2O)
+        self.assertNotEqual(
+            grading.trainer_identity(models.D3), grading.trainer_identity(models.H2O)
+        )
+        d3 = grading.workload_profile([4096] * 2, model=models.D3)
+        self.assertEqual(grading.validate_workload(d3, model=models.D3, examples=2), d3)
+        with self.assertRaisesRegex(ValueError, "model mismatch|invalid workload tokens"):
+            grading.validate_workload(d3, model=models.H2O, examples=2)
+
     def test_grade_requires_three_unique_comparable_recent_reports(self):
         reports = [report(i) for i in range(3)]
         self.assertEqual(grading.qualification_grade(reports, CONTEXT, NOW)["status"], "qualified")

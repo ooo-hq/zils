@@ -55,27 +55,39 @@ def finite(value, minimum=0, maximum=math.inf):
     return type(value) in (int, float) and math.isfinite(value) and minimum <= value <= maximum
 
 
+JEVK5_TRAINER_FILES = ("zils/jevk5.py", "requirements/model.txt", "requirements/jevk5-source.txt")
+TRAINER_FILES = {
+    models.H2O: ("zils/h2o.py", "zils/jevk5.py", "zils/h2o-pins.json", "requirements/h2o.txt"),
+    models.D3: ("zils/d3.py", "zils/jevk5.py", "zils/d3-pins.json", "requirements/d3.txt"),
+}
+# Tuned bands; a profile's input cap decides which of them it can reach.
+BANDS = (512, 1024, 2048, 4096)
+
+
 def trainer_identity(model=models.JEVK5):
     root = Path(__file__).resolve().parents[1]
     return digest(
         {
             name: hashlib.sha256((root / name).read_bytes()).hexdigest()
-            for name in (
-                ("zils/h2o.py", "zils/jevk5.py", "zils/h2o-pins.json", "requirements/h2o.txt")
-                if model == models.H2O
-                else ("zils/jevk5.py", "requirements/model.txt", "requirements/jevk5-source.txt")
-            )
+            for name in TRAINER_FILES.get(model, JEVK5_TRAINER_FILES)
         }
     )
 
 
+def input_cap(model):
+    return models.spec(model).get("max_input_tokens", 2048)
+
+
 def workload_profile(token_lengths, *, model):
+    cap = input_cap(model)
     if (
         model not in models.TEXT_ADAPTER_MODELS
         or not token_lengths
-        or any(type(n) is not int or not 1 <= n <= 2048 for n in token_lengths)
+        or any(type(n) is not int or not 1 <= n <= cap for n in token_lengths)
     ):
-        raise ValueError("workload requires encoded text adapter training inputs of 1..2048 tokens")
+        raise ValueError(
+            f"workload requires encoded text adapter training inputs of 1..{cap} tokens"
+        )
     maximum = max(token_lengths)
     return {
         "model": model,
@@ -83,7 +95,7 @@ def workload_profile(token_lengths, *, model):
         "examples": len(token_lengths),
         "total_tokens": sum(token_lengths),
         "max_tokens": maximum,
-        "band": next(f"tokens-{n}" for n in (512, 1024, 2048) if maximum <= n),
+        "band": next(f"tokens-{n}" for n in BANDS if maximum <= n),
     }
 
 
@@ -107,7 +119,7 @@ def validate_workload(value, *, model, examples):
     count, total, maximum = (value[k] for k in ("examples", "total_tokens", "max_tokens"))
     if any(type(n) is not int or n < 1 for n in (count, total, maximum)) or count != examples:
         raise ValueError("invalid workload counts")
-    if maximum > 2048 or not maximum + count - 1 <= total <= count * maximum:
+    if maximum > input_cap(model) or not maximum + count - 1 <= total <= count * maximum:
         raise ValueError("invalid workload tokens")
     if value["band"] != workload_profile([maximum], model=model)["band"]:
         raise ValueError("invalid workload band")
@@ -130,7 +142,7 @@ def valid_context(context):
         )
         and isinstance(context["rubric"], str)
         and 1 <= len(context["rubric"]) <= 128
-        and context["band"] in {"tokens-512", "tokens-1024", "tokens-2048"}
+        and context["band"] in {f"tokens-{n}" for n in BANDS}
     )
 
 
