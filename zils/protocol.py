@@ -147,7 +147,13 @@ def opener():
 
 
 def fetch_checkpoint(
-    claim, destination, expected_endpoint=None, round_scoped=False, *, model=models.KEV
+    claim,
+    destination,
+    expected_endpoint=None,
+    round_scoped=False,
+    *,
+    model=models.KEV,
+    kind="adapter",
 ):
     endpoint_ok(
         claim["endpoint"], allowed=[expected_endpoint] if expected_endpoint is not None else None
@@ -158,19 +164,19 @@ def fetch_checkpoint(
     destination = Path(destination)
     destination.mkdir()
     started, total = time.monotonic(), 0
-    files = models.candidate_files(model)
+    files = models.candidate_files(model, kind)
+    budget = models.artifact_budget(kind)
+    deadline = 1800 if kind == "candidate" else 300 if model == models.IMAJEV else 30
     for name in files:
         with opener().open(claim["endpoint"] + prefix + name, timeout=5) as response:
             size = int(response.headers.get("Content-Length", "-1"))
-            if not 0 <= size <= zils.MAX_ARTIFACT_BYTES - total:
+            if not 0 <= size <= budget - total:
                 raise ValueError("invalid artifact size or checkpoint exceeds byte budget")
             received = 0
             with (destination / name).open("xb") as output:
                 while chunk := response.read(1024 * 1024):
                     received += len(chunk)
-                    if received > size or time.monotonic() - started > (
-                        300 if model == models.IMAJEV else 30
-                    ):
+                    if received > size or time.monotonic() - started > deadline:
                         raise ValueError("artifact exceeds declared size or download deadline")
                     output.write(chunk)
             if received != size:

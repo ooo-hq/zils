@@ -58,6 +58,19 @@ SPECS = {
 }
 KEV_FILES = ("adapter_config.json", "adapter_model.safetensors", "head.pt")
 JEVK5_FILES = ("adapter_config.json", "adapter_model.safetensors", "model.json")
+# A base candidate (Option 5) carries full H2O weights plus the parent's contract files unchanged.
+H2O_CONTRACT_FILES = (
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "chat_template.jinja",
+    "serve_config.json",
+    "h2o_lightning_shim.py",
+    "generation_config.json",
+    "LICENSE",
+)
+CANDIDATE_FILES = ("model.json", "config.json", "model.safetensors", *H2O_CONTRACT_FILES)
+MAX_ADAPTER_BYTES = 512 * 1024 * 1024
+MAX_CANDIDATE_BYTES = 10 * 1024**3
 IMAJEV_FILES = (
     "adapter_config.json",
     "adapter_model.safetensors",
@@ -114,9 +127,22 @@ def job_model(job):
     return validate_spec(value) if value is not None else KEV
 
 
-def candidate_files(model):
+def candidate_files(model, kind="adapter"):
     spec(model)
+    if kind == "candidate":
+        if model != H2O:
+            raise ValueError("base candidates are supported for the H2O profile only")
+        return CANDIDATE_FILES
     return {KEV: KEV_FILES, JEVK5: JEVK5_FILES, H2O: JEVK5_FILES, IMAJEV: IMAJEV_FILES}[model]
+
+
+def artifact_budget(kind="adapter"):
+    return MAX_CANDIDATE_BYTES if kind == "candidate" else MAX_ADAPTER_BYTES
+
+
+def artifact_kind(checkpoint):
+    value = metadata(checkpoint)
+    return value["kind"] if value is not None else "adapter"
 
 
 def metadata(checkpoint):
@@ -131,9 +157,11 @@ def metadata(checkpoint):
         or set(value) - {"version", "model", "kind", "temperature", "calibration", "profile"}
         or value.get("version") != VERSION
         or value.get("model") not in (*TEXT_ADAPTER_MODELS, IMAJEV)
-        or value.get("kind") not in ("base", "adapter")
+        or value.get("kind") not in ("base", "adapter", "candidate")
     ):
         raise ValueError("invalid model metadata")
+    if value["kind"] == "candidate" and value["model"] != H2O:
+        raise ValueError("base candidates are supported for the H2O profile only")
     if value["model"] == IMAJEV:
         if value.get("profile") != spec(IMAJEV) or value["kind"] != "adapter":
             raise ValueError("image metadata differs from the pinned profile")
@@ -165,6 +193,10 @@ def artifact_files(checkpoint):
         (Path(checkpoint) / name).exists() for name in IMAJEV_FILES[2:4]
     ):
         raise ValueError("checkpoint mixes model formats")
+    if value["kind"] == "candidate":
+        if (Path(checkpoint) / "adapter_model.safetensors").exists():
+            raise ValueError("checkpoint mixes model formats")
+        return CANDIDATE_FILES
     return ("model.json",) if value["kind"] == "base" else candidate_files(value["model"])
 
 
