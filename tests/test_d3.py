@@ -76,11 +76,59 @@ class D3ModuleTest(unittest.TestCase):
         model = d3.DecisionModel.__new__(d3.DecisionModel)
         model.device = "cpu"
         model.readout = torch.eye(255, dtype=torch.float32)
-        model.base = FakeBackbone()
+        model.base = FakeBackbone().eval()
         self.assertEqual(model.logits([1, 2, 3], 3).dtype, torch.float32)
         probabilities = model.probabilities([1, 2, 3], ["a", "b", "c"], {"type": "choice"}, 1.0)
         self.assertAlmostEqual(sum(probabilities.values()), 1.0, places=6)
         self.assertEqual(max(probabilities, key=probabilities.get), "a")
+        # A model left in training mode is a node fault (exit 78), not the miner's.
+        model.base.train()
+        with self.assertRaisesRegex(OSError, "eval mode"):
+            model.probabilities([1, 2, 3], ["a", "b", "c"], {"type": "choice"}, 1.0)
+
+    def test_setup_invariants_raise_oserror(self):
+        runtime = SimpleNamespace(
+            fast=None,
+            attention_mode=d3.PINS["attention"],
+            temperature=d3.PINS["temperature"],
+            readout_dtype=d3.PINS["readout_dtype"],
+            prompt="d3",
+            backbone_type="qwen3_5",
+            max_length=2048,
+        )
+        native = SimpleNamespace(D3=SimpleNamespace(from_pretrained=lambda *a, **k: runtime))
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.is_bf16_supported", return_value=True),
+            patch("zils.d3.verify_runtime"),
+            patch("zils.d3.base_path", return_value=Path(tmp)),
+            patch("zils.d3.Encoder", return_value=SimpleNamespace(native=native, tokenizer=None)),
+        ):
+            models.write_metadata(tmp, kind="base", model=models.D3)
+            with self.assertRaisesRegex(OSError, "pinned configuration"):
+                d3.DecisionModel(tmp, "cuda")
+
+    def test_vendor_code_comes_from_the_pinned_base_only(self):
+        with tempfile.TemporaryDirectory() as pinned, tempfile.TemporaryDirectory() as candidate:
+            (Path(pinned) / "d3_runtime.py").write_text(
+                "def answer_codes(tokenizer):\n    return ['A'], [1]\n"
+            )
+            (Path(candidate) / "d3_runtime.py").write_text("raise ImportError('candidate code')\n")
+            (Path(candidate) / "decision_config.json").write_text(
+                json.dumps({"prompt": "d3", "codes": ["A"]})
+            )
+            d3.vendor.cache_clear()
+            self.addCleanup(d3.vendor.cache_clear)
+            self.addCleanup(sys.modules.pop, "d3_runtime", None)
+            self.addCleanup(lambda: sys.path.remove(pinned) if pinned in sys.path else None)
+            with (
+                patch("zils.d3.pinned_base_path", return_value=Path(pinned)),
+                patch("transformers.AutoTokenizer.from_pretrained"),
+            ):
+                encoder = d3.Encoder(Path(candidate))
+            self.assertEqual(Path(encoder.native.__file__).parent, Path(pinned))
+            self.assertNotIn(candidate, sys.path)
 
     def test_encode_refuses_images_until_release(self):
         encoder = d3.Encoder.__new__(d3.Encoder)
@@ -104,6 +152,14 @@ class D3ModuleTest(unittest.TestCase):
                 (Path(tmp) / name).write_bytes(name.encode())
             (Path(tmp) / "model-00001-of-00002.safetensors").write_bytes(b"new weights")
             d3.validate_candidate(tmp)  # MODEL_MANIFEST.json, requirements.txt, d3_server.py absent
+            for extra, make in (
+                ("extra.py", lambda path: path.write_text("")),
+                ("__pycache__", lambda path: path.symlink_to(Path(tmp) / "config.json")),
+            ):
+                make(Path(tmp) / extra)
+                with self.assertRaisesRegex(ValueError, f"unexpected entry: {extra}"):
+                    d3.validate_candidate(tmp)
+                (Path(tmp) / extra).unlink()
             (Path(tmp) / "d3_runtime.py").write_bytes(b"changed")
             with self.assertRaisesRegex(ValueError, "d3_runtime.py differs"):
                 d3.validate_candidate(tmp)

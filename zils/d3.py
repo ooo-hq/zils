@@ -1,6 +1,7 @@
 """Pinned d3-mini text adapter runtime: native d3 prompt, FP32 code readout, language LoRA."""
 
 import argparse
+import functools
 import hashlib
 import importlib.metadata
 import inspect
@@ -66,18 +67,25 @@ def pinned_base_path(download=False):
     return root
 
 
+@functools.cache
+def vendor():
+    """d3_runtime from the pinned release only; a base candidate supplies weights, never code."""
+    root = pinned_base_path()
+    sys.path.insert(0, str(root))
+    import d3_runtime
+
+    if Path(d3_runtime.__file__).parent != root:
+        raise OSError("d3_runtime was imported from outside the pinned release")
+    return d3_runtime
+
+
 class Encoder:
     """The vendor's prompt and tokenizer without its weights, so CPU hosts can validate inputs."""
 
     def __init__(self, root):
         from transformers import AutoTokenizer
 
-        # Only the checksum-verified release (or a candidate with hash-equal code) supplies d3_runtime.
-        if str(root) not in sys.path:
-            sys.path.insert(0, str(root))
-        import d3_runtime
-
-        self.native = d3_runtime
+        self.native = d3_runtime = vendor()
         self.tokenizer = AutoTokenizer.from_pretrained(root, local_files_only=True)
         # D3.text renders with these codes; the vendor refuses to load when they differ from the config.
         self.codes, _ = d3_runtime.answer_codes(self.tokenizer)
@@ -166,6 +174,9 @@ def validate_candidate(checkpoint):
     meta = models.metadata(checkpoint)
     if meta is None or meta["model"] != models.D3 or meta["kind"] != "candidate":
         raise ValueError("base candidate requires d3 candidate metadata")
+    for entry in checkpoint.iterdir():
+        if entry.name not in models.D3_CANDIDATE_FILES:
+            raise ValueError(f"base candidate contains an unexpected entry: {entry.name}")
     for name in models.D3_CANDIDATE_FILES:
         path = checkpoint / name
         if path.is_symlink() or not path.is_file():
@@ -179,8 +190,10 @@ def validate_candidate(checkpoint):
 class DecisionModel:
     def __init__(self, checkpoint, device, train=False):
         import torch
-        from peft import LoraConfig, get_peft_model
+        from peft import LoraConfig, get_peft_model, get_peft_model_state_dict
+        from safetensors.torch import load_file
 
+        # Setup invariants raise OSError (node unavailable); only checkpoint faults blame the miner.
         self.meta = models.metadata(checkpoint)
         if self.meta is None or self.meta["model"] != models.D3:
             raise ValueError("d3 requires a d3 checkpoint")
@@ -220,14 +233,15 @@ class DecisionModel:
             or runtime.readout_dtype != PINS["readout_dtype"]
             or runtime.prompt != "d3"
             or runtime.backbone_type != "qwen3_5"
+            or runtime.max_length != MAX_TOKENS
         ):
-            raise RuntimeError("d3 runtime differs from the pinned configuration")
+            raise OSError("d3 runtime differs from the pinned configuration")
         self.base = runtime.backbone
         self.readout = runtime.readout
         if self.readout.dtype != torch.float32 or self.readout.shape[0] != 255:
-            raise RuntimeError("d3 readout must be FP32 with 255 codes")
+            raise OSError("d3 readout must be FP32 with 255 codes")
         if any(p.dtype != torch.bfloat16 or not p.is_cuda for p in self.base.parameters()):
-            raise RuntimeError("d3 backbone must be BF16 on the GPU")
+            raise OSError("d3 backbone must be BF16 on the GPU")
         self.base.config.use_cache = False
         self.base.config.text_config.use_cache = False
         self.peft = None
@@ -238,7 +252,7 @@ class DecisionModel:
                 if name.startswith("language_model.layers.") and name.rsplit(".", 1)[-1] in TARGETS
             ]
             if len(targets) != 152:
-                raise RuntimeError("d3 language adapter target count changed")
+                raise OSError("d3 language adapter target count changed")
             if self.meta["kind"] == "adapter":
                 validate_adapter_config(checkpoint, targets)
             self.peft = get_peft_model(
@@ -253,11 +267,33 @@ class DecisionModel:
             )
             # PEFT shortens target names during injection; persist the exact language-only scope.
             self.peft.peft_config["default"].target_modules = set(targets)
-            trainable = [p for p in self.peft.parameters() if p.requires_grad]
-            if len(trainable) != 304 or sum(p.numel() for p in trainable) != 14_376_960:
-                raise RuntimeError("d3 LoRA parameter count changed")
+            trainable = [(n, p) for n, p in self.peft.named_parameters() if p.requires_grad]
+            if (
+                len(trainable) != 304
+                or sum(p.numel() for _, p in trainable) != 14_376_960
+                or not all(
+                    "lora_" in n
+                    and "language_model.layers." in n
+                    and p.dtype == torch.float32
+                    and p.is_cuda
+                    for n, p in trainable
+                )
+                or any(torch.count_nonzero(p) for n, p in trainable if "lora_B" in n)
+            ):
+                raise OSError("d3 LoRA initialisation differs from the pinned recipe")
             if self.meta["kind"] == "adapter":
+                stored = load_file(str(Path(checkpoint) / "adapter_model.safetensors"))
+                if any(v.dtype != torch.bfloat16 for v in stored.values()):
+                    raise ValueError("d3 adapter tensors must be bfloat16")
                 load_adapter_weights(self.peft, checkpoint)
+                actual = get_peft_model_state_dict(self.peft)
+                if any(
+                    not torch.equal(actual[k].detach().cpu(), v.to(actual[k].dtype))
+                    for k, v in stored.items()
+                ):
+                    raise OSError("d3 adapter tensors did not load exactly")
+                if not train:
+                    self.peft.requires_grad_(False)
             self.peft.eval()
 
     def encode(self, state, question):
@@ -271,10 +307,12 @@ class DecisionModel:
             input_ids=tokens, attention_mask=torch.ones_like(tokens), use_cache=False
         ).last_hidden_state[:, -1]
         if hidden.dtype != torch.bfloat16:
-            raise RuntimeError("d3 backbone must return BF16 hidden states")
+            raise OSError("d3 backbone must return BF16 hidden states")
         # The published d3 readout is FP32 even during BF16 LoRA training.
         with torch.autocast(self.device, enabled=False):
             values = (hidden.float() @ self.readout[:count].T)[0]
+        if values.dtype != torch.float32:
+            raise OSError("d3 readout must produce FP32 logits")
         if not torch.isfinite(values).all():
             raise RuntimeError("d3 produced nonfinite logits")
         return values
@@ -282,6 +320,8 @@ class DecisionModel:
     def probabilities(self, ids, keys, question, temperature):
         import torch
 
+        if self.base.training or torch.is_autocast_enabled("cuda"):
+            raise OSError("d3 inference requires eval mode without autocast")
         with torch.inference_mode():
             values = (self.logits(ids, len(keys)).double() / temperature).softmax(-1).cpu().tolist()
         if not all(math.isfinite(v) for v in values) or abs(sum(values) - 1) >= 1e-6:
