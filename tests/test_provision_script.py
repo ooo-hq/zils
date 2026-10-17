@@ -133,6 +133,13 @@ class ProvisionScriptTest(unittest.TestCase):
         )
         self.assertLess(env.index("requirements/h2o.txt"), env.index("chmod -R a+rX"))
 
+    def test_service_user_can_read_the_environments_whatever_the_inherited_umask(self):
+        text = SCRIPT.read_text()
+        self.assertLess(text.index("umask 022"), text.index("phase driver"))
+        env = text[text.index("phase environments") : text.index("phase references")]
+        self.assertIn("chmod -R a+rX .venv-kev .venv-h2o .venv-d3", env)
+        self.assertLess(env.index("requirements/d3.txt"), env.index("a+rX .venv-kev"))
+
     def test_d3_runtime_follows_h2o_in_environments_references_qualify_and_image(self):
         text = SCRIPT.read_text()
         env = text[text.index("phase environments") : text.index("phase references")]
