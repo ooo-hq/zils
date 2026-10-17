@@ -66,9 +66,18 @@ def score(cases, predictions):
     if any("image" in c for c in cases):
         if not all("image" in c for c in cases):
             raise ValueError("Mixed image and text evaluation is unsupported")
-        from .image_metrics import score as image_score
+        from .image_contract import UNKNOWN
 
-        return image_score(cases, predictions)
+        # Imajev answers with an unknown outcome; d3 answers only the declared ones, scored as text.
+        if isinstance(predictions, list) and any(
+            isinstance(row, dict)
+            and isinstance(row.get("probabilities"), dict)
+            and UNKNOWN in row["probabilities"]
+            for row in predictions
+        ):
+            from .image_metrics import score as image_score
+
+            return image_score(cases, predictions)
     if not isinstance(predictions, list) or len(predictions) != len(cases):
         raise ValueError("exactly one prediction per case is required")
     by_id = {}
@@ -245,12 +254,6 @@ def evaluate(args):
                 request["images"] = [str(path)]
     elif any("image" in c for c in cases):
         raise ValueError("Image data cannot use a text runtime")
-    # Only Imajev answers with an unknown outcome; d3 image cases score like text cases.
-    scored = (
-        cases
-        if model == models.IMAJEV
-        else [{k: v for k, v in c.items() if k != "image"} for c in cases]
-    )
     environment = {
         **{
             k: v
@@ -320,7 +323,7 @@ def evaluate(args):
                     )
                 ):
                     raise ValueError("Image inference runtime identity changed")
-                row.update(score(scored, output["predictions"]))
+                row.update(score(cases, output["predictions"]))
                 row.update(
                     status="evaluated", runtime=output["runtime"], predictions=output["predictions"]
                 )
