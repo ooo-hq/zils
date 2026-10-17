@@ -15,7 +15,7 @@ remain unimplemented. The existing synthetic fleet remains supported.
 
 Complete the Python 3.13 [H2O setup](queue-miners.md#2-install-and-verify-the-reference),
 including creation of `models/h2o-reference` on a qualified host. Work from the
-repository root; the setup guide identifies supported CUDA and Apple MPS hardware.
+repository root; the setup guide identifies supported CUDA hardware.
 Use only data authorized for training and for export to the configured miners.
 The export flag records an operator decision; it does not provide encryption,
 confidential compute, legal authorization, or isolation from miner operators.
@@ -115,6 +115,6 @@ no model meets the delivery criteria. Scores from different customer jobs must
 not be pooled as if they measured the same task. Repeated rounds reuse test data;
 acceptance is a measured threshold on that set, not a guarantee of generalization
 or statistical significance. Reserve independent final evaluation data for real
-deployment decisions. The separate [Zils decision API](https://github.com/ooo-hq/zils-platform/blob/main/docs/decision-api.md) serves approved shared JevK5
-weights in a local pilot. Deployment of these training artifacts, automated release
+deployment decisions. The separate [Zils decision API](https://github.com/ooo-hq/zils-platform/blob/main/docs/decision-api.md) serves approved
+shared weights through the hosted service. Deployment of these training artifacts, automated release
 approval/rollback, billing, and cross-job reward allocation remain future work.

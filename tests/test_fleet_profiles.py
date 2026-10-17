@@ -54,7 +54,7 @@ def image_dataset(root):
 
 class FleetProfilesTest(unittest.TestCase):
     def test_each_vertical_completes_a_signed_training_and_evaluation_round(self):
-        for model in (models.JEVK5, models.H2O, models.IMAJEV, models.D3):
+        for model in (models.H2O, models.IMAJEV, models.D3):
             with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 options = {}
@@ -105,7 +105,7 @@ else:
     print(json.dumps({'runtime':{'temperature':temp},'predictions':[
       {'id':r['id'],'probabilities':{'true':a/(a+b),'false':b/(a+b)},'elapsed_ms':1} for r in rows]}))
 """
-                trainer = "zils" + models.TEXT_RUNTIME_MODULES.get(model, ".jevk5")
+                trainer = "zils" + models.TEXT_RUNTIME_MODULES.get(model, ".h2o")
                 runtime.write_text(
                     f"#!{sys.executable}\n"
                     + (
@@ -145,7 +145,7 @@ else:
                                 [
                                     *command,
                                     "--device",
-                                    "cpu" if model == models.JEVK5 else "cuda",
+                                    "cuda",
                                     "--runtime-python",
                                     str(runtime),
                                     "--no-download",
@@ -317,14 +317,14 @@ print(json.dumps({'runtime':{},'predictions':[
                 "text",
                 examples(),
                 POLICY,
-                model=models.JEVK5,
+                model=models.H2O,
                 allow_training_data_export=True,
             )
-            reference = checkpoint(root / "reference", models.JEVK5)
+            reference = checkpoint(root / "reference", models.H2O)
             out = fleet.initialize(root / "fleet", data, reference, "127.0.0.1", 8900, [8901])
             cfg = json.loads((out / "miner-1/config.json").read_text())
-            self.assertEqual(cfg["base_revision"], "c4f7fdb3aeab5582336406e78d3bef11bf98833d")
-            self.assertEqual(cfg["model"]["id"], "jevk5-4b-v0.3")
+            self.assertEqual(cfg["base_revision"], "acaf0d4ea251e54de928c75ef4352670d33192d3")
+            self.assertEqual(cfg["model"]["id"], "h2o-lightning-4b-v1.2.3")
             wrong = checkpoint(root / "wrong", models.IMAJEV)
             with self.assertRaisesRegex(ValueError, "profile"):
                 fleet.initialize(root / "bad", data, wrong, "127.0.0.1", 8900, [8901])
@@ -404,7 +404,7 @@ print(json.dumps({'runtime':{},'predictions':[
             self.assertFalse((root / "fleet").exists())
 
     def test_transfer_uses_expected_profile_and_rejects_cross_profile_metadata(self):
-        for model in (models.JEVK5, models.H2O, models.IMAJEV):
+        for model in (models.H2O, models.D3, models.IMAJEV):
             with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 source = checkpoint(root / "source", model)
@@ -430,7 +430,7 @@ print(json.dumps({'runtime':{},'predictions':[
                     self.assertEqual(set(requested), set(models.candidate_files(model)))
                     self.assertEqual(zils.checkpoint_hash(root / "download"), claim["sha256"])
                     # A signed base-only hash must not bypass the adapter-file contract.
-                    if model == models.JEVK5:
+                    if model == models.H2O:
                         models.write_metadata(source, model=model, kind="base")
                         claim["sha256"] = zils.checkpoint_hash(source)
                         with self.assertRaisesRegex(ValueError, "profile|adapter"):

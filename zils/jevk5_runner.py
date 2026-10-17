@@ -8,7 +8,7 @@ import time
 from contextlib import redirect_stdout
 from pathlib import Path
 
-# Executing this file must not let zils/jevk5.py shadow the upstream jevk5 package.
+# Executing this file directly must import the zils package, not the zils/ directory itself.
 script_dir = Path(__file__).resolve().parent
 sys.path = [str(script_dir.parent), *[p for p in sys.path if Path(p).resolve() != script_dir]]
 
@@ -55,11 +55,7 @@ def main():
             "dtype": "bfloat16",
             "device": args.device,
             "model_load_ms": load_ms,
-            **(
-                {"jevk5": importlib.metadata.version("jevk5")}
-                if model_id == models.JEVK5
-                else {"runtime_revision": spec["runtime_revision"]}
-            ),
+            "runtime_revision": spec["runtime_revision"],
             "torch": importlib.metadata.version("torch"),
             "transformers": importlib.metadata.version("transformers"),
         }

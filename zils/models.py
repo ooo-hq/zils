@@ -8,12 +8,14 @@ from copy import deepcopy
 from pathlib import Path
 
 KEV = "kev-0.8b-v1"
-JEVK5 = "jevk5-4b-v0.3"
 H2O = "h2o-lightning-4b-v1.2.3"
 D3 = "d3-mini-4.5b-v1"
 DEFAULT_TRAINING_MODEL = H2O
-TEXT_ADAPTER_MODELS = (JEVK5, H2O, D3)
-TEXT_RUNTIME_MODULES = {H2O: ".h2o", D3: ".d3"}  # default ".jevk5"
+TEXT_ADAPTER_MODELS = (H2O, D3)
+# Retired text profiles: their frozen model.json stays readable for historical reports,
+# but nothing creates, trains, transfers or evaluates them.
+RETIRED_TEXT_MODELS = ("jevk5-4b-v0.3",)
+TEXT_RUNTIME_MODULES = {H2O: ".h2o", D3: ".d3"}
 RUNTIME_PYTHON_ENV = {H2O: "ZILS_H2O_RUNTIME_PYTHON", D3: "ZILS_D3_RUNTIME_PYTHON"}
 CANDIDATE_BASE_ENV = {H2O: "ZILS_H2O_CANDIDATE_BASE", D3: "ZILS_D3_CANDIDATE_BASE"}
 PINS_FILES = {H2O: "h2o-pins.json", D3: "d3-pins.json"}
@@ -24,12 +26,6 @@ SPECS = {
         "name": "Kev 0.8B",
         "base": "Qwen/Qwen3.5-0.8B-Base",
         "base_revision": "dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68",
-    },
-    JEVK5: {
-        "id": JEVK5,
-        "name": "JevK5 4B",
-        "base": "alibiserikbay/JevK5",
-        "base_revision": "c4f7fdb3aeab5582336406e78d3bef11bf98833d",
     },
     H2O: {
         "id": H2O,
@@ -75,7 +71,7 @@ SPECS[D3] = {
     "inputs": {"images": 4, "video": True},
 }
 KEV_FILES = ("adapter_config.json", "adapter_model.safetensors", "head.pt")
-JEVK5_FILES = ("adapter_config.json", "adapter_model.safetensors", "model.json")
+TEXT_ADAPTER_FILES = ("adapter_config.json", "adapter_model.safetensors", "model.json")
 # A base candidate (Option 5) carries full H2O weights plus the parent's contract files unchanged.
 H2O_CONTRACT_FILES = (
     "tokenizer.json",
@@ -195,9 +191,8 @@ def candidate_files(model, kind="adapter"):
         return D3_CANDIDATE_FILES if model == D3 else CANDIDATE_FILES
     return {
         KEV: KEV_FILES,
-        JEVK5: JEVK5_FILES,
-        H2O: JEVK5_FILES,
-        D3: JEVK5_FILES,
+        H2O: TEXT_ADAPTER_FILES,
+        D3: TEXT_ADAPTER_FILES,
         IMAJEV: IMAJEV_FILES,
     }[model]
 
@@ -222,7 +217,7 @@ def metadata(checkpoint):
         not isinstance(value, dict)
         or set(value) - {"version", "model", "kind", "temperature", "calibration", "profile"}
         or value.get("version") != VERSION
-        or value.get("model") not in (*TEXT_ADAPTER_MODELS, IMAJEV)
+        or value.get("model") not in (*TEXT_ADAPTER_MODELS, *RETIRED_TEXT_MODELS, IMAJEV)
         or value.get("kind") not in ("base", "adapter", "candidate")
     ):
         raise ValueError("invalid model metadata")
@@ -266,7 +261,8 @@ def artifact_files(checkpoint):
     return ("model.json",) if value["kind"] == "base" else candidate_files(value["model"])
 
 
-def write_metadata(checkpoint, *, kind="adapter", temperature=1.0, calibration=None, model=JEVK5):
+def write_metadata(checkpoint, *, model, kind="adapter", temperature=1.0, calibration=None):
+    spec(model)  # retired profiles stay readable but are never written
     value = {"version": VERSION, "model": model, "kind": kind, "temperature": temperature}
     if model in (*PINS_FILES, IMAJEV):
         value["profile"] = spec(model)
@@ -315,4 +311,4 @@ def set_temperature(checkpoint, value, calibration=None):
 def text_runtime(model):
     if model not in TEXT_ADAPTER_MODELS:
         raise ValueError("unsupported text adapter runtime")
-    return importlib.import_module(TEXT_RUNTIME_MODULES.get(model, ".jevk5"), __package__)
+    return importlib.import_module(TEXT_RUNTIME_MODULES[model], __package__)

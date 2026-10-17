@@ -42,7 +42,7 @@ class RepositoryBoundaryTest(unittest.TestCase):
             [
                 sys.executable,
                 "-c",
-                "import sys; sys.modules.update({name: None for name in ('zils_platform', 'zils_sdk', 'stripe', 'boto3')}); import miner.queue, zils.validator, zils.fleet, zils.releases, zils.jev_manifest",
+                "import sys; sys.modules.update({name: None for name in ('zils_platform', 'zils_sdk', 'stripe', 'boto3')}); import miner.queue, zils.validator, zils.fleet, zils.releases",
             ],
             capture_output=True,
             text=True,
