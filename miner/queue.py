@@ -129,7 +129,7 @@ def run_once(
                 finally:
                     temporary.unlink(missing_ok=True)
             job = {**config, "round_id": uuid.UUID(job_id).hex, "min_free_mib": minimum_mib}
-            if model == models.H2O:
+            if model in models.PINS_FILES:
                 job["min_free_mib"] = assignment["min_free_mib"]
                 job["max_seconds"] = assignment["max_seconds"]
             if model == models.IMAJEV:
@@ -248,10 +248,13 @@ def main():
         state.mkdir(mode=0o700, parents=True, exist_ok=True)
         references = {}
         for path in args.reference or ["models/reference"]:
+            path = Path(path).resolve(strict=True)  # a missing dir would read as Kev
             model = models.checkpoint_model(path)
             if model in references:
                 raise ValueError("Install only one reference per model profile")
-            references[model] = Path(path).resolve()
+            if env := models.runtime_python_env(model):
+                settings.required(env)  # fail before claiming a job this node cannot run
+            references[model] = path
             if not args.no_download:
                 prepare_base(model)
         enabled = config.get("graded_scheduling", False)

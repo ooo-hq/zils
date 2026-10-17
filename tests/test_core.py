@@ -1,13 +1,20 @@
 """Offline contract checks. Prediction fixtures are not model benchmarks."""
 
+import contextlib
 import copy
 import importlib.util
+import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from zils import core, models
 
 
 class LocalSubnetTest(unittest.TestCase):
@@ -187,6 +194,59 @@ class LocalSubnetTest(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("cannot start evaluation runtime", result.stderr)
             self.assertFalse(failed_report.exists())
+
+    def evaluate_one(self, model, base_model, unset=()):
+        case = {
+            "id": "one",
+            "family": "policy",
+            "state": "Approved.",
+            "question": {"type": "noul", "instructions": "Is this approved?"},
+            "label": "true",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkpoint = root / "checkpoint"
+            checkpoint.mkdir()
+            for name in models.candidate_files(model):
+                (checkpoint / name).write_text("fixture")
+            models.write_metadata(checkpoint, model=model)
+            (root / "cases.jsonl").write_text(json.dumps(case))
+            (root / "manifest.json").write_text(json.dumps([core.submission(checkpoint, 1)]))
+            args = SimpleNamespace(
+                cases=root / "cases.jsonl",
+                submissions=root / "manifest.json",
+                base_revision=models.spec(base_model)["base_revision"],
+                timeout=10,
+                report=root / "report.json",
+                device="cpu",
+                runner_python=sys.executable,
+            )
+            quiet = contextlib.ExitStack()
+            quiet.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            quiet.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            with quiet, patch.dict(os.environ, {"HF_HOME": str(root)}):
+                for variable in unset:
+                    for name in (variable, "FEZ_" + variable.removeprefix("ZILS_")):
+                        os.environ.pop(name, None)
+                core.evaluate(args)
+            return json.loads(args.report.read_text())["miners"][0]
+
+    def test_profile_interpreter_is_required_for_evaluation(self):
+        for model, variable in (
+            (models.D3, "ZILS_D3_RUNTIME_PYTHON"),
+            (models.H2O, "ZILS_H2O_RUNTIME_PYTHON"),
+        ):
+            with self.subTest(model=model):
+                row = self.evaluate_one(model, model, unset=(variable,))
+                self.assertEqual(row["status"], "rejected")
+                self.assertIn(variable, row["error"])
+
+    def test_checkpoint_under_another_profile_revision_is_rejected(self):
+        for model, base_model in ((models.D3, models.H2O), (models.H2O, models.D3)):
+            with self.subTest(checkpoint=model, revision=base_model):
+                row = self.evaluate_one(model, base_model)
+                self.assertEqual(row["status"], "rejected")
+                self.assertIn("checkpoint belongs to a different model", row["error"])
 
 
 if __name__ == "__main__":

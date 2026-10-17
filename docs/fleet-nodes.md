@@ -44,10 +44,10 @@ secrets. Roles differ only in which services are enabled.
 | Droplet | DigitalOcean GPU Droplet, RTX 4000 Ada (20 GB) to start; RTX 6000 Ada / L40S (48 GB) if a node must serve image models and H2O together. Ubuntu LTS with the NVIDIA driver compatible with CUDA 13.0. |
 | Accounts | `zilsminer` (training), `zilsapi` (serving), group `zils-compute`; no interactive login for either. |
 | Source | `ooo-hq/zils` at the revision in the platform's `subnet-ref.txt`. `ooo-hq/zils-platform` at its main only on operator-owned nodes taking a serving or `hosted-validator` role, installed by a separate platform step. Both read-only to service users. |
-| Environments | `.venv-kev` (Python 3.13, cu128: miner client, fleet, testnet SDK 11.1.0), `.venv-h2o` (Python 3.12, cu130: pinned H2O runtime), `.venv-image` (optional, Imajev pins), `.venv-platform` (validator and serving roles). |
-| References | `models/h2o-reference` verified against `zils/h2o-pins.json`; `models/imajev-reference` only on image-capable nodes. Reference caches are part of the snapshot. |
+| Environments | `.venv-kev` (Python 3.13, cu128: miner client, fleet, testnet SDK 11.1.0), `.venv-h2o` (Python 3.12, cu130: pinned H2O runtime), `.venv-d3` (Python 3.12, cu130: pinned d3 runtime), `.venv-image` (optional, Imajev pins), `.venv-platform` (validator and serving roles). |
+| References | `models/h2o-reference` verified against `zils/h2o-pins.json`; `models/d3-reference` verified against `zils/d3-pins.json`; `models/imajev-reference` only on image-capable nodes. Reference caches are part of the snapshot. |
 | Units | From `zils`: `zils-queue-miner`, `zils-fleet-miner`, `zils-fleet-validator`. From `zils-platform` (operator nodes only): `zils-h2o-adapter.socket` + runtime + proxy, `zils-image-runtime`, `zils-release-sync`, `zils-training-processor`, `zils-workflow`, `zils-*-tunnel`. All installed, all disabled; the role enables a subset. |
-| Qualification | `scripts/qualify_node.py` output: profile identity, `trainer_sha256`, kernel check, peak GPU memory for a 2,048-token training step and an adapter reload, timing. Stored on the node and copied to the operator for `zils_worker_profiles` registration. |
+| Qualification | `scripts/qualify_node.py` output, one report per text profile (H2O in `qualification`, d3 in `qualification-d3`): profile identity, `trainer_sha256`, kernel check, peak GPU memory for a training step at the profile's input cap (2,048 tokens for H2O, 4,096 for d3) and an adapter reload, timing; the d3 report adds `parity` against the vendor readout. Stored on the node and copied to the operator for `zils_worker_profiles` registration. |
 
 Not in the image: hotkeys, coldkeys, runtime tokens, Supabase credentials,
 Spaces keys, Tailscale auth keys, tunnel SSH keys. These arrive at boot.
@@ -150,11 +150,11 @@ already-provisioned one (see the [runbook](fleet-node-runbook.md)):
 2. Accounts, groups, directories, permissions.
 3. Source checkouts at the pinned revisions; `uv` environments from the
    `requirements/*.txt` pins; no network after this step except references.
-4. References downloaded and verified against `h2o-pins.json`.
+4. References downloaded and verified against `h2o-pins.json` and `d3-pins.json`.
 5. Units installed, all disabled.
-6. `python -m scripts.qualify_node run`; its report is the proof the image is good.
+6. `python -m scripts.qualify_node` for H2O, then again with `--model d3-mini-4.5b-v1`; the reports are the proof the image is good.
 7. Writes `/etc/zils-node/image.json`: subnet revision, platform revision,
-   pins hash, qualification report hash, build time.
+   H2O pins hash (`pins_sha256_16`), d3 pins hash (`d3_pins_sha256_16`), qualification report hash, build time.
 
 Rebuild paths:
 
@@ -162,7 +162,7 @@ Rebuild paths:
 - **Snapshot**: after step 7 on a node with no secrets injected, take a
   DigitalOcean snapshot named from `pins_sha256_16` and the short `subnet_commit` in `image.json`. New nodes boot from it
   in minutes and run only boot-time injection plus role start. A snapshot is
-  retired whenever `subnet-ref.txt` or the H2O pins change; the script makes
+  retired whenever `subnet-ref.txt` or the H2O or d3 pins change; the script makes
   the next one.
 
 Nothing in the state directories is needed to rebuild: customer job state is

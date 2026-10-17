@@ -35,6 +35,16 @@ class NodeUnitsTest(unittest.TestCase):
                     self.assertIn("/var/lib/zils-node", paths.group(1).split())
                     self.assertIn(LOCK_DIR, paths.group(1).split())
 
+    def test_queue_miner_passes_a_reference_for_each_profile(self):
+        text = (ROOT / "deploy/units/zils-queue-miner.service").read_text()
+        self.assertIn("--reference /opt/zils/models/h2o-reference", text)
+        self.assertIn("--reference /opt/zils/models/d3-reference", text)
+
+    def test_env_example_names_both_runtimes(self):
+        text = (ROOT / "deploy/units/zils-node.env.example").read_text()
+        self.assertIn("ZILS_H2O_RUNTIME_PYTHON=/opt/zils/.venv-h2o/bin/python\n", text)
+        self.assertIn("ZILS_D3_RUNTIME_PYTHON=/opt/zils/.venv-d3/bin/python\n", text)
+
     def test_every_role_unit_has_an_expected_module(self):
         for spec in node_role.ROLES.values():
             for unit in spec["units"]:

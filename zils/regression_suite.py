@@ -3,7 +3,9 @@
 A candidate that wins the sealed exam is promoted only if adapters trained on it are no worse than adapters
 trained on the incumbent on every job (within `tolerance` Brier) and better on at least one. Jobs are public or
 Zils-owned case files under ``<suite>/jobs/<name>/{train,calibration,test}.jsonl``; customer data never enters.
-Training and inference use the production recipe through ``zils.h2o train`` and ``zils evaluate``.
+Training and inference use the production recipe through the profile's trainer (``zils.h2o train`` or
+``zils.d3 train``) and ``zils evaluate``. ``--model`` runs both sides on one pinned profile; with
+``--incumbent-model`` and ``--candidate-model`` each side trains on its own profile, base revision and interpreter.
 """
 
 import argparse
@@ -52,8 +54,9 @@ def _run(command, env, cwd):
     return result
 
 
-def train_and_score(job, base_dir, label, out, runtime_python, env, device):
-    """Train the production LoRA on `job` against the base that `env` selects; return calibrated test Brier."""
+def train_and_score(job, base_dir, label, out, runtime_python, env, device, module, base_revision):
+    """Train the production LoRA with trainer `module` on `job` against the base that `env` selects; return
+    calibrated test Brier."""
     work = Path(out) / job.name / label
     work.mkdir(parents=True, exist_ok=False)
     rows = benchmark.training_rows(benchmark.read_jsonl(job / "train.jsonl"))
@@ -64,7 +67,7 @@ def train_and_score(job, base_dir, label, out, runtime_python, env, device):
         [
             runtime_python,
             "-m",
-            "zils.h2o",
+            module,
             "train",
             "--data",
             str(export),
@@ -96,7 +99,7 @@ def train_and_score(job, base_dir, label, out, runtime_python, env, device):
                 "--cases",
                 str(job / f"{split}.jsonl"),
                 "--base-revision",
-                models.spec(models.H2O)["base_revision"],
+                base_revision,
                 "--runner-python",
                 runtime_python,
                 "--device",
@@ -132,54 +135,112 @@ def train_and_score(job, base_dir, label, out, runtime_python, env, device):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    text_models = list(models.TEXT_RUNTIME_MODULES)
     parser.add_argument("--suite", required=True)
     parser.add_argument(
         "--incumbent", required=True, help="reference checkpoint directory of the pinned base"
     )
-    parser.add_argument("--candidate", required=True, help="verified base candidate directory")
+    parser.add_argument(
+        "--candidate",
+        required=True,
+        help="verified base candidate directory (cross-profile: reference directory of the candidate profile)",
+    )
     parser.add_argument("--out", required=True)
     parser.add_argument(
-        "--runtime-python", default=os.environ.get("ZILS_H2O_RUNTIME_PYTHON", sys.executable)
+        "--model", choices=text_models, help=f"same-profile mode, default {models.H2O}"
+    )
+    parser.add_argument("--incumbent-model", choices=text_models, help="cross-profile mode")
+    parser.add_argument("--candidate-model", choices=text_models, help="cross-profile mode")
+    parser.add_argument(
+        "--runtime-python", help="interpreter of the (incumbent) profile; default its env variable"
+    )
+    parser.add_argument(
+        "--candidate-runtime-python",
+        help="cross-profile only: interpreter of the candidate profile; default its env variable",
     )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
     args = parser.parse_args()
+    cross = bool(args.incumbent_model or args.candidate_model)
+    if cross and not (args.incumbent_model and args.candidate_model and not args.model):
+        parser.error(
+            "cross-profile mode takes --incumbent-model and --candidate-model, not --model"
+        )
+    if args.candidate_runtime_python and not cross:
+        parser.error("--candidate-runtime-python applies to cross-profile mode only")
+    incumbent_model = args.incumbent_model or args.model or models.H2O
+    candidate_model = args.candidate_model or incumbent_model
+
+    def interpreter(model, given):
+        return given or os.environ.get(models.runtime_python_env(model), sys.executable)
+
+    incumbent_python = interpreter(incumbent_model, args.runtime_python)
+    candidate_python = interpreter(candidate_model, args.candidate_runtime_python)
+    if not cross:
+        candidate_python = incumbent_python
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=False)
-    if models.metadata(args.candidate)["kind"] != "candidate":
-        raise SystemExit("--candidate must be a base candidate checkpoint")
-    base_env = {**os.environ, "ZILS_H2O_RUNTIME_PYTHON": args.runtime_python}
-    base_env.pop("ZILS_H2O_CANDIDATE_BASE", None)
-    candidate_env = {**base_env, "ZILS_H2O_CANDIDATE_BASE": str(Path(args.candidate).resolve())}
-    # The candidate is loaded as the base through ZILS_H2O_CANDIDATE_BASE; its reference checkpoint is a base stub.
-    stub = out / "candidate-reference"
-    stub.mkdir()
-    models.write_metadata(stub, kind="base", model=models.H2O)
+    meta = models.metadata(args.candidate)
+    if cross:
+        if (meta or {}).get("model") != candidate_model:
+            raise SystemExit(f"--candidate must be a {candidate_model} checkpoint")
+        if (models.metadata(args.incumbent) or {}).get("model") != incumbent_model:
+            raise SystemExit(f"--incumbent must be a {incumbent_model} checkpoint")
+    elif (meta or {}).get("kind") != "candidate" or meta["model"] != candidate_model:
+        raise SystemExit(f"--candidate must be a {candidate_model} base candidate checkpoint")
+
+    def side_env(model, python):
+        env = {**os.environ, models.runtime_python_env(model): python}
+        for name in models.CANDIDATE_BASE_ENV.values():
+            env.pop(name, None)
+        return env
+
+    incumbent_env = side_env(incumbent_model, incumbent_python)
+    if cross:
+        candidate_env, candidate_reference = (
+            side_env(candidate_model, candidate_python),
+            args.candidate,
+        )
+    else:
+        # The candidate is loaded as the base through the profile's candidate env; its reference checkpoint is a base stub.
+        candidate_env = {
+            **incumbent_env,
+            models.candidate_base_env(candidate_model): str(Path(args.candidate).resolve()),
+        }
+        candidate_reference = out / "candidate-reference"
+        candidate_reference.mkdir()
+        models.write_metadata(candidate_reference, kind="base", model=candidate_model)
+    sides = {
+        "incumbent": (incumbent_model, Path(args.incumbent), incumbent_python, incumbent_env),
+        "candidate": (candidate_model, Path(candidate_reference), candidate_python, candidate_env),
+    }
     results, detail = {}, {}
     for job in jobs(args.suite):
         detail[job.name] = {
-            "incumbent": train_and_score(
+            label: train_and_score(
                 job,
-                Path(args.incumbent),
-                "incumbent",
+                reference,
+                label,
                 out,
-                args.runtime_python,
-                base_env,
+                python,
+                env,
                 args.device,
-            ),
-            "candidate": train_and_score(
-                job, stub, "candidate", out, args.runtime_python, candidate_env, args.device
-            ),
+                "zils" + models.TEXT_RUNTIME_MODULES[model],
+                models.spec(model)["base_revision"],
+            )
+            for label, (model, reference, python, env) in sides.items()
         }
         results[job.name] = {k: v["brier"] for k, v in detail[job.name].items()}
         (out / "progress.json").write_text(json.dumps(results, indent=2) + "\n")
     decision = verdict(results, args.tolerance)
-    (out / "suite-result.json").write_text(
-        json.dumps(
-            {"verdict": decision, "jobs": detail, "candidate": str(args.candidate)}, indent=2
-        )
-        + "\n"
-    )
+    result = {
+        "verdict": decision,
+        "jobs": detail,
+        "candidate": str(args.candidate),
+        "incumbent_model": incumbent_model,
+        "candidate_model": candidate_model,
+    }
+    (out / "suite-result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(decision, indent=2))
 
 

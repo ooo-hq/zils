@@ -12,6 +12,8 @@ from zils import models
 
 
 class QualifyNodeTest(unittest.TestCase):
+    SIZING = {"overhead": 300, "per_repeat": 2.5}
+
     def fake_run(self, calls):
         def run(command, **kwargs):
             calls.append(command)
@@ -37,6 +39,15 @@ class QualifyNodeTest(unittest.TestCase):
                     )
                 )
                 return SimpleNamespace(returncode=0, stdout="", stderr="")
+            if "sizing probe" in text:
+                return SimpleNamespace(returncode=0, stdout=json.dumps(self.SIZING), stderr="")
+            if "zils.d3 parity" in text:
+                cases = Path(command[command.index("--cases") + 1]).read_text().splitlines()
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout=json.dumps({"cases": len(cases), "max_difference": 2.5e-8}),
+                    stderr="",
+                )
             if "reload_predict" in text:
                 return SimpleNamespace(
                     returncode=0,
@@ -65,6 +76,84 @@ class QualifyNodeTest(unittest.TestCase):
         self.assertEqual(report["training"]["max_prompt_tokens"], 2031)
         self.assertTrue(any("verify_runtime" in " ".join(map(str, c)) for c in calls))
         self.assertTrue(all("--id=0" in c for c in calls if c[0] == "nvidia-smi"))
+
+    def test_d3_uses_its_module_and_measured_sizing_and_checks_parity(self):
+        calls = []
+        rows = []
+        cases = []
+        run = self.fake_run(calls)
+
+        def recording_run(command, **kwargs):
+            if "--data" in command:
+                data = Path(command[command.index("--data") + 1])
+                rows.extend(json.loads(line) for line in data.read_text().splitlines())
+            if "--cases" in command:
+                path = Path(command[command.index("--cases") + 1])
+                cases.extend(json.loads(line) for line in path.read_text().splitlines())
+            return run(command, **kwargs)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(__file__).resolve().parents[1]
+            report = qualify_node.qualify(
+                root,
+                "python3.12",
+                Path(tmp) / "q",
+                run=recording_run,
+                free_mib=19500,
+                model=models.D3,
+            )
+        text = [" ".join(map(str, c)) for c in calls]
+        self.assertEqual(report["model"], models.D3)
+        self.assertEqual(
+            report["profile_sha256"], models.profile_identity(models.D3)["profile_sha256"]
+        )
+        self.assertEqual(report["parity"], {"cases": 9, "max_difference": 2.5e-8})
+        self.assertEqual(report["sizing"], self.SIZING)
+        self.assertTrue(report["reload_predict_ok"])
+        self.assertTrue(any("zils.d3 reference" in c for c in text))
+        self.assertTrue(any("zils.d3 train" in c for c in text))
+        self.assertTrue(any("from zils.d3 import verify_runtime" in c for c in text))
+        self.assertTrue(any("from zils.d3 import DecisionModel" in c for c in text))
+        self.assertFalse(any("zils.h2o" in c for c in text))
+        self.assertLess(
+            next(i for i, c in enumerate(text) if "sizing probe" in c),
+            next(i for i, c in enumerate(text) if "zils.d3 train" in c),
+        )
+
+        def repeats(state):
+            return state["history"].count("payment issue ")
+
+        def expected(target):
+            return qualify_node.repeats_for(target, **self.SIZING)
+
+        cap = models.spec(models.D3)["max_input_tokens"]
+        self.assertEqual(len(rows), 6)
+        self.assertEqual({repeats(r["state"]) for r in rows}, {expected(cap - 200)})
+        self.assertEqual(expected(cap - 200), 1438)
+        self.assertEqual(len(cases), 9)
+        self.assertEqual({repeats(c["state"]) for c in cases[:6]}, {expected(cap - 200)})
+        self.assertEqual(
+            [repeats(c["state"]) for c in cases[6:]],
+            [expected(1000), expected(2000), expected(cap - 200)],
+        )
+        self.assertEqual({c["question"]["type"] for c in cases[6:]}, {"choice"})
+
+    def test_repeats_for_uses_measured_costs(self):
+        self.assertEqual(qualify_node.repeats_for(1000, 131, 2), 434)
+        self.assertEqual(qualify_node.repeats_for(100, 300, 2), 0)
+        with self.assertRaises(ValueError):
+            qualify_node.repeats_for(1000, 100, 0)
+
+    def test_h2o_report_has_no_parity_and_keeps_2048_rows(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(__file__).resolve().parents[1]
+            report = qualify_node.qualify(
+                root, "python3.12", Path(tmp) / "q", run=self.fake_run(calls), free_mib=19500
+            )
+        self.assertNotIn("parity", report)
+        self.assertEqual(qualify_node.STATE["history"], "payment issue " * 950)
+        self.assertFalse(any("parity" in " ".join(map(str, c)) for c in calls))
 
     def test_below_floor_stops_before_training(self):
         calls = []

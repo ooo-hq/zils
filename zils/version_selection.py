@@ -3,6 +3,7 @@
 import re
 import uuid
 
+from . import models
 from .model_names import valid_customer_aliases
 
 VERSION = "zils-version-selection/v1"
@@ -21,8 +22,9 @@ def job_id(value):
 def validate(selection, previous_job_id=None, *, current_job_id=None):
     if (
         not isinstance(selection, dict)
-        or set(selection) != {"version", "root_job_id", "previous"}
+        or set(selection) - {"base_change"} != {"version", "root_job_id", "previous"}
         or selection["version"] != VERSION
+        or selection.get("base_change", True) is not True
     ):
         raise ValueError("Invalid frozen version selection")
     job_id(selection["root_job_id"])
@@ -64,7 +66,17 @@ def check_promotion(current, entry, selection):
         incumbent = next(
             (row for row in current["models"] if row["id"] == previous["model_id"]), None
         )
-        if incumbent is not None and incumbent.get("profile") != entry.get("profile"):
+        if (
+            incumbent is not None
+            and selection.get("base_change") is not True
+            # Registry entries written before profiles existed carry no profile; only a
+            # text adapter entry may replace one, so a text-to-image move stays refused.
+            and (
+                "profile" in incumbent
+                or (entry.get("profile") or {}).get("id") not in models.TEXT_ADAPTER_MODELS
+            )
+            and incumbent.get("profile") != entry.get("profile")
+        ):
             raise ValueError("A task version cannot move between model profiles")
         if incumbent is None or incumbent["owners"] != entry["owners"]:
             raise ValueError("Previous model is unavailable to this customer")

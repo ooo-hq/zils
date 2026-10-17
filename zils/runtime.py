@@ -69,9 +69,17 @@ def locked(path, wait=False):
         yield
 
 
+# Profiles that must hold GPU capacity, and the setting that raises their free-memory floor.
+CAPACITY_ENV = {
+    models.H2O: "ZILS_H2O_MIN_FREE_MIB",
+    models.IMAJEV: "ZILS_IMAGE_MIN_FREE_MIB",
+    models.D3: "ZILS_D3_MIN_FREE_MIB",
+}
+
+
 def gpu_ready(device, *, model=None, minimum_mib=0):
     """Opt-in deployment capacity gate, also checked under the shared compute lock."""
-    if model == models.H2O and device != "cuda":
+    if model in models.PINS_FILES and device != "cuda":
         return False
     if minimum_mib > 0 and device not in ("cuda", "mps"):
         return False
@@ -88,18 +96,10 @@ def gpu_ready(device, *, model=None, minimum_mib=0):
             return pages * page_size >= minimum_mib * 1024**2
         except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
             return False
-    if model in (models.H2O, models.IMAJEV):
+    if model in CAPACITY_ENV:
         if device != "cuda":
             return False
-        minimum = max(
-            12288,
-            int(
-                settings.get(
-                    "ZILS_H2O_MIN_FREE_MIB" if model == models.H2O else "ZILS_IMAGE_MIN_FREE_MIB",
-                    "12288",
-                )
-            ),
-        )
+        minimum = max(12288, int(settings.get(CAPACITY_ENV[model], "12288")))
     else:
         if device != "cuda" or (settings.get("ZILS_GPU_MIN_FREE_MIB") is None and minimum_mib == 0):
             return True
@@ -189,7 +189,7 @@ def run_child(command, log, device, timeout=3600, *, model=None, minimum_mib=0, 
         )
     )
     # Capacity-bound jobs defer under contention instead of reserving an attempt while waiting.
-    if model in (models.H2O, models.IMAJEV) or minimum_mib > 0:
+    if model in CAPACITY_ENV or minimum_mib > 0:
         try:
             with locked(lock):
                 if check_lease:

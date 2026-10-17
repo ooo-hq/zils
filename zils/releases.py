@@ -209,12 +209,8 @@ def _manifest(root):
         "model": spec,
         "checkpoint_sha256": checkpoint,
         "temperature": meta["temperature"],
-        "runtime_revision": spec["runtime_revision"]
-        if model in (models.H2O, models.IMAJEV)
-        else RUNTIME_REVISION,
-        "prompt_version": spec["prompt"]
-        if model in (models.H2O, models.IMAJEV)
-        else PROMPT_VERSION,
+        "runtime_revision": spec.get("runtime_revision", RUNTIME_REVISION),
+        "prompt_version": spec.get("prompt", PROMPT_VERSION),
         "release_date": date.date().isoformat(),
         "files": {n: _hash(root / n) for n in files},
         **extra,

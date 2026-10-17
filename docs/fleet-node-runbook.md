@@ -19,17 +19,25 @@ If nyc2 rejects the size, try `tor1` then `atl1`.
 
     ssh root@<ip> 'curl -fsSL https://raw.githubusercontent.com/ooo-hq/zils/main/scripts/provision_node.sh | ZILS_SUBNET_REF=main bash'
     ssh root@<ip> cat /var/lib/zils-node/qualification/qualification.json
+    ssh root@<ip> cat /var/lib/zils-node/qualification-d3/qualification.json
 
 The script fetches its own Python interpreters through `uv` into
 `/opt/uv-python`, and the role config directory `/etc/zils-node` is group
 `zils-compute`. `ZILS_NODE_DRY_RUN=1` previews the phases without changing
 anything, and provisioning takes 20–40 minutes over one SSH session; if it
 drops, rerun the same command, every finished phase is skipped.
+The d3 environment, reference and qualification steps live inside the existing
+`environments`, `references` and `qualify` phases, so they run only on a fresh
+provision; a node or snapshot provisioned before d3 support needs a rebuild, or
+a manual run of those three steps, before `apply_role.sh` installs the
+queue-miner unit that references `models/d3-reference`.
 
 Record `profile_sha256`, `runtime_sha256`, `trainer_sha256`,
-`training.peak_gpu_mib` and `gpu.free_mib_at_start`; the operator registers
-them in `zils_worker_profiles` for this image hash. The image hash is
-`pins_sha256_16` from `/etc/zils-node/image.json`.
+`training.peak_gpu_mib` and `gpu.free_mib_at_start` from both reports (H2O and
+d3, which also carries `parity`); the operator registers each in
+`zils_worker_profiles` for this image hash. The image hashes are
+`pins_sha256_16` (H2O) and `d3_pins_sha256_16` (d3) from
+`/etc/zils-node/image.json`; record both.
 
 ## Snapshot (no secrets on the node yet)
 

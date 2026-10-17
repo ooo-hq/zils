@@ -53,7 +53,7 @@ def image_dataset(root):
 
 class FleetProfilesTest(unittest.TestCase):
     def test_each_vertical_completes_a_signed_training_and_evaluation_round(self):
-        for model in (models.JEVK5, models.H2O, models.IMAJEV):
+        for model in (models.JEVK5, models.H2O, models.IMAJEV, models.D3):
             with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 options = {}
@@ -104,7 +104,7 @@ else:
     print(json.dumps({'runtime':{'temperature':temp},'predictions':[
       {'id':r['id'],'probabilities':{'true':a/(a+b),'false':b/(a+b)},'elapsed_ms':1} for r in rows]}))
 """
-                trainer = "zils.h2o" if model == models.H2O else "zils.jevk5"
+                trainer = "zils" + models.TEXT_RUNTIME_MODULES.get(model, ".jevk5")
                 runtime.write_text(
                     f"#!{sys.executable}\n"
                     + (
@@ -121,6 +121,7 @@ else:
                     **os.environ,
                     "ZILS_IMAGE_RUNTIME_PYTHON": str(runtime),
                     "ZILS_H2O_RUNTIME_PYTHON": str(runtime),
+                    "ZILS_D3_RUNTIME_PYTHON": str(runtime),
                     "ZILS_NVIDIA_SMI": str(capacity),
                     "ZILS_COMPUTE_LOCK": str(root / "gpu.lock"),
                     "ZILS_PYTHON": sys.executable,
@@ -367,6 +368,95 @@ else:
                         claim["sha256"] = zils.checkpoint_hash(source)
                         with self.assertRaisesRegex(ValueError, "profile|adapter"):
                             protocol.fetch_checkpoint(claim, root / "bad", model=model)
+
+    def test_queue_job_carries_capacity_limits_for_pinned_profiles(self):
+        import uuid
+
+        from miner import queue
+
+        class Stop(Exception):
+            pass
+
+        for model in (models.H2O, models.D3):
+            with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                reference = checkpoint(root / "reference", model)
+                training = b"{}\n"
+                job_id = str(uuid.uuid4())
+                assignment = {
+                    "job_id": job_id,
+                    "lease_token": str(uuid.uuid4()),
+                    "uid": 1,
+                    "model": models.spec(model),
+                    "base_revision": models.spec(model)["base_revision"],
+                    "initial_sha256": zils.checkpoint_hash(reference),
+                    "training_sha256": hashlib.sha256(training).hexdigest(),
+                    "job_sha256": "c" * 64,
+                    "training": {"url": "https://example.test/training"},
+                    "min_free_mib": 14000,
+                    "max_seconds": 900,
+                }
+
+                class Client:
+                    url = "https://example.test"
+                    key = SimpleNamespace(ss58_address="hotkey")
+
+                    def call(self, name, payload=None):
+                        return {"assignment": assignment} if name == "claim" else {}
+
+                jobs_seen = []
+
+                def train(config, directory, job, runtime, device, **options):
+                    jobs_seen.append(job)
+                    raise Stop()
+
+                with (
+                    patch("miner.queue.gpu_ready", return_value=True),
+                    patch(
+                        "miner.queue.download", lambda url, path, limit: path.write_bytes(training)
+                    ),
+                    patch("miner.queue.train_candidate", train),
+                    patch("miner.queue.lease_heartbeat") as heartbeat,
+                    self.assertRaises(Stop),
+                ):
+                    heartbeat.return_value.__enter__.return_value = lambda: None
+                    queue.run_once(Client(), root / "state", reference, sys.executable, "cuda")
+                self.assertEqual(jobs_seen[0]["min_free_mib"], 14000)
+                self.assertEqual(jobs_seen[0]["max_seconds"], 900)
+
+    def test_queue_miner_refuses_to_start_with_a_reference_it_cannot_run(self):
+        from miner import queue
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "config.json"
+            seed = "0x" + "11" * 32
+            config.write_text(json.dumps({"coordinator": "https://example.test", "seed": seed}))
+            reference = checkpoint(root / "d3-reference", models.D3)
+            env = {
+                k: v
+                for k, v in os.environ.items()
+                if k not in ("ZILS_D3_RUNTIME_PYTHON", "FEZ_D3_RUNTIME_PYTHON")
+            }
+            cases = (
+                (reference, "ZILS_D3_RUNTIME_PYTHON"),
+                (root / "missing-reference", "missing-reference"),
+            )
+            for path, message in cases:
+                argv = ["queue", "--config", str(config), "--state", str(root / "state")]
+                argv += ["--reference", str(path), "--no-download", "--once"]
+                with (
+                    self.subTest(reference=path.name),
+                    patch.dict(os.environ, env, clear=True),
+                    patch.object(sys, "argv", argv),
+                    patch("miner.queue.run_once") as run_once,
+                    patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                    self.assertRaises(SystemExit) as stop,
+                ):
+                    queue.main()
+                self.assertEqual(stop.exception.code, 1)
+                self.assertIn(message, stderr.getvalue())
+                run_once.assert_not_called()
 
 
 if __name__ == "__main__":

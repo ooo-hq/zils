@@ -132,3 +132,31 @@ class ProvisionScriptTest(unittest.TestCase):
             env.index("UV_PYTHON_INSTALL_DIR"), env.index("uv venv"), "export before any uv call"
         )
         self.assertLess(env.index("requirements/h2o.txt"), env.index("chmod -R a+rX"))
+
+    def test_d3_runtime_follows_h2o_in_environments_references_qualify_and_image(self):
+        text = SCRIPT.read_text()
+        env = text[text.index("phase environments") : text.index("phase references")]
+        self.assertLess(env.index(".venv-h2o"), env.index(".venv-d3"))
+        self.assertIn("uv venv --python 3.12 .venv-d3", env)
+        self.assertIn(
+            "--python .venv-d3/bin/python --torch-backend=cu130 -r requirements/d3.txt", env
+        )
+        refs = text[text.index("phase references") : text.index("phase units")]
+        self.assertLess(refs.index("zils.h2o reference"), refs.index("zils.d3 reference"))
+        self.assertIn("-m zils.d3 reference --out models/d3-reference", refs)
+        qualify = text[text.index("phase qualify") : text.index("phase image")]
+        self.assertEqual(qualify.count("\n      qualify_runtime "), 2)
+        self.assertLess(qualify.index(".venv-h2o"), qualify.index("--model d3-mini-4.5b-v1"))
+        self.assertIn("--runtime-python $ROOT/.venv-d3/bin/python", qualify)
+        self.assertIn('rm -rf "$STATE/qualification-d3/adapter"', qualify)
+        self.assertIn("--out $STATE/qualification-d3", qualify)
+        image = text[text.index("phase image") :]
+        self.assertIn(
+            "PINS=$(sha256sum zils/h2o-pins.json requirements/h2o.txt | sha256sum | cut -c1-16)",
+            image,
+        )
+        self.assertIn(
+            "D3_PINS=$(sha256sum zils/d3-pins.json requirements/d3.txt | sha256sum | cut -c1-16)",
+            image,
+        )
+        self.assertIn("d3_pins_sha256_16", image)

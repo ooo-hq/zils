@@ -143,3 +143,74 @@ class ModelTest(unittest.TestCase):
             (root / "model.json").symlink_to(root / "missing.json")
             with self.assertRaisesRegex(ValueError, "regular"):
                 zils.checkpoint_hash(root)
+
+    def test_candidate_base_env_names_the_profile_override(self):
+        self.assertEqual(models.candidate_base_env(models.H2O), "ZILS_H2O_CANDIDATE_BASE")
+        self.assertEqual(models.candidate_base_env(models.D3), "ZILS_D3_CANDIDATE_BASE")
+        for model in (models.JEVK5, models.IMAJEV):
+            with self.assertRaisesRegex(ValueError, "no base-candidate support"):
+                models.candidate_base_env(model)
+
+    def test_d3_profile_is_pinned_and_unique(self):
+        spec = models.spec(models.D3)
+        self.assertEqual(spec["base_revision"], models.pins(models.D3)["revision"])
+        self.assertEqual(
+            models.pins(models.D3)["vendor"],
+            {"repo": "vllm-sr/d3-mini", "revision": "a475367de0d8133a3c1a2a0dc12303d89cfa2ab4"},
+        )
+        self.assertEqual(spec["max_input_tokens"], 4096)
+        self.assertEqual(spec["inputs"], {"images": 4, "video": True})
+        revisions = [models.spec(m)["base_revision"] for m in models.SPECS]
+        self.assertEqual(len(revisions), len(set(revisions)))
+        self.assertIn(models.D3, models.TEXT_ADAPTER_MODELS)
+
+    def test_d3_identity_hashes_pins_file(self):
+        pins = models.pins(models.D3)
+        self.assertEqual(pins["python"], "3.12")
+        self.assertEqual(pins["packages"]["torchvision"], "0.25.0+cu130")
+        self.assertEqual(len(pins["files"]), 25)  # every manifest file except README.md, assets/*
+        identity = models.profile_identity(models.D3)
+        self.assertEqual(set(identity), {"profile_sha256", "runtime_sha256"})
+        self.assertNotEqual(
+            identity["runtime_sha256"], models.profile_identity(models.H2O)["runtime_sha256"]
+        )
+
+    def test_h2o_and_imajev_identities_are_unchanged(self):
+        self.assertEqual(
+            models.profile_identity(models.H2O)["profile_sha256"],
+            "d28055e0296cba2afa5ba7f9052a3173ac7196b21f841898254b8e6df2b84506",
+        )
+        self.assertEqual(
+            models.profile_identity(models.IMAJEV)["profile_sha256"],
+            "3d53e354ad72ae067f33bfa8175d281507c467780a8c6c807cc0eb41eceb459c",
+        )
+        path = Path(models.__file__).with_name("h2o-pins.json")
+        self.assertEqual(models.pins(models.H2O), json.loads(path.read_text()))
+
+    def test_d3_metadata_requires_profile(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            models.write_metadata(tmp, model=models.D3)
+            self.assertEqual(models.metadata(tmp)["profile"], models.spec(models.D3))
+            (Path(tmp) / "model.json").write_text(
+                json.dumps(
+                    {
+                        "version": models.VERSION,
+                        "model": models.D3,
+                        "kind": "adapter",
+                        "temperature": 1.0,
+                    }
+                )
+            )
+            with self.assertRaisesRegex(ValueError, "pinned profile"):
+                models.metadata(tmp)
+
+    def test_text_runtime_and_interpreter_lookup(self):
+        self.assertEqual(models.text_runtime(models.D3).__name__, "zils.d3")
+        self.assertEqual(models.runtime_python_env(models.D3), "ZILS_D3_RUNTIME_PYTHON")
+        self.assertEqual(models.runtime_python_env(models.H2O), "ZILS_H2O_RUNTIME_PYTHON")
+        self.assertIsNone(models.runtime_python_env(models.JEVK5))
+        self.assertEqual(models.candidate_files(models.D3), models.JEVK5_FILES)
+        self.assertEqual(
+            models.candidate_files(models.D3, kind="candidate")[-len(models.D3_CONTRACT_FILES) :],
+            models.D3_CONTRACT_FILES,
+        )

@@ -1,8 +1,10 @@
-"""Qualify this host for the pinned H2O profile and write qualification.json.
+"""Qualify this host for a pinned text profile and write qualification.json.
 
-Runs from .venv-kev; drives the isolated .venv-h2o runtime through subprocesses
-so the pinned runtime check, a 2,048-token training step and an adapter reload
-happen in the real environment. Mirrors the 10 October 2026 RTX 4090 check.
+Runs from .venv-kev; drives the isolated .venv-h2o or .venv-d3 runtime through
+subprocesses so the pinned runtime check, a training step at the profile's input
+cap (2,048 tokens for H2O, 4,096 for d3) and an adapter reload happen in the
+real environment. d3 also checks its readout against the vendor's. Mirrors the
+10 October 2026 RTX 4090 check.
 """
 
 import argparse
@@ -19,6 +21,9 @@ from zils.runtime import gpu_ready
 
 FLOOR_MIB = 12288
 STATE = {"ticket": "Please help with payment.", "history": "payment issue " * 950}
+H2O_CAP = 2048
+PHRASE = "payment issue "
+HEADROOM_TOKENS = 200  # d3 rows target the cap minus this; the encoder refuses anything over
 QUESTIONS = [
     {
         "type": "choice",
@@ -34,12 +39,26 @@ QUESTIONS = [
 ]
 RELOAD_PREDICT = """# reload_predict probe
 import json, sys
-from zils.h2o import DecisionModel
+from MODULE import DecisionModel
 adapter, state, questions = sys.argv[1], json.loads(sys.argv[2]), json.loads(sys.argv[3])
 model = DecisionModel(adapter, "cuda")
 lengths = [len(model.encode(state, q)[0]) for q in questions]
 probes = [model.predict(state, q) for q in questions]
 print(json.dumps({"ok": all(abs(sum(p.values()) - 1) < 1e-7 for p in probes), "max_prompt_tokens": max(lengths)}))
+"""
+
+
+SIZING_PROBE = """# sizing probe
+import json, sys
+from zils.d3 import Encoder, base_path
+ticket, questions = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+encoder = Encoder(base_path())
+def tokens(question, repeats):
+    state = {"ticket": ticket, "history": "payment issue " * repeats}
+    return len(encoder.encode(state, question)[0])
+base = [tokens(q, 0) for q in questions]
+per = [(tokens(q, 100) - b) / 100 for q, b in zip(questions, base)]
+print(json.dumps({"overhead": max(base), "per_repeat": max(per)}))
 """
 
 
@@ -64,7 +83,14 @@ def free_memory_mib(run):
     return int(result.stdout.strip().splitlines()[0])
 
 
-def synthetic_rows(path):
+def repeats_for(target_tokens, overhead, per_repeat):
+    """Repeats of PHRASE that bring a row to about target_tokens, from measured token costs."""
+    if per_repeat <= 0:
+        raise ValueError(f"measured {per_repeat} tokens per repeat")
+    return max(0, int((target_tokens - overhead) // per_repeat))
+
+
+def synthetic_rows(path, state):
     rows = []
     for question in QUESTIONS * 2:
         label = (
@@ -74,18 +100,29 @@ def synthetic_rows(path):
             if question["type"] == "noul"
             else "1"
         )
-        rows.append({"state": STATE, "questions": {"decision": dict(question, label=label)}})
+        rows.append({"state": state, "questions": {"decision": dict(question, label=label)}})
     path.write_text("".join(json.dumps(r) + "\n" for r in rows))
-    return len(rows)
+    return rows
 
 
-def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None):
+def parity_cases(path, rows, states):
+    """The six training rows plus one choice row per extra state (about 1,000, 2,000, cap - 200)."""
+    cases = [{"state": r["state"], "question": QUESTIONS[i % 3]} for i, r in enumerate(rows)]
+    cases += [{"state": s, "question": QUESTIONS[0]} for s in states]
+    path.write_text(
+        "".join(json.dumps(dict(case, id=f"case-{n}")) + "\n" for n, case in enumerate(cases))
+    )
+
+
+def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None, model=models.H2O):
     out.mkdir(parents=True, exist_ok=True)
     (out / "qualification.json").unlink(missing_ok=True)  # never leave a stale passing report
+    module = "zils" + models.TEXT_RUNTIME_MODULES[model]
+    cap = models.spec(model)["max_input_tokens"]
     report = {
-        "model": models.H2O,
-        **models.profile_identity(models.H2O),
-        "trainer_sha256": trainer_identity(models.H2O),
+        "model": model,
+        **models.profile_identity(model),
+        "trainer_sha256": trainer_identity(model),
         "completed_at": None,
     }
 
@@ -106,7 +143,7 @@ def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None):
         free = free_memory_mib(run) if free_mib is None else free_mib
         report["gpu"]["free_mib_at_start"] = free
         report["capacity_ok"] = free >= FLOOR_MIB and (
-            free_mib is not None or gpu_ready("cuda", model=models.H2O)
+            free_mib is not None or gpu_ready("cuda", model=model)
         )
         if not report["capacity_ok"]:
             report["error"] = f"free GPU memory {free} MiB is below the {FLOOR_MIB} MiB floor"
@@ -117,7 +154,7 @@ def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None):
             [
                 runtime_python,
                 "-c",
-                "from zils.h2o import verify_runtime; verify_runtime(); print('ok')",
+                f"from {module} import verify_runtime; verify_runtime(); print('ok')",
             ],
             capture_output=True,
             text=True,
@@ -133,21 +170,42 @@ def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None):
         if not (reference / "model.json").exists():
             shutil.rmtree(reference, ignore_errors=True)  # half-written reference
             run(
-                [runtime_python, "-m", "zils.h2o", "reference", "--out", str(reference)],
+                [runtime_python, "-m", module, "reference", "--out", str(reference)],
                 check=True,
                 capture_output=True,
                 text=True,
                 timeout=3600,
                 cwd=env_root,
             )
+        if model == models.D3:
+            stage = "sizing"
+            sized = run(
+                [runtime_python, "-c", SIZING_PROBE, json.dumps(STATE["ticket"])]
+                + [json.dumps(QUESTIONS)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=600,
+                cwd=env_root,
+            )
+            report["sizing"] = json.loads(sized.stdout)
+
+            def history(target):
+                return PHRASE * repeats_for(target, **report["sizing"])
+
+            state = dict(STATE, history=history(cap - HEADROOM_TOKENS))
+        else:
+            # H2O's 950 repeats fill its 2,048-token cap.
+            state = dict(STATE, history=STATE["history"] * (cap // H2O_CAP))
         stage = "train"
         data = out / "train.jsonl"
-        examples = synthetic_rows(data)
+        rows = synthetic_rows(data, state)
+        examples = len(rows)
         run(
             [
                 runtime_python,
                 "-m",
-                "zils.h2o",
+                module,
                 "train",
                 "--data",
                 str(data),
@@ -172,9 +230,9 @@ def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None):
             [
                 runtime_python,
                 "-c",
-                RELOAD_PREDICT,
+                RELOAD_PREDICT.replace("MODULE", module),
                 str(adapter),
-                json.dumps(STATE),
+                json.dumps(state),
                 json.dumps(QUESTIONS),
             ],
             capture_output=True,
@@ -197,6 +255,21 @@ def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None):
             "max_prompt_tokens": reload["max_prompt_tokens"],
         }
         report["reload_predict_ok"] = bool(reload["ok"])
+        if model == models.D3 and report["reload_predict_ok"]:
+            stage = "parity"
+            cases = out / "parity.jsonl"
+            targets = (1000, 2000, cap - HEADROOM_TOKENS)
+            parity_cases(cases, rows, [dict(STATE, history=history(n)) for n in targets])
+            checked = run(
+                [runtime_python, "-m", module, "parity"]
+                + ["--reference", str(reference), "--cases", str(cases)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=900,
+                cwd=env_root,
+            )
+            report["parity"] = json.loads(checked.stdout)
         return finish(0 if report["reload_predict_ok"] else 4)
     except (
         subprocess.CalledProcessError,
@@ -217,10 +290,18 @@ def main(argv=None):
     parser.add_argument(
         "--root", default=".", help="zils checkout (runtime imports zils from here)"
     )
-    parser.add_argument("--runtime-python", required=True, help=".venv-h2o/bin/python")
+    parser.add_argument("--model", choices=(models.H2O, models.D3), default=models.H2O)
+    parser.add_argument(
+        "--runtime-python", required=True, help=".venv-h2o/bin/python or .venv-d3/bin/python"
+    )
     parser.add_argument("--out", required=True)
     args = parser.parse_args(argv)
-    report = qualify(Path(args.root).resolve(), args.runtime_python, Path(args.out).resolve())
+    report = qualify(
+        Path(args.root).resolve(),
+        args.runtime_python,
+        Path(args.out).resolve(),
+        model=args.model,
+    )
     print(json.dumps(report, indent=2))
     return 0
 

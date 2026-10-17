@@ -53,7 +53,7 @@ def evaluate_round(
         except (ValueError, OSError, http.client.HTTPException) as error:
             failed[uid] = str(error)
 
-    def evaluate(submissions, cases, name):
+    def evaluate(submissions, cases, name, base_revision=None):
         manifest = attempt / f"{name}-submissions.json"
         wire.write_json(manifest, submissions)
         report = attempt / f"{name}.json"
@@ -67,7 +67,7 @@ def evaluate_round(
             "--cases",
             str(cases),
             "--base-revision",
-            config["base_revision"],
+            base_revision or config["base_revision"],
             "--runner-python",
             settings.required("ZILS_IMAGE_RUNTIME_PYTHON")
             if model == models.IMAJEV
@@ -104,6 +104,7 @@ def evaluate_round(
         return json.loads(report.read_text())
 
     baseline = None
+    baseline_model = model
     selection = manifest.get("selection")
     previous = selection["previous"] if selection else None
     if "job_id" in config:
@@ -117,6 +118,10 @@ def evaluate_round(
         if previous:
             # Score the exact version the customer can call, including its serving temperature.
             fitted_baseline = source
+            # An upgrade may change base: the frozen release runs on the base it was trained on.
+            baseline_model = models.checkpoint_model(source)
+            if baseline_model != model and selection.get("base_change") is not True:
+                raise ValueError("cross-profile upgrade requires base_change")
         else:
             raw = attempt / "baseline-raw"
             zils.stage(entry, raw)
@@ -129,12 +134,18 @@ def evaluate_round(
             fitted_baseline = attempt / "baseline-calibrated"
             calibrate.fit(data, calibration, 0, raw, fitted_baseline)
         baseline_report = evaluate(
-            [zils.submission(fitted_baseline, 0)], data / "test.jsonl", "baseline-test"
+            [zils.submission(fitted_baseline, 0)],
+            data / "test.jsonl",
+            "baseline-test",
+            base_revision=models.spec(baseline_model)["base_revision"],
         )
         jobs.verify_report(data, baseline_report, "test")
         baseline = baseline_report["miners"][0]
         if baseline["status"] != "evaluated":
-            raise RuntimeError("baseline evaluation failed; no customer model can be accepted")
+            raise RuntimeError(
+                "baseline evaluation failed; no customer model can be accepted: "
+                + baseline.get("error", "no error recorded")
+            )
 
     fitted = []
     if entries:
@@ -220,6 +231,7 @@ def evaluate_round(
             job_sha256=config["job_sha256"],
             benchmark_use="customer-held-out-reused-across-rounds",
             baseline=baseline,
+            baseline_model=baseline_model,
             delivery=delivery,
         )
         if selection:
