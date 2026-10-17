@@ -32,7 +32,8 @@ directory. Every required file is still checked.
 
 The supported text contract is choice, true/false, or score with up to 255
 outcomes and 2,048 full prompt tokens. Oversized inputs and images are rejected;
-examples and options are never silently truncated. Image jobs retain ImaJev.
+examples and options are never silently truncated. Image jobs run on d3-mini
+(frozen `zils.image_jobs` datasets), no longer on ImaJev.
 
 Prompts use H2O's native non-thinking chat template and `Answer:` prefix. Native
 temperatures are 0.75 for choice, 0.8 for true/false, and 0.65 for score; the

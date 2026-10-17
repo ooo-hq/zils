@@ -26,8 +26,9 @@ and the guarded Bittensor testnet integration.
 | Run a validator | [Validator setup](docs/validators.md) |
 | Develop or evaluate the subnet | [Local development](docs/development.md), [evaluation contract](docs/evaluation.md) |
 
-Both workflows require operator admission. Customer workers and closed Bittensor
-fleets support H2O Lightning 4B text and qualified ImaJev 4B image jobs; JevK5 and Kev 0.8B
+Both workflows require operator admission. Customer workers support d3-mini text and
+image jobs (a d3 queue miner downloads a job's frozen training photos itself); closed
+Bittensor fleets support H2O Lightning 4B text and qualified ImaJev 4B image jobs; JevK5 and Kev 0.8B
 jobs remain supported. Each fleet pins one job and model. Text and image scores
 are not combined into one reward vector. Queue evaluation does not publish
 chain weights. Mainnet participation and public miner discovery are not implemented.
