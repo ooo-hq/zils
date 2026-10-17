@@ -1,18 +1,20 @@
 # Base candidates
 
 A base candidate is a full-weight replacement for a pinned text base, per
-profile: H2O Lightning 4B v1.2.3 today, and d3-mini-4.5b-v1 if it is promoted. d3-mini
-is not promoted: it did not pass the confirmation draw on 17 October 2026
-(see [d3-mini](roadmap.md#d3-mini)).
-Everything below describes H2O unless it says d3. Miners may train it however they like; validators
+profile: d3-mini-4.5b-v1, the base for new jobs since 17 October 2026, and H2O
+Lightning 4B v1.2.3 while existing H2O adapters are still served. d3-mini did not
+pass the confirmation draw on 17 October 2026; it became the base by the owner's
+decision, recorded as an override of the promotion rule (see
+[d3-mini](roadmap.md#d3-mini)). Everything below describes H2O unless it says d3. Miners may train it however they like; validators
 score it on a sealed holdout against the current base and, for a pending
 winner, retrain a fixed suite of reference adapters on both. Status, 17 October 2026:
 candidate loading, round decisions, sandboxed evaluation, the regression suite,
 chain-derived admission and the dry-run promotion script are merged; open
 admission is off by default; no public round has been run; the channel setting
 on the platform is a configuration value (`ZILS_TRAINING_MODEL_LATEST`), not yet
-a registry alias; automatic "follow stable" upgrades are not implemented. The
-pinned base is unchanged, and customer adapter jobs are not affected.
+a registry alias; automatic "follow stable" upgrades are not implemented. Since
+17 October 2026 both channels name d3-mini; existing H2O jobs keep their frozen
+profile and move to d3 only through `base_change` upgrade jobs.
 
 ## What stays fixed
 
