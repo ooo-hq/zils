@@ -75,6 +75,17 @@ class JobTest(unittest.TestCase):
             jobs.select({"status": "rejected"}, [candidate], POLICY)
         with self.assertRaises(ValueError):
             jobs.validate_policy({**POLICY, "min_accuracy": float("nan")})
+        previous = {**POLICY, "previous_job_id": "0" * 8 + "-0000-4000-8000-" + "0" * 12}
+        jobs.validate_policy(previous)
+        jobs.validate_policy({**previous, "base_change": True})  # cross-profile upgrade opt-in
+        for bad in (
+            {**POLICY, "base_change": True},  # no previous model to change the base of
+            {**previous, "base_change": False},
+            {**previous, "base_change": "yes"},
+            {**previous, "follow": "latest"},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                jobs.validate_policy(bad)
 
     @unittest.skipUnless(
         importlib.util.find_spec("kev") and importlib.util.find_spec("bittensor_wallet"),
