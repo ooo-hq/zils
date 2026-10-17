@@ -105,7 +105,7 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
             runtime,
             "-u",
             "-m",
-            "zils" + models.TEXT_RUNTIME_MODULES.get(model, ".jevk5"),
+            "zils" + models.TEXT_RUNTIME_MODULES[model],
             "train",
             "--data",
             str(directory / "miner-training.jsonl"),

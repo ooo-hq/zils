@@ -31,9 +31,7 @@ Use Linux or WSL 2 with Git, Python 3.13, `uv`, a BF16-capable NVIDIA GPU and it
 CUDA driver. Allow at least 25 GB of free disk for models and dependencies,
 plus space for assigned data and candidates. The runtime was checked on an
 RTX 4090; memory needs depend on input length. H2O and d3 use isolated CUDA runtimes
-below. Apple silicon miners retain the
-[JevK5 installation guide](mac-miners.md) for explicitly assigned legacy jobs.
-H2O CPU and Apple MPS training are unsupported.
+below. CPU and Apple MPS training are unsupported; the retired JevK5 Mac path no longer exists.
 
 The operator assigns a local queue UID. On-chain registration is not required
 for this queue, and a Bittensor UID alone does not authorize job access.
@@ -73,7 +71,7 @@ pinned base weights and writes `models/h2o-reference/model.json`
 (`models/d3-reference/model.json` for d3).
 See the [H2O model contract](h2o-queue.md) for the immutable revision, runtime,
 and cache override. The operator must explicitly qualify this hotkey for H2O;
-an existing JevK5 approval does not qualify it for H2O.
+an approval for another profile does not qualify it for H2O.
 
 ## 3. Configure your worker
 
@@ -108,9 +106,10 @@ chmod 600 .private/queue-miner.json
 
 Use a dedicated miner operating-system account. Never load the validator's
 `.private/training.env` or Supabase service-role key into it. If training and
-evaluation share a GPU, have the operator configure the same
-[compute lock and capacity settings](jevk5-queue.md#configure-the-services)
-for both services before starting.
+evaluation share a GPU, have the operator set the same `ZILS_COMPUTE_LOCK` path for
+both services before starting: an administrator-owned directory with group
+read/write access whose parent miners cannot replace. Without it, locking is per
+user and device.
 
 ## 4. Start the miner
 

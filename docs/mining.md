@@ -2,7 +2,7 @@
 
 Local and Bittensor testnet fleets support **H2O Lightning 4B text** and
 **ImaJev 4B image** jobs. Each fleet pins one frozen job and its matching model
-reference. Existing JevK5 4B text and Kev 0.8B bundles remain supported. For workers that claim different customer jobs,
+reference. Existing Kev 0.8B bundles remain supported; JevK5 4B bundles are retired. For workers that claim different customer jobs,
 use the [queue miner guide](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md).
 Queue and fleet miners use the same trainers but different credentials and startup commands.
 
@@ -22,8 +22,6 @@ image runtime described below. Later starts reuse the cache.
 
 For a text fleet, create the H2O reference with the
 [queue miner setup](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md#2-install-and-verify-the-reference)
-(a legacy JevK5 fleet uses the [JevK5 model setup](https://github.com/ooo-hq/zils/blob/main/docs/jevk5-queue.md#install-and-create-the-reference)
-with `--model jevk5-4b-v0.3` and `models/jevk5-reference` below).
 Prepare authorized, independent training/calibration/test JSONL files using the
 [customer data format](https://github.com/ooo-hq/zils/blob/main/docs/customer-jobs.md#prepare-data).
 The following freezes those files and an example acceptance policy; choose your
@@ -99,8 +97,8 @@ Do not relabel a Kev manifest as a different model.
 4. Run `./start-miner --rounds 1`. It can start before the validator and will retry.
 
 H2O needs a qualified CUDA host and the isolated runtime below on every miner
-and the validator. JevK5 needs a qualified CUDA or Apple MPS host. Image training
-requires qualified CUDA hardware; CPU fallback applies only to Kev. Use `--device cuda` or `mps`
+and the validator. Image training
+requires qualified CUDA hardware; CPU and Apple MPS fallback apply only to Kev. Use `--device cuda`
 explicitly. To reuse an environment or cache, set `ZILS_PYTHON`
 to its absolute Python path and `HF_HOME` to the cache directory.
 
@@ -119,7 +117,7 @@ For d3 bundles (`d3-mini-4.5b-v1`), do the same with `.venv-d3`,
 
 H2O training waits until at least 12,288 MiB of GPU memory is free
 (`ZILS_H2O_MIN_FREE_MIB` raises that floor). Neither side silently substitutes
-the JevK5 runtime. See the [H2O model contract](h2o-queue.md) for the pins.
+another runtime. See the [H2O model contract](h2o-queue.md) for the pins.
 
 For image bundles, also install and verify the isolated runtime on each host:
 

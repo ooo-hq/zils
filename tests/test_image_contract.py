@@ -24,7 +24,7 @@ class CapabilitiesTest(unittest.TestCase):
                 "unknown_key": None,
             },
         )
-        for model in (models.H2O, models.JEVK5):
+        for model in (models.H2O,):
             self.assertIs(capabilities(model), TEXT_CAPABILITIES)
 
     def test_import_stays_free_of_torch_and_pil(self):

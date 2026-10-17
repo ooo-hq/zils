@@ -77,10 +77,8 @@ class H2OTest(unittest.TestCase):
         self.assertEqual(
             models.spec(models.H2O)["base_revision"], "acaf0d4ea251e54de928c75ef4352670d33192d3"
         )
-        self.assertNotEqual(
-            models.profile_identity(models.H2O), models.profile_identity(models.JEVK5)
-        )
-        self.assertNotEqual(trainer_identity(models.H2O), trainer_identity(models.JEVK5))
+        self.assertNotEqual(models.profile_identity(models.H2O), models.profile_identity(models.D3))
+        self.assertNotEqual(trainer_identity(models.H2O), trainer_identity(models.D3))
         self.assertEqual(models.job_model({}), models.KEV)
         self.assertEqual(workload_profile([2048], model=models.H2O)["model"], models.H2O)
         with tempfile.TemporaryDirectory() as tmp:
@@ -91,7 +89,7 @@ class H2OTest(unittest.TestCase):
             path = Path(tmp) / "model.json"
             path.chmod(0o600)
             value = json.loads(path.read_text())
-            value["profile"]["base_revision"] = models.spec(models.JEVK5)["base_revision"]
+            value["profile"]["base_revision"] = "0" * 40
             path.write_text(json.dumps(value))
             with self.assertRaisesRegex(ValueError, "pinned"):
                 models.metadata(tmp)

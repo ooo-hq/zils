@@ -24,7 +24,7 @@ Two properties are required of every node:
 - Fleet bundles, the validator and testnet publication are documented in
   [mining.md](mining.md), [validators.md](validators.md),
   [testnet.md](testnet.md) and [bittensor-registration.md](bittensor-registration.md).
-  `zils.fleet` and `zils.testnet` accept H2O, JevK5, ImaJev and Kev jobs; the
+  `zils.fleet` and `zils.testnet` accept H2O, d3, ImaJev and Kev jobs; the
   fleet round and publisher tests cover H2O, but no H2O chain round has been run.
 - Hosted serving on the 4090 uses a socket-activated H2O adapter runtime, a
   host-local capacity controller that pauses image serving while H2O is

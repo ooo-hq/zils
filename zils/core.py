@@ -224,7 +224,6 @@ def evaluate(args):
     base = models.spec(model)["base"]
     runner = Path(__file__).with_name(
         {
-            models.JEVK5: "jevk5_runner.py",
             models.H2O: "jevk5_runner.py",
             models.D3: "jevk5_runner.py",
             models.IMAJEV: "imajev_runner.py",

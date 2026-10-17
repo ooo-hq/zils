@@ -20,15 +20,15 @@ and the guarded Bittensor testnet integration.
 | Role | Guide |
 | --- | --- |
 | Run an H2O miner on NVIDIA hardware | [Queued miners](docs/queue-miners.md) |
-| Run a JevK5 miner on Apple silicon | [Mac miners](docs/mac-miners.md) |
 | Run a qualified ImaJev image miner | [Image queue setup](docs/queue-miners.md#add-the-image-vertical), [image fleet setup](docs/mining.md#image-fleets) |
 | Join the closed Bittensor testnet fleet | [Registration](docs/bittensor-registration.md), then [miner setup](docs/mining.md) |
 | Run a validator | [Validator setup](docs/validators.md) |
 | Develop or evaluate the subnet | [Local development](docs/development.md), [evaluation contract](docs/evaluation.md) |
 
 Both workflows require operator admission. Customer workers and closed Bittensor
-fleets support H2O Lightning 4B text and qualified ImaJev 4B image jobs; JevK5 and Kev 0.8B
-jobs remain supported. Each fleet pins one job and model. Text and image scores
+fleets support H2O Lightning 4B and d3-mini 4.5B text and qualified ImaJev 4B image jobs;
+Kev 0.8B jobs remain supported. JevK5 4B is retired: its frozen checkpoints stay readable,
+but nothing creates, trains or serves them. Each fleet pins one job and model. Text and image scores
 are not combined into one reward vector. Queue evaluation does not publish
 chain weights. Mainnet participation and public miner discovery are not implemented.
 
@@ -61,7 +61,7 @@ export ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"
 For d3, also pass `--reference models/d3-reference` and export
 `ZILS_D3_RUNTIME_PYTHON` as described in the queued miner setup.
 
-H2O and d3 require CUDA. Legacy JevK5 supports [qualified Macs](docs/mac-miners.md). The miner uses
+H2O and d3 require CUDA. The miner uses
 outbound HTTPS and receives only approved training data and signed upload URLs.
 Keep calibration/test data and operator service credentials off miner accounts.
 For the separate testnet fleet, run `./start-miner --rounds 1` from its assigned
@@ -101,8 +101,7 @@ uv pip install --python .venv-kev/bin/python \
 .venv-kev/bin/python -m scripts.download_models
 ```
 
-For JevK5 and ImaJev fleets, follow the [model-specific fleet setup](docs/mining.md).
-JevK5 queue miners use the [JevK5 reference setup](docs/jevk5-queue.md#install-and-create-the-reference).
+For H2O, d3 and ImaJev fleets, follow the [model-specific fleet setup](docs/mining.md).
 References are downloaded from pinned upstream revisions. Private
 checkpoints, wallets, datasets, and generated bundles are excluded from Git.
 
