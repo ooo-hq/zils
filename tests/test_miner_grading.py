@@ -140,7 +140,7 @@ class GradingTests(unittest.TestCase):
             grading.validate_workload(d3, model=models.H2O, examples=2)
 
     def test_contexts_are_keyed_by_model_and_band(self):
-        self.assertEqual(grading.context_key(CONTEXT), f"{models.JEVK5}/tokens-512")
+        self.assertEqual(grading.context_key(CONTEXT), f"{models.H2O}/tokens-512")
         identity = {k: "f" * 64 for k in ("profile_sha256", "runtime_sha256")}
         d3 = {**CONTEXT, **identity, "model": models.D3, "band": "tokens-4096"}
         h2o = {**CONTEXT, **identity, "model": models.H2O, "band": "tokens-2048"}
@@ -167,7 +167,7 @@ class GradingTests(unittest.TestCase):
             )["quality_runs"],
             0,
         )
-        crossed = job(workload=grading.workload_profile([100] * 10, model=models.H2O))
+        crossed = job(workload=grading.workload_profile([100] * 10, model=models.D3))
         result = grading.rank_candidates(crossed, [worker()], NOW)
         self.assertIsNone(result["selected_hotkey"])
         self.assertEqual(result["exclusions"][0]["reason"], "unverified_workload_or_consent")
