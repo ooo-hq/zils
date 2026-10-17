@@ -10,11 +10,14 @@ Status of the work for an open competition, as of 17 October 2026:
 1. Admission rules: chain-derived admission is implemented and off by default.
 2. Isolated evaluation: the sandboxed evaluation subprocess is merged.
 3. Refreshed held-out benchmarks: the round-one sealed holdout is authored
-   (1,458 cases in six families), and a confirmation draw is required before
-   any promotion.
+   (1,458 cases in six families). The first confirmation draw, run on
+   17 October 2026 on a second, disjoint sealed set (291 calibration and 1,156
+   test cases), did not confirm a winner; see [d3-mini](#d3-mini).
 4. Promotion and rollback: two channels and the adapter regression suite are
-   decided and implemented. The channel is platform configuration today; a
-   registry alias and automatic follow-stable upgrades remain.
+   decided and implemented. The suite has run once, on 17 October 2026, and
+   passed on its single reference job (the rule asks for three or four). The
+   channel is platform configuration today and `latest` is not set; a registry
+   alias and automatic follow-stable upgrades remain.
 5. Public health and chain reporting: remaining.
 
 ## Base tier
@@ -35,11 +38,22 @@ through the runtime, platform routing, a `latest` channel that can point at d3
 when configured, and cross-profile upgrades with `base_change`
 (see [version selection](version-selection.md#changing-the-base-profile)).
 
-Not yet: d3 is not the default for new jobs, the platform migrations are not
-applied in production, and no d3 serving process runs. Its promotion under the
-base-tier rules is pending: the first draw cleared, and the confirmation draw
-and the regression suite had not completed as of 17 October. The recorded
-evidence is in [model research](model-research.md#d3-mini-evidence-16-october-2026).
+d3 is not the default for new jobs and is not promoted. On the night of
+16–17 October 2026, on one rented B300 over 6.75 hours, the base tier's rules
+were applied and stock d3-mini is **not promotable today**. The first draw
+cleared (Brier 0.142 against 0.184 for H2O), but the confirmation draw, on a
+second disjoint teacher-authored sealed set, did not confirm a winner: d3 0.1790
+and H2O 0.1794, an improvement of 0.0004 with a paired-bootstrap 95% interval of
+[−0.022, +0.023], where the rule needs at least 0.01 with a positive lower
+bound. The adapter regression suite passed, on one reference job where the rule
+asks for three or four.
+
+Consequences: `latest` is not set (no latest base is configured); `stable` and
+the default for new jobs remain H2O Lightning 4B v1.2.3; H2O remains the
+base-tier incumbent; no round-two decision was frozen. d3-mini remains a merged,
+available profile: qualified miners and validators can run it, and its platform
+migrations are applied. The recorded evidence is in
+[model research](model-research.md#d3-mini-evidence-16-october-2026).
 
 Customer-job data contracts, calibration, and acceptance are shared with the
 hosted platform. Hosted account management, APIs, billing, storage, and serving
