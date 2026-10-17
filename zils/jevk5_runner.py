@@ -32,10 +32,16 @@ def main():
         load_ms = (time.perf_counter() - started) * 1000
         predictions = []
         for row in requests:
-            if set(row) != {"id", "state", "question"}:
-                raise ValueError("inference must receive only id, state and question")
+            if set(row) - {"images", "videos"} != {"id", "state", "question"}:
+                raise ValueError("inference must receive only id, state, question and media paths")
+            # Media travel as local paths; only profiles that declare inputs ever receive them.
+            media = {}
+            if "images" in row:
+                media["images"] = [Path(path).read_bytes() for path in row["images"]]
+            if "videos" in row:
+                media["videos"] = list(row["videos"])
             started = time.perf_counter()
-            probabilities = model.predict(row["state"], row["question"])
+            probabilities = model.predict(row["state"], row["question"], **media)
             predictions.append(
                 {
                     "id": row["id"],

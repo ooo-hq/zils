@@ -66,9 +66,18 @@ def score(cases, predictions):
     if any("image" in c for c in cases):
         if not all("image" in c for c in cases):
             raise ValueError("Mixed image and text evaluation is unsupported")
-        from .image_metrics import score as image_score
+        from .image_contract import UNKNOWN
 
-        return image_score(cases, predictions)
+        # Imajev answers with an unknown outcome; d3 answers only the declared ones, scored as text.
+        if isinstance(predictions, list) and any(
+            isinstance(row, dict)
+            and isinstance(row.get("probabilities"), dict)
+            and UNKNOWN in row["probabilities"]
+            for row in predictions
+        ):
+            from .image_metrics import score as image_score
+
+            return image_score(cases, predictions)
     if not isinstance(predictions, list) or len(predictions) != len(cases):
         raise ValueError("exactly one prediction per case is required")
     by_id = {}
@@ -222,7 +231,8 @@ def evaluate(args):
             models.KEV: "kev_runner.py",
         }[model]
     )
-    if model == models.IMAJEV:
+    media = any("image" in c for c in cases) and "inputs" in models.spec(model)
+    if model == models.IMAJEV or media:
         from . import benchmark
 
         root = Path(args.cases).parent
@@ -237,7 +247,13 @@ def evaluate(args):
             raise ValueError("Image evaluation requires verified local image assets")
         for request, case in zip(requests, cases, strict=True):
             asset = manifest["assets"][case["image"]["asset_id"]]
-            request["image"] = {"asset_id": asset["id"], "sha256": asset["canonical_sha256"]}
+            if model == models.IMAJEV:
+                request["image"] = {"asset_id": asset["id"], "sha256": asset["canonical_sha256"]}
+            else:
+                from .imajev import image_path
+
+                path = image_path(args.images, {"sha256": asset["canonical_sha256"]})
+                request["images"] = [str(path.resolve())]
     elif any("image" in c for c in cases):
         raise ValueError("Image data cannot use a text runtime")
     environment = {

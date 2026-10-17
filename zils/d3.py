@@ -5,6 +5,7 @@ import functools
 import hashlib
 import importlib.metadata
 import inspect
+import io
 import json
 import math
 import os
@@ -12,9 +13,10 @@ import sys
 from pathlib import Path
 
 from . import ROOT, models, options, settings
-from .jevk5 import load_adapter_weights
+from .jevk5 import asset_bytes, load_adapter_weights
 
 MAX_TOKENS = 4096
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 TARGETS = (
     "q_proj",
     "k_proj",
@@ -79,6 +81,32 @@ def vendor():
     return d3_runtime
 
 
+def check_media(images=(), videos=()):
+    """Refuse media outside the d3 limits before any processor or GPU work; return RGB images."""
+    limits = models.spec(models.D3)["inputs"]
+    if len(images) > limits["images"]:
+        raise ValueError(f"d3 accepts at most {limits['images']} images")
+    if videos and not limits["video"]:
+        raise ValueError("d3 does not accept video")
+    if len(videos) > 1:
+        raise ValueError("d3 accepts at most 1 video")
+    if any(not isinstance(image, bytes) or image[:8] != PNG_SIGNATURE for image in images):
+        raise ValueError("d3 images must be canonical PNG bytes")
+    if any(Path(video).is_symlink() or not Path(video).is_file() for video in videos):
+        raise ValueError("d3 videos must be regular MP4 file paths")
+    pictures = []
+    if images:
+        from PIL import Image
+
+        for image in images:
+            try:
+                with Image.open(io.BytesIO(image)) as picture:
+                    pictures.append(picture.convert("RGB"))
+            except (OSError, SyntaxError, Image.DecompressionBombError):
+                raise ValueError("d3 images must be canonical PNG bytes") from None
+    return pictures
+
+
 class Encoder:
     """The vendor's prompt and tokenizer without its weights, so CPU hosts can validate inputs."""
 
@@ -86,6 +114,7 @@ class Encoder:
         from transformers import AutoTokenizer
 
         self.native = d3_runtime = vendor()
+        self.root = root
         self.tokenizer = AutoTokenizer.from_pretrained(root, local_files_only=True)
         # D3.text renders with these codes; the vendor refuses to load when they differ from the config.
         self.codes, _ = d3_runtime.answer_codes(self.tokenizer)
@@ -93,28 +122,69 @@ class Encoder:
         if config["prompt"] != "d3" or config["codes"] != self.codes:
             raise OSError("d3 answer codes differ from its tokenizer")
 
-    def encode(self, state, question, images=(), videos=()):
-        if images or videos:
-            raise ValueError("d3 image inputs arrive in a later release")
+    @functools.cached_property
+    def processor(self):
+        """The pinned AutoProcessor (no weights), loaded only for image or video prompts."""
+        processor = self.native.load_processor(self.root)
+        self.native.configure_video_processor(processor)
+        return processor
+
+    def inputs(self, state, question, images=(), videos=()):
+        """(batch, names): token ids for text, or the processor batch for canonical PNGs and MP4 paths."""
+        pictures = check_media(images, videos)
         declared = options(question)
         self.native._json_value(state)
         normalized = self.native.normalize_question(question)
         if normalized.keys != declared:
             raise ValueError("d3 outcomes differ from the declared outcomes")
-        text = self.native.render(self.tokenizer, "d3", state, normalized.rendered, self.codes)
-        ids = self.tokenizer(text, add_special_tokens=False)["input_ids"]
+        if not images and not videos:
+            text = self.native.render(self.tokenizer, "d3", state, normalized.rendered, self.codes)
+            batch = ids = self.tokenizer(text, add_special_tokens=False)["input_ids"]
+        else:
+            # The vendor's D3.image_text / D3.video_text prompt, expanded by the pinned processor.
+            native, rendered = self.native, normalized.rendered
+            messages = (
+                native.video_messages("d3", state, rendered, self.codes, len(images), len(videos))
+                if videos
+                else native.image_messages("d3", state, rendered, self.codes, len(images))
+            )
+            text = self.processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True, enable_thinking=False
+            )
+            if text.count(native.IMAGE_TOKEN) != len(images) or text.count(
+                native.VIDEO_TOKEN
+            ) != len(videos):
+                raise ValueError("d3 state or question contains an image or video placeholder")
+            media = {"images": pictures} if pictures else {}
+            if videos:
+                decoded = [native.load_video(str(video)) for video in videos]
+                media.update(
+                    videos=[video.frames for video in decoded],
+                    video_metadata=[video.metadata() for video in decoded],
+                )
+            batch = self.processor(text=[text], return_tensors="pt", **media)
+            ids = batch["input_ids"][0].tolist()
         if not ids or len(ids) > MAX_TOKENS:
             raise ValueError("Decision exceeds the 4096-token d3 input limit; shorten the example")
-        return ids, normalized.keys
+        return batch, normalized.keys
+
+    def encode(self, state, question, images=(), videos=()):
+        batch, names = self.inputs(state, question, images, videos)
+        return (batch if isinstance(batch, list) else batch["input_ids"][0].tolist()), names
 
 
-def validate_inputs(splits):
+def validate_inputs(splits, root=None):
     from .miner_grading import workload_profile
 
     encoder, lengths = Encoder(base_path()), []
     for split, rows in splits.items():
         for row in rows:
-            ids, _ = encoder.encode(row["state"], row["question"])
+            images = ()
+            if "images" in row:
+                if root is None:
+                    raise ValueError("image rows need a dataset root")
+                images = [asset_bytes(Path(root), name) for name in row["images"]]
+            ids, _ = encoder.encode(row["state"], row["question"], images=images)
             if split == "train":
                 lengths.append(len(ids))
     return workload_profile(lengths, model=models.D3)
@@ -323,13 +393,16 @@ class DecisionModel:
     def encode(self, state, question):
         return self.encoder.encode(state, question)
 
-    def logits(self, ids, count):
+    def logits(self, inputs, count):
+        """`inputs` is a token-id list (text) or the encoder's processor batch (images, video)."""
         import torch
 
-        tokens = torch.tensor([ids], dtype=torch.long, device=self.device)
-        hidden = self.base(
-            input_ids=tokens, attention_mask=torch.ones_like(tokens), use_cache=False
-        ).last_hidden_state[:, -1]
+        if isinstance(inputs, list):
+            tokens = torch.tensor([inputs], dtype=torch.long, device=self.device)
+            inputs = {"input_ids": tokens, "attention_mask": torch.ones_like(tokens)}
+        else:
+            inputs = {name: value.to(self.device) for name, value in inputs.items()}
+        hidden = self.base(**inputs, use_cache=False).last_hidden_state[:, -1]
         if hidden.dtype != torch.bfloat16:
             raise OSError("d3 backbone must return BF16 hidden states")
         # The published d3 readout is FP32 even during BF16 LoRA training.
@@ -352,9 +425,9 @@ class DecisionModel:
             raise RuntimeError("d3 produced an invalid distribution")
         return dict(zip(keys, values, strict=True))
 
-    def predict(self, state, question):
-        ids, keys = self.encode(state, question)
-        return self.probabilities(ids, keys, question, self.meta["temperature"])
+    def predict(self, state, question, images=(), videos=()):
+        inputs, keys = self.encoder.inputs(state, question, images, videos)
+        return self.probabilities(inputs, keys, question, self.meta["temperature"])
 
 
 def parity(model, cases):

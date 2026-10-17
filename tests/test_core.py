@@ -18,6 +18,28 @@ from zils import core, models
 
 
 class LocalSubnetTest(unittest.TestCase):
+    def test_image_cases_pick_the_scorer_from_the_prediction_contract(self):
+        question = {"type": "choice", "criteria": {"normal": None, "damaged": None}}
+        cases = [
+            {"id": "a", "family": "f", "state": {}, "question": question, "label": "normal"},
+            {"id": "b", "family": "f", "state": {}, "question": question, "label": "damaged"},
+        ]
+        images = [{**c, "image": {"asset_id": c["id"]}} for c in cases]
+        plain = [
+            {"id": "a", "probabilities": {"normal": 0.8, "damaged": 0.2}, "elapsed_ms": 1},
+            {"id": "b", "probabilities": {"normal": 0.3, "damaged": 0.7}, "elapsed_ms": 1},
+        ]
+        # d3 answers only the declared outcomes: image cases score exactly like text cases.
+        self.assertEqual(core.score(images, plain), core.score(cases, plain))
+        unknown = [
+            {**row, "probabilities": {**row["probabilities"], "__unknown__": 0.0}} for row in plain
+        ]
+        with patch("zils.image_metrics.score", return_value={"imajev": True}) as imajev:
+            self.assertEqual(core.score(images, unknown), {"imajev": True})
+        imajev.assert_called_once_with(images, unknown)
+        with self.assertRaisesRegex(ValueError, "Mixed image and text"):
+            core.score([images[0], cases[1]], plain)
+
     def test_validator_contract(self):
         self.assertIsNotNone(importlib.util.find_spec("zils"), "local validator is missing")
         import zils
