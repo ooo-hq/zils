@@ -2,10 +2,10 @@
 
 H2O Lightning 4B v1.2.3 was the default text base from 10 to 17 October 2026.
 Since 17 October new text jobs train on `d3-mini-4.5b-v1`; H2O is retiring
-under the base-tier spec's shortened window (the owner's served H2O adapter has
-been re-released on d3 through a `base_change` upgrade; one internal test task
-remains on H2O until it passes its own upgrade or is dropped), so this page
-documents the profile that existing frozen jobs still pin:
+under the base-tier spec's shortened window (the owner's served H2O adapter was
+re-released on d3 through a `base_change` upgrade and the one remaining internal
+test task was dropped on 17 October; H2O serving is off), so this page documents
+the profile that existing frozen jobs still pin:
 
 | Component | Pin |
 | --- | --- |
