@@ -2,7 +2,6 @@
 
 import argparse
 import json
-import re
 import sys
 import time
 import uuid
@@ -13,7 +12,7 @@ from bittensor_wallet import Keypair
 
 import zils
 from miner.worker import train_candidate
-from zils import models, protocol, queue_protocol, settings
+from zils import image_jobs, models, protocol, queue_protocol, settings
 from zils.cloud import MAX_DATA_BYTES, APIError, download, trusted_url, upload
 from zils.miner_presence import presence_loop
 from zils.queue_protocol import identifier, lease_heartbeat
@@ -132,8 +131,9 @@ def run_once(
             if model in models.PINS_FILES:
                 job["min_free_mib"] = assignment["min_free_mib"]
                 job["max_seconds"] = assignment["max_seconds"]
+            if image_jobs.takes_images(model):
+                download_images(client, auth, training, directory / "images", model)
             if model == models.IMAJEV:
-                download_images(client, auth, training, directory / "images")
                 runtime = settings.required("ZILS_IMAGE_RUNTIME_PYTHON")
                 job["min_free_mib"] = assignment["min_free_mib"]
                 job["max_seconds"] = assignment["max_seconds"]
@@ -174,7 +174,7 @@ def run_once(
     return True
 
 
-def download_images(client, auth, training, destination):
+def download_images(client, auth, training, destination, model=models.IMAJEV):
     from datetime import datetime, timezone
 
     from zils.imajev import image_path
@@ -184,17 +184,15 @@ def download_images(client, auth, training, destination):
     bindings = {}
     for line in Path(training).read_text().splitlines():
         row = json.loads(line)
-        if len(row["images"]) != 1:
+        images = row.get("images", [])
+        if model == models.IMAJEV and len(images) != 1:
             raise ValueError("Training requires one frozen image per row")
-        image = row["images"][0]
-        aid = identifier(image["asset_id"])
-        if not isinstance(image.get("sha256"), str) or not re.fullmatch(
-            "[a-f0-9]{64}", image["sha256"]
-        ):
-            raise ValueError("Invalid frozen training image hash")
-        if aid in bindings and bindings[aid] != image["sha256"]:
-            raise ValueError("Training image binding changed")
-        bindings[aid] = image["sha256"]
+        for image in images:
+            image_jobs.export_path(image)
+            aid = identifier(image["asset_id"])
+            if aid in bindings and bindings[aid] != image["sha256"]:
+                raise ValueError("Training image binding changed")
+            bindings[aid] = image["sha256"]
     # Small refresh batches keep URLs short lived, even on slow connections.
     for aid, sha in bindings.items():
         target = destination / (sha + ".png")

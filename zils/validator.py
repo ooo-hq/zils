@@ -30,6 +30,7 @@ def evaluate_round(
     benchmark.audit(data)
     manifest = json.loads((data / "manifest.json").read_text())
     model = models.validate_spec(manifest["model"]) if "model" in manifest else models.KEV
+    frozen_images = model == models.IMAJEV or "assets" in manifest  # verified <sha256>.png cache
     if config["base_revision"] != models.spec(model)["base_revision"]:
         raise ValueError("Evaluation configuration differs from the frozen model profile")
     if config.get("job_sha256") != (
@@ -77,7 +78,7 @@ def evaluate_round(
             "--report",
             str(report),
         ]
-        if model == models.IMAJEV:
+        if frozen_images:
             command.extend(["--images", str(directory / "images")])
         waiting = False
         while True:
