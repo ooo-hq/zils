@@ -25,8 +25,9 @@ and the guarded Bittensor testnet integration.
 | Run a validator | [Validator setup](docs/validators.md) |
 | Develop or evaluate the subnet | [Local development](docs/development.md), [evaluation contract](docs/evaluation.md) |
 
-Both workflows require operator admission. Customer workers and closed Bittensor
-fleets support H2O Lightning 4B and d3-mini 4.5B text and qualified ImaJev 4B image jobs;
+Both workflows require operator admission. Customer workers support d3-mini text and
+image jobs (a d3 queue miner downloads a job's frozen training photos itself); closed
+Bittensor fleets support H2O Lightning 4B and d3-mini 4.5B text and qualified ImaJev 4B image jobs;
 Kev 0.8B jobs remain supported. JevK5 4B is retired: its frozen checkpoints stay readable,
 but nothing creates, trains or serves them. Each fleet pins one job and model. Text and image scores
 are not combined into one reward vector. Queue evaluation does not publish
