@@ -1,7 +1,9 @@
 # Base candidates
 
 A base candidate is a full-weight replacement for a pinned text base, per
-profile: H2O Lightning 4B v1.2.3 today, and d3-mini-4.5b-v1 once it is promoted.
+profile: H2O Lightning 4B v1.2.3 today, and d3-mini-4.5b-v1 if it is promoted. d3-mini
+is not promoted: it did not pass the confirmation draw on 17 October 2026
+(see [d3-mini](roadmap.md#d3-mini)).
 Everything below describes H2O unless it says d3. Miners may train it however they like; validators
 score it on a sealed holdout against the current base and, for a pending
 winner, retrain a fixed suite of reference adapters on both. Status, 17 October 2026:

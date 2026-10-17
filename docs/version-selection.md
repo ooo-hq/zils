@@ -82,8 +82,8 @@ then scores the new candidate on the same test data. The usual upgrade
 requirements apply. Without `base_change`, a profile change is refused. After
 acceptance, the task alias follows the new release as it does for any other
 version; earlier immutable IDs remain callable. As of 17 October 2026 d3-mini is
-not the default for new jobs, and its platform migrations are not applied in
-production.
+not the default for new jobs and is not promoted (it did not pass the base
+tier's confirmation draw); its platform migrations are applied.
 
 ## Activation and API names
 
