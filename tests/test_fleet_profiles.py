@@ -293,6 +293,14 @@ print(json.dumps({'runtime':{},'predictions':[
             self.assertEqual(
                 [p["elapsed_ms"] for p in miner["predictions"]], [1] * len(frozen["test"])
             )
+            asset = manifest["assets"][frozen["test"][0]["image"]["asset_id"]]
+            cached = images / (asset["canonical_sha256"] + ".png")
+            cached.write_bytes(cached.read_bytes() + b"tampered")
+            with (
+                patch("zils.benchmark.audit", return_value=frozen),
+                self.assertRaisesRegex(ValueError, "Frozen image bytes changed"),
+            ):
+                core.evaluate(SimpleNamespace(**{**vars(args), "report": root / "tampered"}))
             text = {
                 "base_revision": models.spec(models.H2O)["base_revision"],
                 "report": root / "h2o",

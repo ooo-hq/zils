@@ -250,8 +250,10 @@ def evaluate(args):
             if model == models.IMAJEV:
                 request["image"] = {"asset_id": asset["id"], "sha256": asset["canonical_sha256"]}
             else:
-                path = Path(args.images).resolve() / (asset["canonical_sha256"] + ".png")
-                request["images"] = [str(path)]
+                from .imajev import image_path
+
+                path = image_path(args.images, {"sha256": asset["canonical_sha256"]})
+                request["images"] = [str(path.resolve())]
     elif any("image" in c for c in cases):
         raise ValueError("Image data cannot use a text runtime")
     environment = {

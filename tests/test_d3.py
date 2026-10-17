@@ -451,6 +451,20 @@ class TrainingRowsTest(unittest.TestCase):
                     train(self.write(Path(tmp), [path]), model_id=models.D3)
             loaded.assert_not_called()
 
+    def test_media_limits_are_refused_before_loading(self):
+        from zils.jevk5 import train
+
+        with tempfile.TemporaryDirectory() as tmp, patch("zils.d3.DecisionModel") as loaded:
+            (Path(tmp) / "a.png").write_bytes(png())
+            (Path(tmp) / "a.gif").write_bytes(b"GIF89a" + bytes(32))
+            for message, images in (
+                ("at most 4 images", ["a.png"] * 5),
+                ("canonical PNG", ["a.gif"]),
+            ):
+                with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                    train(self.write(Path(tmp), images), model_id=models.D3)
+            loaded.assert_not_called()
+
     def model(self, parameter):
         batch = {"input_ids": torch.ones(1, 3, dtype=torch.long)}
         model = SimpleNamespace(

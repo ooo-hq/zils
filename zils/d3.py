@@ -81,6 +81,32 @@ def vendor():
     return d3_runtime
 
 
+def check_media(images=(), videos=()):
+    """Refuse media outside the d3 limits before any processor or GPU work; return RGB images."""
+    limits = models.spec(models.D3)["inputs"]
+    if len(images) > limits["images"]:
+        raise ValueError(f"d3 accepts at most {limits['images']} images")
+    if videos and not limits["video"]:
+        raise ValueError("d3 does not accept video")
+    if len(videos) > 1:
+        raise ValueError("d3 accepts at most 1 video")
+    if any(not isinstance(image, bytes) or image[:8] != PNG_SIGNATURE for image in images):
+        raise ValueError("d3 images must be canonical PNG bytes")
+    if any(Path(video).is_symlink() or not Path(video).is_file() for video in videos):
+        raise ValueError("d3 videos must be regular MP4 file paths")
+    pictures = []
+    if images:
+        from PIL import Image
+
+        for image in images:
+            try:
+                with Image.open(io.BytesIO(image)) as picture:
+                    pictures.append(picture.convert("RGB"))
+            except (OSError, SyntaxError, Image.DecompressionBombError):
+                raise ValueError("d3 images must be canonical PNG bytes") from None
+    return pictures
+
+
 class Encoder:
     """The vendor's prompt and tokenizer without its weights, so CPU hosts can validate inputs."""
 
@@ -105,27 +131,7 @@ class Encoder:
 
     def inputs(self, state, question, images=(), videos=()):
         """(batch, names): token ids for text, or the processor batch for canonical PNGs and MP4 paths."""
-        limits = models.spec(models.D3)["inputs"]
-        if len(images) > limits["images"]:
-            raise ValueError(f"d3 accepts at most {limits['images']} images")
-        if videos and not limits["video"]:
-            raise ValueError("d3 does not accept video")
-        if len(videos) > 1:
-            raise ValueError("d3 accepts at most 1 video")
-        if any(not isinstance(image, bytes) or image[:8] != PNG_SIGNATURE for image in images):
-            raise ValueError("d3 images must be canonical PNG bytes")
-        if any(Path(video).is_symlink() or not Path(video).is_file() for video in videos):
-            raise ValueError("d3 videos must be regular MP4 file paths")
-        pictures = []
-        if images:
-            from PIL import Image
-
-            for image in images:
-                try:
-                    with Image.open(io.BytesIO(image)) as picture:
-                        pictures.append(picture.convert("RGB"))
-                except (OSError, SyntaxError, Image.DecompressionBombError):
-                    raise ValueError("d3 images must be canonical PNG bytes") from None
+        pictures = check_media(images, videos)
         declared = options(question)
         self.native._json_value(state)
         normalized = self.native.normalize_question(question)

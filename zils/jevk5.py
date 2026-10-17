@@ -252,7 +252,10 @@ def train(args, *, model_id=models.JEVK5):
             raise ValueError(f"{model_id} does not accept images")
         if not isinstance(images, list):
             raise ValueError("training images must be a list of paths")
-        examples.append((row, [asset_bytes(data.parent, name) for name in images]))
+        images = [asset_bytes(data.parent, name) for name in images]
+        if images:
+            engine.check_media(images)  # media limits are refused before the weights load
+        examples.append((row, images))
     if not examples:
         raise ValueError("training export is empty")
     model = engine.DecisionModel(args.reference, args.device, train=True)
