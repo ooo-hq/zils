@@ -251,8 +251,14 @@ def train(args, *, model_id=models.JEVK5):
         if images and "inputs" not in models.spec(model_id):
             raise ValueError(f"{model_id} does not accept images")
         if not isinstance(images, list):
-            raise ValueError("training images must be a list of paths")
-        images = [asset_bytes(data.parent, name) for name in images]
+            raise ValueError("training images must be a list of paths or frozen references")
+        from .image_jobs import export_path
+
+        # A queue export names frozen assets; the miner caches them under images/<sha256>.png.
+        images = [
+            asset_bytes(data.parent, export_path(name) if isinstance(name, dict) else name)
+            for name in images
+        ]
         if images:
             engine.check_media(images)  # media limits are refused before the weights load
         examples.append((row, images))

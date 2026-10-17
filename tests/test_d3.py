@@ -497,6 +497,26 @@ class TrainingRowsTest(unittest.TestCase):
                 train(self.write(Path(tmp), ["photos/a.png"]), model_id=models.D3)
         self.assertEqual(model.seen, [[png()], (batch, 2)])
 
+    def test_frozen_export_references_resolve_to_the_cached_training_images(self):
+        import hashlib
+
+        from zils.jevk5 import train
+
+        model, batch = self.model("lora_A")
+        sha = hashlib.sha256(png()).hexdigest()
+        reference = {"asset_id": "10000000-0000-4000-8000-000000000001", "sha256": sha}
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("zils.d3.DecisionModel", return_value=model),
+        ):
+            (Path(tmp) / "images").mkdir()
+            (Path(tmp) / "images" / (sha + ".png")).write_bytes(png())
+            with self.assertRaises(Stop):
+                train(self.write(Path(tmp), [reference]), model_id=models.D3)
+            with self.assertRaisesRegex(ValueError, "frozen training image reference"):
+                train(self.write(Path(tmp), [{"sha256": sha}]), model_id=models.D3)
+        self.assertEqual(model.seen, [[png()], (batch, 2)])
+
     def test_training_refuses_a_trainable_vision_tower(self):
         from zils.jevk5 import train
 

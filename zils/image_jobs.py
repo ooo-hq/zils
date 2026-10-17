@@ -1,4 +1,8 @@
-"""Frozen image datasets: verified content identity and training-only exports."""
+"""Frozen image datasets: verified content identity and training-only exports.
+
+Imajev jobs and jobs on a text profile that declares `inputs` (d3) share this format: one canonical
+PNG per case, an asset catalog bound to the owner and job, and a training export of asset references.
+"""
 
 import hashlib
 import json
@@ -10,9 +14,11 @@ from pathlib import Path
 import zils
 
 from . import benchmark, jobs, models, version_selection
-from .image_contract import validate_image_request
+from .decisions import DecisionError, validate_request
+from .image_contract import UNKNOWN, capabilities, validate_image_request
 
 VERSION = "zils-image-job/v1"
+PREPROCESSOR = "zils-image-rgb-png/v1"
 SPLITS = {"train": 1024, "calibration": 256, "test": 512}
 ASSET_FIELDS = (
     "id",
@@ -39,10 +45,53 @@ def manifest_bytes(manifest):
     return (canonical(manifest) + "\n").encode()
 
 
+def takes_images(model):
+    """Profiles whose jobs freeze image assets: Imajev, and text profiles that declare inputs."""
+    return model == models.IMAJEV or "inputs" in models.spec(model)
+
+
+def validate_training_question(model, question, state=None):
+    """One choice question per frozen image case, within the profile's option limit."""
+    body = {
+        "model": model,
+        "state": {} if state is None else state,
+        "questions": {"decision": question},
+    }
+    try:
+        if model == models.IMAJEV:
+            validate_image_request(
+                {**body, "images": [{"asset_id": "00000000-0000-0000-0000-000000000000"}]}
+            )
+        else:
+            validate_request(body)
+            if (
+                question["type"] != "choice"
+                or len(question["criteria"]) > capabilities(model)["max_options"]
+                or UNKNOWN in question["criteria"]
+                or any(not name.strip() for name in question["criteria"])
+            ):
+                raise ValueError("image training takes one choice question per case")
+    except DecisionError as error:
+        raise ValueError(str(error)) from None
+    return question
+
+
+def export_path(entry):
+    """Local cache file of a frozen training-export image, relative to the export file."""
+    if (
+        not isinstance(entry, dict)
+        or set(entry) != {"asset_id", "sha256"}
+        or not isinstance(entry["sha256"], str)
+        or not re.fullmatch("[a-f0-9]{64}", entry["sha256"])
+    ):
+        raise ValueError("invalid frozen training image reference")
+    return "images/" + entry["sha256"] + ".png"
+
+
 def verify_binding(job):
     manifest = job.get("manifest") or {}
     if (
-        models.job_model(job) != models.IMAJEV
+        not takes_images(models.job_model(job))
         or manifest.get("version") != VERSION
         or hashlib.sha256(manifest_bytes(manifest)).hexdigest() != job.get("job_sha256")
     ):
@@ -77,6 +126,14 @@ def validate_intake(value):
     return value
 
 
+def validate_acceptance(model, policy, outcomes=None):
+    """Imajev jobs carry image targets; other image-capable profiles use the text policy."""
+    if model == models.IMAJEV:
+        validate_policy(policy, outcomes)
+    else:
+        jobs.validate_policy(policy)
+
+
 def validate_policy(policy, outcomes=None):
     extra = {"positive_class", "min_positive_recall", "max_false_positive_rate", "min_class_recall"}
     if not isinstance(policy, dict):
@@ -106,8 +163,9 @@ def validate_policy(policy, outcomes=None):
 
 
 def _validate(splits, assets, job, *, live=False):
-    if models.job_model(job) != models.IMAJEV or set(splits) != set(SPLITS):
-        raise ValueError("image job requires its pinned profile and all three splits")
+    model = models.job_model(job)
+    if not takes_images(model) or set(splits) != set(SPLITS):
+        raise ValueError("image job requires an image-capable profile and all three splits")
     version_selection.job_id(job["id"])
     version_selection.job_id(job["owner_id"])
     ids, groups, digests, pixels, bindings, used = set(), {}, {}, {}, {}, {}
@@ -130,7 +188,7 @@ def _validate(splits, assets, job, *, live=False):
                 or asset["owner_id"] != job["owner_id"]
                 or asset["job_id"] != job["id"]
                 or asset["purpose"] != "training"
-                or asset["preprocessor"] != models.spec(models.IMAJEV)["preprocessor"]
+                or asset["preprocessor"] != PREPROCESSOR
             ):
                 raise ValueError("image asset owner, job or profile binding is invalid")
             if live:
@@ -155,14 +213,7 @@ def _validate(splits, assets, job, *, live=False):
                 or not 1 <= asset["canonical_bytes"] <= 10 * 1024 * 1024
             ):
                 raise ValueError("image exceeds canonical limits")
-            validate_image_request(
-                {
-                    "model": models.IMAJEV,
-                    "state": case["state"],
-                    "questions": {"decision": case["question"]},
-                    "images": [{"asset_id": aid}],
-                }
-            )
+            validate_training_question(model, case["question"], case["state"])
             current_order = list(case["question"]["criteria"])
             if question is None:
                 question, order = case["question"], current_order
@@ -211,7 +262,8 @@ def training_rows(cases, assets=None):
 
 def build(root, job, splits, assets, policy):
     catalog, bindings, question, order, groups = _validate(splits, assets, job, live=True)
-    validate_policy(policy, order)
+    model = models.job_model(job)
+    validate_acceptance(model, policy, order)
     if policy != job["acceptance"]:
         raise ValueError("image acceptance policy changed")
     selection = job.get("selection")
@@ -245,7 +297,7 @@ def build(root, job, splits, assets, policy):
         "job_id": job["id"],
         "owner_id": job["owner_id"],
         "data_access": "approved-workers-training-export",
-        "model": models.spec(models.IMAJEV),
+        "model": models.spec(model),
         "acceptance": policy,
         "selection": selection,
         "files": {name: benchmark.file_hash(root / name) for name in benchmark.FILES},
@@ -288,7 +340,7 @@ def audit(root, manifest):
             raise ValueError("image dataset changed: " + name)
     splits = {s: benchmark.read_jsonl(root / f"{s}.jsonl") for s in SPLITS}
     catalog, bindings, question, order, groups = _validate(splits, manifest["assets"], job)
-    validate_policy(manifest["acceptance"], order)
+    validate_acceptance(models.job_model(job), manifest["acceptance"], order)
     version_selection.validate(
         manifest["selection"],
         manifest["acceptance"].get("previous_job_id"),
@@ -343,12 +395,6 @@ def task_contract(manifest):
     ):
         raise ValueError("Image task outcome order changed")
     question = {**question, "criteria": {key: question["criteria"][key] for key in order}}
-    validate_image_request(
-        {
-            "model": models.IMAJEV,
-            "state": {},
-            "questions": {"decision": question},
-            "images": [{"asset_id": "00000000-0000-0000-0000-000000000000"}],
-        }
-    )
+    model = models.validate_spec(manifest["model"]) if "model" in manifest else models.IMAJEV
+    validate_training_question(model, question)
     return {"question": question, "outcome_order": list(order)}
