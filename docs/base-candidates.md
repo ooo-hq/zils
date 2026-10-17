@@ -1,8 +1,8 @@
 # Base candidates
 
 A base candidate is a full-weight replacement for a pinned text base, per
-profile: d3-mini-4.5b-v1, the base for new jobs since 17 October 2026, and H2O
-Lightning 4B v1.2.3 while existing H2O adapters are still served. d3-mini did not
+profile: d3-mini-4.5b-v1, the base for new jobs since 17 October 2026; H2O
+Lightning 4B v1.2.3 is retiring and no longer served. d3-mini did not
 pass the confirmation draw on 17 October 2026; it became the base by the owner's
 decision, recorded as an override of the promotion rule (see
 [d3-mini](roadmap.md#d3-mini)). Everything below describes H2O unless it says d3. Miners may train it however they like; validators
