@@ -139,6 +139,39 @@ class GradingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "model mismatch|invalid workload tokens"):
             grading.validate_workload(d3, model=models.H2O, examples=2)
 
+    def test_contexts_are_keyed_by_model_and_band(self):
+        self.assertEqual(grading.context_key(CONTEXT), f"{models.JEVK5}/tokens-512")
+        identity = {k: "f" * 64 for k in ("profile_sha256", "runtime_sha256")}
+        d3 = {**CONTEXT, **identity, "model": models.D3, "band": "tokens-4096"}
+        h2o = {**CONTEXT, **identity, "model": models.H2O, "band": "tokens-2048"}
+        self.assertTrue(grading.valid_context(d3))
+        # Stored H2O evidence stays readable; a band above H2O's cap was never produced.
+        self.assertTrue(grading.valid_context(h2o))
+        self.assertFalse(grading.valid_context({**h2o, "band": "tokens-4096"}))
+        self.assertEqual(grading.bands(models.H2O), ("tokens-512", "tokens-1024", "tokens-2048"))
+        self.assertEqual(grading.bands(models.D3)[-1], "tokens-4096")
+        # The same band under another model never grades this context.
+        attempt = {
+            "id": "other-model",
+            "context": {**CONTEXT, "model": models.D3},
+            "outcome": "valid",
+            "finished_at": NOW.isoformat(),
+            "started_at": (NOW - timedelta(seconds=100)).isoformat(),
+            "submitted_at": NOW.isoformat(),
+            "total_tokens": 1000,
+        }
+        self.assertEqual(grading.performance_grade([attempt], CONTEXT, NOW)["successes"], 0)
+        self.assertEqual(
+            grading.qualification_grade(
+                [{**report(1), "context": {**CONTEXT, "model": models.D3}}], CONTEXT, NOW
+            )["quality_runs"],
+            0,
+        )
+        crossed = job(workload=grading.workload_profile([100] * 10, model=models.H2O))
+        result = grading.rank_candidates(crossed, [worker()], NOW)
+        self.assertIsNone(result["selected_hotkey"])
+        self.assertEqual(result["exclusions"][0]["reason"], "unverified_workload_or_consent")
+
     def test_grade_requires_three_unique_comparable_recent_reports(self):
         reports = [report(i) for i in range(3)]
         self.assertEqual(grading.qualification_grade(reports, CONTEXT, NOW)["status"], "qualified")
