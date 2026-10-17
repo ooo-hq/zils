@@ -5,13 +5,41 @@ The [first registered training-to-chain round](testnet-round-001.md) recorded a
 completed commit–reveal cycle. That evidence does not establish current uptime,
 open participation, mainnet support, or production model quality.
 
-Work remaining for an open competition:
+Status of the work for an open competition, as of 17 October 2026:
 
-1. Public miner discovery and admission rules.
-2. Isolated evaluation of hostile checkpoints and stronger operational boundaries.
-3. Refreshed held-out benchmarks with comparable quality and performance scoring.
-4. Explicit model promotion and rollback policy for subnet winners.
-5. Verifiable public miner/validator health and chain-result reporting.
+1. Admission rules: chain-derived admission is implemented and off by default.
+2. Isolated evaluation: the sandboxed evaluation subprocess is merged.
+3. Refreshed held-out benchmarks: the round-one sealed holdout is authored
+   (1,458 cases in six families), and a confirmation draw is required before
+   any promotion.
+4. Promotion and rollback: two channels and the adapter regression suite are
+   decided and implemented. The channel is platform configuration today; a
+   registry alias and automatic follow-stable upgrades remain.
+5. Public health and chain reporting: remaining.
+
+## Base tier
+
+Miners can submit a full-weight replacement for the pinned base of a text
+profile. [Base candidates](base-candidates.md) describes the submission
+contract, scoring, the confirmation draw, the regression suite and the `latest`
+and `stable` channels. Candidate loading, round decisions, sandboxed evaluation,
+the regression suite, chain-derived admission and the dry-run promotion script
+are merged. No public round has been run.
+
+## d3-mini
+
+The profile `d3-mini-4.5b-v1` (vendor model `vllm-sr/d3-mini`, mirrored as
+`zils-ai/d3-mini-4.5b-v1`) was merged on 16–17 October 2026: the profile and
+pins, the runtime module, node provisioning and qualification, images and video
+through the runtime, platform routing, a `latest` channel that can point at d3
+when configured, and cross-profile upgrades with `base_change`
+(see [version selection](version-selection.md#changing-the-base-profile)).
+
+Not yet: d3 is not the default for new jobs, the platform migrations are not
+applied in production, and no d3 serving process runs. Its promotion under the
+base-tier rules is pending: the first draw cleared, and the confirmation draw
+and the regression suite had not completed as of 17 October. The recorded
+evidence is in [model research](model-research.md#d3-mini-evidence-16-october-2026).
 
 Customer-job data contracts, calibration, and acceptance are shared with the
 hosted platform. Hosted account management, APIs, billing, storage, and serving

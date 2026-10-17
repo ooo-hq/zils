@@ -59,6 +59,32 @@ was trained or calibrated on. The existing split audit checks the current job;
 operators remain responsible for semantic overlap and repeated use of evaluation
 data across jobs. Acceptance measures this dataset, not guaranteed future quality.
 
+### Changing the base profile
+
+A task stays on its base profile unless the request says otherwise. To move a
+task from one profile to another, for example from H2O to d3-mini, set
+`"base_change": true` in the acceptance policy next to `previous_job_id`:
+
+```json
+{
+  "name": "flight-v3",
+  "acceptance": {
+    "min_accuracy": 0.80,
+    "min_brier_improvement": 0.01,
+    "previous_job_id": "REPLACE_WITH_PRIOR_READY_JOB_UUID",
+    "base_change": true
+  }
+}
+```
+
+The validator scores the frozen previous release with its own base and runtime,
+then scores the new candidate on the same test data. The usual upgrade
+requirements apply. Without `base_change`, a profile change is refused. After
+acceptance, the task alias follows the new release as it does for any other
+version; earlier immutable IDs remain callable. As of 17 October 2026 d3-mini is
+not the default for new jobs, and its platform migrations are not applied in
+production.
+
 ## Activation and API names
 
 After runtime verification, new versioned releases receive an immutable model ID

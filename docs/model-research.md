@@ -135,6 +135,25 @@ compute was **$37.95**. This is a runtime estimate, not a provider invoice or a
 price for customer training. Research results do not promote an adapter or
 replace per-job acceptance tests.
 
+## d3-mini evidence (16 October 2026)
+
+These results come from one rented B300 on the research path. Stock d3-mini
+scored Brier 0.142 and accuracy 89.8% on the round-one sealed holdout through
+the validator's decision rule, against 0.184 and 87.7% for the stock H2O
+incumbent. That makes it eligible and a pending winner; the confirmation draw
+and the regression suite had not completed as of 17 October. A d3 adapter
+trained with the frozen production recipe on the 4,096-example ABCD set tied the
+H2O adapter on the 500-case test cohort (83.4% vs 83.0%, interval includes zero)
+and beat it on the historical cohort (86.6% vs 83.6%, interval +0.6 to +5.4);
+this reproduced across two seeds. On the exam, d3's prompt had a median 568
+input tokens against H2O's 528. A feature probe answered yes/no, score,
+multi-question, JSON state, one, two and four images and a short video
+correctly, and refused a 13,414-token state at the runtime's 8,192 limit.
+
+Caveats: one card and one day; nothing above 4,096 input tokens was tested; and
+the exam is a teacher-authored holdout, not customer data. These results do not
+promote d3-mini or replace per-job acceptance tests.
+
 ## Reports and reproducibility
 
 - [B300 study](https://zils.ai/model/b300-study)
