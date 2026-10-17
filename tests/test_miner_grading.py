@@ -10,8 +10,8 @@ from zils import miner_grading as grading, models
 
 NOW = datetime(2026, 10, 9, tzinfo=UTC)
 CONTEXT = {
-    "model": models.JEVK5,
-    **models.profile_identity(models.JEVK5),
+    "model": models.H2O,
+    **models.profile_identity(models.H2O),
     "trainer_sha256": "a" * 64,
     "rubric": "test/v1",
     "benchmark_sha256": "b" * 64,
@@ -42,7 +42,7 @@ def job(**overrides):
         "id": "job",
         "job_sha256": "c" * 64,
         "context": dict(CONTEXT),
-        "workload": grading.workload_profile([100] * 10, model=models.JEVK5),
+        "workload": grading.workload_profile([100] * 10, model=models.H2O),
         "deadline": (NOW + timedelta(hours=2)).isoformat(),
         "consent": True,
         "purpose": "customer",
@@ -56,7 +56,7 @@ def worker(hotkey="worker", improvement=0.12, rate=0.1, **overrides):
         "enabled": True,
         "approved": True,
         "resource_id": hotkey,
-        "profile": models.profile_identity(models.JEVK5),
+        "profile": models.profile_identity(models.H2O),
         "received_at": NOW.isoformat(),
         "ready": True,
         "reserved": False,
@@ -73,14 +73,14 @@ class GradingTests(unittest.TestCase):
         from zils import jobs
 
         splits = examples()
-        workload = grading.workload_profile([100] * len(splits["train"]), model=models.JEVK5)
+        workload = grading.workload_profile([100] * len(splits["train"]), model=models.H2O)
         with tempfile.TemporaryDirectory() as tmp:
             old = jobs.build(
                 Path(tmp) / "old",
                 "old",
                 splits,
                 POLICY,
-                model=models.JEVK5,
+                model=models.H2O,
                 allow_training_data_export=True,
             )
             self.assertNotIn("workload", old)
@@ -90,7 +90,7 @@ class GradingTests(unittest.TestCase):
                 "new",
                 splits,
                 POLICY,
-                model=models.JEVK5,
+                model=models.H2O,
                 allow_training_data_export=True,
                 workload=workload,
             )
@@ -120,10 +120,10 @@ class GradingTests(unittest.TestCase):
             (1024, "tokens-1024"),
             (1025, "tokens-2048"),
         ]:
-            self.assertEqual(grading.workload_profile([length], model=models.JEVK5)["band"], band)
+            self.assertEqual(grading.workload_profile([length], model=models.H2O)["band"], band)
         for lengths in ([], [0], [2049], [True], [1.5]):
             with self.assertRaises(ValueError):
-                grading.workload_profile(lengths, model=models.JEVK5)
+                grading.workload_profile(lengths, model=models.H2O)
 
     def test_workload_cap_follows_the_profile(self):
         self.assertEqual(grading.workload_profile([4096], model=models.D3)["band"], "tokens-4096")
@@ -140,7 +140,7 @@ class GradingTests(unittest.TestCase):
             grading.validate_workload(d3, model=models.H2O, examples=2)
 
     def test_contexts_are_keyed_by_model_and_band(self):
-        self.assertEqual(grading.context_key(CONTEXT), f"{models.JEVK5}/tokens-512")
+        self.assertEqual(grading.context_key(CONTEXT), f"{models.H2O}/tokens-512")
         identity = {k: "f" * 64 for k in ("profile_sha256", "runtime_sha256")}
         d3 = {**CONTEXT, **identity, "model": models.D3, "band": "tokens-4096"}
         h2o = {**CONTEXT, **identity, "model": models.H2O, "band": "tokens-2048"}
@@ -167,7 +167,7 @@ class GradingTests(unittest.TestCase):
             )["quality_runs"],
             0,
         )
-        crossed = job(workload=grading.workload_profile([100] * 10, model=models.H2O))
+        crossed = job(workload=grading.workload_profile([100] * 10, model=models.D3))
         result = grading.rank_candidates(crossed, [worker()], NOW)
         self.assertIsNone(result["selected_hotkey"])
         self.assertEqual(result["exclusions"][0]["reason"], "unverified_workload_or_consent")
@@ -234,7 +234,7 @@ class GradingTests(unittest.TestCase):
         result = grading.rank_candidates(job(workload=None), [worker()], NOW)
         self.assertIsNone(result["selected_hotkey"])
         oversized = job()
-        oversized["workload"] = grading.workload_profile([300] * 100, model=models.JEVK5)
+        oversized["workload"] = grading.workload_profile([300] * 100, model=models.H2O)
         self.assertEqual(
             grading.rank_candidates(oversized, [worker()], NOW)["exclusions"][0]["reason"],
             "capacity",

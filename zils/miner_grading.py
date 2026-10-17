@@ -55,7 +55,6 @@ def finite(value, minimum=0, maximum=math.inf):
     return type(value) in (int, float) and math.isfinite(value) and minimum <= value <= maximum
 
 
-JEVK5_TRAINER_FILES = ("zils/jevk5.py", "requirements/model.txt", "requirements/jevk5-source.txt")
 TRAINER_FILES = {
     models.H2O: ("zils/h2o.py", "zils/jevk5.py", "zils/h2o-pins.json", "requirements/h2o.txt"),
     models.D3: ("zils/d3.py", "zils/jevk5.py", "zils/d3-pins.json", "requirements/d3.txt"),
@@ -64,12 +63,12 @@ TRAINER_FILES = {
 BANDS = (512, 1024, 2048, 4096)
 
 
-def trainer_identity(model=models.JEVK5):
+def trainer_identity(model):
     root = Path(__file__).resolve().parents[1]
     return digest(
         {
             name: hashlib.sha256((root / name).read_bytes()).hexdigest()
-            for name in TRAINER_FILES.get(model, JEVK5_TRAINER_FILES)
+            for name in TRAINER_FILES[model]
         }
     )
 

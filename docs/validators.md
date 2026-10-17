@@ -5,7 +5,7 @@ and score held-out examples. Miner-reported metrics do not determine rewards.
 The closed Bittensor fleet can publish testnet weights only after explicit
 configuration and review. Public discovery and mainnet are not implemented.
 
-## JevK5 queue validator
+## Queue validator
 
 The model evaluation and acceptance code lives in this repository. The hosted
 queue processor connects that evaluator to customer jobs and protected storage;
@@ -131,4 +131,4 @@ See [testnet outcomes](testnet.md#read-the-outcome) for restart behavior.
 
 The [first verified testnet round](testnet-round-001.md) demonstrates this closed
 path. It does not establish current validator uptime, open access, mainnet
-support, or JevK5 training-to-chain integration.
+support, or queue training-to-chain integration.

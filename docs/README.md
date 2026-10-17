@@ -7,10 +7,10 @@ participation. Customer workers and fleets support d3-mini text and image jobs
 
 | Task | Guide |
 | --- | --- |
-| Operate a miner | [Queued miners](queue-miners.md), [Mac miners](mac-miners.md), [closed fleet](mining.md) |
+| Operate a miner | [Queued miners](queue-miners.md), [closed fleet](mining.md) |
 | Operate a validator | [Validator setup](validators.md), [evaluation contract](evaluation.md) |
 | Join the testnet | [Registration](bittensor-registration.md), [testnet operation](testnet.md) |
-| Prepare models or training data | [JevK5 reference](jevk5-queue.md), [customer data contract](customer-jobs.md), [version selection](version-selection.md) |
+| Prepare models or training data | [H2O reference](queue-miners.md#2-install-and-verify-the-reference), [H2O model contract](h2o-queue.md), [customer data contract](customer-jobs.md), [version selection](version-selection.md) |
 | Compare tuned open models and miner hardware tradeoffs | [Official Jev comparisons and B300 research](model-research.md) |
 | Submit a replacement base (implemented, no round run) | [Base candidates](base-candidates.md) |
 | Develop and inspect evidence | [Development](development.md), [benchmark](benchmark.md), [experiments](experiments.md), [JevBench](jevbench-public.md), [recorded testnet round](testnet-round-001.md) |

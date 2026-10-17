@@ -13,7 +13,6 @@ the testnet tests:
 uv pip install --python .venv-kev/bin/python \
   -r requirements/dev.txt -r requirements/model.txt \
   -r requirements/rehearsal.txt -r requirements/testnet.txt -r requirements/images.txt
-uv pip install --python .venv-kev/bin/python --no-deps -r requirements/jevk5-source.txt
 make check
 ```
 
