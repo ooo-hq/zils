@@ -19,13 +19,17 @@ def validate_policy(policy):
     if (
         not isinstance(policy, dict)
         or not required <= set(policy)
-        or set(policy) - required - {"previous_job_id"}
+        or set(policy) - required - {"previous_job_id", "base_change"}
     ):
         raise ValueError("acceptance requires min_accuracy and min_brier_improvement")
     if "previous_job_id" in policy:
         from .version_selection import job_id
 
         job_id(policy["previous_job_id"])
+    if "base_change" in policy and (
+        policy["base_change"] is not True or "previous_job_id" not in policy
+    ):
+        raise ValueError("base_change is only true, with a previous_job_id")
     for name, maximum in (("min_accuracy", 1), ("min_brier_improvement", 2)):
         value = policy[name]
         if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= maximum:
