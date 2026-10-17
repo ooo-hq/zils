@@ -11,26 +11,17 @@ OWNER = "10000000-0000-4000-8000-000000000002"
 JOB = "10000000-0000-4000-8000-000000000003"
 
 
-POLICY = {
-    "min_accuracy": 0.8,
-    "min_brier_improvement": 0.01,
-    "positive_class": "damaged",
-    "min_positive_recall": 0.9,
-    "max_false_positive_rate": 0.1,
-}
+POLICY = {"min_accuracy": 0.8, "min_brier_improvement": 0.01}
 
 
-TEXT_POLICY = {"min_accuracy": 0.8, "min_brier_improvement": 0.01}
-
-
-def fixture(model=models.IMAJEV):
-    """An Imajev job carries image targets; a d3 job freezes the same photos under the text policy."""
+def fixture(model=models.D3):
+    """A d3 job freezes one canonical photo per case under the text acceptance policy."""
     job = {
         "id": JOB,
         "owner_id": OWNER,
         "status": "uploading",
         "model_profile": models.spec(model),
-        "acceptance": POLICY if model == models.IMAJEV else TEXT_POLICY,
+        "acceptance": POLICY,
     }
     splits, assets = {}, {}
     for split in ("train", "calibration", "test"):
@@ -70,35 +61,3 @@ def fixture(model=models.IMAJEV):
                 }
             )
     return job, splits, assets
-
-
-SCRIPT = """import json,sys,math,os
-from pathlib import Path
-from PIL import Image
-from zils import models
-from zils.image_metrics import probabilities_at_temperature
-assert 'SUPABASE_SERVICE_ROLE_KEY' not in os.environ
-checkpoint=Path(sys.argv[sys.argv.index('--checkpoint')+1])
-if '--train' in sys.argv:
-    rows=[json.loads(line) for line in Path(sys.argv[sys.argv.index('--cases')+1]).read_text().splitlines()]
-    assert all(set(r)=={'state','questions','images'} for r in rows)
-    out=Path(sys.argv[sys.argv.index('--out')+1]);out.mkdir()
-    for name in models.IMAJEV_FILES:
-        if name!='model.json':(out/name).write_text('trained')
-    models.write_metadata(out,model=models.IMAJEV)
-else:
-    rows=json.loads(Path(sys.argv[sys.argv.index('--cases')+1]).read_text())
-    assert all(set(r)=={'id','state','question','image'} for r in rows)
-    images=Path(sys.argv[sys.argv.index('--images')+1])
-    trained=(checkpoint/'adapter_model.safetensors').read_text()=='trained'
-    temp=models.temperature(checkpoint);predictions=[]
-    for row in rows:
-        keys=[*row['question']['criteria'],'__unknown__']
-        with Image.open(images/(row['image']['sha256']+'.png')) as photo:
-            gold='normal' if photo.getpixel((0,0))[0]==0 else 'damaged'
-        logits=[(3 if k==gold else 0) for k in keys] if trained else [.1,0,0]
-        if os.environ.get('FIXTURE_IMAGE_REJECT')=='1' and trained:logits=[0,0,3]
-        probabilities=dict(zip(keys,probabilities_at_temperature(logits,temp)))
-        predictions.append({'id':row['id'],'probabilities':probabilities,'logits':logits,'elapsed_ms':1,'input_tokens':442})
-    print(json.dumps({'predictions':predictions,'runtime':{'temperature':temp,'model':models.spec(models.IMAJEV),**models.profile_identity(models.IMAJEV)}}))
-"""

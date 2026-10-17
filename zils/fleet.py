@@ -70,10 +70,9 @@ def initialize(
     if manifest.get("selection", {}).get("previous"):
         raise ValueError("Fleet bundles cannot resolve hosted predecessor models")
     image_sources = {}
-    if model == models.IMAJEV:
-        from .imajev import image_path, verify_starting_checkpoint
+    if "assets" in manifest:
+        from .image_jobs import image_path
 
-        verify_starting_checkpoint(checkpoint)
         if (
             images is None
             or type(min_free_mib) is not int
@@ -114,7 +113,7 @@ def initialize(
     }
     if model != models.KEV:
         shared["model"] = models.spec(model)
-    if model == models.IMAJEV:
+    if image_sources:
         shared.update(min_free_mib=min_free_mib, max_seconds=max_seconds)
 
     def copy_images(destination, *, training):
@@ -162,10 +161,6 @@ def initialize(
         (directory / "docs").mkdir()
         for name in ("mining.md", "testnet.md"):
             shutil.copyfile(ROOT / "docs" / name, directory / "docs" / name)
-        if model == models.IMAJEV:
-            (directory / "scripts").mkdir()
-            for name in ("__init__.py", "download_imajev.py"):
-                shutil.copyfile(ROOT / "scripts" / name, directory / "scripts" / name)
         (directory / "README.md").write_text(
             "# Zils miner\n\nSee [setup and operation](docs/mining.md). "
             "After setup, run `./start-miner`.\n"

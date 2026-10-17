@@ -4,7 +4,7 @@
 This guide joins an existing subnet; a miner does not create a subnet.
 
 Zils connects a **closed, model-pinned fleet** to Bittensor testnet. The operator
-selects JevK5 4B text, ImaJev 4B image, or a legacy Kev 0.8B job and qualifies
+selects a d3-mini text or image job, a JevK5 4B text job, or a legacy Kev 0.8B job and qualifies
 the participating hardware. Registration alone does not select a model.
 The [verified round on subnet 579](testnet-round-001.md) is a historical result,
 not an invitation to register on that subnet today. The fleet rejects mainnet.

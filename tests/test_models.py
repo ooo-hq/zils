@@ -147,9 +147,8 @@ class ModelTest(unittest.TestCase):
     def test_candidate_base_env_names_the_profile_override(self):
         self.assertEqual(models.candidate_base_env(models.H2O), "ZILS_H2O_CANDIDATE_BASE")
         self.assertEqual(models.candidate_base_env(models.D3), "ZILS_D3_CANDIDATE_BASE")
-        for model in (models.JEVK5, models.IMAJEV):
-            with self.assertRaisesRegex(ValueError, "no base-candidate support"):
-                models.candidate_base_env(model)
+        with self.assertRaisesRegex(ValueError, "no base-candidate support"):
+            models.candidate_base_env(models.JEVK5)
 
     def test_d3_profile_is_pinned_and_unique(self):
         spec = models.spec(models.D3)
@@ -175,14 +174,10 @@ class ModelTest(unittest.TestCase):
             identity["runtime_sha256"], models.profile_identity(models.H2O)["runtime_sha256"]
         )
 
-    def test_h2o_and_imajev_identities_are_unchanged(self):
+    def test_h2o_identity_is_unchanged(self):
         self.assertEqual(
             models.profile_identity(models.H2O)["profile_sha256"],
             "d28055e0296cba2afa5ba7f9052a3173ac7196b21f841898254b8e6df2b84506",
-        )
-        self.assertEqual(
-            models.profile_identity(models.IMAJEV)["profile_sha256"],
-            "3d53e354ad72ae067f33bfa8175d281507c467780a8c6c807cc0eb41eceb459c",
         )
         path = Path(models.__file__).with_name("h2o-pins.json")
         self.assertEqual(models.pins(models.H2O), json.loads(path.read_text()))

@@ -18,11 +18,7 @@ from unittest.mock import patch
 from PIL import Image
 
 import zils
-from tests.fixture_images import (
-    POLICY as IMAGE_POLICY,
-    SCRIPT as IMAGE_SCRIPT,
-    fixture as image_fixture,
-)
+from tests.fixture_images import fixture as image_fixture
 from tests.test_jobs import POLICY, examples
 from zils import benchmark, core, fleet, image_jobs, jobs, models, protocol, validator
 from zils.runtime import CapacityUnavailable, run_child
@@ -36,7 +32,7 @@ def checkpoint(path, model):
     return path
 
 
-def image_dataset(root, model=models.IMAJEV):
+def image_dataset(root, model=models.D3):
     job, splits, assets = image_fixture(model)
     images = root / "photos"
     images.mkdir()
@@ -54,32 +50,26 @@ def image_dataset(root, model=models.IMAJEV):
 
 class FleetProfilesTest(unittest.TestCase):
     def test_each_vertical_completes_a_signed_training_and_evaluation_round(self):
-        for model in (models.JEVK5, models.H2O, models.IMAJEV, models.D3):
+        for model in (models.JEVK5, models.H2O, models.D3):
             with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
-                options = {}
-                if model == models.IMAJEV:
-                    data, images, _ = image_dataset(root)
-                    options = {"images": images, "min_free_mib": 12288, "max_seconds": 120}
-                else:
-                    data = root / "data"
-                    jobs.build(
-                        data,
-                        "text",
-                        examples(),
-                        POLICY,
-                        model=model,
-                        allow_training_data_export=True,
-                    )
+                data = root / "data"
+                jobs.build(
+                    data,
+                    "text",
+                    examples(),
+                    POLICY,
+                    model=model,
+                    allow_training_data_export=True,
+                )
                 reference = checkpoint(root / "reference", model)
                 with socket.socket() as a, socket.socket() as b:
                     a.bind(("127.0.0.1", 0))
                     b.bind(("127.0.0.1", 0))
                     ports = [a.getsockname()[1], b.getsockname()[1]]
-                with patch("zils.imajev.verify_starting_checkpoint"):
-                    out = fleet.initialize(
-                        root / "fleet", data, reference, "127.0.0.1", ports[0], ports[1:], **options
-                    )
+                out = fleet.initialize(
+                    root / "fleet", data, reference, "127.0.0.1", ports[0], ports[1:]
+                )
                 config = out / "validator/config.json"
                 cfg = json.loads(config.read_text())
                 cfg.update(round_timeout=90, result_grace=1)
@@ -108,11 +98,8 @@ else:
                 trainer = "zils" + models.TEXT_RUNTIME_MODULES.get(model, ".jevk5")
                 runtime.write_text(
                     f"#!{sys.executable}\n"
-                    + (
-                        IMAGE_SCRIPT
-                        if model == models.IMAJEV
-                        else f"TRAINER={trainer!r}\nMODEL={model!r}\n" + text_script
-                    )
+                    + f"TRAINER={trainer!r}\nMODEL={model!r}\n"
+                    + text_script
                 )
                 runtime.chmod(0o700)
                 capacity = root / "nvidia-smi"
@@ -120,7 +107,6 @@ else:
                 capacity.chmod(0o700)
                 env = {
                     **os.environ,
-                    "ZILS_IMAGE_RUNTIME_PYTHON": str(runtime),
                     "ZILS_H2O_RUNTIME_PYTHON": str(runtime),
                     "ZILS_D3_RUNTIME_PYTHON": str(runtime),
                     "ZILS_NVIDIA_SMI": str(capacity),
@@ -173,7 +159,7 @@ else:
                     self.assertEqual(report["weights"], {"1": 1.0})
                     result = next((out / "miner-1/state/jobs").glob("*/result.json"))
                     self.assertEqual(json.loads(result.read_text())["model"]["id"], model)
-                    if model == models.IMAJEV:
+                    if model == models.D3:  # capacity waits and deferrals, once per round
                         entry = json.loads(
                             next((out / "miner-1/state/jobs").glob("*/candidate.json")).read_text()
                         )
@@ -322,19 +308,19 @@ print(json.dumps({'runtime':{},'predictions':[
                 image_jobs.export_path(exported[0]["images"][0]),
                 "images/" + exported[0]["images"][0]["sha256"] + ".png",
             )
-            # d3 takes up to 255 declared outcomes where Imajev stops at 16; neither takes __unknown__.
+            # d3 takes up to 255 declared outcomes of one choice question per case.
             wide = {"type": "choice", "criteria": {str(n): None for n in range(40)}}
             image_jobs.validate_training_question(models.D3, wide)
             for model, question in (
-                (models.IMAJEV, wide),
                 (models.D3, {"type": "noul"}),
-                (models.D3, {"type": "choice", "criteria": {"a": None, "__unknown__": None}}),
+                (models.D3, {"type": "choice", "criteria": {str(n): None for n in range(256)}}),
             ):
                 with self.subTest(model=model), self.assertRaises(ValueError):
                     image_jobs.validate_training_question(model, question)
-            # Image targets belong to Imajev jobs only; d3 image jobs use the text acceptance policy.
+            # Image jobs use the text acceptance policy; the old image targets are refused.
+            targets = {**job["acceptance"], "positive_class": "damaged"}
             with self.assertRaisesRegex(ValueError, "min_accuracy"):
-                image_jobs.build(root / "targets", job, splits, assets, IMAGE_POLICY)
+                image_jobs.build(root / "targets", job, splits, assets, targets)
             _, text_rows, _ = image_fixture(models.D3)
             with self.assertRaisesRegex(ValueError, "image-capable"):
                 image_jobs.build(
@@ -385,12 +371,10 @@ print(json.dumps({'runtime':{},'predictions':[
                     }
 
             with patch("miner.queue.download", lambda url, path, limit: path.write_bytes(data)):
-                queue.download_images(Client(), {}, training, root / "images", models.D3)
-                queue.download_images(Client(), {}, training, root / "images", models.D3)
+                queue.download_images(Client(), {}, training, root / "images")
+                queue.download_images(Client(), {}, training, root / "images")
             self.assertEqual(calls, [("image-downloads", [aid])])  # cached on the second pass
             self.assertEqual((root / "images" / (sha + ".png")).read_bytes(), data)
-            with self.assertRaisesRegex(ValueError, "one frozen image"):
-                queue.download_images(Client(), {}, training, root / "images")
 
     def test_text_fleet_uses_frozen_profile_and_rejects_a_different_reference(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -409,7 +393,7 @@ print(json.dumps({'runtime':{},'predictions':[
             cfg = json.loads((out / "miner-1/config.json").read_text())
             self.assertEqual(cfg["base_revision"], "c4f7fdb3aeab5582336406e78d3bef11bf98833d")
             self.assertEqual(cfg["model"]["id"], "jevk5-4b-v0.3")
-            wrong = checkpoint(root / "wrong", models.IMAJEV)
+            wrong = checkpoint(root / "wrong", models.H2O)
             with self.assertRaisesRegex(ValueError, "profile"):
                 fleet.initialize(root / "bad", data, wrong, "127.0.0.1", 8900, [8901])
             self.assertFalse((root / "bad").exists())
@@ -418,21 +402,20 @@ print(json.dumps({'runtime':{},'predictions':[
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data, images, assets = image_dataset(root)
-            reference = checkpoint(root / "reference", models.IMAJEV)
-            with patch("zils.imajev.verify_starting_checkpoint"):
-                out = fleet.initialize(
-                    root / "fleet",
-                    data,
-                    reference,
-                    "127.0.0.1",
-                    8900,
-                    [8901],
-                    images=images,
-                    min_free_mib=14000,
-                    max_seconds=900,
-                )
+            reference = checkpoint(root / "reference", models.D3)
+            out = fleet.initialize(
+                root / "fleet",
+                data,
+                reference,
+                "127.0.0.1",
+                8900,
+                [8901],
+                images=images,
+                min_free_mib=14000,
+                max_seconds=900,
+            )
             cfg = json.loads((out / "miner-1/config.json").read_text())
-            self.assertEqual(cfg["model"]["id"], "imajev-4b-v1")
+            self.assertEqual(cfg["model"]["id"], models.D3)
             self.assertEqual(cfg["min_free_mib"], 14000)
             self.assertEqual(cfg["max_seconds"], 900)
             from miner.worker import train_candidate
@@ -440,7 +423,7 @@ print(json.dumps({'runtime':{},'predictions':[
             for field, value in (("min_free_mib", 12288), ("max_seconds", 3600)):
                 job = {**cfg, "round_id": "a" * 32, field: value}
                 with (
-                    patch.dict(os.environ, {"ZILS_IMAGE_RUNTIME_PYTHON": sys.executable}),
+                    patch.dict(os.environ, {"ZILS_D3_RUNTIME_PYTHON": sys.executable}),
                     patch(
                         "miner.worker.run_child",
                         side_effect=AssertionError("must not start training"),
@@ -468,13 +451,10 @@ print(json.dumps({'runtime':{},'predictions':[
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             data, images, assets = image_dataset(root)
-            reference = checkpoint(root / "reference", models.IMAJEV)
+            reference = checkpoint(root / "reference", models.D3)
             asset = next(iter(assets.values()))
             (images / (asset["canonical_sha256"] + ".png")).write_bytes(b"changed")
-            with (
-                patch("zils.imajev.verify_starting_checkpoint"),
-                self.assertRaisesRegex(ValueError, "image"),
-            ):
+            with self.assertRaisesRegex(ValueError, "image"):
                 fleet.initialize(
                     root / "fleet",
                     data,
@@ -488,7 +468,7 @@ print(json.dumps({'runtime':{},'predictions':[
             self.assertFalse((root / "fleet").exists())
 
     def test_transfer_uses_expected_profile_and_rejects_cross_profile_metadata(self):
-        for model in (models.JEVK5, models.H2O, models.IMAJEV):
+        for model in (models.JEVK5, models.H2O, models.D3):
             with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 source = checkpoint(root / "source", model)

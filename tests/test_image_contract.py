@@ -5,12 +5,11 @@ import sys
 import unittest
 
 from zils import models
-from zils.image_contract import IMAGE_CAPABILITIES, TEXT_CAPABILITIES, capabilities
+from zils.image_contract import TEXT_CAPABILITIES, capabilities
 
 
 class CapabilitiesTest(unittest.TestCase):
     def test_capabilities_per_profile(self):
-        self.assertIs(capabilities(models.IMAJEV), IMAGE_CAPABILITIES)
         self.assertEqual(
             capabilities(models.D3),
             {

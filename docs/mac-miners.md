@@ -10,7 +10,7 @@ establish on-chain earnings.
 Use Apple silicon, macOS 14 or newer, Python 3.13, Git, and `uv`. Allow at least
 25 GB free disk for the pinned model and dependencies, plus training artifacts
 and swap. Obtain an approved hotkey and the coordinator URL from the operator.
-This guide supports the **JevK5 text profile**, not Imajev image training.
+This guide supports the **JevK5 text profile**; d3 text and image jobs need a CUDA host.
 
 The tested machine was an **M4 Mac mini with 16 GiB unified memory**, running
 macOS 26.5.2 and the pinned PyTorch 2.8.0 runtime. Other chips, operating-system

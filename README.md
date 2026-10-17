@@ -21,14 +21,13 @@ and the guarded Bittensor testnet integration.
 | --- | --- |
 | Run an H2O miner on NVIDIA hardware | [Queued miners](docs/queue-miners.md) |
 | Run a JevK5 miner on Apple silicon | [Mac miners](docs/mac-miners.md) |
-| Run a qualified ImaJev image miner | [Image queue setup](docs/queue-miners.md#add-the-image-vertical), [image fleet setup](docs/mining.md#image-fleets) |
 | Join the closed Bittensor testnet fleet | [Registration](docs/bittensor-registration.md), then [miner setup](docs/mining.md) |
 | Run a validator | [Validator setup](docs/validators.md) |
 | Develop or evaluate the subnet | [Local development](docs/development.md), [evaluation contract](docs/evaluation.md) |
 
 Both workflows require operator admission. Customer workers support d3-mini text and
 image jobs (a d3 queue miner downloads a job's frozen training photos itself); closed
-Bittensor fleets support H2O Lightning 4B text and qualified ImaJev 4B image jobs; JevK5 and Kev 0.8B
+Bittensor fleets support d3-mini and H2O Lightning 4B text jobs and d3-mini image jobs; JevK5 and Kev 0.8B
 jobs remain supported. Each fleet pins one job and model. Text and image scores
 are not combined into one reward vector. Queue evaluation does not publish
 chain weights. Mainnet participation and public miner discovery are not implemented.
@@ -102,7 +101,7 @@ uv pip install --python .venv-kev/bin/python \
 .venv-kev/bin/python -m scripts.download_models
 ```
 
-For JevK5 and ImaJev fleets, follow the [model-specific fleet setup](docs/mining.md).
+For JevK5 fleets, follow the [model-specific fleet setup](docs/mining.md).
 JevK5 queue miners use the [JevK5 reference setup](docs/jevk5-queue.md#install-and-create-the-reference).
 References are downloaded from pinned upstream revisions. Private
 checkpoints, wallets, datasets, and generated bundles are excluded from Git.

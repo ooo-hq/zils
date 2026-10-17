@@ -61,7 +61,7 @@ entry for each machine:
 `777` is an example only; use the operator-confirmed subnet ID. Each miner UID
 must be the value returned by the chain for that hotkey, not a local queue ID.
 
-Create a frozen H2O text or ImaJev image job and its matching reference using
+Create a frozen d3 or H2O text job, or a d3 image job, and its matching reference using
 the [miner guide](mining.md#prepare-bundles-on-the-validator). Legacy Kev benchmarks
 remain supported. A fleet and its round scores always belong to one model profile.
 Replace `VALIDATOR_PRIVATE_IPV4` with the validator's numeric private address.

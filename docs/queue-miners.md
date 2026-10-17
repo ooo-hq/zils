@@ -5,8 +5,8 @@ submits signed artifacts for independent evaluation. It connects to the
 coordinator over outbound HTTPS. It needs an approved hotkey and model hardware;
 it does not need Supabase credentials or an inbound public server.
 
-The initial setup below is for **H2O Lightning 4B text training**; add **ImaJev 4B image
-training** with the steps below. For a **Bittensor testnet fleet**, use
+The initial setup below is for **H2O Lightning 4B text training**; a d3 miner also
+takes **image jobs** (see below). For a **Bittensor testnet fleet**, use
 [registration](bittensor-registration.md) and
 [bundle setup](mining.md). Queue assignments do not publish Bittensor weights
 or establish on-chain earnings.
@@ -153,35 +153,12 @@ If a job references a different base model, stop and resolve the operator's
 configuration using the [model transition guide](h2o-queue.md#existing-jobs).
 Do not change model identifiers or hashes to make an incompatible reference pass.
 
-## Add the image vertical
+## Image jobs
 
-Complete [image runtime installation and worker qualification](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md#worker-and-service-setup)
-before advertising image support. The operator must approve this hotkey for the
-exact `imajev-4b-v1` profile/runtime hashes using maximum-context measurements.
-Registering a text worker or downloading image weights does not grant that approval.
+A d3 queue miner needs nothing extra for image jobs. When a claimed job's training
+export references frozen photos, the miner downloads them through the coordinator's
+signed image grants into `images/<sha256>.png` beside the export, verifies each
+hash, and trains with the d3 runtime it already has. Image workers receive only
+training photos; validation photos and labels remain on the processor. The operator
+must have qualified the hotkey for the d3 profile; no separate image approval exists.
 
-Install the isolated image runtime and download its pinned release from the
-repository root:
-
-```bash
-uv venv --python 3.13 .venv-image
-uv pip install --python .venv-image/bin/python --torch-backend=cu128 -r requirements/imajev.txt
-.venv-image/bin/python -m scripts.download_imajev --out models/imajev-reference
-.venv-image/bin/python -c 'from zils.imajev import create_reference; create_reference("models/imajev-reference", "models/imajev-starting-checkpoint")'
-export ZILS_IMAGE_RUNTIME_PYTHON="$PWD/.venv-image/bin/python"
-export ZILS_IMAGE_REFERENCE="$PWD/models/imajev-reference"
-.venv-kev/bin/python -m miner.queue \
-  --config .private/queue-miner.json --state .private/queue-miner \
-  --reference models/h2o-reference \
-  --reference models/imajev-starting-checkpoint --device cuda
-```
-
-Stop the existing worker before restarting it with both references and the same
-state directory. One process trains jobs serially, using the matching reference
-and separate image runtime. Claims include only installed profiles that have
-current operator approval and enough free GPU memory. Image workers receive only
-training photos; validation photos and labels remain on the processor.
-
-Keep image admission disabled until the operator has verified training, evaluation,
-and activation. A worker with both references installed does not establish launch
-readiness. Retain a Kev reference only for explicitly supported legacy assignments.
