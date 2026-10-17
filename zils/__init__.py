@@ -10,6 +10,7 @@ from .core import (  # noqa: E402
     BASE as BASE,
     MAX_ARTIFACT_BYTES as MAX_ARTIFACT_BYTES,
     RUBRIC as RUBRIC,
+    blend_weights as blend_weights,
     checkpoint_hash as checkpoint_hash,
     evaluate as evaluate,
     options as options,

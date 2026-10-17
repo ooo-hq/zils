@@ -92,6 +92,28 @@ class FleetTest(unittest.TestCase):
                 r.write_json(destination, {"complete": False})
             self.assertEqual(json.loads(destination.read_text()), {"complete": True})
 
+    def test_base_tier_track_needs_a_testnet_fleet(self):
+        import contextlib
+        import io
+
+        from zils import models
+
+        fleet = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "base_revision": models.spec(models.KEV)["base_revision"],
+                        "base_tier": {"share": 0.7, "incumbent_sha256": "c" * 64, "draws": []},
+                    }
+                )
+            )
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                fleet.main(["validator", "--config", str(config)])
+            self.assertIn("testnet fleet config", err.getvalue())
+
     def test_three_miners_complete_two_rounds_and_keep_private_data_local(self):
         from miner.worker import train_candidate
 

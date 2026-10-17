@@ -28,7 +28,10 @@ profile. [Base candidates](base-candidates.md) describes the submission
 contract, scoring, the confirmation draw, the regression suite and the `latest`
 and `stable` channels. Candidate loading, round decisions, sandboxed evaluation,
 the regression suite, chain-derived admission and the dry-run promotion script
-are merged. No public round has been run.
+are merged. A testnet fleet can pay eligible candidates from the base tier's
+share of the one weight vector, blended with adapter rounds
+([two-track payment](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)).
+No public round has been run.
 
 ## d3-mini
 

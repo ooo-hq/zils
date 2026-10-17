@@ -141,6 +141,28 @@ def weight_vector(rows):
     return {uid: skill / total for uid, skill in skills.items() if skill > 0} if total else {}
 
 
+def blend_weights(weights_by_track, shares):
+    """One chain vector from per-track weight vectors, each normalized over its own earners first.
+
+    ``shares`` sums to one. A track with no earner pays nothing: the chain normalizes the result, so its
+    share flows to the other tracks. Every track empty gives ``{}`` (nothing is sent).
+    """
+    if set(weights_by_track) != set(shares) or not shares:
+        raise ValueError("every track needs exactly one share")
+    if any(
+        type(s) not in (int, float) or not math.isfinite(s) or not 0 <= s <= 1
+        for s in shares.values()
+    ) or not math.isclose(sum(shares.values()), 1.0, abs_tol=1e-9):
+        raise ValueError("track shares must lie in [0, 1] and sum to one")
+    combined = defaultdict(float)
+    for track, weights in weights_by_track.items():
+        normalized = weight_vector([{"uid": int(uid), "skill": w} for uid, w in weights.items()])
+        for uid, weight in normalized.items():
+            combined[uid] += shares[track] * weight
+    total = sum(combined.values())
+    return {uid: w / total for uid, w in sorted(combined.items()) if w > 0} if total else {}
+
+
 def checkpoint_hash(path):
     path = Path(path)
     records, total = [], 0

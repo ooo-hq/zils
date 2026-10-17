@@ -281,6 +281,12 @@ def main(argv=None):
             raise ValueError("Fleet configuration differs from its pinned model profile")
         if getattr(args, "publish_weights", False) and "chain" not in config:
             raise ValueError("--publish-weights requires a testnet fleet config")
+        if "base_tier" in config:
+            from . import base_round
+
+            if "chain" not in config:
+                raise ValueError("a base-tier track requires a testnet fleet config")
+            base_round.validate_track(config["base_tier"])
         signing_key(config)
         if "chain" in config:
             from . import testnet
