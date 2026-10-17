@@ -16,8 +16,9 @@ Status of the work for an open competition, as of 17 October 2026:
 4. Promotion and rollback: two channels and the adapter regression suite are
    decided and implemented. The suite has run once, on 17 October 2026, and
    passed on its single reference job (the rule asks for three or four). The
-   channel is platform configuration today and `latest` is not set; a registry
-   alias and automatic follow-stable upgrades remain.
+   channel is platform configuration today; since 17 October 2026 `stable` and
+   `latest` both name d3-mini by owner decision. A registry alias and automatic
+   follow-stable upgrades remain.
 5. Public health and chain reporting: remaining.
 
 ## Base tier
@@ -38,7 +39,8 @@ through the runtime, platform routing, a `latest` channel that can point at d3
 when configured, and cross-profile upgrades with `base_change`
 (see [version selection](version-selection.md#changing-the-base-profile)).
 
-d3 is not the default for new jobs and is not promoted. On the night of
+d3 was not promoted by the exam; it is the default for new jobs since
+17 October 2026 by the owner's decision (below). On the night of
 16–17 October 2026, on one rented B300 over 6.75 hours, the base tier's rules
 were applied and stock d3-mini is **not promotable today**. The first draw
 cleared (Brier 0.142 against 0.184 for H2O), but the confirmation draw, on a
@@ -48,11 +50,15 @@ and H2O 0.1794, an improvement of 0.0004 with a paired-bootstrap 95% interval of
 bound. The adapter regression suite passed, on one reference job where the rule
 asks for three or four.
 
-Consequences: `latest` is not set (no latest base is configured); `stable` and
-the default for new jobs remain H2O Lightning 4B v1.2.3; H2O remains the
-base-tier incumbent; no round-two decision was frozen. d3-mini remains a merged,
-available profile: qualified miners and validators can run it, and its platform
-migrations are applied. The recorded evidence is in
+Decision, 17 October 2026: the owner adopted d3-mini as the base anyway, on
+capability grounds (adapters trained on d3 beat adapters trained on H2O on the
+reference job and on ABCD; d3 takes images and video), recorded as an override of
+the promotion rule rather than a win under it. The same afternoon the hosted
+platform set `stable` and `latest` to d3-mini, qualified a d3 miner and serving
+host, moved the owner's H2O task to d3 through a `base_change` upgrade and
+switched H2O serving off; JevK5 and Imajev retire once nothing served depends on
+them.
+Stock d3-mini is the base-tier incumbent for round two. The recorded evidence is in
 [model research](model-research.md#d3-mini-evidence-16-october-2026).
 
 Customer-job data contracts, calibration, and acceptance are shared with the
