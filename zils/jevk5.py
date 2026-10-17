@@ -109,6 +109,16 @@ def validate_inputs(splits):
     return workload_profile(lengths, model=models.JEVK5)
 
 
+def asset_bytes(root, name):
+    """Bytes of a file named relative to `root` that resolves inside it (no absolute paths or `..`)."""
+    path = (root / name).resolve() if isinstance(name, str) else None
+    if path is None or Path(name).is_absolute() or not path.is_relative_to(root.resolve()):
+        raise ValueError("image paths must stay inside the dataset directory")
+    if not path.is_file():
+        raise ValueError(f"no image file inside the dataset directory at {name}")
+    return path.read_bytes()
+
+
 def save_adapter_weights(model, output):
     import torch
 
@@ -229,18 +239,34 @@ def train(args, *, model_id=models.JEVK5):
     if output.exists():
         raise FileExistsError("training output exists; preserve the previous attempt")
     engine = models.text_runtime(model_id)
-    model = engine.DecisionModel(args.reference, args.device, train=True)
-    rows = []
-    for line in Path(args.data).read_text().splitlines():
+    data = Path(args.data)
+    examples = []
+    for line in data.read_text().splitlines():
         if not line.strip():
             continue
         row = json.loads(line)
-        if set(row) != {"state", "questions"} or set(row["questions"]) != {"decision"}:
+        if set(row) - {"images"} != {"state", "questions"} or set(row["questions"]) != {"decision"}:
             raise ValueError("training export must contain exactly one decision per example")
+        images = row.get("images", [])
+        if images and "inputs" not in models.spec(model_id):
+            raise ValueError(f"{model_id} does not accept images")
+        if not isinstance(images, list):
+            raise ValueError("training images must be a list of paths")
+        examples.append((row, [asset_bytes(data.parent, name) for name in images]))
+    if not examples:
+        raise ValueError("training export is empty")
+    model = engine.DecisionModel(args.reference, args.device, train=True)
+    rows = []
+    for row, images in examples:
         question = dict(row["questions"]["decision"])
         label = question.pop("label")
         label = str(label).lower() if type(label) is bool else str(label)
-        ids, keys = model.encode(row["state"], question)
+        # Image rows keep the processor batch (pixels and expanded ids); text rows keep token ids.
+        inputs, keys = (
+            model.encoder.inputs(row["state"], question, images=images)
+            if images
+            else model.encode(row["state"], question)
+        )
         if label not in keys:
             raise ValueError("training label is not an allowed outcome")
         temperature = (
@@ -248,14 +274,14 @@ def train(args, *, model_id=models.JEVK5):
             if model_id == models.H2O
             else 1.0
         )
-        rows.append((ids, keys.index(label), len(keys), temperature))
-    if not rows:
-        raise ValueError("training export is empty")
+        rows.append((inputs, keys.index(label), len(keys), temperature))
     params = [p for p in model.peft.parameters() if p.requires_grad]
     if not params or any(
         "lora_" not in n for n, p in model.peft.named_parameters() if p.requires_grad
     ):
         raise RuntimeError("training must update only LoRA parameters")
+    if any(p.requires_grad for n, p in model.peft.named_parameters() if "visual" in n):
+        raise RuntimeError("training must keep the vision tower frozen")
     model.base.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
     model.peft.train()
     optimizer = torch.optim.AdamW(params, lr=2e-5, weight_decay=0)
@@ -266,9 +292,9 @@ def train(args, *, model_id=models.JEVK5):
     getattr(torch, args.device).synchronize()
     started = time.perf_counter()
     for step, index in enumerate(order):
-        ids, label, count, temperature = rows[index]
+        inputs, label, count, temperature = rows[index]
         with torch.autocast(args.device, dtype=torch.bfloat16):
-            logits = model.logits(ids, count) / temperature
+            logits = model.logits(inputs, count) / temperature
             loss = torch.nn.functional.cross_entropy(
                 logits[None], torch.tensor([label], device=args.device)
             )

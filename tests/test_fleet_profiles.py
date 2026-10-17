@@ -1,5 +1,6 @@
 """Fleet profile selection and private image exports; no GPU weights are downloaded."""
 
+import contextlib
 import hashlib
 import io
 import json
@@ -23,7 +24,7 @@ from tests.fixture_images import (
     fixture as image_fixture,
 )
 from tests.test_jobs import POLICY, examples
-from zils import fleet, image_jobs, jobs, models, protocol, validator
+from zils import benchmark, core, fleet, image_jobs, jobs, models, protocol, validator
 from zils.runtime import CapacityUnavailable, run_child
 
 
@@ -240,6 +241,64 @@ else:
                             process.wait(timeout=10)
                     for log in logs:
                         log.close()
+
+    def test_d3_runtime_receives_image_paths_with_each_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data, images, _ = image_dataset(root)
+            frozen = benchmark.audit(data)
+            # image_jobs freezes Imajev datasets today; the d3 run binds the same split to its profile.
+            manifest = json.loads((data / "manifest.json").read_text())
+            (data / "manifest.json").write_text(
+                json.dumps({**manifest, "model": models.spec(models.D3)})
+            )
+            runtime = root / "fixture-runtime"
+            runtime.write_text(
+                f"#!{sys.executable}\n"
+                + """import json, sys
+from pathlib import Path
+assert sys.argv[sys.argv.index('--base-revision')+1]
+rows=json.load(sys.stdin)
+assert all(set(r)=={'id','state','question','images'} for r in rows)
+for r in rows:
+    assert all(Path(p).is_absolute() and Path(p).read_bytes()[:8]==b'\\x89PNG\\r\\n\\x1a\\n' for p in r['images'])
+print(json.dumps({'runtime':{},'predictions':[
+  {'id':r['id'],'probabilities':{k:.5 for k in r['question']['criteria']},
+   'elapsed_ms':len(r['images'])} for r in rows]}))
+"""
+            )
+            runtime.chmod(0o700)
+            (root / "submissions.json").write_text(
+                json.dumps([core.submission(checkpoint(root / "candidate", models.D3), 1)])
+            )
+            args = SimpleNamespace(
+                cases=data / "test.jsonl",
+                submissions=root / "submissions.json",
+                base_revision=models.spec(models.D3)["base_revision"],
+                timeout=30,
+                report=root / "report.json",
+                device="cuda",
+                runner_python=sys.executable,
+                images=images,
+            )
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
+                patch.dict(os.environ, {"ZILS_D3_RUNTIME_PYTHON": str(runtime)}),
+                patch("zils.benchmark.audit", return_value=frozen),
+            ):
+                core.evaluate(args)
+            miner = json.loads(args.report.read_text())["miners"][0]
+            self.assertEqual(miner["status"], "evaluated", miner.get("error"))
+            self.assertEqual(
+                [p["elapsed_ms"] for p in miner["predictions"]], [1] * len(frozen["test"])
+            )
+            text = {
+                "base_revision": models.spec(models.H2O)["base_revision"],
+                "report": root / "h2o",
+            }
+            with self.assertRaisesRegex(ValueError, "Image data cannot use a text runtime"):
+                core.evaluate(SimpleNamespace(**{**vars(args), **text}))
 
     def test_text_fleet_uses_frozen_profile_and_rejects_a_different_reference(self):
         with tempfile.TemporaryDirectory() as tmp:

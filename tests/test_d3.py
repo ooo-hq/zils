@@ -1,6 +1,8 @@
 """d3-mini runtime: pins, weight-free encoder contract, FP32 readout and parity."""
 
+import contextlib
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -9,18 +11,68 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import torch
+from PIL import Image
 
 from zils import d3, models
 
 
 class FakeBackbone(torch.nn.Module):
-    def forward(self, input_ids, attention_mask, use_cache):
+    def forward(self, input_ids, attention_mask, use_cache, **media):
+        self.media = media
         hidden = torch.zeros(1, input_ids.shape[1], 255, dtype=torch.bfloat16)
         hidden[0, -1, 0] = 1
         return SimpleNamespace(last_hidden_state=hidden)
+
+
+IMAGE, VIDEO = "<|image_pad|>", "<|video_pad|>"
+
+
+def png(color=(0, 0, 0)):
+    output = io.BytesIO()
+    Image.new("RGB", (8, 8), color).save(output, format="PNG")
+    return output.getvalue()
+
+
+class FakeProcessor:
+    """Renders placeholders like the chat template and returns a processor batch of `length` ids."""
+
+    def __init__(self, length=20):
+        self.length, self.calls = length, []
+
+    def apply_chat_template(self, messages, tokenize, add_generation_prompt, enable_thinking):
+        return messages
+
+    def __call__(self, text, return_tensors, **media):
+        self.calls.append((text, media))
+        ids = torch.ones(1, self.length, dtype=torch.long)
+        return {"input_ids": ids, "attention_mask": ids, "pixel_values": torch.zeros(2, 3)}
+
+
+def media_encoder(processor):
+    """An Encoder over a fake vendor: image_messages/video_messages render placeholders + state."""
+    encoder = d3.Encoder.__new__(d3.Encoder)
+    encoder.codes, encoder.root, encoder.processor = ["A", "B"], Path("/pinned"), processor
+    encoder.native = SimpleNamespace(
+        IMAGE_TOKEN=IMAGE,
+        VIDEO_TOKEN=VIDEO,
+        _json_value=json.dumps,
+        normalize_question=lambda q: SimpleNamespace(keys=list(q["criteria"]), rendered=q),
+        image_messages=lambda prompt, state, q, codes, n: IMAGE * n + json.dumps(state),
+        video_messages=lambda prompt, state, q, codes, n, v: IMAGE * n + VIDEO * v + str(state),
+        load_video=lambda path: SimpleNamespace(
+            frames="frames:" + path, metadata=lambda: {"fps": 2}
+        ),
+        load_processor=Mock(side_effect=AssertionError("text prompts never load the processor")),
+        render=lambda tokenizer, prompt, state, q, codes: "text",
+    )
+    encoder.tokenizer = lambda text, add_special_tokens: {"input_ids": [1, 2, 3]}
+    return encoder
+
+
+QUESTION = {"type": "choice", "criteria": {"a": "a", "b": "b"}}
 
 
 SHARDS = ("model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors")
@@ -145,12 +197,66 @@ class D3ModuleTest(unittest.TestCase):
             self.assertEqual(Path(encoder.native.__file__).parent, Path(pinned))
             self.assertNotIn(candidate, sys.path)
 
-    def test_encode_refuses_images_until_release(self):
-        encoder = d3.Encoder.__new__(d3.Encoder)
-        with self.assertRaisesRegex(ValueError, "later release"):
-            encoder.encode(
-                {}, {"type": "choice", "criteria": {"a": "a", "b": "b"}}, images=[b"png"]
-            )
+    def test_encode_limits_and_canonical_png(self):
+        encoder = d3.Encoder.__new__(d3.Encoder)  # refusals happen before any vendor or processor
+        with tempfile.TemporaryDirectory() as tmp:
+            clip = Path(tmp) / "clip.mp4"
+            clip.write_bytes(b"mp4")
+            for message, images, videos in (
+                ("at most 4 images", [png()] * 5, ()),
+                ("at most 1 video", (), [str(clip)] * 2),
+                ("canonical PNG", [b"GIF89a" + bytes(32)], ()),
+                ("canonical PNG", [png()[:8] + b"not a png"], ()),
+                ("canonical PNG", ["not bytes"], ()),
+                ("regular MP4 file", (), [tmp]),
+            ):
+                with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                    encoder.encode({}, QUESTION, images=images, videos=videos)
+
+    def test_text_prompts_stay_processor_free(self):
+        encoder = media_encoder(None)
+        del encoder.processor
+        self.assertEqual(encoder.encode({}, QUESTION), ([1, 2, 3], ["a", "b"]))
+        batch, names = encoder.inputs({}, QUESTION)
+        self.assertEqual((batch, names), ([1, 2, 3], ["a", "b"]))
+
+    def test_image_and_video_prompts_go_through_the_processor(self):
+        processor = FakeProcessor()
+        encoder = media_encoder(processor)
+        ids, names = encoder.encode({"n": 1}, QUESTION, images=[png(), png((9, 9, 9))])
+        self.assertEqual((ids, names), ([1] * 20, ["a", "b"]))
+        text, media = processor.calls[-1]
+        self.assertEqual(text, [IMAGE * 2 + '{"n": 1}'])
+        self.assertEqual([image.mode for image in media["images"]], ["RGB", "RGB"])
+        self.assertEqual(media["images"][1].getpixel((0, 0)), (9, 9, 9))
+        self.assertNotIn("videos", media)
+        with tempfile.TemporaryDirectory() as tmp:
+            clip = Path(tmp) / "clip.mp4"
+            clip.write_bytes(b"mp4")
+            batch, _ = encoder.inputs("s", QUESTION, images=[png()], videos=[str(clip)])
+            self.assertIn("pixel_values", batch)
+            text, media = processor.calls[-1]
+            self.assertEqual(text, [IMAGE + VIDEO + "s"])
+            self.assertEqual(media["videos"], ["frames:" + str(clip)])
+            self.assertEqual(media["video_metadata"], [{"fps": 2}])
+        with self.assertRaisesRegex(ValueError, "placeholder"):
+            encoder.encode(IMAGE, QUESTION, images=[png()])
+        processor.length = 4097  # expanded image tokens count toward the cap; nothing is truncated
+        with self.assertRaisesRegex(ValueError, "4096-token"):
+            encoder.encode({}, QUESTION, images=[png()])
+
+    def test_predict_runs_a_processor_batch_through_the_fp32_readout(self):
+        model = d3.DecisionModel.__new__(d3.DecisionModel)
+        model.device = "cpu"
+        model.readout = torch.eye(255, dtype=torch.float32)
+        model.base = FakeBackbone().eval()
+        model.meta = {"temperature": 1.0}
+        model.encoder = media_encoder(FakeProcessor())
+        probabilities = model.predict({}, QUESTION, images=[png()])
+        self.assertEqual(max(probabilities, key=probabilities.get), "a")
+        self.assertEqual(model.base.media["pixel_values"].shape, (2, 3))
+        self.assertEqual(model.predict({}, QUESTION).keys(), {"a", "b"})
+        self.assertEqual(model.base.media, {})
 
     def test_cli_help_lists_commands(self):
         out = subprocess.run(
@@ -233,6 +339,161 @@ class D3ModuleTest(unittest.TestCase):
             patch("zils.runtime.subprocess.run", return_value=SimpleNamespace(stdout="13000")),
         ):
             self.assertFalse(gpu_ready("cuda", model=models.D3))
+
+    def test_validate_inputs_reads_image_rows_under_the_dataset_root(self):
+        encoder = SimpleNamespace(calls=[])
+        encoder.encode = lambda state, q, images=(): encoder.calls.append(images) or ([1] * 5, [])
+        rows = {"train": [{"state": {}, "question": QUESTION, "images": ["photos/a.png"]}]}
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("zils.d3.base_path"),
+            patch("zils.d3.Encoder", return_value=encoder),
+            patch(
+                "zils.miner_grading.workload_profile", side_effect=lambda lengths, model: lengths
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "image rows need a dataset root"):
+                d3.validate_inputs(rows)
+            (Path(tmp) / "photos").mkdir()
+            (Path(tmp) / "photos/a.png").write_bytes(png())
+            self.assertEqual(d3.validate_inputs(rows, root=tmp), [5])
+            self.assertEqual(encoder.calls, [[png()]])
+            rows["train"][0]["images"] = ["../a.png"]
+            with self.assertRaisesRegex(ValueError, "inside"):
+                d3.validate_inputs(rows, root=tmp)
+
+    def test_runner_reads_image_bytes_and_passes_media_only_when_present(self):
+        from zils import jevk5_runner
+
+        calls = []
+
+        class Model:
+            meta = {"temperature": 1.0}
+
+            def __init__(self, checkpoint, device):
+                pass
+
+            def predict(self, state, question, **media):
+                calls.append(media)
+                return {"a": 0.5, "b": 0.5}
+
+        spec = models.spec(models.D3)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "a.png").write_bytes(png())
+            rows = [
+                {"id": "text", "state": {}, "question": QUESTION},
+                {"id": "media", "state": {}, "question": QUESTION, "images": [f"{tmp}/a.png"]},
+                {"id": "clip", "state": {}, "question": QUESTION, "videos": [f"{tmp}/c.mp4"]},
+            ]
+            argv = ["runner", "--checkpoint", tmp, "--device", "cuda"]
+            argv += ["--base", spec["base"], "--base-revision", spec["base_revision"]]
+            for requests in (rows, [{**rows[0], "label": "a"}]):
+                with (
+                    patch.object(sys, "argv", argv),
+                    patch("sys.stdin", io.StringIO(json.dumps(requests))),
+                    patch("zils.models.checkpoint_model", return_value=models.D3),
+                    patch(
+                        "zils.models.text_runtime",
+                        return_value=SimpleNamespace(DecisionModel=Model),
+                    ),
+                    contextlib.redirect_stdout(io.StringIO()) as out,
+                ):
+                    if requests is rows:
+                        jevk5_runner.main()
+                    else:
+                        with self.assertRaisesRegex(ValueError, "only id, state, question"):
+                            jevk5_runner.main()
+                if requests is rows:
+                    predictions = json.loads(out.getvalue())["predictions"]
+                    self.assertEqual([p["id"] for p in predictions], ["text", "media", "clip"])
+        self.assertEqual(calls, [{}, {"images": [png()]}, {"videos": [f"{tmp}/c.mp4"]}])
+
+
+class FakeAdapter(torch.nn.Module):
+    def __init__(self, name):
+        super().__init__()
+        self.register_parameter(name, torch.nn.Parameter(torch.zeros(1)))
+
+
+class Stop(Exception):
+    pass
+
+
+class TrainingRowsTest(unittest.TestCase):
+    def write(self, root, images):
+        row = {"state": {}, "questions": {"decision": {**QUESTION, "label": "a"}}}
+        (root / "train.jsonl").write_text(json.dumps({**row, "images": images}) + "\n")
+        return SimpleNamespace(
+            data=str(root / "train.jsonl"),
+            reference="ref",
+            device="cpu",
+            seed=1,
+            out=str(root / "o"),
+        )
+
+    def test_text_profiles_refuse_image_rows_before_loading(self):
+        with tempfile.TemporaryDirectory() as tmp, patch("zils.h2o.DecisionModel") as loaded:
+            from zils.jevk5 import train
+
+            args = self.write(Path(tmp), ["a.png"])
+            with self.assertRaisesRegex(
+                ValueError, "h2o-lightning-4b-v1.2.3 does not accept images"
+            ):
+                train(args, model_id=models.H2O)
+            loaded.assert_not_called()
+
+    def test_image_paths_must_stay_inside_the_training_directory(self):
+        from zils.jevk5 import train
+
+        with tempfile.TemporaryDirectory() as tmp, patch("zils.d3.DecisionModel") as loaded:
+            for path in ("../a.png", "/etc/hosts", "missing.png", 3):
+                with self.subTest(path=path), self.assertRaisesRegex(ValueError, "inside"):
+                    train(self.write(Path(tmp), [path]), model_id=models.D3)
+            loaded.assert_not_called()
+
+    def model(self, parameter):
+        batch = {"input_ids": torch.ones(1, 3, dtype=torch.long)}
+        model = SimpleNamespace(
+            peft=FakeAdapter(parameter),
+            base=SimpleNamespace(gradient_checkpointing_enable=lambda **kwargs: None),
+            seen=[],
+        )
+        model.encoder = SimpleNamespace(
+            inputs=lambda state, q, images: model.seen.append(images) or (batch, ["a", "b"])
+        )
+
+        def logits(inputs, count):
+            model.seen.append((inputs, count))
+            raise Stop
+
+        model.logits = logits
+        return model, batch
+
+    def test_image_rows_reach_logits_as_a_processor_batch(self):
+        from zils.jevk5 import train
+
+        model, batch = self.model("lora_A")
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("zils.d3.DecisionModel", return_value=model),
+        ):
+            (Path(tmp) / "photos").mkdir()
+            (Path(tmp) / "photos/a.png").write_bytes(png())
+            with self.assertRaises(Stop):
+                train(self.write(Path(tmp), ["photos/a.png"]), model_id=models.D3)
+        self.assertEqual(model.seen, [[png()], (batch, 2)])
+
+    def test_training_refuses_a_trainable_vision_tower(self):
+        from zils.jevk5 import train
+
+        model, _ = self.model("visual_lora_A")
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("zils.d3.DecisionModel", return_value=model),
+        ):
+            (Path(tmp) / "a.png").write_bytes(png())
+            with self.assertRaisesRegex(RuntimeError, "vision tower"):
+                train(self.write(Path(tmp), ["a.png"]), model_id=models.D3)
 
 
 if __name__ == "__main__":

@@ -222,7 +222,8 @@ def evaluate(args):
             models.KEV: "kev_runner.py",
         }[model]
     )
-    if model == models.IMAJEV:
+    media = any("image" in c for c in cases) and "inputs" in models.spec(model)
+    if model == models.IMAJEV or media:
         from . import benchmark
 
         root = Path(args.cases).parent
@@ -237,9 +238,19 @@ def evaluate(args):
             raise ValueError("Image evaluation requires verified local image assets")
         for request, case in zip(requests, cases, strict=True):
             asset = manifest["assets"][case["image"]["asset_id"]]
-            request["image"] = {"asset_id": asset["id"], "sha256": asset["canonical_sha256"]}
+            if model == models.IMAJEV:
+                request["image"] = {"asset_id": asset["id"], "sha256": asset["canonical_sha256"]}
+            else:
+                path = Path(args.images).resolve() / (asset["canonical_sha256"] + ".png")
+                request["images"] = [str(path)]
     elif any("image" in c for c in cases):
         raise ValueError("Image data cannot use a text runtime")
+    # Only Imajev answers with an unknown outcome; d3 image cases score like text cases.
+    scored = (
+        cases
+        if model == models.IMAJEV
+        else [{k: v for k, v in c.items() if k != "image"} for c in cases]
+    )
     environment = {
         **{
             k: v
@@ -309,7 +320,7 @@ def evaluate(args):
                     )
                 ):
                     raise ValueError("Image inference runtime identity changed")
-                row.update(score(cases, output["predictions"]))
+                row.update(score(scored, output["predictions"]))
                 row.update(
                     status="evaluated", runtime=output["runtime"], predictions=output["predictions"]
                 )

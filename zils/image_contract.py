@@ -3,6 +3,7 @@
 import math
 from uuid import UUID
 
+from . import models
 from .decisions import DecisionError, invalid, validate_request
 
 UNKNOWN = "__unknown__"
@@ -19,6 +20,24 @@ IMAGE_CAPABILITIES = {
     "unknown_key": UNKNOWN,
     "option_order": "declared_then_unknown",
 }
+
+
+def capabilities(model):
+    if model == models.IMAJEV:
+        return IMAGE_CAPABILITIES
+    if model != models.D3:
+        return TEXT_CAPABILITIES
+    spec = models.spec(models.D3)
+    return {
+        "modalities": ["text", "image", "video"],
+        "question_types": ["noul", "choice", "score"],
+        "max_images": spec["inputs"]["images"],
+        "max_videos": 1,
+        "max_questions": 8,
+        "max_options": 255,
+        "max_input_tokens": spec["max_input_tokens"],
+        "unknown_key": None,
+    }
 
 
 def validate_image_request(body):
