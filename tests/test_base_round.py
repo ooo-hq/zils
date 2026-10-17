@@ -153,6 +153,89 @@ class BaseRoundTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "disjoint"):
             base_round.confirm(decision, decision)
 
+    def test_track_describes_draws_and_pays_only_matching_decisions(self):
+        import contextlib
+        import io
+        from unittest.mock import patch
+
+        calibration, test = make_cases("cal", 20), make_cases("test", 20)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "draw-1"
+            sealed(root, calibration, test)
+            draw = base_round.draw(root)
+            self.assertEqual(draw["dataset_sha256"], base_round.dataset_hash(test))
+            self.assertEqual(draw["manifest_sha256"], benchmark.file_hash(root / "manifest.json"))
+            out = io.StringIO()
+            with (
+                patch("sys.argv", ["base_round", "--round", str(root), "--describe-draw"]),
+                contextlib.redirect_stdout(out),
+            ):
+                base_round.main()
+            self.assertEqual(json.loads(out.getvalue()), draw)
+        incumbent = "c" * 64
+        track = {"share": 0.7, "incumbent_sha256": incumbent, "draws": [draw]}
+        self.assertEqual(base_round.validate_track(track)["policy"], base_round.DEFAULT_POLICY)
+        for bad in (
+            {**track, "share": 1.5},
+            {**track, "share": "0.7"},
+            {**track, "incumbent_sha256": "not-a-hash"},
+            {**track, "draws": []},
+            {**track, "draws": [{"manifest_sha256": draw["manifest_sha256"]}]},
+            {**track, "policy": {"unknown": 1}},
+            {**track, "policy": {"min_brier_improvement": -1}},
+            {**track, "extra": True},
+        ):
+            with self.assertRaises(ValueError):
+                base_round.validate_track(bad)
+        members = {"1": {"hotkey": "a"}, "2": {"hotkey": "b"}}
+        decision = {
+            **draw,
+            "policy": dict(base_round.DEFAULT_POLICY),
+            "incumbent": {"uid": 65535, "sha256": incumbent},
+            "candidates": [
+                {"uid": 2, "sha256": "d" * 64, "eligible": True, "skill": 0.4},
+                {"uid": 1, "sha256": "e" * 64, "eligible": False, "skill": 0.5},
+            ],
+            "weights": {"2": 1.0},
+        }
+        self.assertEqual(base_round.track_weights(track, decision, members), {2: 1.0})
+        shared = [
+            {"uid": 1, "sha256": "d" * 64, "eligible": True, "skill": 0.4},
+            {"uid": 2, "sha256": "d" * 64, "eligible": True, "skill": 0.4},
+        ]
+        for message, bad in (
+            ("draw", {**decision, "dataset_sha256": "f" * 64}),
+            ("draw", {**decision, "manifest_sha256": "f" * 64}),
+            ("policy", {**decision, "policy": {**decision["policy"], "min_brier_improvement": 0}}),
+            ("incumbent", {**decision, "incumbent": {"uid": 65535, "sha256": "f" * 64}}),
+            ("roster", {**decision, "incumbent": {"uid": 1, "sha256": incumbent}}),
+            ("distinct", {**decision, "candidates": shared, "weights": {"1": 0.5, "2": 0.5}}),
+            (
+                "incumbent",
+                {
+                    **decision,
+                    "candidates": [{"uid": 2, "sha256": incumbent, "eligible": True, "skill": 0.4}],
+                },
+            ),
+            (
+                "outside",
+                {
+                    **decision,
+                    "candidates": [{"uid": 7, "sha256": "d" * 64, "eligible": True, "skill": 0.4}],
+                    "weights": {"7": 1.0},
+                },
+            ),
+            ("differ", {**decision, "weights": {"2": 0.5, "1": 0.5}}),
+            ("missing", {k: v for k, v in decision.items() if k != "candidates"}),
+        ):
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
+                base_round.track_weights(track, bad, members)
+        # Rotation: a decision for a draw no longer listed stops paying.
+        with self.assertRaisesRegex(ValueError, "draw"):
+            base_round.track_weights(
+                {**track, "draws": [{**draw, "dataset_sha256": "0" * 64}]}, decision, members
+            )
+
     def test_rows_reject_foreign_reports(self):
         cases = make_cases("x", 3)
         with self.assertRaisesRegex(ValueError, "sealed split"):

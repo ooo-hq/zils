@@ -145,13 +145,37 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
     rows = report["miners"]
     if any(str(row["uid"]) not in config["members"] for row in rows):
         raise ValueError("report contains a miner outside this registered fleet")
-    weights = zils.weight_vector(
+    adapter = zils.weight_vector(
         [{**row, "skill": row["skill"] if row["status"] == "evaluated" else 0.0} for row in rows]
     )
+    track, decision = config.get("base_tier"), report.get("base_tier")
+    if decision is not None and track is None:
+        raise ValueError("report carries a base-tier decision but the fleet has no base-tier track")
+    tracks = None
+    weights = adapter
+    if track is not None:
+        from . import base_round
+
+        share = base_round.validate_track(track)["share"]
+        # A missing decision means nothing was scored this epoch; adapters then take the whole vector.
+        base = (
+            base_round.track_weights(track, decision, config["members"])
+            if decision is not None
+            else {}
+        )
+        weights = zils.blend_weights(
+            {"base": base, "adapter": adapter}, {"base": share, "adapter": 1 - share}
+        )
+        tracks = {
+            "base_share": share,
+            "base": {str(k): v for k, v in base.items()},
+            "adapter": {str(k): v for k, v in adapter.items()},
+        }
     record = {
         **state,
         "report_sha256": report_hash,
         "requested_weights": {str(k): v for k, v in weights.items()},
+        **({"tracks": tracks} if tracks else {}),
         "chain_write": False,
         "weights_verified": False,
     }

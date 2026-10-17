@@ -253,6 +253,31 @@ class LocalSubnetTest(unittest.TestCase):
                 core.evaluate(args)
             return json.loads(args.report.read_text())["miners"][0]
 
+    def test_blend_weights_pays_each_track_its_share(self):
+        base, adapter = {"2": 1.0}, {1: 0.75, 2: 0.25}
+        shares = {"base": 0.7, "adapter": 0.3}
+        both = core.blend_weights({"base": base, "adapter": adapter}, shares)
+        self.assertAlmostEqual(both[1], 0.225)
+        self.assertAlmostEqual(both[2], 0.775)
+        self.assertAlmostEqual(sum(both.values()), 1.0)
+        # An empty track pays nothing, so the other track takes the whole vector.
+        self.assertEqual(core.blend_weights({"base": {}, "adapter": adapter}, shares), adapter)
+        self.assertEqual(core.blend_weights({"base": base, "adapter": {}}, shares), {2: 1.0})
+        self.assertEqual(core.blend_weights({"base": {}, "adapter": {}}, shares), {})
+        # Per-track normalization first: raw skills in one track do not dilute the other.
+        skewed = core.blend_weights({"base": {2: 0.1}, "adapter": {1: 0.9}}, shares)
+        self.assertAlmostEqual(skewed[2], 0.7)
+        for bad in (
+            {"base": 0.7},
+            {"base": 0.7, "adapter": 0.4},
+            {"base": 1.2, "adapter": -0.2},
+            {"base": float("nan"), "adapter": 1.0},
+        ):
+            with self.assertRaises(ValueError):
+                core.blend_weights({"base": base, "adapter": adapter}, bad)
+        with self.assertRaises(ValueError):
+            core.blend_weights({"base": {"x": 1.0}, "adapter": {}}, shares)
+
     def test_profile_interpreter_is_required_for_evaluation(self):
         for model, variable in (
             (models.D3, "ZILS_D3_RUNTIME_PYTHON"),

@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import random
+import re
 import statistics
 from collections import defaultdict
 from pathlib import Path
@@ -199,6 +200,68 @@ def decide(cases, incumbent_uid, calibration_rows, test_rows, policy=None):
     }
 
 
+def draw(root):
+    """The identity of one sealed draw: its manifest hash and the test split's dataset hash."""
+    _, cases = audit(root)
+    return {
+        "manifest_sha256": benchmark.file_hash(Path(root) / "manifest.json"),
+        "dataset_sha256": dataset_hash(cases["test"]),
+    }
+
+
+def validate_track(track):
+    """A fleet config's base-tier track: share, incumbent, allowed draws and the decision policy."""
+    if not isinstance(track, dict) or set(track) - {"share", "incumbent_sha256", "draws", "policy"}:
+        raise ValueError("base_tier accepts share, incumbent_sha256, draws and policy")
+    share = track.get("share")
+    if type(share) not in (int, float) or not 0 <= share <= 1:
+        raise ValueError("base_tier.share must be a number in [0, 1]")
+    if not re.fullmatch("[a-f0-9]{64}", str(track.get("incumbent_sha256"))):
+        raise ValueError("base_tier.incumbent_sha256 must be the incumbent checkpoint hash")
+    draws = track.get("draws")
+    if not isinstance(draws, list) or not draws:
+        raise ValueError("base_tier.draws must list at least one sealed draw")
+    for item in draws:
+        if not isinstance(item, dict) or set(item) != {"manifest_sha256", "dataset_sha256"}:
+            raise ValueError("each draw needs manifest_sha256 and dataset_sha256")
+        if any(not re.fullmatch("[a-f0-9]{64}", str(v)) for v in item.values()):
+            raise ValueError("draw hashes must be sha256 hex")
+    policy = {**DEFAULT_POLICY, **track.get("policy", {})}
+    if set(policy) != set(DEFAULT_POLICY) or any(
+        type(v) not in (int, float) or v < 0 for v in policy.values()
+    ):
+        raise ValueError("base_tier.policy may only override the base_round policy keys")
+    return {**track, "policy": policy}
+
+
+def track_weights(track, decision, members):
+    """Base-tier weights a decision earns under a track; re-derived from its eligible candidates."""
+    track = validate_track(track)
+    for key in ("manifest_sha256", "dataset_sha256", "policy", "incumbent", "candidates"):
+        if key not in decision:
+            raise ValueError("base-tier decision is missing " + key)
+    if {k: decision[k] for k in ("manifest_sha256", "dataset_sha256")} not in track["draws"]:
+        raise ValueError("base-tier decision is not for a draw of the configured track")
+    if decision["policy"] != track["policy"]:
+        raise ValueError("base-tier decision used a different policy than the track")
+    if decision["incumbent"]["sha256"] != track["incumbent_sha256"]:
+        raise ValueError("base-tier decision scored against a different incumbent")
+    if str(decision["incumbent"]["uid"]) in members:
+        raise ValueError("the incumbent row must use a uid outside the roster")
+    eligible = [c for c in decision["candidates"] if c["eligible"]]
+    hashes = [c["sha256"] for c in eligible]
+    if len(set(hashes)) != len(hashes) or track["incumbent_sha256"] in hashes:
+        raise ValueError("eligible base candidates must be distinct and differ from the incumbent")
+    if any(str(c["uid"]) not in members for c in eligible):
+        raise ValueError("base-tier decision pays a miner outside this registered fleet")
+    weights = zils.weight_vector([{"uid": c["uid"], "skill": c["skill"]} for c in eligible])
+    if {str(k): v for k, v in weights.items()} != {
+        str(k): v for k, v in decision.get("weights", weights).items()
+    }:
+        raise ValueError("base-tier decision weights differ from its eligible candidates")
+    return weights
+
+
 def confirm(first, second):
     """Promotion needs the same checkpoint eligible on two disjoint draws; return the confirmed winner or None."""
     if first["dataset_sha256"] == second["dataset_sha256"]:
@@ -213,17 +276,30 @@ def confirm(first, second):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--round", required=True, help="sealed round directory with manifest.json")
-    parser.add_argument("--calibration-report", required=True)
-    parser.add_argument("--test-report", required=True)
-    parser.add_argument("--incumbent-uid", type=int, required=True)
+    parser.add_argument(
+        "--describe-draw",
+        action="store_true",
+        help="audit the round and print its draw entry for a fleet config's base_tier.draws",
+    )
+    parser.add_argument("--calibration-report")
+    parser.add_argument("--test-report")
+    parser.add_argument("--incumbent-uid", type=int)
     parser.add_argument(
         "--min-brier-improvement", type=float, default=DEFAULT_POLICY["min_brier_improvement"]
     )
     parser.add_argument(
         "--confirm", help="an earlier decision.json; print the confirmed winner instead"
     )
-    parser.add_argument("--out", required=True)
+    parser.add_argument("--out")
     args = parser.parse_args()
+    if args.describe_draw:
+        print(json.dumps(draw(args.round)))
+        return
+    if (
+        not (args.calibration_report and args.test_report and args.out)
+        or args.incumbent_uid is None
+    ):
+        parser.error("--calibration-report, --test-report, --incumbent-uid and --out are required")
     manifest, cases = audit(args.round)
     calibration = rows_for(
         json.loads(Path(args.calibration_report).read_text()), cases["calibration"]

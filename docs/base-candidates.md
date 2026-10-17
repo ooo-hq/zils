@@ -79,6 +79,11 @@ different miners are rejected.
 Per-case results are never returned; you learn aggregate metrics only. The
 round's questions are published after the round closes and are not reused.
 
+On a testnet fleet with a `base_tier` track, eligible candidates are paid at
+every publication from the base tier's share of the one weight vector, blended
+with the adapter round's weights; see
+[the two-track rule](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first).
+
 ## Validator and publisher tooling
 
 The reference-adapter suite and the publication helper take the profile with

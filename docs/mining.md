@@ -167,6 +167,49 @@ hashes, calibrates each candidate, and scores the separate evaluation cases.
 Local mode never writes weights to Bittensor. Testnet mode needs registered
 wallets and explicit publication; follow the [testnet guide](testnet.md).
 
+## Two tracks on the testnet: the base tier pays first
+
+On a testnet fleet whose validator config carries a `base_tier` track, miners
+earn on two tracks, paid from one weight vector on the configured subnet:
+
+- **Base tier (primary, continuous).** Submit a full-weight candidate for the
+  pinned base, `d3-mini-4.5b-v1`, under the
+  [base candidate contract](base-candidates.md). The validator's base-tier
+  scorer calibrates it on the sealed calibration split and scores the sealed
+  test split; you are eligible when your skill is positive, your accuracy is
+  not below the incumbent's, your Brier improvement is at least 0.01 and the
+  paired bootstrap 95% lower bound is above zero. Eligible candidates share
+  the base-tier share of every publication in proportion to skill until a
+  newer decision replaces that one, the holdout rotates, or a confirmed winner
+  is promoted. The incumbent itself earns nothing, and a resubmitted stock base
+  is never eligible.
+- **Adapter rounds (alongside).** The frozen customer job rounds above continue
+  unchanged; each round's calibrated test-split skill is the adapter weight.
+
+Split: the base tier takes `base_tier.share` of the vector (currently **0.7**;
+the validator records the share in every chain attempt and receipt), adapters
+the rest. Each track is normalized over its own earners first, so a miner with
+no eligible base candidate still earns its adapter share and a miner that trains
+no customer adapter still earns its base share. A track nobody earned on pays
+nothing; the chain's own normalization then hands its share to the other track.
+If nobody earned on either track, nothing is sent and the previous chain
+weights remain.
+
+Anti-gaming: one live submission per hotkey per round, a claim cannot change
+within a round, a hash already submitted by another miner is rejected, every
+sealed split is audited against its manifest before scoring, and payment goes
+only to registered roster UIDs. You receive aggregate metrics, never per-case
+outcomes; a round's cases are published after it closes and are not reused.
+
+What a base-tier miner needs: the 20–24 GB cards in today's fleet cannot
+full-fine-tune the 4.5B backbone, but a d3 LoRA trains in about 10.5 GB of
+GPU memory. Train a LoRA on d3, merge it into the backbone, and write the two
+bf16 shards with the parent's index layout plus the untouched contract files
+(see [the artifact](base-candidates.md#artifact)); the merge needs about 20 GB
+of RAM or GPU memory and 10 GB of disk per candidate, and the upload is at
+most 9.5 GiB. Customer jobs take priority on a shared card; base training fills
+the idle time.
+
 ## Results and restarts
 
 Miner logs, frozen candidates, and results are in `state/jobs/`. Full validator

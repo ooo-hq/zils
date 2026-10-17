@@ -129,6 +129,49 @@ weight proportions. If a receipt is `unknown`, inspect the chain before manual
 recovery; deleting the attempt marker and retrying can duplicate a submission.
 See [testnet outcomes](testnet.md#read-the-outcome) for restart behavior.
 
+### 6. Pay the base tier from the same vector
+
+A testnet validator config may carry a `base_tier` track. Each publication then
+blends base-tier skill with the round's adapter skill into the one weight vector
+sent to the subnet; see [the miner view](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)
+for the payment rule. Add the track to `validator/config.json` by hand:
+
+```json
+"base_tier": {
+  "share": 0.7,
+  "incumbent_sha256": "CHECKPOINT_HASH_OF_THE_PINNED_BASE_REFERENCE",
+  "draws": [{"manifest_sha256": "…", "dataset_sha256": "…"}],
+  "policy": {"min_brier_improvement": 0.01}
+}
+```
+
+`share` is the base tier's fraction of the vector and must be explicit.
+`incumbent_sha256` is the `zils submit` checkpoint hash of the incumbent
+reference the scorer compares against. `draws` lists every sealed draw whose
+decision may pay in this epoch; print an entry with
+`python -m zils.base_round --round SEALED_DIR --describe-draw`, which audits the
+directory first. Remove a draw to rotate the holdout. `policy` may only override
+the `zils.base_round` defaults and is optional. The fleet refuses to start with
+a track on a non-testnet config or with an invalid track.
+
+The validator does not collect base candidates itself. Score them with
+`python -m zils.base_round … --out validator/base-tier/decision.json`
+(re-score when a new candidate arrives; the confirmation draw's decision
+replaces the first draw's). The scorer's incumbent row must use a UID outside
+the roster, such as 65535. Each round freezes the current decision into its
+directory as `base-tier.json` before the first publish attempt and embeds it in
+the report, so the report hash binds it and a restart republishes the same
+weights. A missing decision file means nothing was scored this epoch: the round
+publishes adapter weights alone.
+
+The publisher refuses a decision for a draw not in the track, scored with a
+different policy or against a different incumbent, paying a UID outside the
+roster, with duplicate or incumbent hashes among the eligible candidates, or
+whose recorded weights differ from its eligible candidates; it also refuses a
+report carrying a decision when the config has no track. The attempt and
+receipt record `tracks` (`base_share`, per-track normalized weights) next to
+`requested_weights`, so the on-chain proportions can be traced to each track.
+
 The [first verified testnet round](testnet-round-001.md) demonstrates this closed
 path. It does not establish current validator uptime, open access, mainnet
 support, or queue training-to-chain integration.

@@ -247,6 +247,17 @@ def evaluate_round(
     return report
 
 
+def attach_base_tier(config, directory, work, report):
+    """Embed the epoch's base-tier decision, frozen with the round the first time it is published."""
+    if "base_tier" not in config:
+        return report
+    frozen = work / "base-tier.json"
+    if not frozen.exists():
+        current = directory / "base-tier" / "decision.json"
+        wire.write_json(frozen, json.loads(current.read_text()) if current.exists() else None)
+    return {**report, "base_tier": json.loads(frozen.read_text())}
+
+
 def admission_settings(config):
     """Static member allowlist with private transport, or chain-derived members with public endpoints."""
     mode = config.get("admission", "members")
@@ -493,6 +504,7 @@ def validator(config, directory, args):
             if chain_state is not None:
                 from bittensor.wallet import Wallet
 
+                report = attach_base_tier(config, directory, work, report)
                 with locked(work / "chain.lock"), testnet.connect(config) as sub:
                     outcome = testnet.publish_round(
                         config,
@@ -503,6 +515,9 @@ def validator(config, directory, args):
                         publish=args.publish_weights,
                     )
                 public.update(chain=outcome, chain_write=outcome["chain_write"])
+                if "tracks" in outcome:
+                    # Miners see the blended vector, not the adapter round alone.
+                    public["weights"] = outcome["requested_weights"]
                 print(f"validator: testnet weights {outcome['status']}", flush=True)
             wire.write_json(work / "result.json", signed(public, key))
             with condition:
