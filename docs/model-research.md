@@ -186,6 +186,20 @@ base-tier incumbent, and no round-two decision was frozen. d3-mini remains a
 merged, available profile (qualified miners and validators can run it; its
 platform migrations are applied) but it is not the default and is not promoted.
 
+**Decision (17 October 2026, owner).** d3-mini becomes the Zils base regardless
+of the stock exam, by the owner's decision and recorded as an override of the
+promotion rule, not as a win under it. The grounds are capability: adapters
+trained on d3 beat adapters trained on H2O on the reference job and on ABCD, and
+d3 takes images and video, which H2O does not serve. `latest` moves to d3 once a
+permanent d3 fleet exists (a qualified d3 miner, a processor with the d3
+reference, an always-warm d3 adapter runtime behind the gateway, and gateway and
+workflow on code that knows the profile, in the rollout order of
+`docs/d3-rollout.md`); `stable` follows after one real customer job has trained
+and served on that fleet. Existing H2O jobs and releases keep their frozen
+profile and move only through `base_change` upgrade jobs. From the moment
+`latest` moves, stock d3-mini is the base-tier incumbent that future candidates
+must beat under the unchanged rule.
+
 Caveats: one card and one night; nothing above 4,096 input tokens was tested;
 and the holdouts are teacher-authored, not customer data. These results do not
 replace per-job acceptance tests.
