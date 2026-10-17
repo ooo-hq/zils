@@ -14,11 +14,10 @@ its setup moved to
 Only approved operators should receive its service credentials. Miners need no
 platform installation or database credential.
 
-For image jobs, install the isolated runtime, configure its environment, and
-complete [image qualification](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md#worker-and-service-setup). Add
-`--additional-reference models/imajev-starting-checkpoint` to the processor.
-It selects the matching model for each frozen job; keep image admission off until
-evaluation and activation are verified. This does not change the primary text reference.
+Image jobs run on the d3 profile: the processor evaluates a frozen image job with the
+d3 reference and runtime it already has, caching the job's verified photos beside the
+benchmark. No separate image runtime or reference is installed; see
+[image training](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md#d3-image-jobs).
 
 ## Open admission (experimental, not enabled anywhere)
 

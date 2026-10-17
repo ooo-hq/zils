@@ -26,68 +26,43 @@ def fit(root, report, uid, checkpoint, destination):
     if destination.exists():
         raise FileExistsError(f"checkpoint destination already exists: {destination}")
 
-    image = models.checkpoint_model(checkpoint) == models.IMAJEV
     if models.temperature(checkpoint) != 1.0:
         raise ValueError("source checkpoint must have temperature 1.0")
     cases = benchmark.read_jsonl(Path(root) / "calibration.jsonl")
     predictions = {p["id"]: p for p in miner["predictions"]}
-    if image:
-        from .image_contract import UNKNOWN
-        from .image_metrics import fit_image_temperature, probabilities_at_temperature
+    from kev.metrics import fit_temperature, probabilities_at_temperature
 
-        keys = [*cases[0]["question"]["criteria"], UNKNOWN]
-        logits = [predictions[c["id"]]["logits"] for c in cases]
-        for c, values in zip(cases, logits, strict=True):
-            if len(values) != len(keys) or any(
-                not math.isclose(p, predictions[c["id"]]["probabilities"][key], abs_tol=1e-7)
-                for key, p in zip(keys, probabilities_at_temperature(values, 1.0), strict=True)
-            ):
-                raise ValueError("Calibration logits differ from the full-native probabilities")
-        temperature = fit_image_temperature(
-            logits, [keys.index(c["label"]) for c in cases], [c["family"] for c in cases]
+    rows = []
+    for case in cases:
+        keys = zils.options(case["question"])
+        rows.append(
+            {
+                "p": [predictions[case["id"]]["probabilities"][k] for k in keys],
+                "label": keys.index(case["label"]),
+                "task": case["family"],
+                "keys": keys,
+                "source": case["family"],
+                "inference_temperature": 1.0,
+                # Kev filters on this eligibility marker. Our declared fit population includes all variants.
+                "variant": "clean",
+                "fez_variant": case.get("variant", "customer"),
+            }
         )
-        adjusted = [
-            {
-                **predictions[c["id"]],
-                "probabilities": dict(
-                    zip(keys, probabilities_at_temperature(values, temperature), strict=True)
-                ),
-            }
-            for c, values in zip(cases, logits, strict=True)
-        ]
-        method = "Full-native image macro-family NLL; 81 log-spaced temperatures in [0.25, 4]; calibration only"
-    else:
-        from kev.metrics import fit_temperature, probabilities_at_temperature
-
-        rows = []
-        for case in cases:
-            keys = zils.options(case["question"])
-            rows.append(
-                {
-                    "p": [predictions[case["id"]]["probabilities"][k] for k in keys],
-                    "label": keys.index(case["label"]),
-                    "task": case["family"],
-                    "keys": keys,
-                    "source": case["family"],
-                    "inference_temperature": 1.0,
-                    # Kev filters on this eligibility marker. Our declared fit population includes all variants.
-                    "variant": "clean",
-                    "fez_variant": case.get("variant", "customer"),
-                }
-            )
-        temperature = fit_temperature(rows, aggregation="macro", points=81)
-        if not math.isfinite(temperature) or not 0.25 <= temperature <= 4:
-            raise ValueError("temperature fitter returned an invalid value")
-        adjusted = [
-            {
-                **predictions[c["id"]],
-                "probabilities": dict(
-                    zip(row["keys"], probabilities_at_temperature(row, temperature).tolist())
-                ),
-            }
-            for c, row in zip(cases, rows)
-        ]
-        method = "Kev macro-family NLL; 81 log-spaced temperatures in [0.25, 4]; all calibration variants"
+    temperature = fit_temperature(rows, aggregation="macro", points=81)
+    if not math.isfinite(temperature) or not 0.25 <= temperature <= 4:
+        raise ValueError("temperature fitter returned an invalid value")
+    adjusted = [
+        {
+            **predictions[c["id"]],
+            "probabilities": dict(
+                zip(row["keys"], probabilities_at_temperature(row, temperature).tolist())
+            ),
+        }
+        for c, row in zip(cases, rows)
+    ]
+    method = (
+        "Kev macro-family NLL; 81 log-spaced temperatures in [0.25, 4]; all calibration variants"
+    )
     result = {
         "raw_checkpoint_sha256": entry["sha256"],
         "dataset_sha256": report["dataset_sha256"],

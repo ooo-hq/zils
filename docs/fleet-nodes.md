@@ -24,7 +24,7 @@ Two properties are required of every node:
 - Fleet bundles, the validator and testnet publication are documented in
   [mining.md](mining.md), [validators.md](validators.md),
   [testnet.md](testnet.md) and [bittensor-registration.md](bittensor-registration.md).
-  `zils.fleet` and `zils.testnet` accept H2O, JevK5, ImaJev and Kev jobs; the
+  `zils.fleet` and `zils.testnet` accept d3, H2O, JevK5 and Kev jobs; the
   fleet round and publisher tests cover H2O, but no H2O chain round has been run.
 - Hosted serving on the 4090 uses a socket-activated H2O adapter runtime, a
   host-local capacity controller that pauses image serving while H2O is
@@ -44,9 +44,9 @@ secrets. Roles differ only in which services are enabled.
 | Droplet | DigitalOcean GPU Droplet, RTX 4000 Ada (20 GB) to start; RTX 6000 Ada / L40S (48 GB) if a node must serve image models and H2O together. Ubuntu LTS with the NVIDIA driver compatible with CUDA 13.0. |
 | Accounts | `zilsminer` (training), `zilsapi` (serving), group `zils-compute`; no interactive login for either. |
 | Source | `ooo-hq/zils` at the revision in the platform's `subnet-ref.txt`. `ooo-hq/zils-platform` at its main only on operator-owned nodes taking a serving or `hosted-validator` role, installed by a separate platform step. Both read-only to service users. |
-| Environments | `.venv-kev` (Python 3.13, cu128: miner client, fleet, testnet SDK 11.1.0), `.venv-h2o` (Python 3.12, cu130: pinned H2O runtime), `.venv-d3` (Python 3.12, cu130: pinned d3 runtime), `.venv-image` (optional, Imajev pins), `.venv-platform` (validator and serving roles). |
-| References | `models/h2o-reference` verified against `zils/h2o-pins.json`; `models/d3-reference` verified against `zils/d3-pins.json`; `models/imajev-reference` only on image-capable nodes. Reference caches are part of the snapshot. |
-| Units | From `zils`: `zils-queue-miner`, `zils-fleet-miner`, `zils-fleet-validator`. From `zils-platform` (operator nodes only): `zils-h2o-adapter.socket` + runtime + proxy, `zils-image-runtime`, `zils-release-sync`, `zils-training-processor`, `zils-workflow`, `zils-*-tunnel`. All installed, all disabled; the role enables a subset. |
+| Environments | `.venv-kev` (Python 3.13, cu128: miner client, fleet, testnet SDK 11.1.0), `.venv-h2o` (Python 3.12, cu130: pinned H2O runtime), `.venv-d3` (Python 3.12, cu130: pinned d3 runtime), `.venv-platform` (validator and serving roles). |
+| References | `models/h2o-reference` verified against `zils/h2o-pins.json`; `models/d3-reference` verified against `zils/d3-pins.json`. Reference caches are part of the snapshot. |
+| Units | From `zils`: `zils-queue-miner`, `zils-fleet-miner`, `zils-fleet-validator`. From `zils-platform` (operator nodes only): `zils-h2o-adapter.socket` + runtime + proxy, `zils-release-sync`, `zils-training-processor`, `zils-workflow`, `zils-*-tunnel`. All installed, all disabled; the role enables a subset. |
 | Qualification | `scripts/qualify_node.py` output, one report per text profile (H2O in `qualification`, d3 in `qualification-d3`): profile identity, `trainer_sha256`, kernel check, peak GPU memory for a training step at the profile's input cap (2,048 tokens for H2O, 4,096 for d3) and an adapter reload, timing; the d3 report adds `parity` against the vendor readout. Stored on the node and copied to the operator for `zils_worker_profiles` registration. |
 
 Not in the image: hotkeys, coldkeys, runtime tokens, Supabase credentials,
@@ -61,7 +61,6 @@ user data) and selects the role. A node runs exactly one role.
 | --- | --- | --- | --- |
 | `miner` | `zils-queue-miner` (customer jobs via coordinator HTTPS, approved hotkey); optionally `zils-fleet-miner` for a chain round using an assigned bundle | hotkey, coordinator URL, bundle when in a round | Testnet UID for its hotkey when it joins a round |
 | `serve-h2o` | `zils-h2o-adapter` socket/runtime/proxy, resident with no idle shutdown; `zils-release-sync` (new, see below); `zils-h2o-tunnel` to the gateway | runtime token, Spaces read credential, tunnel key | None |
-| `serve-image` | `zils-image-runtime`, `zils-image-tunnel` | as above | None |
 | `fleet-validator` | `zils-fleet-validator` (`zils.fleet validator`) and the `zils.testnet` publisher for chain rounds. Pure `zils`; no platform code or credential. | validator hotkey, roster, frozen job and reference | Validator UID with permit |
 | `hosted-validator` | `fleet-validator` plus the platform add-on: `zils-training-processor` (customer-job evaluation) and `zils-workflow` (assignment, activation). Only on nodes the operator owns. | the above plus the Supabase service credential | as above |
 

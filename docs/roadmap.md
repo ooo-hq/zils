@@ -56,8 +56,8 @@ reference job and on ABCD; d3 takes images and video), recorded as an override o
 the promotion rule rather than a win under it. The same afternoon the hosted
 platform set `stable` and `latest` to d3-mini, qualified a d3 miner and serving
 host, moved the owner's H2O task to d3 through a `base_change` upgrade and
-switched H2O serving off; JevK5 and Imajev retire once nothing served depends on
-them.
+switched H2O serving off; Imajev retired on 17 October once image training moved to
+d3; JevK5 retires once nothing served depends on it.
 Stock d3-mini is the base-tier incumbent for round two. The recorded evidence is in
 [model research](model-research.md#d3-mini-evidence-16-october-2026).
 

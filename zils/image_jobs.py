@@ -1,12 +1,11 @@
 """Frozen image datasets: verified content identity and training-only exports.
 
-Imajev jobs and jobs on a text profile that declares `inputs` (d3) share this format: one canonical
-PNG per case, an asset catalog bound to the owner and job, and a training export of asset references.
+A job on a text profile that declares `inputs` (d3) freezes one canonical PNG per case, an asset
+catalog bound to the owner and job, and a training export of asset references.
 """
 
 import hashlib
 import json
-import math
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,7 +14,7 @@ import zils
 
 from . import benchmark, jobs, models, version_selection
 from .decisions import DecisionError, validate_request
-from .image_contract import UNKNOWN, capabilities, validate_image_request
+from .image_contract import capabilities
 
 VERSION = "zils-image-job/v1"
 PREPROCESSOR = "zils-image-rgb-png/v1"
@@ -46,8 +45,8 @@ def manifest_bytes(manifest):
 
 
 def takes_images(model):
-    """Profiles whose jobs freeze image assets: Imajev, and text profiles that declare inputs."""
-    return model == models.IMAJEV or "inputs" in models.spec(model)
+    """Profiles whose jobs freeze image assets: text profiles that declare `inputs`."""
+    return "inputs" in models.spec(model)
 
 
 def validate_training_question(model, question, state=None):
@@ -58,19 +57,13 @@ def validate_training_question(model, question, state=None):
         "questions": {"decision": question},
     }
     try:
-        if model == models.IMAJEV:
-            validate_image_request(
-                {**body, "images": [{"asset_id": "00000000-0000-0000-0000-000000000000"}]}
-            )
-        else:
-            validate_request(body)
-            if (
-                question["type"] != "choice"
-                or len(question["criteria"]) > capabilities(model)["max_options"]
-                or UNKNOWN in question["criteria"]
-                or any(not name.strip() for name in question["criteria"])
-            ):
-                raise ValueError("image training takes one choice question per case")
+        validate_request(body)
+        if (
+            question["type"] != "choice"
+            or len(question["criteria"]) > capabilities(model)["max_options"]
+            or any(not name.strip() for name in question["criteria"])
+        ):
+            raise ValueError("image training takes one choice question per case")
     except DecisionError as error:
         raise ValueError(str(error)) from None
     return question
@@ -86,6 +79,20 @@ def export_path(entry):
     ):
         raise ValueError("invalid frozen training image reference")
     return "images/" + entry["sha256"] + ".png"
+
+
+def image_path(images, binding):
+    """Content-addressed local cache; model inputs never contain source filenames."""
+    digest = binding.get("sha256")
+    if not isinstance(digest, str) or not re.fullmatch("[a-f0-9]{64}", digest):
+        raise ValueError("Invalid frozen image hash")
+    path = Path(images) / (digest + ".png")
+    if path.is_symlink() or not path.is_file() or path.stat().st_size > 10 * 1024**2:
+        raise ValueError("Frozen image bytes changed or are unavailable")
+    with path.open("rb") as stream:
+        if hashlib.file_digest(stream, "sha256").hexdigest() != digest:
+            raise ValueError("Frozen image bytes changed or are unavailable")
+    return path
 
 
 def verify_binding(job):
@@ -124,42 +131,6 @@ def validate_intake(value):
     ):
         raise ValueError("invalid frozen image intake")
     return value
-
-
-def validate_acceptance(model, policy, outcomes=None):
-    """Imajev jobs carry image targets; other image-capable profiles use the text policy."""
-    if model == models.IMAJEV:
-        validate_policy(policy, outcomes)
-    else:
-        jobs.validate_policy(policy)
-
-
-def validate_policy(policy, outcomes=None):
-    extra = {"positive_class", "min_positive_recall", "max_false_positive_rate", "min_class_recall"}
-    if not isinstance(policy, dict):
-        raise ValueError("image acceptance policy is required")
-    jobs.validate_policy({k: v for k, v in policy.items() if k not in extra})
-    binary = {"positive_class", "min_positive_recall", "max_false_positive_rate"}
-    if binary & policy.keys() or outcomes is not None and len(outcomes) == 2:
-        if not binary <= policy.keys() or "min_class_recall" in policy:
-            raise ValueError(
-                "binary image targets require positive class, recall and false-positive rate"
-            )
-        if not isinstance(policy["positive_class"], str) or not policy["positive_class"]:
-            raise ValueError("positive class must be named")
-        if outcomes is not None and (
-            len(outcomes) != 2 or policy["positive_class"] not in outcomes
-        ):
-            raise ValueError("positive class must match the binary outcomes")
-    if "min_class_recall" in policy:
-        if not isinstance(policy["min_class_recall"], dict) or not policy["min_class_recall"]:
-            raise ValueError("class recall targets must name outcomes")
-        if outcomes is not None and not policy["min_class_recall"].keys() <= set(outcomes):
-            raise ValueError("class recall target does not name an outcome")
-    targets = [policy[k] for k in ("min_positive_recall", "max_false_positive_rate") if k in policy]
-    targets.extend(policy.get("min_class_recall", {}).values())
-    if any(type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 1 for v in targets):
-        raise ValueError("image targets must be finite numbers between zero and one")
 
 
 def _validate(splits, assets, job, *, live=False):
@@ -263,7 +234,7 @@ def training_rows(cases, assets=None):
 def build(root, job, splits, assets, policy):
     catalog, bindings, question, order, groups = _validate(splits, assets, job, live=True)
     model = models.job_model(job)
-    validate_acceptance(model, policy, order)
+    jobs.validate_policy(policy)
     if policy != job["acceptance"]:
         raise ValueError("image acceptance policy changed")
     selection = job.get("selection")
@@ -340,7 +311,7 @@ def audit(root, manifest):
             raise ValueError("image dataset changed: " + name)
     splits = {s: benchmark.read_jsonl(root / f"{s}.jsonl") for s in SPLITS}
     catalog, bindings, question, order, groups = _validate(splits, manifest["assets"], job)
-    validate_acceptance(models.job_model(job), manifest["acceptance"], order)
+    jobs.validate_policy(manifest["acceptance"])
     version_selection.validate(
         manifest["selection"],
         manifest["acceptance"].get("previous_job_id"),
@@ -395,6 +366,6 @@ def task_contract(manifest):
     ):
         raise ValueError("Image task outcome order changed")
     question = {**question, "criteria": {key: question["criteria"][key] for key in order}}
-    model = models.validate_spec(manifest["model"]) if "model" in manifest else models.IMAJEV
+    model = models.validate_spec(manifest["model"])
     validate_training_question(model, question)
     return {"question": question, "outcome_order": list(order)}

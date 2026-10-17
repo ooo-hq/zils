@@ -1,7 +1,7 @@
 # Run a text or image fleet miner
 
-Local and Bittensor testnet fleets support **H2O Lightning 4B text** and
-**ImaJev 4B image** jobs. Each fleet pins one frozen job and its matching model
+Local and Bittensor testnet fleets support **d3-mini 4.5B text and image** and
+**H2O Lightning 4B text** jobs. Each fleet pins one frozen job and its matching model
 reference. Existing JevK5 4B text and Kev 0.8B bundles remain supported. For workers that claim different customer jobs,
 use the [queue miner guide](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md).
 Queue and fleet miners use the same trainers but different credentials and startup commands.
@@ -15,8 +15,7 @@ After the one-time setup below, run this in your assigned miner folder:
 The miner trains one candidate per round, submits its signed checkpoint, receives
 the validator's result, and waits for the next round. Stop with Ctrl+C, or use
 `./start-miner --rounds 1` for a single result. The first start downloads the
-pinned text base model. Image miners require the separately installed, verified
-image runtime described below. Later starts reuse the cache.
+pinned text base model. Later starts reuse the cache.
 
 ## Prepare bundles on the validator
 
@@ -53,17 +52,16 @@ references instead; provision each hotkey separately.
 
 ### Image fleets
 
-Complete the pinned runtime and maximum-context hardware qualification in
-[image training](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md#worker-and-service-setup)
-for every participating miner and the validator. Use a fresh published starting
-checkpoint, not an earlier customer adapter. The operator supplies an audited
-image-job directory built by `zils.image_jobs.build`, its canonical image cache
+Image fleets run on the d3 profile with the d3 reference and runtime (see
+[image training](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md#d3-image-jobs)).
+The operator supplies an audited image-job directory built by `zils.image_jobs.build`
+(a d3 job whose cases carry one photo each), its canonical image cache
 (`<sha256>.png`), and measured admission limits. Those are private inputs; fleet
 initialization does not download customer photos or resolve hosted predecessor jobs.
 
 ```bash
 .venv-kev/bin/python -m zils.fleet init --out .private/fleet-image \
-  --benchmark .private/jobs/image-v1 --checkpoint models/imajev-starting-checkpoint \
+  --benchmark .private/jobs/image-v1 --checkpoint models/d3-reference \
   --images .private/image-cache --min-free-mib QUALIFIED_FREE_MIB \
   --max-seconds QUALIFIED_TRAINING_SECONDS --host VALIDATOR_PRIVATE_IPV4
 ```
@@ -99,8 +97,8 @@ Do not relabel a Kev manifest as a different model.
 4. Run `./start-miner --rounds 1`. It can start before the validator and will retry.
 
 H2O needs a qualified CUDA host and the isolated runtime below on every miner
-and the validator. JevK5 needs a qualified CUDA or Apple MPS host. Image training
-requires qualified CUDA hardware; CPU fallback applies only to Kev. Use `--device cuda` or `mps`
+and the validator; d3 bundles need the same with the d3 runtime. JevK5 needs a qualified CUDA or Apple MPS host. Image training
+runs on d3 and requires qualified CUDA hardware; CPU fallback applies only to Kev. Use `--device cuda` or `mps`
 explicitly. To reuse an environment or cache, set `ZILS_PYTHON`
 to its absolute Python path and `HF_HOME` to the cache directory.
 
@@ -120,22 +118,6 @@ For d3 bundles (`d3-mini-4.5b-v1`), do the same with `.venv-d3`,
 H2O training waits until at least 12,288 MiB of GPU memory is free
 (`ZILS_H2O_MIN_FREE_MIB` raises that floor). Neither side silently substitutes
 the JevK5 runtime. See the [H2O model contract](h2o-queue.md) for the pins.
-
-For image bundles, also install and verify the isolated runtime on each host:
-
-```bash
-uv venv --python 3.13 .venv-image
-uv pip install --python .venv-image/bin/python --torch-backend=cu128 -r requirements/imajev.txt
-.venv-image/bin/python -m scripts.download_imajev --out models/imajev-reference
-export ZILS_IMAGE_RUNTIME_PYTHON="$PWD/.venv-image/bin/python"
-export ZILS_IMAGE_REFERENCE="$PWD/models/imajev-reference"
-./start-miner --device cuda --rounds 1
-```
-
-The validator needs these same image runtime variables. Set the shared
-`ZILS_COMPUTE_LOCK` and the qualified `ZILS_IMAGE_GPU_MEMORY_FRACTION` when sharing
-a GPU, as described in the image training guide. Low capacity makes a miner wait;
-it never permits a smaller unverified memory allowance.
 
 ### Windows / NVIDIA GPU
 

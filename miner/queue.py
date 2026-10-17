@@ -88,10 +88,6 @@ def run_once(
                 reference = Path(references[model])
             if models.checkpoint_model(reference) != model:
                 raise ValueError("Installed reference differs from the assigned profile")
-            if model == models.IMAJEV:
-                from zils.imajev import verify_starting_checkpoint
-
-                verify_starting_checkpoint(reference)
             if assignment["base_revision"] != models.spec(model)["base_revision"] or assignment.get(
                 "model", models.spec(models.KEV)
             ) != models.spec(model):
@@ -132,11 +128,7 @@ def run_once(
                 job["min_free_mib"] = assignment["min_free_mib"]
                 job["max_seconds"] = assignment["max_seconds"]
             if image_jobs.takes_images(model):
-                download_images(client, auth, training, directory / "images", model)
-            if model == models.IMAJEV:
-                runtime = settings.required("ZILS_IMAGE_RUNTIME_PYTHON")
-                job["min_free_mib"] = assignment["min_free_mib"]
-                job["max_seconds"] = assignment["max_seconds"]
+                download_images(client, auth, training, directory / "images")
             entry = train_candidate(
                 config,
                 directory,
@@ -174,20 +166,17 @@ def run_once(
     return True
 
 
-def download_images(client, auth, training, destination, model=models.IMAJEV):
+def download_images(client, auth, training, destination):
     from datetime import datetime, timezone
 
-    from zils.imajev import image_path
+    from zils.image_jobs import image_path
 
     destination = Path(destination)
     destination.mkdir(mode=0o700, parents=True, exist_ok=True)
     bindings = {}
     for line in Path(training).read_text().splitlines():
         row = json.loads(line)
-        images = row.get("images", [])
-        if model == models.IMAJEV and len(images) != 1:
-            raise ValueError("Training requires one frozen image per row")
-        for image in images:
+        for image in row.get("images", []):
             image_jobs.export_path(image)
             aid = identifier(image["asset_id"])
             if aid in bindings and bindings[aid] != image["sha256"]:

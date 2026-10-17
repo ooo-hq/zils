@@ -162,9 +162,6 @@ class CrossProfileTest(unittest.TestCase):
         check_promotion(current, entry, {**selection, "base_change": True})
         legacy = {key: value for key, value in incumbent.items() if key != "profile"}
         check_promotion({"models": [legacy]}, entry, selection)
-        image = {**entry, "profile": models.spec(models.IMAJEV)}
-        with self.assertRaisesRegex(ValueError, "cannot move between model profiles"):
-            check_promotion({"models": [legacy]}, image, selection)
 
     def test_selection_base_change_must_be_true(self):
         selection = {"version": VERSION, "root_job_id": str(uuid.uuid4()), "previous": None}

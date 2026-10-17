@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 import zils
 
-from . import models, protocol as wire, settings
+from . import models, protocol as wire
 from .runtime import CapacityUnavailable, digest, locked, run_child, signed, signing_key, verified
 
 
@@ -30,7 +30,7 @@ def evaluate_round(
     benchmark.audit(data)
     manifest = json.loads((data / "manifest.json").read_text())
     model = models.validate_spec(manifest["model"]) if "model" in manifest else models.KEV
-    frozen_images = model == models.IMAJEV or "assets" in manifest  # verified <sha256>.png cache
+    frozen_images = "assets" in manifest  # verified <sha256>.png cache beside the benchmark
     if config["base_revision"] != models.spec(model)["base_revision"]:
         raise ValueError("Evaluation configuration differs from the frozen model profile")
     if config.get("job_sha256") != (
@@ -70,9 +70,7 @@ def evaluate_round(
             "--base-revision",
             base_revision or config["base_revision"],
             "--runner-python",
-            settings.required("ZILS_IMAGE_RUNTIME_PYTHON")
-            if model == models.IMAJEV
-            else args.runtime_python,
+            args.runtime_python,
             "--device",
             args.device,
             "--report",
@@ -88,11 +86,6 @@ def evaluate_round(
                     attempt / f"{name}.log",
                     args.device,
                     timeout=120 + 600 * len(submissions),
-                    **(
-                        {"model": model, "minimum_mib": config.get("min_free_mib", 0)}
-                        if model == models.IMAJEV
-                        else {}
-                    ),
                 )
                 break
             except CapacityUnavailable:
@@ -192,17 +185,6 @@ def evaluate_round(
             release = attempt / "accepted-model"
             zils.stage(winner, release)
             delivery["checkpoint"] = str(release.relative_to(work))
-            evidence = {}
-            if model == models.IMAJEV:
-                from .image_metrics import public_metrics
-
-                selected = next(row for row in report["miners"] if row["uid"] == delivery["uid"])
-                evidence = {
-                    "image_metrics": {
-                        "baseline": public_metrics(baseline),
-                        "candidate": public_metrics(selected),
-                    }
-                }
             wire.write_json(
                 release / "release.json",
                 {
@@ -224,7 +206,6 @@ def evaluate_round(
                         else {}
                     ),
                     **delivery,
-                    **evidence,
                 },
             )
         report.update(
