@@ -3,6 +3,9 @@
 # writes a marker under /var/lib/zils-node/markers and skips itself when the
 # marker exists. ZILS_NODE_DRY_RUN=1 prints the plan and changes nothing.
 set -euo pipefail
+# Service units and hardened shells may inherit a restrictive umask; the service
+# user must be able to read and execute everything this script installs.
+umask 022
 
 ZILS_SUBNET_REF="${ZILS_SUBNET_REF:-main}"
 ROOT=/opt/zils
@@ -71,6 +74,8 @@ main() {
       uv pip install -q --python .venv-d3/bin/python --torch-backend=cu130 -r requirements/d3.txt
       # The venvs symlink into the managed interpreters; the service user must be able to exec them.
       [ -d /opt/uv-python ] && chmod -R a+rX /opt/uv-python || true
+      # uv hardlinks site-packages from its cache, so the files keep the mode they were cached with.
+      chmod -R a+rX .venv-kev .venv-h2o .venv-d3
     fi
     done_marker environments
   fi
