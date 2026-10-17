@@ -4,9 +4,13 @@ A base candidate is a full-weight replacement for a pinned text base, per
 profile: H2O Lightning 4B v1.2.3 today, and d3-mini-4.5b-v1 once it is promoted.
 Everything below describes H2O unless it says d3. Miners may train it however they like; validators
 score it on a sealed holdout against the current base and, for a pending
-winner, retrain a fixed suite of reference adapters on both. Nothing in this
-document is live: open admission is off by default, no round has been run, and
-the pinned base is unchanged. Customer adapter jobs are not affected.
+winner, retrain a fixed suite of reference adapters on both. Status, 17 October 2026:
+candidate loading, round decisions, sandboxed evaluation, the regression suite,
+chain-derived admission and the dry-run promotion script are merged; open
+admission is off by default; no public round has been run; the channel setting
+on the platform is a configuration value (`ZILS_TRAINING_MODEL_LATEST`), not yet
+a registry alias; automatic "follow stable" upgrades are not implemented. The
+pinned base is unchanged, and customer adapter jobs are not affected.
 
 ## What stays fixed
 

@@ -1,9 +1,9 @@
 # Miner and validator documentation
 
 This repository covers workers, evaluation, signed protocols, and testnet
-participation. Customer workers and fleets support JevK5 text and qualified
-ImaJev image jobs, with one model pinned per job. Start with the guide matching
-your role.
+participation. Customer workers and fleets support H2O text (the default for
+new jobs), d3-mini (merged, not the default) and Imajev image profiles, with one
+model pinned per job. Start with the guide matching your role.
 
 | Task | Guide |
 | --- | --- |
@@ -12,7 +12,7 @@ your role.
 | Join the testnet | [Registration](bittensor-registration.md), [testnet operation](testnet.md) |
 | Prepare models or training data | [JevK5 reference](jevk5-queue.md), [customer data contract](customer-jobs.md), [version selection](version-selection.md) |
 | Compare tuned open models and miner hardware tradeoffs | [Official Jev comparisons and B300 research](model-research.md) |
-| Submit a replacement base (proposed, not live) | [Base candidates](base-candidates.md) |
+| Submit a replacement base (implemented, no round run) | [Base candidates](base-candidates.md) |
 | Develop and inspect evidence | [Development](development.md), [benchmark](benchmark.md), [experiments](experiments.md), [JevBench](jevbench-public.md), [recorded testnet round](testnet-round-001.md) |
 
 [Repository boundaries](repositories.md) explains where hosted services, client
