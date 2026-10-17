@@ -77,6 +77,15 @@ def input_cap(model):
     return models.spec(model).get("max_input_tokens", 2048)
 
 
+def bands(model):
+    return tuple(f"tokens-{n}" for n in BANDS if n <= input_cap(model))
+
+
+def context_key(value):
+    """Routing configurations key benchmark contexts by model and band, never band alone."""
+    return f"{value['model']}/{value['band']}"
+
+
 def workload_profile(token_lengths, *, model):
     cap = input_cap(model)
     if (
@@ -141,7 +150,7 @@ def valid_context(context):
         )
         and isinstance(context["rubric"], str)
         and 1 <= len(context["rubric"]) <= 128
-        and context["band"] in {f"tokens-{n}" for n in BANDS}
+        and context["band"] in bands(context["model"])
     )
 
 
@@ -267,7 +276,7 @@ def rank_candidates(job, workers, now):
         validate_workload(workload, model=context["model"], examples=workload["examples"])
         if (
             not valid_context(context)
-            or workload["band"] != context["band"]
+            or context_key(workload) != context_key(context)
             or job.get("consent") is not True
         ):
             raise ValueError("invalid job")
