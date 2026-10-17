@@ -82,7 +82,8 @@ round's questions are published after the round closes and are not reused.
 ## Validator and publisher tooling
 
 The reference-adapter suite and the publication helper take the profile with
-`--model` (`h2o-lightning-4b-v1.2.3`, the default, or `d3-mini-4.5b-v1`):
+`--model` (`d3-mini-4.5b-v1`, the base since 17 October 2026, or the retiring
+`h2o-lightning-4b-v1.2.3`, still the code default):
 
 ```bash
 python -m zils.regression_suite --model h2o-lightning-4b-v1.2.3 --suite SUITE \
