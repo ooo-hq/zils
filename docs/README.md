@@ -1,9 +1,9 @@
 # Miner and validator documentation
 
 This repository covers workers, evaluation, signed protocols, and testnet
-participation. Customer workers and fleets support H2O text (the default for
-new jobs), d3-mini (merged, not the default) and Imajev image profiles, with one
-model pinned per job. Start with the guide matching your role.
+participation. Customer workers and fleets support d3-mini text and image jobs
+(the default for new jobs since 17 October 2026), the retiring H2O text profile
+(frozen jobs only) and the Imajev image profile, with one model pinned per job. Start with the guide matching your role.
 
 | Task | Guide |
 | --- | --- |
