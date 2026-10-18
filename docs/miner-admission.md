@@ -31,9 +31,8 @@ queue, which today only talks to hotkeys an operator inserted by hand.
 - Queue qualification jobs automatically for a new hotkey (today an operator
   submits and authorizes them, about $12 of credit for five on 17 October 2026).
   Graded routing is unchanged: three passing reports before customer work.
-- Route customer jobs to outside hotkeys by default; a job whose customer
-  opted out (`outside_miners: false`, [customer jobs](customer-jobs.md#prepare-data))
-  goes only to hotkeys marked `operated_by_zils`.
+- Route customer jobs to the whole pool. Zils' own hotkeys are ordinary rows
+  with no special path ([customer jobs](customer-jobs.md#prepare-data)).
 
 The base-tier path is the
 [open-admission runbook](validators.md#open-admission-base-tier-not-yet-enabled)
@@ -66,8 +65,5 @@ zils-web change, out of scope here.
 - Coordinator: admit chain-registered hotkeys, write worker and profile rows on
   first contact, auto-queue qualification jobs.
 - `terms_sha256` in the signed claim and in `qualification.json`;
-  `terms_sha256`, `terms_accepted_at`, `operated_by_zils` on
-  `fez_training_workers`.
-- `outside_miners` (default true) on `fez_training_jobs` and the create-job
-  body, honoured by the graded scheduler.
+  `terms_sha256` and `terms_accepted_at` on `fez_training_workers`.
 - Validator base-tier intake (separate session).
