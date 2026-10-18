@@ -20,7 +20,7 @@ complete [image qualification](https://github.com/ooo-hq/zils-platform/blob/main
 It selects the matching model for each frozen job; keep image admission off until
 evaluation and activation are verified. This does not change the primary text reference.
 
-## Open admission (experimental, not enabled anywhere)
+## Open admission (base tier; not yet enabled)
 
 The default validator admits only the static `members` allowlist and pins each
 miner's artifact endpoint to a private or Tailscale address. Two settings relax
@@ -38,9 +38,73 @@ section:
 
 Registration on the subnet is the admission check; there is no further vetting.
 Every submission is still hash-verified, size-bounded, and scored in the
-isolated runner described in [evaluation](evaluation.md). The validator must be
-reachable on a public address for miners to announce; firewall everything but
-its announcement port and keep the artifact transport read-only.
+isolated runner described in [evaluation](evaluation.md).
+
+### What opening the door means today
+
+Open admission is a property of the fleet validator, and the fleet validator
+runs **adapter rounds**: one frozen customer job per fleet, whose training split
+is shipped to every admitted miner. Opening it therefore hands customer training
+data to anyone who pays the registration burn. The base tier needs no customer
+data (candidates come in, the sealed holdout never leaves the validator), but
+the validator does not yet run base-tier rounds: base candidates are scored by an
+operator running `python -m zils.base_round` against the sealed draws and
+dropping the decision sidecar (section 6 below). So, in order:
+
+1. **Policy (owner, decided 18 October 2026).** Outside miners may train customer
+   jobs as well as base candidates, under miner terms still to be written. Until
+   the terms exist and a customer has accepted them, a public validator carries a
+   Zils-authored job (public data), not a customer's.
+2. **Base-tier intake (code, about two days).** A validator round type that
+   collects base candidates (9.5 GiB each, downloaded once per distinct hash and
+   kept across epochs so a resubmitted hash costs nothing), scores them with
+   `base_round` on the configured draws inside the sandbox, and writes the decision
+   sidecar itself. This is also the cross-round submission cap the open-admission
+   design still lacks.
+3. **Runbook below**, once 1 and 2 hold.
+
+### Runbook: a public validator for the base tier
+
+Host: a GPU node of node-1's class (RTX 4000 Ada 20 GB; scoring needs about
+10 GB; about $0.76/h on DigitalOcean), provisioned with
+`scripts/provision_node.sh` and the `fleet-validator` role, plus 10 GiB of disk
+per admitted candidate. Keep the validator hotkey on the host, never a coldkey.
+
+Network: expose only the announcement port (8900 by default) to the internet;
+artifacts are fetched *outbound* from each miner's announced endpoint, pinned to
+the announcing connection's source address. Plaintext HTTP is accepted for round
+one because claims are signed and artifacts hash-verified; put a TLS terminator in
+front when the operator wants transport privacy.
+
+Config (`/etc/zils-node/fleet/validator/config.json`; the fields the closed
+testnet fleet already uses, plus admission and the base tier):
+
+```json
+{
+  "chain": {"network": "test", "netuid": 579},
+  "validator_hotkey": "VALIDATOR_SS58",
+  "admission": "chain",
+  "public_endpoints": true,
+  "base_tier": {
+    "share": 0.7,
+    "incumbent_sha256": "CHECKPOINT_HASH_OF_models/d3-reference",
+    "draws": [{"manifest_sha256": "…", "dataset_sha256": "…"}],
+    "policy": {"min_brier_improvement": 0.01}
+  }
+}
+```
+
+`members` is omitted: preflight derives it from the chain and freezes it per
+round. Run `python -m zils.testnet preflight --config …` and check that the
+member list is what the metagraph shows minus the validator. Start the unit,
+then watch `state/rounds/<round>/chain-snapshot.json` and `submissions/` fill.
+Miners announce with the same signed claim as a fleet miner, against the
+validator's public URL, with their own public artifact port in the claim.
+
+Limits that stay until the intake lands: HTTPS, per-hotkey submission caps across
+rounds, and the validator's own base-tier scoring. Rollback: set
+`"admission": "members"` and remove `public_endpoints`; the next round uses the
+static roster again.
 
 ## Bittensor testnet validator
 
