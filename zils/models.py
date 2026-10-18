@@ -123,6 +123,15 @@ IMAJEV_FILES = (
 VERSION = "zils-checkpoint/v1"
 
 
+def d3_family():
+    """Profiles the d3 runtime serves: the vendor base and every Zils base promoted from it."""
+    return tuple(m for m, module in TEXT_RUNTIME_MODULES.items() if module == ".d3")
+
+
+def base_candidate_models():
+    return (H2O, *d3_family())
+
+
 def spec(model):
     if model not in SPECS:
         raise ValueError("unsupported model identity")
@@ -186,9 +195,9 @@ def job_model(job):
 def candidate_files(model, kind="adapter"):
     spec(model)
     if kind == "candidate":
-        if model not in (H2O, D3):
+        if model not in base_candidate_models():
             raise ValueError("base candidates are supported for the H2O and d3 profiles only")
-        return D3_CANDIDATE_FILES if model == D3 else CANDIDATE_FILES
+        return CANDIDATE_FILES if model == H2O else D3_CANDIDATE_FILES
     return {
         KEV: KEV_FILES,
         H2O: TEXT_ADAPTER_FILES,
@@ -221,7 +230,7 @@ def metadata(checkpoint):
         or value.get("kind") not in ("base", "adapter", "candidate")
     ):
         raise ValueError("invalid model metadata")
-    if value["kind"] == "candidate" and value["model"] not in (H2O, D3):
+    if value["kind"] == "candidate" and value["model"] not in base_candidate_models():
         raise ValueError("base candidates are supported for the H2O and d3 profiles only")
     if value["model"] == IMAJEV:
         if value.get("profile") != spec(IMAJEV) or value["kind"] != "adapter":

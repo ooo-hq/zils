@@ -73,7 +73,7 @@ def locked(path, wait=False):
 CAPACITY_ENV = {
     models.H2O: "ZILS_H2O_MIN_FREE_MIB",
     models.IMAJEV: "ZILS_IMAGE_MIN_FREE_MIB",
-    models.D3: "ZILS_D3_MIN_FREE_MIB",
+    **{m: "ZILS_D3_MIN_FREE_MIB" for m in models.d3_family()},
 }
 
 
@@ -280,6 +280,8 @@ def prepare_base(model=models.KEV):
 
         base, _ = resolve_reference(Path(settings.required("ZILS_IMAGE_REFERENCE")))
         return base
+    if model in models.d3_family():
+        return models.text_runtime(model).base_path(download=True, model=model)
     if model in models.TEXT_ADAPTER_MODELS:
         return models.text_runtime(model).base_path(download=True)
     from huggingface_hub import snapshot_download

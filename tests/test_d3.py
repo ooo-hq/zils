@@ -379,6 +379,60 @@ class D3ModuleTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "outside the pinned recipe"):
                 d3.write_candidate(adapter, root / "candidate-2")
 
+    def test_promoted_profiles_join_the_d3_family(self):
+        """A Zils base promoted from d3 is its own profile: same runtime, own repo, pins and candidates."""
+        from zils import image_contract
+
+        r1 = "d3-mini-4.5b-zils-r1"
+        spec = {
+            **models.spec(models.D3),
+            "id": r1,
+            "base": "zils-ai/" + r1,
+            "base_revision": "0" * 40,
+            "parent": {"id": models.D3, "base_revision": models.spec(models.D3)["base_revision"]},
+        }
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            self.enterContext(patch.dict(models.TEXT_RUNTIME_MODULES, {r1: ".d3"}))
+            self.enterContext(patch.dict(models.SPECS, {r1: spec}))
+            self.enterContext(patch.dict(models.PINS_FILES, {r1: "d3-r1-pins.json"}))
+            self.enterContext(
+                patch.dict(models.CANDIDATE_BASE_ENV, {r1: "ZILS_D3_R1_CANDIDATE_BASE"})
+            )
+            self.enterContext(
+                patch.object(models, "TEXT_ADAPTER_MODELS", (*models.TEXT_ADAPTER_MODELS, r1))
+            )
+            parent = {"a.weight": SHARDS[0], "b.weight": SHARDS[1]}
+            weights(root / "r1-base", parent)
+            pins = {
+                **d3.PINS,
+                "files": {
+                    n: hashlib.sha256(b"r1 " + n.encode()).hexdigest() for n in d3.PINS["files"]
+                },
+            }
+            self.enterContext(patch.object(models, "pins", lambda model: pins))
+            self.enterContext(
+                patch(
+                    "zils.d3.pinned_base_path",
+                    lambda download=False, model=models.D3: root / "r1-base",
+                )
+            )
+            self.assertEqual(models.d3_family(), (models.D3, r1))
+            self.assertIn(r1, models.base_candidate_models())
+            self.assertEqual(models.candidate_files(r1, "candidate"), models.D3_CANDIDATE_FILES)
+            self.assertEqual(image_contract.capabilities(r1)["max_images"], 4)
+            candidate = root / "candidate"
+            candidate.mkdir()
+            models.write_metadata(candidate, kind="candidate", model=r1)
+            for name in models.D3_CONTRACT_FILES:
+                (candidate / name).write_bytes(b"r1 " + name.encode())
+            weights(candidate, parent)
+            d3.validate_candidate(candidate, r1)
+            with self.assertRaisesRegex(ValueError, "candidate metadata"):
+                d3.validate_candidate(candidate, models.D3)
+            with self.assertRaisesRegex(ValueError, "not a d3 profile"):
+                d3.profile(models.H2O)
+
     def test_parity_reports_and_rejects_drift(self):
         reference = [0.7, 0.3]
         model = SimpleNamespace(

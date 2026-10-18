@@ -25,9 +25,9 @@ IMAGE_CAPABILITIES = {
 def capabilities(model):
     if model == models.IMAJEV:
         return IMAGE_CAPABILITIES
-    if model != models.D3:
+    if model not in models.d3_family():
         return TEXT_CAPABILITIES
-    spec = models.spec(models.D3)
+    spec = models.spec(model)
     return {
         "modalities": ["text", "image", "video"],
         "question_types": ["noul", "choice", "score"],

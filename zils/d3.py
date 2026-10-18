@@ -31,38 +31,51 @@ TARGETS = (
 PINS = models.pins(models.D3)
 
 
-def base_path(download=False):
-    """The weights every d3 load uses: the pinned release, or, for the validator's adapter regression
-    suite only, a verified base candidate named by ZILS_D3_CANDIDATE_BASE (weights intentionally unpinned)."""
-    candidate = settings.get("ZILS_D3_CANDIDATE_BASE")
+def profile(model):
+    """A d3-family profile id: the vendor base or a Zils base promoted from it (same graph, new weights)."""
+    if model not in models.d3_family():
+        raise ValueError("not a d3 profile")
+    return model
+
+
+def pins(model=models.D3):
+    """Pins of a d3-family profile; the vendor base's are the module constant."""
+    return PINS if profile(model) == models.D3 else models.pins(model)
+
+
+def base_path(download=False, model=models.D3):
+    """The weights every load of `model` uses: its pinned release, or, for the validator's adapter regression
+    suite only, a verified base candidate named by its candidate-base setting (weights intentionally unpinned)."""
+    candidate = settings.get(models.candidate_base_env(profile(model)))
     if candidate:
         path = Path(candidate).resolve(strict=True)
-        validate_candidate(path)
+        validate_candidate(path, model)
         return path
-    return pinned_base_path(download)
+    return pinned_base_path(download, model)
 
 
-def pinned_base_path(download=False):
+def pinned_base_path(download=False, model=models.D3):
     from huggingface_hub import snapshot_download
 
-    override = settings.get("ZILS_D3_BASE_DIR")
-    profile = models.spec(models.D3)
+    override = settings.get("ZILS_D3_BASE_DIR") if model == models.D3 else None
+    files = pins(model)["files"]
+    profile_spec = models.spec(model)
     root = (
         Path(override).resolve(strict=True)
         if override
         else Path(
             snapshot_download(
-                repo_id=profile["base"],
-                revision=profile["base_revision"],
+                repo_id=profile_spec["base"],
+                revision=profile_spec["base_revision"],
                 cache_dir=str(
                     Path(os.environ.get("HF_HOME", str(ROOT / ".cache/huggingface"))) / "hub"
                 ),
-                allow_patterns=list(PINS["files"]),
+                allow_patterns=list(files),
                 local_files_only=not download,
             )
         )
     )
-    for name, expected in PINS["files"].items():
+    for name, expected in files.items():
         with (root / name).open("rb") as stream:
             if hashlib.file_digest(stream, "sha256").hexdigest() != expected:
                 raise OSError(f"d3 base file {name} differs from its pin")
@@ -71,7 +84,7 @@ def pinned_base_path(download=False):
 
 @functools.cache
 def vendor():
-    """d3_runtime from the pinned release only; a base candidate supplies weights, never code."""
+    """d3_runtime from the vendor's pinned release only; promoted bases and candidates supply weights, never code."""
     root = pinned_base_path()
     sys.path.insert(0, str(root))
     import d3_runtime
@@ -173,10 +186,10 @@ class Encoder:
         return (batch if isinstance(batch, list) else batch["input_ids"][0].tolist()), names
 
 
-def validate_inputs(splits, root=None):
+def validate_inputs(splits, root=None, model=models.D3):
     from .miner_grading import workload_profile
 
-    encoder, lengths = Encoder(base_path()), []
+    encoder, lengths = Encoder(base_path(model=model)), []
     for split, rows in splits.items():
         for row in rows:
             images = ()
@@ -187,7 +200,7 @@ def validate_inputs(splits, root=None):
             ids, _ = encoder.encode(row["state"], row["question"], images=images)
             if split == "train":
                 lengths.append(len(ids))
-    return workload_profile(lengths, model=models.D3)
+    return workload_profile(lengths, model=model)
 
 
 def verify_runtime():
@@ -219,14 +232,15 @@ def validate_adapter_config(checkpoint, targets):
     if path.is_symlink() or not path.is_file() or path.stat().st_size > 16384:
         raise ValueError("d3 adapter configuration must be a bounded regular file")
     config = json.loads(path.read_text())
-    profile = models.spec(models.D3)
+    meta = models.metadata(checkpoint)
+    base = models.spec(profile(meta["model"] if meta else models.D3))
     required = {
         "r": 16,
         "lora_alpha": 32,
         "lora_dropout": 0.05,
         "bias": "none",
-        "base_model_name_or_path": profile["base"],
-        "revision": profile["base_revision"],
+        "base_model_name_or_path": base["base"],
+        "revision": base["base_revision"],
         "modules_to_save": None,
     }
     if not isinstance(config, dict):
@@ -238,12 +252,19 @@ def validate_adapter_config(checkpoint, targets):
         raise ValueError(f"Adapter {', '.join(wrong)} differs from the pinned d3 recipe")
 
 
-def validate_candidate(checkpoint):
-    """A base candidate changes weights only; every contract file, config.json included, is the pin."""
+def validate_candidate(checkpoint, model=None):
+    """A base candidate changes weights only; every contract file, config.json included, is its parent's pin.
+    `model`, when given, is the parent profile the caller expects."""
     checkpoint = Path(checkpoint)
     meta = models.metadata(checkpoint)
-    if meta is None or meta["model"] != models.D3 or meta["kind"] != "candidate":
+    if (
+        meta is None
+        or meta["model"] not in models.d3_family()
+        or meta["kind"] != "candidate"
+        or (model is not None and meta["model"] != model)
+    ):
         raise ValueError("base candidate requires d3 candidate metadata")
+    files = pins(meta["model"])["files"]
     for entry in checkpoint.iterdir():
         if entry.name not in models.D3_CANDIDATE_FILES:
             raise ValueError(f"base candidate contains an unexpected entry: {entry.name}")
@@ -253,14 +274,14 @@ def validate_candidate(checkpoint):
             raise ValueError(f"base candidate requires a regular {name}")
         if name in models.D3_CONTRACT_FILES:
             with path.open("rb") as stream:
-                if hashlib.file_digest(stream, "sha256").hexdigest() != PINS["files"][name]:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != files[name]:
                     raise ValueError(f"base candidate {name} differs from the pinned parent")
     # Weights must load exactly: the parent's tensor names, held in the two pinned shard files.
     from safetensors import SafetensorError, safe_open
 
     index = "model.safetensors.index.json"
     shards = ("model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors")
-    parent = json.loads((pinned_base_path() / index).read_text())["weight_map"]
+    parent = json.loads((pinned_base_path(model=meta["model"]) / index).read_text())["weight_map"]
     mapped = json.loads((checkpoint / index).read_text())
     mapped = mapped.get("weight_map") if isinstance(mapped, dict) else None
     if not isinstance(mapped, dict):
@@ -300,9 +321,10 @@ def write_candidate(adapter, out):
 
     adapter, out = Path(adapter), Path(out)
     meta = models.metadata(adapter)
-    if meta is None or meta["model"] != models.D3 or meta["kind"] != "adapter":
+    if meta is None or meta["model"] not in models.d3_family() or meta["kind"] != "adapter":
         raise ValueError("merge requires a d3 adapter checkpoint")
-    root = pinned_base_path()
+    parent = meta["model"]
+    root = pinned_base_path(model=parent)
     index = "model.safetensors.index.json"
     weight_map = json.loads((root / index).read_text())["weight_map"]
     targets = {
@@ -350,8 +372,8 @@ def write_candidate(adapter, out):
         raise RuntimeError("adapter targets missing from the backbone shards")
     for name in (index, *models.D3_CONTRACT_FILES):
         shutil.copyfile(root / name, out / name)
-    models.write_metadata(out, kind="candidate", model=models.D3)
-    validate_candidate(out)
+    models.write_metadata(out, kind="candidate", model=parent)
+    validate_candidate(out, parent)
 
     def sha(path):
         with path.open("rb") as stream:
@@ -359,8 +381,8 @@ def write_candidate(adapter, out):
 
     return {
         "version": "zils-base-candidate/v1",
-        "parent": models.spec(models.D3),
-        "parent_files_sha256": dict(PINS["files"]),
+        "parent": models.spec(parent),
+        "parent_files_sha256": dict(pins(parent)["files"]),
         "adapter_sha256": sha(adapter / "adapter_model.safetensors"),
         "recipe": {"merge": "lora_alpha/r scaled B@A in fp32, stored bf16", "scaling": scaling},
         "merged_tensors": merged,
@@ -376,7 +398,7 @@ class DecisionModel:
 
         # Setup invariants raise OSError (node unavailable); only checkpoint faults blame the miner.
         self.meta = models.metadata(checkpoint)
-        if self.meta is None or self.meta["model"] != models.D3:
+        if self.meta is None or self.meta["model"] not in models.d3_family():
             raise ValueError("d3 requires a d3 checkpoint")
         candidate = self.meta["kind"] == "candidate"
         if candidate and train:
@@ -389,9 +411,9 @@ class DecisionModel:
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
         torch.set_float32_matmul_precision("highest")
-        root = base_path()
+        root = base_path(model=self.meta["model"])
         if candidate:
-            validate_candidate(checkpoint)
+            validate_candidate(checkpoint, self.meta["model"])
             root = Path(checkpoint)
         self.encoder = Encoder(root)
         self.tokenizer = self.encoder.tokenizer
@@ -542,6 +564,7 @@ def main():
     reference = sub.add_parser("reference")
     reference.add_argument("--out", required=True)
     reference.add_argument("--no-download", action="store_true")
+    reference.add_argument("--model", choices=models.d3_family(), default=models.D3)
     trainer = sub.add_parser("train")
     for name in ("data", "reference", "out"):
         trainer.add_argument("--" + name, required=True)
@@ -555,13 +578,14 @@ def main():
     checker.add_argument("--cases", required=True)
     args = parser.parse_args()
     if args.command == "reference":
-        base_path(download=not args.no_download)
+        base_path(download=not args.no_download, model=args.model)
         path = Path(args.out)
         path.mkdir(parents=True, exist_ok=False)
-        models.write_metadata(path, kind="base", model=models.D3)
+        models.write_metadata(path, kind="base", model=args.model)
         (path / "model.json").chmod(0o444)
     elif args.command == "train":
-        train(args, model_id=models.D3)
+        # The reference checkpoint names the profile, so promoted bases train without new flags.
+        train(args, model_id=profile((models.metadata(args.reference) or {}).get("model")))
     elif args.command == "candidate":
         print(json.dumps(write_candidate(args.adapter, args.out), indent=2))
     else:

@@ -177,7 +177,7 @@ def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None, model=
                 timeout=3600,
                 cwd=env_root,
             )
-        if model == models.D3:
+        if model in models.d3_family():
             stage = "sizing"
             sized = run(
                 [runtime_python, "-c", SIZING_PROBE, json.dumps(STATE["ticket"])]
@@ -255,7 +255,7 @@ def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None, model=
             "max_prompt_tokens": reload["max_prompt_tokens"],
         }
         report["reload_predict_ok"] = bool(reload["ok"])
-        if model == models.D3 and report["reload_predict_ok"]:
+        if model in models.d3_family() and report["reload_predict_ok"]:
             stage = "parity"
             cases = out / "parity.jsonl"
             targets = (1000, 2000, cap - HEADROOM_TOKENS)
@@ -290,7 +290,7 @@ def main(argv=None):
     parser.add_argument(
         "--root", default=".", help="zils checkout (runtime imports zils from here)"
     )
-    parser.add_argument("--model", choices=(models.H2O, models.D3), default=models.H2O)
+    parser.add_argument("--model", choices=(models.H2O, *models.d3_family()), default=models.H2O)
     parser.add_argument(
         "--runtime-python", required=True, help=".venv-h2o/bin/python or .venv-d3/bin/python"
     )
