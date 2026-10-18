@@ -16,8 +16,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from zils import models  # noqa: E402
 
-ORIGIN = {models.H2O: " by h2oai, Apache License 2.0", models.D3: "; licence terms are in LICENSE"}
-CANDIDATE_ID_PREFIX = {models.H2O: "h2o-lightning-4b", models.D3: "d3-mini-4.5b"}
+ORIGIN = {
+    models.H2O: " by h2oai, Apache License 2.0",
+    **{m: "; licence terms are in LICENSE" for m in models.d3_family()},
+}
+CANDIDATE_ID_PREFIX = {
+    models.H2O: "h2o-lightning-4b",
+    **{m: "d3-mini-4.5b" for m in models.d3_family()},
+}
 
 NOTICE = """Zils base model, round {round}.
 Derived from {base} (revision {revision}){origin}.
@@ -96,11 +102,29 @@ def main():
         "parent": {"id": parent["id"], "base_revision": parent["base_revision"]},
     }
     pins = {name: sha(staging / name) for name in sorted(p.name for p in staging.iterdir())}
+    # The new profile's pins file: the parent's runtime pins over the published files (README.md excluded).
+    pins_file = {
+        **models.pins(args.model),
+        "files": {k: v for k, v in pins.items() if k != "README.md"},
+    }
+    pins_path = staging.parent / f"{candidate_id}-pins.json"
+    pins_path.write_text(json.dumps(pins_file, indent=2, sort_keys=True) + "\n")
+    registration = {
+        "TEXT_ADAPTER_MODELS": candidate_id,
+        "TEXT_RUNTIME_MODULES": models.TEXT_RUNTIME_MODULES[args.model],
+        "RUNTIME_PYTHON_ENV": models.RUNTIME_PYTHON_ENV[args.model],
+        "CANDIDATE_BASE_ENV": models.CANDIDATE_BASE_ENV[args.model].replace(
+            "_CANDIDATE_BASE", f"_ZILS_R{args.round}_CANDIDATE_BASE"
+        ),
+        "PINS_FILES": pins_path.name,
+    }
     result = {
         "staged": str(staging),
         "repo": repo,
         "proposed_spec_entry": entry,
         "proposed_pin_files": pins,
+        "proposed_pins_file": str(pins_path),
+        "proposed_registration": registration,
         "uploaded": False,
     }
     if args.upload:

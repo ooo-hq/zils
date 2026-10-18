@@ -16,6 +16,25 @@ a registry alias; automatic "follow stable" upgrades are not implemented. Since
 17 October 2026 both channels name d3-mini; existing H2O jobs keep their frozen
 profile and move to d3 only through `base_change` upgrade jobs.
 
+## Promoted profiles
+
+A confirmed d3 winner becomes a new profile, not a new revision of `d3-mini-4.5b-v1`:
+`scripts/promote_base.py --model d3-mini-4.5b-v1 --round N` stages the candidate's
+files with a Zils `NOTICE` and `README.md`, uploads them to `zils-ai/d3-mini-4.5b-zils-rN`,
+and prints the `SPECS` entry (`parent` names the profile it was trained from), the
+pins file `d3-mini-4.5b-zils-rN-pins.json` (the parent's runtime pins over the
+published files) and the registration the runtime needs: the new id joins
+`TEXT_ADAPTER_MODELS`, `TEXT_RUNTIME_MODULES` (`.d3`), `RUNTIME_PYTHON_ENV` (the
+same interpreter), `CANDIDATE_BASE_ENV` and `PINS_FILES`. Every d3-family profile
+shares the vendor runtime code, which is loaded from the vendor release only; the
+profile a checkpoint belongs to comes from its `model.json`, so a reference
+written with `zils.d3 reference --model <id>` trains, evaluates and serves
+adapters for that base with no new flags. Frozen jobs keep their profile; the
+platform registers the row (`zils_model_profiles`) and the `latest` channel names
+the new id. `zils.d3 candidate --adapter <dir> --out <dir>` is the reference merge
+recipe: the parent's shards with `lora_alpha / r` scaled `B @ A` added to each of
+the 152 language targets, contract files copied byte for byte.
+
 ## What stays fixed
 
 Only the weights change. A candidate must keep:

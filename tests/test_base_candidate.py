@@ -176,6 +176,26 @@ class BaseCandidateTest(unittest.TestCase):
                 self.assertEqual(entry["parent"]["id"], model)
                 self.assertEqual(entry["base"], result["repo"])
                 self.assertEqual(entry["max_input_tokens"], models.spec(model)["max_input_tokens"])
+                registration = result["proposed_registration"]
+                self.assertEqual(
+                    registration["TEXT_RUNTIME_MODULES"], models.TEXT_RUNTIME_MODULES[model]
+                )
+                self.assertEqual(
+                    registration["RUNTIME_PYTHON_ENV"], models.RUNTIME_PYTHON_ENV[model]
+                )
+                self.assertIn("_ZILS_R3_CANDIDATE_BASE", registration["CANDIDATE_BASE_ENV"])
+                pins_file = json.loads(Path(result["proposed_pins_file"]).read_text())
+                self.assertEqual(
+                    registration["PINS_FILES"], Path(result["proposed_pins_file"]).name
+                )
+                self.assertNotIn("README.md", pins_file["files"])
+                self.assertEqual(
+                    pins_file["files"]["NOTICE"], result["proposed_pin_files"]["NOTICE"]
+                )
+                self.assertEqual(
+                    {k: v for k, v in pins_file.items() if k != "files"},
+                    {k: v for k, v in models.pins(model).items() if k != "files"},
+                )
 
     def test_promote_base_refuses_a_candidate_of_another_profile(self):
         with tempfile.TemporaryDirectory() as tmp:
