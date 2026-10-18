@@ -9,6 +9,7 @@ real environment. d3 also checks its readout against the vendor's. Mirrors the
 
 import argparse
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -114,7 +115,15 @@ def parity_cases(path, rows, states):
     )
 
 
-def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None, model=models.H2O):
+def qualify(
+    root,
+    runtime_python,
+    out,
+    run=subprocess.run,
+    free_mib=None,
+    model=models.H2O,
+    terms_sha256=None,
+):
     out.mkdir(parents=True, exist_ok=True)
     (out / "qualification.json").unlink(missing_ok=True)  # never leave a stale passing report
     module = "zils" + models.TEXT_RUNTIME_MODULES[model]
@@ -125,6 +134,10 @@ def qualify(root, runtime_python, out, run=subprocess.run, free_mib=None, model=
         "trainer_sha256": trainer_identity(model),
         "completed_at": None,
     }
+    if terms_sha256 is not None:  # the miner terms version this host accepts (chain admission)
+        if not re.fullmatch("[a-f0-9]{64}", terms_sha256):
+            raise ValueError("terms_sha256 must be the sha256 hex digest of docs/mining-terms.md")
+        report["terms_sha256"] = terms_sha256
 
     def finish(code):
         report["completed_at"] = datetime.now(timezone.utc).isoformat()
@@ -295,12 +308,17 @@ def main(argv=None):
         "--runtime-python", required=True, help=".venv-h2o/bin/python or .venv-d3/bin/python"
     )
     parser.add_argument("--out", required=True)
+    parser.add_argument(
+        "--terms-sha256",
+        help="sha256 of docs/mining-terms.md you accept; recorded for chain admission",
+    )
     args = parser.parse_args(argv)
     report = qualify(
         Path(args.root).resolve(),
         args.runtime_python,
         Path(args.out).resolve(),
         model=args.model,
+        terms_sha256=args.terms_sha256,
     )
     print(json.dumps(report, indent=2))
     return 0
