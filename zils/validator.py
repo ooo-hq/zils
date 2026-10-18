@@ -3,18 +3,84 @@
 import collections
 import http.client
 import json
+import os
 import re
 import shutil
 import sys
 import threading
 import time
 import uuid
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import zils
 
 from . import models, protocol as wire, settings
 from .runtime import CapacityUnavailable, digest, locked, run_child, signed, signing_key, verified
+
+# The incumbent base is scored as a row outside every roster; the publisher refuses a roster uid there.
+INCUMBENT_UID = 65535
+SUBMISSION_DIRS = {"adapter": "submissions", "candidate": "base-submissions"}
+
+
+def run_evaluate(
+    args,
+    attempt,
+    name,
+    submissions,
+    cases,
+    *,
+    base_revision,
+    model,
+    images=None,
+    minimum_mib=0,
+    wait_for_capacity=False,
+):
+    """One sandboxed `zils evaluate` of `submissions` on `cases`, deferred while GPU capacity is unavailable."""
+    manifest = attempt / f"{name}-submissions.json"
+    wire.write_json(manifest, submissions)
+    report = attempt / f"{name}.json"
+    command = [
+        sys.executable,
+        "-m",
+        "zils",
+        "evaluate",
+        "--submissions",
+        str(manifest),
+        "--cases",
+        str(cases),
+        "--base-revision",
+        base_revision,
+        "--runner-python",
+        settings.required("ZILS_IMAGE_RUNTIME_PYTHON")
+        if model == models.IMAJEV
+        else args.runtime_python,
+        "--device",
+        args.device,
+        "--report",
+        str(report),
+    ]
+    if images is not None:
+        command.extend(["--images", str(images)])
+    waiting = False
+    while True:
+        try:
+            run_child(
+                command,
+                attempt / f"{name}.log",
+                args.device,
+                timeout=120 + 600 * len(submissions),
+                **({"model": model, "minimum_mib": minimum_mib} if model == models.IMAJEV else {}),
+            )
+            break
+        except CapacityUnavailable:
+            if not wait_for_capacity:
+                raise
+            if not waiting:
+                print("validator: waiting for evaluation capacity", flush=True)
+                waiting = True
+            time.sleep(max(1, args.poll))
+    return json.loads(report.read_text())
 
 
 def evaluate_round(
@@ -47,6 +113,8 @@ def evaluate_round(
             options = {"expected_endpoint": claim["endpoint"], "round_scoped": True}
             if fetch_checkpoint is None:
                 options["model"] = model
+                if admission_settings(config)[1]:
+                    options["public"] = True
             (fetch_checkpoint or wire.fetch_checkpoint)(claim, path, **options)
             if models.checkpoint_model(path) != model:
                 raise ValueError("Submission differs from the job model profile")
@@ -55,54 +123,18 @@ def evaluate_round(
             failed[uid] = str(error)
 
     def evaluate(submissions, cases, name, base_revision=None):
-        manifest = attempt / f"{name}-submissions.json"
-        wire.write_json(manifest, submissions)
-        report = attempt / f"{name}.json"
-        command = [
-            sys.executable,
-            "-m",
-            "zils",
-            "evaluate",
-            "--submissions",
-            str(manifest),
-            "--cases",
-            str(cases),
-            "--base-revision",
-            base_revision or config["base_revision"],
-            "--runner-python",
-            settings.required("ZILS_IMAGE_RUNTIME_PYTHON")
-            if model == models.IMAJEV
-            else args.runtime_python,
-            "--device",
-            args.device,
-            "--report",
-            str(report),
-        ]
-        if frozen_images:
-            command.extend(["--images", str(directory / "images")])
-        waiting = False
-        while True:
-            try:
-                run_child(
-                    command,
-                    attempt / f"{name}.log",
-                    args.device,
-                    timeout=120 + 600 * len(submissions),
-                    **(
-                        {"model": model, "minimum_mib": config.get("min_free_mib", 0)}
-                        if model == models.IMAJEV
-                        else {}
-                    ),
-                )
-                break
-            except CapacityUnavailable:
-                if not wait_for_capacity:
-                    raise
-                if not waiting:
-                    print("validator: waiting for evaluation capacity", flush=True)
-                    waiting = True
-                time.sleep(max(1, args.poll))
-        return json.loads(report.read_text())
+        return run_evaluate(
+            args,
+            attempt,
+            name,
+            submissions,
+            cases,
+            base_revision=base_revision or config["base_revision"],
+            model=model,
+            images=directory / "images" if frozen_images else None,
+            minimum_mib=config.get("min_free_mib", 0),
+            wait_for_capacity=wait_for_capacity,
+        )
 
     baseline = None
     baseline_model = model
@@ -258,6 +290,202 @@ def attach_base_tier(config, directory, work, report):
     return {**report, "base_tier": json.loads(frozen.read_text())}
 
 
+def base_draws(config, directory):
+    """The sealed draws this validator scores itself, audited now and ordered as the track lists them
+    (the first decides, the last confirms). None when the config has no `base_round_dir`."""
+    if "base_round_dir" not in config:
+        return None
+    from . import base_round
+
+    if "base_tier" not in config or "base_reference" not in config:
+        raise ValueError("base_round_dir requires a base_tier track and base_reference")
+    track = base_round.validate_track(config["base_tier"])
+    model = models.validate_spec(config["model"]) if "model" in config else models.KEV
+    if model not in models.d3_family():
+        raise ValueError("the base-tier intake scores d3-family candidates only")
+    found = {}
+    root = Path(directory) / config["base_round_dir"]
+    for path in sorted(p for p in root.iterdir() if (p / "manifest.json").is_file()):
+        found[frozenset(base_round.draw(path).items())] = path
+    draws = []
+    for item in track["draws"]:
+        if frozenset(item.items()) not in found:
+            raise ValueError(f"base_round_dir has no sealed draw {item['manifest_sha256'][:12]}")
+        draws.append((item, found[frozenset(item.items())]))
+    reference = Path(directory) / config["base_reference"]
+    if (
+        models.checkpoint_model(reference) != model
+        or zils.checkpoint_hash(reference) != track["incumbent_sha256"]
+    ):
+        raise ValueError("base_reference is not the track's incumbent checkpoint")
+    return draws
+
+
+def base_tier_epoch(
+    config,
+    directory,
+    work,
+    registry,
+    args,
+    draws,
+    *,
+    public_endpoints=False,
+    wait_for_capacity=False,
+):
+    """Score this round's base candidates on the sealed draws and write the decision sidecar.
+
+    Every distinct checkpoint hash is downloaded once into a content-addressed store and scored once
+    per draw and split; a hash announced again in a later round costs no download and no GPU time
+    (the cross-round cap). The decision covers the candidates announced this round. The old sidecar
+    is removed first, so an epoch that fails pays nobody. Per-case predictions stay in the store."""
+    from . import base_round
+
+    track = base_round.validate_track(config["base_tier"])
+    model = models.validate_spec(config["model"])
+    validate_candidate = models.text_runtime(model).validate_candidate
+    store = Path(directory) / "base-tier" / "store"
+    sidecar = Path(directory) / "base-tier" / "decision.json"
+    sidecar.unlink(missing_ok=True)
+    store.mkdir(mode=0o700, parents=True, exist_ok=True)
+    attempt = work / ("base-tier-" + uuid.uuid4().hex)
+    attempt.mkdir(mode=0o700)
+    reference = (Path(directory) / config["base_reference"]).resolve()
+    entries = {INCUMBENT_UID: (track["incumbent_sha256"], reference)}
+    rejected = {}
+    for uid, message in sorted(registry.items()):
+        claim = message["claim"]
+        target = store / claim["sha256"] / "checkpoint"
+        if not target.exists():
+            fetched = target.with_name("fetch-" + uuid.uuid4().hex)
+            fetched.parent.mkdir(mode=0o700, exist_ok=True)
+            try:
+                wire.fetch_checkpoint(
+                    claim,
+                    fetched,
+                    expected_endpoint=claim["endpoint"],
+                    round_scoped=True,
+                    model=model,
+                    kind="candidate",
+                    public=public_endpoints,
+                )
+                validate_candidate(fetched, model)
+                fetched.rename(target)
+            except (ValueError, OSError, http.client.HTTPException) as error:
+                shutil.rmtree(fetched, ignore_errors=True)
+                rejected[uid] = str(error)[:400]
+                continue
+        entries[uid] = (claim["sha256"], target)
+    decisions = []
+    for item, path in draws:
+        _, cases = base_round.audit(path)
+        key = item["manifest_sha256"]
+
+        def scores(sha256, split):
+            return store / sha256 / f"{key}-{split}.json"
+
+        for split in base_round.SPLITS:
+            pending = [
+                {"uid": uid, "checkpoint": str(checkpoint), "sha256": sha256}
+                for uid, (sha256, checkpoint) in sorted(entries.items())
+                if not scores(sha256, split).exists()
+            ]
+            if not pending:
+                continue
+            report = run_evaluate(
+                args,
+                attempt,
+                f"{key[:12]}-{split}",
+                pending,
+                path / f"{split}.jsonl",
+                base_revision=models.spec(model)["base_revision"],
+                model=model,
+                wait_for_capacity=wait_for_capacity,
+            )
+            for row in report["miners"]:
+                if row["uid"] == INCUMBENT_UID and row["status"] != "evaluated":
+                    raise RuntimeError(
+                        "incumbent evaluation failed; no base candidate can be scored: "
+                        + row.get("error", "no error recorded")
+                    )
+                target = scores(entries[row["uid"]][0], split)
+                target.parent.mkdir(mode=0o700, exist_ok=True)
+                wire.write_json(
+                    target, {"dataset_sha256": report["dataset_sha256"], "miners": [row]}
+                )
+        rows = {}
+        for split in base_round.SPLITS:
+            rows[split] = {}
+            for uid, (sha256, _) in entries.items():
+                stored = json.loads(scores(sha256, split).read_text())
+                for row in base_round.rows_for(stored, cases[split]).values():
+                    rows[split][uid] = {**row, "uid": uid}
+                if uid not in rows[split]:
+                    rejected[uid] = stored["miners"][0].get("error", "evaluation failed")[:400]
+        decision = base_round.decide(
+            cases, INCUMBENT_UID, rows["calibration"], rows["test"], track["policy"]
+        )
+        decision.update(
+            manifest_sha256=key,
+            round_id=work.name,
+            rejected={str(uid): error for uid, error in sorted(rejected.items())},
+        )
+        decisions.append(decision)
+    if len(decisions) > 1:
+        decisions[-1]["confirmed_winner"] = base_round.confirm(decisions[0], decisions[-1])
+    for decision in decisions:
+        wire.write_json(attempt / f"decision-{decision['manifest_sha256'][:12]}.json", decision)
+    wire.write_json(attempt / "decision.json", decisions[-1])
+    os.replace(attempt / "decision.json", sidecar)
+    return decisions[-1]
+
+
+def accept(config, current, members, registries, rounds, message, source, public_endpoints):
+    """Route one signed announcement into the collecting round: an adapter by default, a base
+    candidate when the claim says `"kind": "candidate"` and this validator scores candidates."""
+    if current.get("status") != "collecting":
+        return 409, {"error": "round is not collecting"}
+    claim = message.get("claim")
+    if not isinstance(claim, dict):
+        raise ValueError("claim must be an object")
+    uid = claim.get("uid")
+    if type(uid) is not int or uid not in members:
+        raise ValueError("unknown miner")
+    if claim.get("round_id") != current["round_id"]:
+        return 409, {"error": "round has changed; request the current round"}
+    kind = "candidate" if claim.get("kind") == "candidate" else "adapter"
+    if kind == "candidate":
+        if "base_tier" not in current:
+            return 409, {"error": "this validator does not collect base candidates"}
+        if claim.get("sha256") == current["base_tier"]["incumbent_sha256"]:
+            raise ValueError("the incumbent base is not a candidate")
+    # Pin downloads to the authenticated caller's TCP source address. The artifact port
+    # is the operator-assigned one for static members, or the signed claim's for public miners.
+    port = (
+        wire.endpoint_port(claim.get("endpoint"))[1]
+        if public_endpoints
+        else config["members"][str(uid)]["port"]
+    )
+    registry = registries[kind]
+    updated = dict(registry)
+    wire.register(
+        message,
+        current["round_id"],
+        members,
+        updated,
+        endpoints={uid: f"http://{source}:{port}"},
+        job_sha256=config.get("job_sha256") if kind == "adapter" else None,
+        public=public_endpoints,
+        kind=kind,
+    )
+    path = rounds / current["round_id"] / SUBMISSION_DIRS[kind] / f"{uid}.json"
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    if not path.exists():
+        wire.write_json(path, message)
+    registry.clear()
+    registry.update(updated)
+    return 200, {"status": "accepted", "round_id": current["round_id"], "kind": kind}
+
+
 def admission_settings(config):
     """Static member allowlist with private transport, or chain-derived members with public endpoints."""
     mode = config.get("admission", "members")
@@ -281,6 +509,8 @@ def validator(config, directory, args):
     )
     condition = threading.Condition()
     current, registry, acks = {}, {}, set()
+    registries = {"adapter": registry, "candidate": {}}
+    draws = base_draws(config, directory)
     recent = collections.defaultdict(collections.deque)
 
     def throttled(address):
@@ -325,44 +555,19 @@ def validator(config, directory, args):
                         if public_endpoints and throttled(self.client_address[0]):
                             self.send(429, {"error": "too many submissions from this address"})
                             return
-                        if current.get("status") != "collecting":
-                            self.send(409, {"error": "round is not collecting"})
-                            return
-                        claim = message.get("claim")
-                        if not isinstance(claim, dict):
-                            raise ValueError("claim must be an object")
-                        uid = claim.get("uid")
-                        if type(uid) is not int or uid not in members:
-                            raise ValueError("unknown miner")
-                        if claim.get("round_id") != current["round_id"]:
-                            self.send(
-                                409, {"error": "round has changed; request the current round"}
-                            )
-                            return
-                        # Pin downloads to the authenticated caller's TCP source address. The artifact port
-                        # is the operator-assigned one for static members, or the signed claim's for public miners.
-                        port = (
-                            wire.endpoint_port(claim.get("endpoint"))[1]
-                            if public_endpoints
-                            else config["members"][str(uid)]["port"]
-                        )
-                        endpoint = f"http://{self.client_address[0]}:{port}"
-                        updated = dict(registry)
-                        wire.register(
-                            message,
-                            current["round_id"],
+                        code, payload = accept(
+                            config,
+                            current,
                             members,
-                            updated,
-                            endpoints={uid: endpoint},
-                            job_sha256=config.get("job_sha256"),
-                            public=public_endpoints,
+                            registries,
+                            rounds,
+                            message,
+                            self.client_address[0],
+                            public_endpoints,
                         )
-                        path = rounds / current["round_id"] / "submissions" / f"{uid}.json"
-                        if not path.exists():
-                            wire.write_json(path, message)
-                        registry.clear()
-                        registry.update(updated)
-                        self.send(200, {"status": "accepted", "round_id": current["round_id"]})
+                        self.send(code, payload)
+                        if code != 200:
+                            return
                     elif self.path == "/ack":
                         if not isinstance(message.get("payload"), dict):
                             raise ValueError("payload must be an object")
@@ -414,7 +619,8 @@ def validator(config, directory, args):
                 rid = uuid.uuid4().hex
                 work = rounds / rid
                 work.mkdir(mode=0o700)
-                (work / "submissions").mkdir(mode=0o700)
+                for folder in SUBMISSION_DIRS.values():
+                    (work / folder).mkdir(mode=0o700)
                 job = {
                     "kind": "round",
                     "round_id": rid,
@@ -431,6 +637,11 @@ def validator(config, directory, args):
                 for name in ("model", "min_free_mib", "max_seconds"):
                     if name in config:
                         job[name] = config[name]
+                if draws is not None:
+                    job["base_tier"] = {
+                        "incumbent_sha256": config["base_tier"]["incumbent_sha256"],
+                        "draws": [item for item, _ in draws],
+                    }
                 wire.write_json(work / "job.json", job)
             for name in (
                 "base_revision",
@@ -455,27 +666,31 @@ def validator(config, directory, args):
                         {int(uid): hotkey for uid, hotkey in snapshot["members"].items()}
                     )
             with condition:
-                registry.clear()
+                for kind in registries:
+                    registries[kind].clear()
                 acks.clear()
                 current.clear()
                 current.update(job)
-                for path in (work / "submissions").glob("*.json"):
-                    message = json.loads(path.read_text())
-                    c = message["claim"]
-                    wire.register(
-                        message,
-                        job["round_id"],
-                        members,
-                        registry,
-                        endpoints={c["uid"]: c["endpoint"]},
-                        job_sha256=config.get("job_sha256"),
-                        public=public_endpoints,
-                    )
+                for kind, folder in SUBMISSION_DIRS.items():
+                    for path in (work / folder).glob("*.json"):
+                        message = json.loads(path.read_text())
+                        c = message["claim"]
+                        wire.register(
+                            message,
+                            job["round_id"],
+                            members,
+                            registries[kind],
+                            endpoints={c["uid"]: c["endpoint"]},
+                            job_sha256=config.get("job_sha256") if kind == "adapter" else None,
+                            public=public_endpoints,
+                            kind=kind,
+                        )
                 while len(registry) < len(members) and time.time() < job["deadline"]:
                     condition.wait(min(1, max(0.01, job["deadline"] - time.time())))
                 current["status"] = "evaluating"
             print(
-                f"validator: evaluating round {job['round_id']} ({len(registry)}/{len(members)} submissions)",
+                f"validator: evaluating round {job['round_id']} ({len(registry)}/{len(members)} "
+                f"submissions, {len(registries['candidate'])} base candidates)",
                 flush=True,
             )
             report = (
@@ -483,6 +698,18 @@ def validator(config, directory, args):
                 if (work / "report.json").exists()
                 else evaluate_round(config, directory, work, registry, args, wait_for_capacity=True)
             )
+            if draws is not None and not (work / "base-tier.json").exists():
+                base_tier_epoch(
+                    config,
+                    directory,
+                    work,
+                    registries["candidate"],
+                    args,
+                    draws,
+                    public_endpoints=public_endpoints,
+                    wait_for_capacity=True,
+                )
+            report = attach_base_tier(config, directory, work, report)
             fields = (
                 "uid",
                 "status",
@@ -501,10 +728,12 @@ def validator(config, directory, args):
                 "miners": [{k: m[k] for k in fields if k in m} for m in report["miners"]],
                 "chain_write": False,
             }
+            if report.get("base_tier") is not None:
+                # Aggregate base-tier metrics for miners; per-case predictions never leave the store.
+                public["base_tier"] = report["base_tier"]
             if chain_state is not None:
                 from bittensor.wallet import Wallet
 
-                report = attach_base_tier(config, directory, work, report)
                 with locked(work / "chain.lock"), testnet.connect(config) as sub:
                     outcome = testnet.publish_round(
                         config,
