@@ -57,7 +57,10 @@ def finite(value, minimum=0, maximum=math.inf):
 
 TRAINER_FILES = {
     models.H2O: ("zils/h2o.py", "zils/jevk5.py", "zils/h2o-pins.json", "requirements/h2o.txt"),
-    models.D3: ("zils/d3.py", "zils/jevk5.py", "zils/d3-pins.json", "requirements/d3.txt"),
+    **{
+        m: ("zils/d3.py", "zils/jevk5.py", "zils/" + models.PINS_FILES[m], "requirements/d3.txt")
+        for m in models.d3_family()
+    },
 }
 # Tuned bands; a profile's input cap decides which of them it can reach.
 BANDS = (512, 1024, 2048, 4096)

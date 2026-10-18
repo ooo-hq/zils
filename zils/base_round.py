@@ -192,7 +192,8 @@ def decide(cases, incumbent_uid, calibration_rows, test_rows, policy=None):
         },
         "policy": policy,
         "candidates": candidates,
-        "weights": zils.weight_vector([{"uid": c["uid"], "skill": c["skill"]} for c in eligible]),
+        # Winner takes all (owner decision, 18 October 2026): eligible runners-up earn nothing.
+        "weights": {winner["uid"]: 1.0} if winner else {},
         "pending_winner": None
         if winner is None
         else {"uid": winner["uid"], "sha256": winner["sha256"]},
@@ -211,13 +212,24 @@ def draw(root):
 
 def validate_track(track):
     """A fleet config's base-tier track: share, incumbent, allowed draws and the decision policy."""
-    if not isinstance(track, dict) or set(track) - {"share", "incumbent_sha256", "draws", "policy"}:
-        raise ValueError("base_tier accepts share, incumbent_sha256, draws and policy")
+    if not isinstance(track, dict) or set(track) - {
+        "share",
+        "incumbent_sha256",
+        "incumbent_uid",
+        "draws",
+        "policy",
+    }:
+        raise ValueError(
+            "base_tier accepts share, incumbent_sha256, incumbent_uid, draws and policy"
+        )
     share = track.get("share")
     if type(share) not in (int, float) or not 0 <= share <= 1:
         raise ValueError("base_tier.share must be a number in [0, 1]")
     if not re.fullmatch("[a-f0-9]{64}", str(track.get("incumbent_sha256"))):
         raise ValueError("base_tier.incumbent_sha256 must be the incumbent checkpoint hash")
+    king = track.get("incumbent_uid")
+    if king is not None and (type(king) is not int or not 0 <= king <= 65535):
+        raise ValueError("base_tier.incumbent_uid must be the roster uid that owns the incumbent")
     draws = track.get("draws")
     if not isinstance(draws, list) or not draws:
         raise ValueError("base_tier.draws must list at least one sealed draw")
@@ -234,10 +246,29 @@ def validate_track(track):
     return {**track, "policy": policy}
 
 
+def king_weights(track, members):
+    """King of the hill: with no eligible challenger the incumbent's miner keeps the whole base share.
+    The vendor base has no owner (`incumbent_uid` unset) and pays nobody."""
+    king = validate_track(track).get("incumbent_uid")
+    if king is None:
+        return {}
+    if str(king) not in members:
+        raise ValueError("base_tier.incumbent_uid is outside this registered fleet")
+    return {king: 1.0}
+
+
 def track_weights(track, decision, members):
-    """Base-tier weights a decision earns under a track; re-derived from its eligible candidates."""
+    """Base-tier weights a decision earns under a track: the pending winner takes the whole share,
+    otherwise the incumbent's miner keeps it (king of the hill)."""
     track = validate_track(track)
-    for key in ("manifest_sha256", "dataset_sha256", "policy", "incumbent", "candidates"):
+    for key in (
+        "manifest_sha256",
+        "dataset_sha256",
+        "policy",
+        "incumbent",
+        "candidates",
+        "pending_winner",
+    ):
         if key not in decision:
             raise ValueError("base-tier decision is missing " + key)
     if {k: decision[k] for k in ("manifest_sha256", "dataset_sha256")} not in track["draws"]:
@@ -254,12 +285,18 @@ def track_weights(track, decision, members):
         raise ValueError("eligible base candidates must be distinct and differ from the incumbent")
     if any(str(c["uid"]) not in members for c in eligible):
         raise ValueError("base-tier decision pays a miner outside this registered fleet")
-    weights = zils.weight_vector([{"uid": c["uid"], "skill": c["skill"]} for c in eligible])
+    pending = decision["pending_winner"]
+    if pending is None:
+        weights = {}
+    elif any(c["uid"] == pending["uid"] and c["sha256"] == pending["sha256"] for c in eligible):
+        weights = {pending["uid"]: 1.0}
+    else:
+        raise ValueError("base-tier pending winner is not an eligible candidate")
     if {str(k): v for k, v in weights.items()} != {
         str(k): v for k, v in decision.get("weights", weights).items()
     }:
-        raise ValueError("base-tier decision weights differ from its eligible candidates")
-    return weights
+        raise ValueError("base-tier decision weights differ from its pending winner")
+    return weights or king_weights(track, members)
 
 
 def confirm(first, second):

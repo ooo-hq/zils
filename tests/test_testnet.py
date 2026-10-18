@@ -334,6 +334,7 @@ class TestnetTest(unittest.TestCase):
                 {"uid": 2, "sha256": "d" * 64, "eligible": True, "skill": 0.4},
                 {"uid": 1, "sha256": "e" * 64, "eligible": False, "skill": 0.5},
             ],
+            "pending_winner": {"uid": 2, "sha256": "d" * 64},
             "weights": {"2": 1.0},
         }
 

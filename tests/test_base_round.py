@@ -196,9 +196,34 @@ class BaseRoundTest(unittest.TestCase):
                 {"uid": 2, "sha256": "d" * 64, "eligible": True, "skill": 0.4},
                 {"uid": 1, "sha256": "e" * 64, "eligible": False, "skill": 0.5},
             ],
+            "pending_winner": {"uid": 2, "sha256": "d" * 64},
             "weights": {"2": 1.0},
         }
         self.assertEqual(base_round.track_weights(track, decision, members), {2: 1.0})
+        # Winner takes all: a second eligible candidate earns nothing.
+        two = [
+            *decision["candidates"],
+            {"uid": 1, "sha256": "e" * 64, "eligible": True, "skill": 0.9},
+        ]
+        self.assertEqual(
+            base_round.track_weights(track, {**decision, "candidates": two}, members), {2: 1.0}
+        )
+        with self.assertRaisesRegex(ValueError, "not an eligible"):
+            base_round.track_weights(
+                track, {**decision, "pending_winner": {"uid": 1, "sha256": "e" * 64}}, members
+            )
+        nobody = {**decision, "pending_winner": None, "weights": {}}
+        self.assertEqual(base_round.track_weights(track, nobody, members), {})
+        # King of the hill: the incumbent's miner keeps the share until a challenger is eligible.
+        crowned = {**track, "incumbent_uid": 1}
+        self.assertEqual(base_round.track_weights(crowned, nobody, members), {1: 1.0})
+        self.assertEqual(base_round.track_weights(crowned, decision, members), {2: 1.0})
+        self.assertEqual(base_round.king_weights(crowned, members), {1: 1.0})
+        self.assertEqual(base_round.king_weights(track, members), {})
+        with self.assertRaisesRegex(ValueError, "outside this registered fleet"):
+            base_round.king_weights({**track, "incumbent_uid": 9}, members)
+        with self.assertRaisesRegex(ValueError, "incumbent_uid"):
+            base_round.validate_track({**track, "incumbent_uid": "1"})
         shared = [
             {"uid": 1, "sha256": "d" * 64, "eligible": True, "skill": 0.4},
             {"uid": 2, "sha256": "d" * 64, "eligible": True, "skill": 0.4},
@@ -209,7 +234,7 @@ class BaseRoundTest(unittest.TestCase):
             ("policy", {**decision, "policy": {**decision["policy"], "min_brier_improvement": 0}}),
             ("incumbent", {**decision, "incumbent": {"uid": 65535, "sha256": "f" * 64}}),
             ("roster", {**decision, "incumbent": {"uid": 1, "sha256": incumbent}}),
-            ("distinct", {**decision, "candidates": shared, "weights": {"1": 0.5, "2": 0.5}}),
+            ("distinct", {**decision, "candidates": shared}),
             (
                 "incumbent",
                 {
@@ -222,6 +247,7 @@ class BaseRoundTest(unittest.TestCase):
                 {
                     **decision,
                     "candidates": [{"uid": 7, "sha256": "d" * 64, "eligible": True, "skill": 0.4}],
+                    "pending_winner": {"uid": 7, "sha256": "d" * 64},
                     "weights": {"7": 1.0},
                 },
             ),

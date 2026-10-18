@@ -247,7 +247,7 @@ def evaluate(args):
     runner = Path(__file__).with_name(
         {
             models.H2O: "jevk5_runner.py",
-            models.D3: "jevk5_runner.py",
+            **{m: "jevk5_runner.py" for m in models.d3_family()},
             models.IMAJEV: "imajev_runner.py",
             models.KEV: "kev_runner.py",
         }[model]
