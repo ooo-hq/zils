@@ -225,6 +225,18 @@ You do not need a bundle, an operator or an invitation to enter the base tier:
 registration on subnet 579 is the admission. About an afternoon end to end, most
 of it the training run.
 
+The public base-tier validator on testnet subnet 579 (18 October 2026):
+
+| | |
+| --- | --- |
+| URL | `http://165.245.195.21:8900` |
+| Validator hotkey | `5HTAVUuHxV81VbYoX7DYFzebdyA1SRk3zazdZiiBN7zCcpxy` (uid 0 on subnet 579) |
+
+Plain HTTP; every reply is signed by that hotkey and the commands refuse any
+other signature. Rounds run hourly. Both values are for the testnet only: the
+host is temporary, and on mainnet the validator gets a new hotkey and a new URL.
+Use the values this table shows for the network you mine on.
+
 1. **Register a hotkey on testnet subnet 579** following the
    [registration guide](bittensor-registration.md); keep the hotkey file on the
    mining host and the coldkey elsewhere.
@@ -243,14 +255,15 @@ of it the training run.
 
    ```bash
    .venv-kev/bin/python -m zils.miner doctor \
-     --validator http://VALIDATOR_PUBLIC_IPV4:8900 --validator-hotkey VALIDATOR_SS58 \
+     --validator http://165.245.195.21:8900 \
+     --validator-hotkey 5HTAVUuHxV81VbYoX7DYFzebdyA1SRk3zazdZiiBN7zCcpxy \
      --wallet-name WALLET_NAME --wallet-hotkey MINER_KEY_NAME --wallet-path /absolute/wallets \
      --candidate candidate --port 8901
    ```
 
    You can run it before step 1 (it tells you to create the wallet), before
-   step 3 (it prints the merge recipe) and again after each fix. The
-   validator's URL and hotkey are published by the operator.
+   step 3 (it prints the merge recipe) and again after each fix. The URL and
+   hotkey are the ones in the table above.
 5. **Announce every round** with the command the doctor printed
    (`zils.miner announce-candidate`, same flags; details in
    [base candidates: announce](base-candidates.md#announce)). Open TCP 8901 to
