@@ -77,6 +77,33 @@ class QualifyNodeTest(unittest.TestCase):
         self.assertTrue(any("verify_runtime" in " ".join(map(str, c)) for c in calls))
         self.assertTrue(all("--id=0" in c for c in calls if c[0] == "nvidia-smi"))
 
+    def test_report_carries_the_accepted_terms_version(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(__file__).resolve().parents[1]
+            report = qualify_node.qualify(
+                root,
+                "python3.12",
+                Path(tmp) / "q",
+                run=self.fake_run([]),
+                free_mib=19500,
+                terms_sha256="f" * 64,
+            )
+            self.assertEqual(report["terms_sha256"], "f" * 64)
+            saved = json.loads((Path(tmp) / "q" / "qualification.json").read_text())
+            self.assertEqual(saved["terms_sha256"], "f" * 64)
+            with self.assertRaises(ValueError):
+                qualify_node.qualify(
+                    root, "python3.12", Path(tmp) / "r", run=self.fake_run([]), terms_sha256="x"
+                )
+        self.assertNotIn("terms_sha256", self.fake_report())
+
+    def fake_report(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(__file__).resolve().parents[1]
+            return qualify_node.qualify(
+                root, "python3.12", Path(tmp) / "q", run=self.fake_run([]), free_mib=19500
+            )
+
     def test_d3_uses_its_module_and_measured_sizing_and_checks_parity(self):
         calls = []
         rows = []
