@@ -61,6 +61,21 @@ class PublicAdmissionTest(unittest.TestCase):
         state["Keys"][2] = ""  # a deregistered slot is simply absent
         self.assertEqual(set(testnet.preflight(config, Chain())["members"]), {"1", "3"})
 
+    def test_round_config_uses_the_chain_snapshot_roster(self):
+        config = {
+            "chain": {"network": "test", "netuid": 579},
+            "admission": "chain",
+            "public_endpoints": True,
+        }
+        members = {1: "miner-a", 3: "miner-c"}
+        derived = validator.round_config(config, "chain", members)
+        self.assertEqual(
+            derived["members"], {"1": {"hotkey": "miner-a"}, "3": {"hotkey": "miner-c"}}
+        )
+        self.assertNotIn("members", config)
+        static = {"members": {"1": {"hotkey": "a", "port": 8901}}}
+        self.assertIs(validator.round_config(static, "members", {1: "a"}), static)
+
     def test_admission_settings_fail_closed(self):
         self.assertEqual(
             validator.admission_settings({"members": {"1": {"hotkey": "a", "port": 8901}}}),
