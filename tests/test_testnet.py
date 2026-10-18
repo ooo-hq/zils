@@ -288,6 +288,7 @@ class TestnetTest(unittest.TestCase):
             "WeightsSetRateLimit": 100,
             "WeightsVersionKey": 0,
             "LastUpdate": [100, 0, 0],
+            "CommitmentOf": {},
         }
         sent = []
 

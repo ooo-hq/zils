@@ -1,18 +1,22 @@
-"""The validator's own base-tier round: fetch once per hash, score once per draw, decide, confirm."""
+"""The validator's own base-tier round: read commitments at the preflight block, pull each new hash
+from Hugging Face once, score once per draw, decide, confirm."""
 
+import hashlib
 import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from urllib.parse import unquote, urlsplit
 
 import zils
 from tests.test_base_round import make_cases, sealed
-from zils import base_round, models, protocol as wire, validator
+from zils import base_round, commitments, models, protocol as wire, testnet, validator
 
 RUNNER = """import json, random, sys, os
 from pathlib import Path
@@ -47,27 +51,77 @@ def candidate(root, accuracy):
     return root
 
 
-def artifact_server(source, requested, *, huge=False):
-    class Files(wire.Handler):
+def fake_hub(repos, requested, *, huge=()):
+    """Hugging Face's two public routes over {repo: {revision: directory}}: revision info with file
+    sizes and LFS digests, and resolve, which redirects once like the real CDN hop. A repo in `huge`
+    lists its model.json at the whole candidate byte budget."""
+
+    class Hub(wire.Handler):
         def do_GET(self):
-            name = self.path.rsplit("/", 1)[-1]
-            requested.append(name)
-            path = source() / name
-            if huge:
-                self.send_response(200)
-                self.send_header("Content-Length", str(models.MAX_CANDIDATE_BYTES + 1))
+            path = unquote(urlsplit(self.path).path)
+            info = re.fullmatch(r"/api/models/([^/]+/[^/]+)/revision/([a-f0-9]{40})", path)
+            if info:
+                source = repos.get(info[1], {}).get(info[2])
+                if source is None:
+                    self.reply(404, {"error": "Revision Not Found"})
+                    return
+                siblings = []
+                for item in sorted(source.iterdir()):
+                    entry = {"rfilename": item.name, "size": item.stat().st_size}
+                    if info[1] in huge and item.name == "model.json":
+                        entry["size"] = models.MAX_CANDIDATE_BYTES
+                    if item.suffix == ".safetensors":
+                        entry["lfs"] = {"sha256": hashlib.sha256(item.read_bytes()).hexdigest()}
+                    siblings.append(entry)
+                self.reply(200, {"id": info[1], "sha": info[2], "siblings": siblings})
+                return
+            resolve = re.fullmatch(r"/([^/]+/[^/]+)/resolve/([a-f0-9]{40})/(.+)", path)
+            if resolve:
+                self.send_response(302)
+                self.send_header("Location", "/cdn" + path)
+                self.send_header("Content-Length", "0")
                 self.end_headers()
                 return
-            if not path.is_file():
-                self.reply(404, {"error": "unknown artifact"})
+            cdn = re.fullmatch(r"/cdn/([^/]+/[^/]+)/resolve/([a-f0-9]{40})/(.+)", path)
+            source = repos.get(cdn[1], {}).get(cdn[2]) if cdn else None
+            if source is None or not (source / cdn[3]).is_file():
+                self.reply(404, {"error": "Entry Not Found"})
                 return
-            data = path.read_bytes()
+            requested.append((cdn[1], cdn[3]))
+            data = (source / cdn[3]).read_bytes()
             self.send_response(200)
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
 
-    return Files
+    return Hub
+
+
+def fake_chain(state):
+    """The storage reads preflight makes, at one pinned block."""
+
+    class Chain:
+        network, endpoint, block = "test", testnet.ENDPOINT, 500
+
+        def query(self, item, params, *, block=None):
+            assert block == self.block
+            value = state[item[1]]
+            return value.get(params[1]) if isinstance(value, dict) else value
+
+    return Chain()
+
+
+def raw_record(block, text):
+    data = text.encode()
+    fields = [
+        {f"Raw{len(data[i : i + 128])}": "0x" + data[i : i + 128].hex()}
+        for i in range(0, len(data), 128)
+    ]
+    return {"block": block, "deposit": 0, "info": {"fields": fields}}
+
+
+def revision(name):
+    return hashlib.sha1(name.encode()).hexdigest()
 
 
 @unittest.skipUnless(
@@ -75,9 +129,7 @@ def artifact_server(source, requested, *, huge=False):
     "use .venv-kev",
 )
 class BaseTierIntakeTest(unittest.TestCase):
-    def test_validator_collects_scores_and_confirms_base_candidates(self):
-        from bittensor_wallet import Keypair
-
+    def test_commitments_are_pulled_once_scored_once_and_copies_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             vdir = root / "validator"
@@ -92,58 +144,92 @@ class BaseTierIntakeTest(unittest.TestCase):
             strong = candidate(root / "strong", 0.85)
             weak = candidate(root / "weak", 0.40)
             later = candidate(root / "later", 0.50)
+            big = candidate(root / "big", 0.90)
             adapter = root / "adapter"
             adapter.mkdir()
             for name in models.TEXT_ADAPTER_FILES:
                 (adapter / name).write_bytes(b"lora")
             models.write_metadata(adapter, model=models.D3)
-            sources = {1: strong, 2: weak, 3: adapter, 4: strong}
-            requested = {uid: [] for uid in sources}
-            keys = {uid: Keypair.create_from_seed("0x" + f"{uid:02x}" * 32) for uid in sources}
-            members = {uid: key.ss58_address for uid, key in keys.items()}
+            repos = {
+                "alice/d3": {revision("strong"): strong, revision("later"): later},
+                "bob/d3": {revision("weak"): weak},
+                "carol/d3": {revision("adapter"): adapter},
+                "dave/d3": {revision("big"): big},
+            }
+            requested = []
+
+            def commit(source, repo, rev):
+                return commitments.format_commitment(zils.checkpoint_hash(source), rev, repo)
+
+            hotkeys = {uid: f"miner-{uid}" for uid in range(1, 9)}
+            records = {
+                # uid 1 commits first; uid 3 replays the same commitment two blocks later.
+                hotkeys[1]: raw_record(400, commit(strong, "alice/d3", revision("strong"))),
+                hotkeys[2]: raw_record(401, commit(weak, "bob/d3", revision("weak"))),
+                hotkeys[3]: raw_record(402, commit(strong, "alice/d3", revision("strong"))),
+                hotkeys[4]: raw_record(
+                    403,
+                    commit(weak, "bob/d3", revision("missing")).replace(
+                        zils.checkpoint_hash(weak), "e" * 64
+                    ),
+                ),
+                hotkeys[5]: raw_record(404, commit(big, "dave/d3", revision("big"))),
+                hotkeys[6]: raw_record(405, "my model is on hugging face"),
+                hotkeys[7]: raw_record(406, commit(adapter, "carol/d3", revision("adapter"))),
+                hotkeys[8]: raw_record(
+                    407, commitments.format_commitment(incumbent, revision("x"), "eve/d3")
+                ),
+            }
+            state = {
+                "NetworksAdded": True,
+                "Uids": {"validator": 0, **{h: uid for uid, h in hotkeys.items()}},
+                "Keys": {0: "validator", **hotkeys},
+                "ValidatorPermit": [True],
+                "SubnetOwnerHotkey": "validator",
+                "CommitRevealWeightsEnabled": True,
+                "MinAllowedWeights": 1,
+                "MaxWeightsLimit": 65535,
+                "WeightsSetRateLimit": 100,
+                "WeightsVersionKey": 0,
+                "LastUpdate": [100],
+                "CommitmentOf": records,
+            }
             runner = root / "runner-python"
             runner.write_text(f"#!{sys.executable}\n{RUNNER}")
             runner.chmod(0o700)
             log = root / "runner.log"
             log.touch()
             args = SimpleNamespace(device="cpu", runtime_python=sys.executable, poll=0.1)
-            rounds = vdir / "state/rounds"
             validate = Mock()
+            config = {
+                "validator": "http://127.0.0.1:1",
+                "validator_hotkey": "validator",
+                "chain": {"network": "test", "netuid": 579},
+                "model": models.spec(models.D3),
+                "base_revision": models.spec(models.D3)["base_revision"],
+                "members": {str(uid): {"hotkey": h} for uid, h in hotkeys.items()},
+                "base_tier": {
+                    "share": 0.7,
+                    "incumbent_sha256": incumbent,
+                    "draws": draws,
+                    "policy": {"bootstrap_resamples": 200},
+                },
+                "base_round_dir": "draws",
+                "base_reference": "reference",
+            }
             with (
-                wire.local_server(artifact_server(lambda: sources[1], requested[1])) as s1,
-                wire.local_server(artifact_server(lambda: sources[2], requested[2])) as s2,
-                wire.local_server(artifact_server(lambda: sources[3], requested[3])) as s3,
-                wire.local_server(
-                    artifact_server(lambda: sources[4], requested[4], huge=True)
-                ) as s4,
+                wire.local_server(fake_hub(repos, requested, huge={"dave/d3"})) as hub,
                 patch.dict(
                     os.environ,
                     {"ZILS_D3_RUNTIME_PYTHON": str(runner), "ZILS_TEST_RUNNER_LOG": str(log)},
                 ),
                 patch("zils.d3.validate_candidate", validate),
+                patch("zils.commitments.HF_ENDPOINT", hub),
             ):
-                ports = {
-                    uid: int(url.rsplit(":", 1)[1]) for uid, url in enumerate((s1, s2, s3, s4), 1)
-                }
-                config = {
-                    "validator": "http://127.0.0.1:1",
-                    "model": models.spec(models.D3),
-                    "base_revision": models.spec(models.D3)["base_revision"],
-                    "members": {
-                        str(uid): {"hotkey": members[uid], "port": ports[uid]} for uid in sources
-                    },
-                    "base_tier": {
-                        "share": 0.7,
-                        "incumbent_sha256": incumbent,
-                        "draws": draws,
-                        "policy": {"bootstrap_resamples": 200},
-                    },
-                    "base_round_dir": "draws",
-                    "base_reference": "reference",
-                }
                 audited = validator.base_draws(config, vdir)
                 self.assertEqual([item for item, _ in audited], draws)
-                self.assertEqual([p.name for _, p in audited], ["first", "second"])
+                with self.assertRaisesRegex(ValueError, "chain commitments"):
+                    validator.base_draws({k: v for k, v in config.items() if k != "chain"}, vdir)
                 with self.assertRaisesRegex(ValueError, "no sealed draw"):
                     validator.base_draws(
                         {
@@ -155,116 +241,73 @@ class BaseTierIntakeTest(unittest.TestCase):
                         },
                         vdir,
                     )
-                with self.assertRaisesRegex(ValueError, "incumbent checkpoint"):
-                    validator.base_draws(
-                        {
-                            **config,
-                            "base_tier": {**config["base_tier"], "incumbent_sha256": "0" * 64},
-                        },
-                        vdir,
-                    )
                 self.assertIsNone(validator.base_draws({"members": {}}, vdir))
 
-                def announce(current, registries, uid, source, **changes):
-                    claim = {
-                        "round_id": current["round_id"],
-                        "uid": uid,
-                        "hotkey": members[uid],
-                        "sha256": zils.checkpoint_hash(source),
-                        "endpoint": f"http://127.0.0.1:{ports[uid]}",
-                        "kind": "candidate",
-                        **changes,
-                    }
-                    message = {
-                        "claim": claim,
-                        "signature": keys[uid].sign(wire.canonical(claim)).hex(),
-                    }
-                    return validator.accept(
-                        config, current, members, registries, rounds, message, "127.0.0.1", False
+                def epoch(rid):
+                    snapshot = testnet.preflight(config, fake_chain(state))
+                    work = vdir / "state/rounds" / rid
+                    work.mkdir(parents=True)
+                    wire.write_json(work / "chain-snapshot.json", snapshot)
+                    registry = commitments.candidates(
+                        json.loads((work / "chain-snapshot.json").read_text()), incumbent
+                    )
+                    return registry, validator.base_tier_epoch(
+                        config, vdir, work, registry, args, audited
                     )
 
-                def new_round(rid):
-                    work = rounds / rid
-                    (work / "base-submissions").mkdir(parents=True)
-                    current = {
-                        "round_id": rid,
-                        "status": "collecting",
-                        "base_tier": {"incumbent_sha256": incumbent, "draws": draws},
-                    }
-                    return work, current, {"adapter": {}, "candidate": {}}
-
-                work, current, registries = new_round("a" * 32)
-                for uid in (1, 2, 3):
-                    self.assertEqual(announce(current, registries, uid, sources[uid])[0], 200)
-                with self.assertRaisesRegex(ValueError, "duplicate checkpoint"):
-                    announce(current, registries, 4, strong)
-                self.assertEqual(announce(current, registries, 4, strong, sha256="f" * 64)[0], 200)
-                self.assertEqual(set(registries["candidate"]), {1, 2, 3, 4})
-                self.assertEqual(registries["adapter"], {})
-                self.assertTrue((work / "base-submissions/1.json").exists())
-                with self.assertRaisesRegex(ValueError, "incumbent"):
-                    announce(current, registries, 1, vdir / "reference")
-                with self.assertRaisesRegex(ValueError, "claim fields"):
-                    announce(current, registries, 1, strong, kind="adapter")
+                registry, decision = epoch("a" * 32)
                 self.assertEqual(
-                    announce(
-                        {k: v for k, v in current.items() if k != "base_tier"},
-                        registries,
-                        1,
-                        strong,
-                    )[0],
-                    409,
+                    registry[1],
+                    {
+                        "sha256": zils.checkpoint_hash(strong),
+                        "revision": revision("strong"),
+                        "repo": "alice/d3",
+                        "block": 400,
+                    },
                 )
-                decision = validator.base_tier_epoch(
-                    config, vdir, work, registries["candidate"], args, audited
-                )
+                self.assertIn("committed first by uid 1 at block 400", registry[3]["error"])
+                self.assertIn("incumbent", registry[8]["error"])
+                self.assertIn("not zils1", registry[6]["error"])
                 self.assertEqual(decision["pending_winner"]["uid"], 1)
                 self.assertEqual(decision["confirmed_winner"]["uid"], 1)
-                self.assertEqual(decision["manifest_sha256"], draws[1]["manifest_sha256"])
                 self.assertEqual(decision["incumbent"]["uid"], validator.INCUMBENT_UID)
                 self.assertEqual(
                     {c["uid"]: c["eligible"] for c in decision["candidates"]}, {1: True, 2: False}
                 )
-                self.assertEqual(set(decision["rejected"]), {"3", "4"})
-                self.assertIn("byte budget", decision["rejected"]["4"])
-                self.assertFalse(any("predictions" in c for c in decision["candidates"]))
-                # Fetch once per hash: every candidate file once for the two real candidates, the
-                # non-candidate artifact rejected after its first missing file, the oversize one
-                # refused on its first declared length.
-                self.assertEqual(sorted(requested[1]), sorted(models.D3_CANDIDATE_FILES))
-                self.assertEqual(sorted(requested[2]), sorted(models.D3_CANDIDATE_FILES))
-                self.assertLess(len(requested[3]), len(models.D3_CANDIDATE_FILES))
-                self.assertEqual(len(requested[4]), 1)
+                self.assertEqual(set(decision["rejected"]), {"3", "4", "5", "6", "7", "8"})
+                self.assertIn("HTTP Error 404", decision["rejected"]["4"])
+                self.assertIn("byte budget", decision["rejected"]["5"])
+                self.assertIn("no model-00001", decision["rejected"]["7"])
+                # Only the candidate files, once per hash; nothing from the refused commitments.
+                self.assertEqual(
+                    sorted(requested),
+                    sorted(
+                        [("alice/d3", n) for n in models.D3_CANDIDATE_FILES]
+                        + [("bob/d3", n) for n in models.D3_CANDIDATE_FILES]
+                    ),
+                )
                 self.assertEqual(validate.call_count, 2)
                 store = vdir / "base-tier/store"
                 self.assertTrue(
                     (store / zils.checkpoint_hash(strong) / "checkpoint/model.json").exists()
                 )
-                self.assertFalse(
-                    (store / zils.checkpoint_hash(adapter)).exists()
-                    and (store / zils.checkpoint_hash(adapter) / "checkpoint").exists()
+                self.assertEqual(
+                    [p.name for p in (store / zils.checkpoint_hash(big)).iterdir()], []
                 )
                 runs = [json.loads(line) for line in log.read_text().splitlines()]
                 # Two draws, two splits: the incumbent and each candidate once per split.
                 self.assertEqual(len(runs), 12)
-                self.assertEqual(sum(r["kind"] == "base" for r in runs), 4)
                 sidecar = json.loads((vdir / "base-tier/decision.json").read_text())
                 self.assertEqual(sidecar["round_id"], "a" * 32)
-                frozen = validator.attach_base_tier(config, vdir, work, {"miners": []})
-                self.assertEqual(frozen["base_tier"]["pending_winner"]["uid"], 1)
-                self.assertTrue((work / "base-tier.json").exists())
 
-                # Next round: the strong hash again (no fetch, no scoring), a new hash from uid 2.
-                sources[2] = later
-                work, current, registries = new_round("b" * 32)
-                announce(current, registries, 1, strong)
-                announce(current, registries, 2, later)
-                before = {uid: len(requests) for uid, requests in requested.items()}
-                decision = validator.base_tier_epoch(
-                    config, vdir, work, registries["candidate"], args, audited
+                # Next round: uid 1 unchanged (no download, no scoring), uid 2 commits a new
+                # revision, and uid 3's copy is still refused.
+                records[hotkeys[2]] = raw_record(450, commit(later, "alice/d3", revision("later")))
+                before = len(requested)
+                registry, decision = epoch("b" * 32)
+                self.assertEqual(
+                    requested[before:], [("alice/d3", n) for n in models.D3_CANDIDATE_FILES]
                 )
-                self.assertEqual(len(requested[1]), before[1])
-                self.assertEqual(len(requested[2]) - before[2], len(models.D3_CANDIDATE_FILES))
                 self.assertEqual(validate.call_count, 3)
                 runs = [json.loads(line) for line in log.read_text().splitlines()]
                 self.assertEqual(len(runs), 16)
@@ -272,45 +315,54 @@ class BaseTierIntakeTest(unittest.TestCase):
                 self.assertEqual(decision["round_id"], "b" * 32)
                 self.assertEqual(decision["pending_winner"]["uid"], 1)
                 self.assertEqual({c["uid"] for c in decision["candidates"]}, {1, 2})
-                self.assertEqual(decision["rejected"], {})
-                self.assertEqual(
-                    json.loads((vdir / "base-tier/decision.json").read_text())["round_id"], "b" * 32
-                )
+                self.assertIn("3", decision["rejected"])
 
-    def test_candidate_claims_are_the_same_signed_claim_with_a_kind(self):
-        from bittensor_wallet import Keypair
+                # A third identical round costs nothing at all.
+                before = len(requested)
+                epoch("c" * 32)
+                self.assertEqual(len(requested), before)
+                self.assertEqual(len(log.read_text().splitlines()), 16)
 
-        key = Keypair.create_from_seed("0x" + "07" * 32)
-        claim = {
-            "round_id": "a" * 32,
-            "uid": 1,
-            "hotkey": key.ss58_address,
-            "sha256": "b" * 64,
-            "endpoint": "http://127.0.0.1:8901",
-        }
-
-        def signed(c):
-            return {"claim": c, "signature": key.sign(wire.canonical(c)).hex()}
-
-        members = {1: key.ss58_address}
-        with self.assertRaisesRegex(ValueError, "claim fields"):
-            wire.register(signed(claim), "a" * 32, members, {}, kind="candidate")
-        with self.assertRaisesRegex(ValueError, "claim fields"):
-            wire.register(signed({**claim, "kind": "candidate"}), "a" * 32, members, {})
-        with self.assertRaisesRegex(ValueError, "not a base candidate"):
-            wire.register(
-                signed({**claim, "kind": "adapter"}), "a" * 32, members, {}, kind="candidate"
-            )
-        registry = {}
-        wire.register(
-            signed({**claim, "kind": "candidate"}),
-            "a" * 32,
-            members,
-            registry,
-            job_sha256="c" * 64,
-            kind="candidate",
+    def test_commitment_format_and_the_earliest_block_rule(self):
+        sha, rev = "a" * 64, "b" * 40
+        text = commitments.format_commitment(sha, rev, "alice/d3-candidate")
+        self.assertEqual(text, f"zils1:{sha}:{rev}:alice/d3-candidate")
+        self.assertEqual(
+            commitments.parse_commitment(text),
+            {"sha256": sha, "revision": rev, "repo": "alice/d3-candidate"},
         )
-        self.assertEqual(registry[1]["claim"]["kind"], "candidate")
+        longest = commitments.format_commitment(sha, rev, "a" * 96 + "/" + "b" * 96)
+        self.assertLessEqual(len(longest.encode()), 3 * testnet.COMMITMENT_FIELD)
+        for bad in (
+            f"zils1:{sha}:main:alice/d3",
+            f"zils1:{sha}:{rev[:12]}:alice/d3",
+            f"zils1:{sha}:{rev}:alice",
+            f"zils1:{sha}:{rev}:alice/../d3",
+            f"zils1:{sha}:{rev}:alice/d3:extra",
+            f"zils2:{sha}:{rev}:alice/d3",
+            f"zils1:{sha.upper()}:{rev}:alice/d3",
+        ):
+            with self.assertRaises(ValueError, msg=bad):
+                commitments.parse_commitment(bad)
+        snapshot = {
+            "commitments": {
+                "1": {"block": 10, "data": text},
+                "2": {"block": 9, "data": commitments.format_commitment(sha, rev, "copy/d3")},
+                "3": {"block": 20, "data": commitments.format_commitment("c" * 64, rev, "x/y")},
+                "4": {"block": 20, "data": commitments.format_commitment("c" * 64, rev, "z/y")},
+                "5": {"block": 21, "data": commitments.format_commitment("c" * 64, rev, "w/y")},
+            }
+        }
+        registry = commitments.candidates(snapshot, "f" * 64)
+        self.assertEqual(registry[2]["repo"], "copy/d3")
+        self.assertIn("first by uid 2 at block 9", registry[1]["error"])
+        # A same-block tie belongs to nobody, and a later copy still loses to that block.
+        self.assertIn("several hotkeys in block 20", registry[3]["error"])
+        self.assertIn("several hotkeys in block 20", registry[4]["error"])
+        self.assertIn("first by uid 3 at block 20", registry[5]["error"])
+        self.assertEqual(testnet.commitment_text(raw_record(1, longest)), longest)
+        self.assertIsNone(testnet.commitment_text({"info": {"fields": [{"Sha256": "0x00"}]}}))
+        self.assertIsNone(testnet.commitment_text(None))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,223 @@
+"""`zils.miner commit-candidate` and `doctor` against a fake chain and a fake Hugging Face."""
+
+import contextlib
+import importlib.util
+import io
+import shutil
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
+
+import zils
+from tests.test_base_tier_intake import candidate, fake_hub, revision
+from zils import commitments, miner, models, protocol as wire, testnet
+
+
+class Chain:
+    """Uids, Keys and CommitmentOf, with set_commitment applied at the next block."""
+
+    network, endpoint = "test", testnet.ENDPOINT
+
+    def __init__(self, uids):
+        self.block, self.uids, self.records, self.calls = 300, uids, {}, []
+
+    def query(self, item, params, *, block=None):
+        assert params[0] == 579 and block == self.block
+        if item[1] == "Uids":
+            return self.uids.get(params[1])
+        if item[1] == "Keys":
+            return {uid: hotkey for hotkey, uid in self.uids.items()}.get(params[1])
+        return self.records.get(params[1])
+
+    def submit_call(self, call, wallet, *, signer, **kwargs):
+        from bittensor.result import ExtrinsicResult
+
+        assert (call.module, call.function, signer) == ("Commitments", "set_commitment", "hotkey")
+        assert call.params["netuid"] == 579 and kwargs["wait_for_finalization"]
+        self.calls.append(call)
+        self.block += 1
+        self.records[wallet.hotkey.ss58_address] = {
+            "block": self.block,
+            "deposit": 0,
+            "info": call.params["info"],
+        }
+        return ExtrinsicResult(True)
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("bittensor") and importlib.util.find_spec("kev"), "use .venv-kev"
+)
+class CommitCandidateTest(unittest.TestCase):
+    def setUp(self):
+        from bittensor.wallet import Wallet
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        self.root = root
+        self.candidate = candidate(root / "candidate", 0.85)
+        self.sha256 = zils.checkpoint_hash(self.candidate)
+        self.wallet = {"path": str(root / "wallets"), "name": "fixture", "hotkey": "miner"}
+        self.hotkey = (
+            Wallet(**self.wallet)
+            .regenerate_hotkey(seed=bytes([7]) * 32, suppress=True)
+            .hotkey.ss58_address
+        )
+        self.chain = Chain({self.hotkey: 1})
+        self.repos, self.requested = {}, []
+        hub = self.enterContext(wire.local_server(fake_hub(self.repos, self.requested)))
+        self.enterContext(patch("zils.commitments.HF_ENDPOINT", hub))
+        self.enterContext(patch("zils.d3.validate_candidate", Mock()))
+        self.connects = []
+
+        @contextlib.contextmanager
+        def connect(config, *, raw_calls=False):
+            testnet.check_config(config)
+            self.connects.append(raw_calls)
+            yield self.chain
+
+        self.enterContext(patch("zils.testnet.connect", connect))
+        repos, uploads = self.repos, []
+        self.uploads = uploads
+
+        class HfApi:
+            def create_repo(self, repo_id, *, repo_type, private, exist_ok):
+                assert repo_type == "model" and private is False and exist_ok
+
+            def upload_folder(self, *, repo_id, repo_type, folder_path, allow_patterns, **kwargs):
+                rev = revision(f"upload-{len(uploads)}")
+                target = root / "hub" / rev
+                target.mkdir(parents=True)
+                for name in allow_patterns:
+                    shutil.copy(Path(folder_path) / name, target / name)
+                repos.setdefault(repo_id, {})[rev] = target
+                uploads.append((repo_id, sorted(allow_patterns)))
+                return SimpleNamespace(oid=rev)
+
+        self.enterContext(patch("huggingface_hub.HfApi", HfApi))
+
+    def run_miner(self, *argv):
+        flags = [
+            "--wallet-name",
+            self.wallet["name"],
+            "--wallet-hotkey",
+            self.wallet["hotkey"],
+            "--wallet-path",
+            self.wallet["path"],
+        ]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            try:
+                miner.main([argv[0], *flags, *argv[1:]])
+                code = 0
+            except SystemExit as stopped:
+                code = stopped.code
+        return code, output.getvalue()
+
+    def test_dry_run_upload_commit_and_no_second_commit(self):
+        repo = "alice/d3-mini-base-candidate-round-three"
+        candidate_flags = ("--candidate", str(self.candidate), "--repo", repo)
+        code, out = self.run_miner("commit-candidate", *candidate_flags)
+        self.assertEqual(code, 0, out)
+        self.assertIn("dry run: nothing uploaded or written", out)
+        self.assertIn(f"commitment zils1:{self.sha256}:", out)
+        self.assertEqual((self.uploads, self.chain.calls), ([], []))
+
+        code, out = self.run_miner("commit-candidate", *candidate_flags, "--yes")
+        self.assertEqual(code, 0, out)
+        rev = revision("upload-0")
+        self.assertEqual(self.uploads, [(repo, sorted(models.D3_CANDIDATE_FILES))])
+        self.assertIn(f"uploaded {repo} at {rev}", out)
+        self.assertIn("committed at block 301", out)
+        self.assertEqual(self.connects[-1], True)
+        text = commitments.format_commitment(self.sha256, rev, repo)
+        self.assertGreater(len(text), 128)
+        self.assertEqual(len(self.chain.calls[0].params["info"]["fields"]), 2)
+        stored = testnet.read_commitment(self.chain, 579, self.hotkey, self.chain.block)
+        self.assertEqual(stored, {"block": 301, "data": text})
+        # What a validator snapshot then reads is this miner's candidate.
+        snapshot = {"commitments": {"1": stored}}
+        self.assertEqual(commitments.candidates(snapshot, "f" * 64)[1]["revision"], rev)
+
+        # Committing the same thing again would move the block; the command refuses to.
+        code, out = self.run_miner("commit-candidate", *candidate_flags, "--revision", rev, "--yes")
+        self.assertEqual(code, 0, out)
+        self.assertIn("already committed at block 301; nothing to do", out)
+        self.assertEqual(len(self.chain.calls), 1)
+
+    def test_refuses_bad_revision_branch_mismatch_and_unregistered(self):
+        flags = ("--candidate", str(self.candidate), "--repo", "alice/d3", "--yes")
+        code, out = self.run_miner("commit-candidate", *flags, "--revision", "main")
+        self.assertEqual(code, 1)
+        self.assertIn("40-hex commit sha", out)
+        code, out = self.run_miner("commit-candidate", *flags, "--revision", revision("none"))
+        self.assertEqual(code, 1)
+        self.assertIn("HTTP Error 404", out)
+        other = candidate(self.root / "other", 0.5)
+        self.repos["alice/d3"] = {revision("other"): other}
+        code, out = self.run_miner("commit-candidate", *flags, "--revision", revision("other"))
+        self.assertEqual(code, 1)
+        self.assertIn("from the local candidate", out)
+        self.assertEqual(self.chain.calls, [])
+        self.chain.uids = {}
+        code, out = self.run_miner("commit-candidate", *flags)
+        self.assertEqual(code, 1)
+        self.assertIn("is not registered on testnet subnet 579", out)
+
+    def test_doctor_stops_at_the_first_failing_step_with_its_fix(self):
+        code, out = self.run_miner("doctor")
+        self.assertEqual(code, 1)
+        self.assertEqual(out.count("ok  "), 3)
+        self.assertIn("fix candidate: no --candidate", out)
+
+        code, out = self.run_miner("doctor", "--candidate", str(self.candidate))
+        self.assertEqual(out.count("ok  "), 4)
+        self.assertIn("fix hugging face: no --repo", out)
+
+        flags = ("--candidate", str(self.candidate), "--repo", "alice/d3")
+        code, out = self.run_miner("doctor", *flags)
+        self.assertIn("fix hugging face: not uploaded yet", out)
+        self.assertIn("commit-candidate", out)
+        self.assertIn("--repo alice/d3 \\\n  --yes", out)
+
+        self.run_miner("commit-candidate", *flags, "--yes")
+        rev = revision("upload-0")
+        code, out = self.run_miner("doctor", *flags, "--revision", revision("none"))
+        self.assertIn("fix hugging face: HTTP Error 404", out)
+
+        code, out = self.run_miner("doctor", *flags, "--revision", rev)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.count("ok  "), 6)
+        self.assertIn(f"ready: uid 1 committed {self.sha256[:12]} at block 301", out)
+
+        self.chain.records.clear()
+        code, out = self.run_miner("doctor", *flags, "--revision", rev)
+        self.assertIn("fix commitment: the chain holds no commitment", out)
+        self.assertIn(f"--revision {rev} \\\n  --yes", out)
+
+        self.chain.uids = {}
+        code, out = self.run_miner("doctor", *flags, "--revision", rev)
+        self.assertEqual(out.count("ok  "), 2)
+        self.assertIn("fix registration: hotkey", out)
+        self.assertIn("tx burned-register --netuid 579", out)
+
+        code, out = self.run_miner("doctor", "--wallet-hotkey", "absent")
+        self.assertIn("fix wallet hotkey: no hotkey file", out)
+
+        real = miner.importlib.import_module
+
+        def without_hub(name, *rest):
+            if name == "huggingface_hub":
+                raise ImportError("No module named huggingface_hub")
+            return real(name, *rest)
+
+        with patch("zils.miner.importlib.import_module", without_hub):
+            code, out = self.run_miner("doctor")
+        self.assertEqual(out.count("ok  "), 0)
+        self.assertIn("fix requirements: missing huggingface_hub", out)
+
+
+if __name__ == "__main__":
+    unittest.main()
