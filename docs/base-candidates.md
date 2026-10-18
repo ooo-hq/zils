@@ -85,7 +85,9 @@ same size).
 
 `zils.miner announce-candidate` is the miner side of the public validator's
 intake. Run it on the host that holds the candidate, with the registered miner
-hotkey (the hotkey file only; the coldkey is never read):
+hotkey (the hotkey file only; the coldkey is never read). `zils.miner doctor`
+with the same flags checks each prerequisite in order and prints the first fix
+or, when all pass, this command with your flags filled in:
 
 ```bash
 .venv-kev/bin/python -m zils.miner announce-candidate \
