@@ -77,10 +77,12 @@ A directory containing exactly these files (`models.D3_CANDIDATE_FILES`):
 
 Nothing else: a `candidate.json`, a README or a stray `__pycache__` is rejected.
 Total size must stay under 9.5 GiB (the parent is 9.08 GB; a merged LoRA is the
-same size). Announce it with the same signed claim as an adapter; the
-checkpoint hash covers every file above. One live submission per hotkey per
-round, a claim cannot change within a round, and identical hashes from different
-miners are rejected.
+same size). Announce it with the same signed claim as an adapter plus
+`"kind": "candidate"`; the checkpoint hash covers every file above. One live
+candidate per hotkey per round, a claim cannot change within a round, identical
+hashes from different miners are rejected, and the incumbent's own hash is
+refused. Announce every round: a validator that scores candidates itself keeps
+each hash it has fetched, so a repeated hash costs no download and no rescoring.
 
 ### Reference recipe: train a LoRA, merge it
 
