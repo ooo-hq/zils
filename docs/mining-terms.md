@@ -97,4 +97,6 @@ and dispute forum to be set.)
   worker row.
 
 Open owner decisions: who signs for Zils, the deletion window above (7 days
-proposed), and whether a mainnet version needs separate terms.
+proposed), and whether a mainnet version needs separate terms. Decided 18
+October 2026: customer jobs go to outside miners by default; customers opt out
+per job.

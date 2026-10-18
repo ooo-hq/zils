@@ -21,10 +21,10 @@ The export flag records an operator decision; it does not provide encryption,
 confidential compute, legal authorization, or isolation from miner operators.
 
 **Outside miners (policy decided 18 October 2026, not yet in effect).**
-By default, Once the
+Once the
 [miner terms](mining-terms.md) are published and admission
-[opens](miner-admission.md), a job's training split may be assigned to miners
-that Zils does not run. They receive the same thing Zils' own miners receive
+[opens](miner-admission.md), a job's training split is assigned to miners
+that Zils does not run unless the customer opts out on that job. They receive the same thing Zils' own miners receive
 today: training states, questions and labels for that one job, under terms that
 forbid retention, redistribution and training other models on it, with deletion
 on completion. Calibration and test splits never leave the processor. Until
