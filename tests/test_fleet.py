@@ -114,6 +114,31 @@ class FleetTest(unittest.TestCase):
                 fleet.main(["validator", "--config", str(config)])
             self.assertIn("testnet fleet config", err.getvalue())
 
+    def test_public_validator_address_needs_public_endpoints(self):
+        import contextlib
+        import io
+
+        from zils import models
+
+        fleet = self.module()
+        base = {
+            "base_revision": models.spec(models.KEV)["base_revision"],
+            "seed": "0x" + "07" * 32,
+            "validator": "http://93.184.216.34:8900",  # global; 203.0.113.0/24 counts as private
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            config.write_text(json.dumps(base))
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                fleet.main(["validator", "--config", str(config)])
+            self.assertIn("pinned private IPv4", err.getvalue())
+            config.write_text(json.dumps({**base, "public_endpoints": True}))
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(BaseException):
+                fleet.main(["validator", "--config", str(config)])
+            self.assertNotIn("pinned", err.getvalue())
+
     def test_three_miners_complete_two_rounds_and_keep_private_data_local(self):
         from miner.worker import train_candidate
 
