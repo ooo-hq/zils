@@ -182,8 +182,11 @@ earn on two tracks, paid from one weight vector on the configured subnet:
   pending winner (lowest Brier among eligible candidates) takes the whole
   base-tier share of every publication until a newer decision replaces that
   one, the holdout rotates, or a confirmed winner is promoted; eligible
-  runners-up earn nothing (owner decision, 18 October 2026). The incumbent
-  itself earns nothing, and a resubmitted stock base is never eligible.
+  runners-up earn nothing (owner decision, 18 October 2026). King of the
+  hill: once a winner is promoted, its miner keeps the whole base share in
+  every epoch without an eligible challenger, until dethroned. The vendor base
+  has no owner and earns nothing, and a resubmitted stock base is never
+  eligible.
 - **Adapter rounds (alongside).** The frozen customer job rounds above continue
   unchanged; each round's calibrated test-split skill is the adapter weight.
 

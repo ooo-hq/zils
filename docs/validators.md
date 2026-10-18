@@ -140,6 +140,7 @@ for the payment rule. Add the track to `validator/config.json` by hand:
 "base_tier": {
   "share": 0.7,
   "incumbent_sha256": "CHECKPOINT_HASH_OF_THE_PINNED_BASE_REFERENCE",
+  "incumbent_uid": 1,
   "draws": [{"manifest_sha256": "…", "dataset_sha256": "…"}],
   "policy": {"min_brier_improvement": 0.01}
 }
@@ -147,7 +148,11 @@ for the payment rule. Add the track to `validator/config.json` by hand:
 
 `share` is the base tier's fraction of the vector and must be explicit.
 `incumbent_sha256` is the `zils submit` checkpoint hash of the incumbent
-reference the scorer compares against. `draws` lists every sealed draw whose
+reference the scorer compares against. `incumbent_uid`, optional, is the roster
+UID of the miner whose promoted candidate is the incumbent: king of the hill,
+it keeps the whole base share in every epoch without an eligible challenger,
+including epochs with no decision file. Leave it unset while the incumbent is
+the vendor base, which nobody owns. `draws` lists every sealed draw whose
 decision may pay in this epoch; print an entry with
 `python -m zils.base_round --round SEALED_DIR --describe-draw`, which audits the
 directory first. Remove a draw to rotate the holdout. `policy` may only override

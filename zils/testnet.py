@@ -157,11 +157,11 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
         from . import base_round
 
         share = base_round.validate_track(track)["share"]
-        # A missing decision means nothing was scored this epoch; adapters then take the whole vector.
+        # A missing decision means nothing was scored this epoch; the king, if any, keeps the base share.
         base = (
             base_round.track_weights(track, decision, config["members"])
             if decision is not None
-            else {}
+            else base_round.king_weights(track, config["members"])
         )
         weights = zils.blend_weights(
             {"base": base, "adapter": adapter}, {"base": share, "adapter": 1 - share}

@@ -212,13 +212,24 @@ def draw(root):
 
 def validate_track(track):
     """A fleet config's base-tier track: share, incumbent, allowed draws and the decision policy."""
-    if not isinstance(track, dict) or set(track) - {"share", "incumbent_sha256", "draws", "policy"}:
-        raise ValueError("base_tier accepts share, incumbent_sha256, draws and policy")
+    if not isinstance(track, dict) or set(track) - {
+        "share",
+        "incumbent_sha256",
+        "incumbent_uid",
+        "draws",
+        "policy",
+    }:
+        raise ValueError(
+            "base_tier accepts share, incumbent_sha256, incumbent_uid, draws and policy"
+        )
     share = track.get("share")
     if type(share) not in (int, float) or not 0 <= share <= 1:
         raise ValueError("base_tier.share must be a number in [0, 1]")
     if not re.fullmatch("[a-f0-9]{64}", str(track.get("incumbent_sha256"))):
         raise ValueError("base_tier.incumbent_sha256 must be the incumbent checkpoint hash")
+    king = track.get("incumbent_uid")
+    if king is not None and (type(king) is not int or not 0 <= king <= 65535):
+        raise ValueError("base_tier.incumbent_uid must be the roster uid that owns the incumbent")
     draws = track.get("draws")
     if not isinstance(draws, list) or not draws:
         raise ValueError("base_tier.draws must list at least one sealed draw")
@@ -235,8 +246,20 @@ def validate_track(track):
     return {**track, "policy": policy}
 
 
+def king_weights(track, members):
+    """King of the hill: with no eligible challenger the incumbent's miner keeps the whole base share.
+    The vendor base has no owner (`incumbent_uid` unset) and pays nobody."""
+    king = validate_track(track).get("incumbent_uid")
+    if king is None:
+        return {}
+    if str(king) not in members:
+        raise ValueError("base_tier.incumbent_uid is outside this registered fleet")
+    return {king: 1.0}
+
+
 def track_weights(track, decision, members):
-    """Base-tier weights a decision earns under a track: the pending winner takes the whole share."""
+    """Base-tier weights a decision earns under a track: the pending winner takes the whole share,
+    otherwise the incumbent's miner keeps it (king of the hill)."""
     track = validate_track(track)
     for key in (
         "manifest_sha256",
@@ -273,7 +296,7 @@ def track_weights(track, decision, members):
         str(k): v for k, v in decision.get("weights", weights).items()
     }:
         raise ValueError("base-tier decision weights differ from its pending winner")
-    return weights
+    return weights or king_weights(track, members)
 
 
 def confirm(first, second):

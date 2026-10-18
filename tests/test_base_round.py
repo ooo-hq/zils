@@ -214,6 +214,16 @@ class BaseRoundTest(unittest.TestCase):
             )
         nobody = {**decision, "pending_winner": None, "weights": {}}
         self.assertEqual(base_round.track_weights(track, nobody, members), {})
+        # King of the hill: the incumbent's miner keeps the share until a challenger is eligible.
+        crowned = {**track, "incumbent_uid": 1}
+        self.assertEqual(base_round.track_weights(crowned, nobody, members), {1: 1.0})
+        self.assertEqual(base_round.track_weights(crowned, decision, members), {2: 1.0})
+        self.assertEqual(base_round.king_weights(crowned, members), {1: 1.0})
+        self.assertEqual(base_round.king_weights(track, members), {})
+        with self.assertRaisesRegex(ValueError, "outside this registered fleet"):
+            base_round.king_weights({**track, "incumbent_uid": 9}, members)
+        with self.assertRaisesRegex(ValueError, "incumbent_uid"):
+            base_round.validate_track({**track, "incumbent_uid": "1"})
         shared = [
             {"uid": 1, "sha256": "d" * 64, "eligible": True, "skill": 0.4},
             {"uid": 2, "sha256": "d" * 64, "eligible": True, "skill": 0.4},
