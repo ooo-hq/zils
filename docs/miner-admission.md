@@ -1,6 +1,6 @@
 # Miner admission
 
-**Draft, 18 October 2026. Documented only; nothing here is built or enabled.**
+**18 October 2026. Documented only; nothing here is built or enabled.**
 
 Registration on Bittensor subnet 579 is the admission. There is no application,
 no form and no operator approval. This matches the fleet validator's

@@ -1,13 +1,11 @@
 # Zils miner terms
 
-**DRAFT, 18 October 2026. Not in force. For the owner's lawyer.** Nothing here
-is offered to anyone until the owner publishes a signed version and
-[admission](miner-admission.md) opens. Plain language is deliberate; the lawyer
-decides the legal form.
+Version 18 October 2026. In force once [admission](miner-admission.md) opens;
+until then no outside miner is admitted.
 
 These terms apply to anyone who runs a miner against the Zils hosted training
-queue or a Zils validator ("you") and are made with the operator of Zils
-("Zils"; the signing entity is an open owner decision, see the end).
+queue or a Zils validator ("you") and are made with Zils, the operator of
+Bittensor subnet 579 ("Zils").
 
 ## 1. What you receive
 
@@ -81,8 +79,8 @@ yours. Nothing here is investment advice or an offer of securities.
 
 You are responsible for your host and for any use of customer data from it.
 Zils provides the queue, weights and runtime as they are, without warranty of
-uptime, work volume or acceptance. (Lawyer: indemnity, limitation, governing law
-and dispute forum to be set.)
+uptime, work volume or acceptance, and is not liable for your costs or losses
+from mining.
 
 ## 8. Acceptance
 
@@ -96,7 +94,5 @@ and dispute forum to be set.)
 - Zils records your hotkey, the terms version and the first-claim time with your
   worker row.
 
-Open owner decisions: who signs for Zils, the deletion window above (7 days
-proposed), and whether a mainnet version needs separate terms. Decided 18
-October 2026: every customer job goes to the whole miner pool; there is no
-per-job opt-out.
+Every customer job goes to the whole miner pool; there is no per-job opt-out.
+A mainnet subnet, when it exists, gets a new version of these terms.
