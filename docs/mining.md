@@ -236,8 +236,9 @@ every validator reads itself. The address only serves its signed round results
 | URL | `http://165.245.195.21:8900` |
 | Validator hotkey | `5HTAVUuHxV81VbYoX7DYFzebdyA1SRk3zazdZiiBN7zCcpxy` (uid 0 on subnet 579) |
 
-Plain HTTP; every reply is signed by that hotkey. Rounds run hourly. Both values are for the testnet only: the
-host is temporary, and on mainnet the validator gets a new hotkey and a new URL.
+Plain HTTP; every reply is signed by that hotkey. Rounds run hourly. Both values
+are for the testnet only: the host is temporary, and on mainnet the validator gets
+a new hotkey and a new URL.
 Use the values this table shows for the network you mine on.
 
 1. **Register a hotkey on testnet subnet 579** following the
