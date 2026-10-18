@@ -20,6 +20,20 @@ Use only data authorized for training and for export to the configured miners.
 The export flag records an operator decision; it does not provide encryption,
 confidential compute, legal authorization, or isolation from miner operators.
 
+**Outside miners (policy decided 18 October 2026, not yet in effect).** Once the
+[miner terms](mining-terms.md) are published and admission
+[opens](miner-admission.md), a job's training split may be assigned to miners
+that Zils does not run. They receive the same thing Zils' own miners receive
+today: training states, questions and labels for that one job, under terms that
+forbid retention, redistribution and training other models on it, with deletion
+on completion. Calibration and test splits never leave the processor. Until
+then every miner is run by Zils. The hosted queue has no per-job switch for this
+yet: job creation records only `allow_training_data_export`
+(`training_export_authorized_at` on `fez_training_jobs`). The field to add is a
+boolean `outside_miners` on the create-job body and the job row, read by the
+scheduler when it picks hotkeys; its default (opt-in or opt-out) is an owner
+decision.
+
 Create three JSONL files under ignored `.private/` storage: `train.jsonl`,
 `calibration.jsonl`, and `test.jsonl`. Each line uses the existing decision-case
 format plus a required source `group_id`:
