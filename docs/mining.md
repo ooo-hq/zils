@@ -225,7 +225,7 @@ You do not need a bundle, an operator or an invitation to enter the base tier:
 registration on subnet 579 is the admission. About an afternoon end to end, most
 of it the training run.
 
-The public base-tier validator (18 October 2026):
+The public base-tier validator on testnet subnet 579 (18 October 2026):
 
 | | |
 | --- | --- |
@@ -233,8 +233,9 @@ The public base-tier validator (18 October 2026):
 | Validator hotkey | `5HTAVUuHxV81VbYoX7DYFzebdyA1SRk3zazdZiiBN7zCcpxy` (uid 0 on subnet 579) |
 
 Plain HTTP; every reply is signed by that hotkey and the commands refuse any
-other signature. Rounds run hourly. The host is temporary: when the validator
-moves, this table changes and the hotkey stays the same.
+other signature. Rounds run hourly. Both values are for the testnet only: the
+host is temporary, and on mainnet the validator gets a new hotkey and a new URL.
+Use the values this table shows for the network you mine on.
 
 1. **Register a hotkey on testnet subnet 579** following the
    [registration guide](bittensor-registration.md); keep the hotkey file on the
