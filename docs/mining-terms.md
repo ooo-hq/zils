@@ -68,7 +68,7 @@ accepts it. You keep no rights in it.
   job counts and scores may appear on zils.ai and in the public network API.
   Customer data and job contents are never published.
 - **Change these terms.** A new version has a new hash; you accept it by
-  continuing to mine after notice, and your worker config must record it.
+  continuing to mine after notice, and your worker config must carry it.
 
 ## 6. Payment reality
 
@@ -86,17 +86,15 @@ and dispute forum to be set.)
 
 ## 8. Acceptance
 
-- **The accepting identity is the hotkey that signs your claims.** By submitting
-  a signed claim from a hotkey, you accept the terms version named in that
-  hotkey's application and worker config. One person may run several hotkeys;
-  each accepts separately.
+- **Registering a hotkey on subnet 579 and mining with it is acceptance.** The
+  hotkey that signs your claims is the accepting identity; the first signed
+  claim records it. One person may run several hotkeys; each accepts separately.
 - **Terms version** = the SHA-256 of this file at the commit you accepted, plus
-  the date in the heading. Record it in two places: `terms_sha256` in your
-  `.private/queue-miner.json`, and `terms_sha256` in the qualification report
-  you send with your application. (Both fields are documented only today; see
-  [admission](miner-admission.md) for what still has to change in code.)
-- Zils records your hotkey, the terms version and the application date with your
-  worker and profile rows.
+  the date in the heading. Your worker config (`.private/queue-miner.json`,
+  `terms_sha256`) carries it into every claim and into the qualification report.
+  (Documented only today; see [admission](miner-admission.md) for the code.)
+- Zils records your hotkey, the terms version and the first-claim time with your
+  worker row.
 
 Open owner decisions: who signs for Zils, the deletion window above (7 days
 proposed), and whether a mainnet version needs separate terms.
