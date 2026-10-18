@@ -36,7 +36,8 @@ queue, which today only talks to hotkeys an operator inserted by hand.
 
 The base-tier path is the
 [open-admission runbook](validators.md#open-admission-base-tier-not-yet-enabled)
-(ooo-hq/zils PR #51); it needs the validator's base-tier intake.
+(merged); the validator's base-tier intake is merged too (#53), so that path
+only waits on the config flip.
 
 ## 3. Operator duties left
 
@@ -66,4 +67,3 @@ zils-web change, out of scope here.
   first contact, auto-queue qualification jobs.
 - `terms_sha256` in the signed claim and in `qualification.json`;
   `terms_sha256` and `terms_accepted_at` on `fez_training_workers`.
-- Validator base-tier intake (separate session).
