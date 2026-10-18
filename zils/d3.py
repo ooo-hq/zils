@@ -281,6 +281,93 @@ def validate_candidate(checkpoint):
             raise ValueError(f"base candidate {shard} tensors differ from its index: {wrong[0]}")
 
 
+TARGET_MODULES = 152
+
+
+def write_candidate(adapter, out):
+    """Merge a pinned-recipe adapter into the parent backbone and write a d3 base candidate.
+
+    The candidate is the parent's two shards with ``W + (lora_alpha / r) * B @ A`` on every LoRA target
+    (computed in FP32, stored BF16), the parent's index and contract files byte for byte, and candidate
+    metadata; nothing else, so `validate_candidate` accepts it. Returns a provenance record for the caller
+    to keep beside the artifact (the artifact itself may hold no extra file).
+    """
+    import shutil
+
+    import torch
+    from safetensors import safe_open
+    from safetensors.torch import load_file, save_file
+
+    adapter, out = Path(adapter), Path(out)
+    meta = models.metadata(adapter)
+    if meta is None or meta["model"] != models.D3 or meta["kind"] != "adapter":
+        raise ValueError("merge requires a d3 adapter checkpoint")
+    root = pinned_base_path()
+    index = "model.safetensors.index.json"
+    weight_map = json.loads((root / index).read_text())["weight_map"]
+    targets = {
+        key[: -len(".weight")]
+        for key in weight_map
+        if key.startswith("language_model.layers.")
+        and key.endswith(".weight")
+        and key.rsplit(".", 2)[-2] in TARGETS
+    }
+    if len(targets) != TARGET_MODULES:
+        raise OSError("d3 language adapter target count changed")
+    validate_adapter_config(adapter, targets)
+    pairs = {}
+    for key, value in load_file(str(adapter / "adapter_model.safetensors")).items():
+        module, found, rest = key.removeprefix("base_model.model.").rpartition(".lora_")
+        which = rest.split(".")[0]
+        if (
+            not found
+            or module not in targets
+            or which not in ("A", "B")
+            or value.dtype != torch.bfloat16
+        ):
+            raise ValueError(f"adapter tensor outside the pinned recipe: {key}")
+        pairs.setdefault(module, {})[which] = value
+    if set(pairs) != targets or any(set(p) != {"A", "B"} for p in pairs.values()):
+        raise ValueError("adapter must hold lora_A and lora_B for every target")
+    scaling = 32 / 16  # lora_alpha / r of the pinned recipe
+    out.mkdir(parents=True, exist_ok=False)
+    merged = 0
+    for shard in sorted(set(weight_map.values())):
+        tensors = {}
+        with safe_open(str(root / shard), framework="pt") as stream:
+            for key in stream.keys():
+                tensor = stream.get_tensor(key)
+                module = key[: -len(".weight")] if key.endswith(".weight") else None
+                if module in pairs:
+                    delta = pairs[module]["B"].float() @ pairs[module]["A"].float()
+                    if tensor.dtype != torch.bfloat16 or delta.shape != tensor.shape:
+                        raise ValueError(f"adapter shape differs from the backbone at {module}")
+                    tensor = (tensor.float() + scaling * delta).to(torch.bfloat16)
+                    merged += 1
+                tensors[key] = tensor
+        save_file(tensors, str(out / shard), metadata={"format": "pt"})
+    if merged != len(pairs):
+        raise RuntimeError("adapter targets missing from the backbone shards")
+    for name in (index, *models.D3_CONTRACT_FILES):
+        shutil.copyfile(root / name, out / name)
+    models.write_metadata(out, kind="candidate", model=models.D3)
+    validate_candidate(out)
+
+    def sha(path):
+        with path.open("rb") as stream:
+            return hashlib.file_digest(stream, "sha256").hexdigest()
+
+    return {
+        "version": "zils-base-candidate/v1",
+        "parent": models.spec(models.D3),
+        "parent_files_sha256": dict(PINS["files"]),
+        "adapter_sha256": sha(adapter / "adapter_model.safetensors"),
+        "recipe": {"merge": "lora_alpha/r scaled B@A in fp32, stored bf16", "scaling": scaling},
+        "merged_tensors": merged,
+        "files_sha256": {p.name: sha(p) for p in sorted(out.iterdir())},
+    }
+
+
 class DecisionModel:
     def __init__(self, checkpoint, device, train=False):
         import torch
@@ -460,6 +547,9 @@ def main():
         trainer.add_argument("--" + name, required=True)
     trainer.add_argument("--seed", required=True, type=int)
     trainer.add_argument("--device", choices=("cuda",), default="cuda")
+    merger = sub.add_parser("candidate", help="merge an adapter into a full-weight base candidate")
+    merger.add_argument("--adapter", required=True)
+    merger.add_argument("--out", required=True)
     checker = sub.add_parser("parity")
     checker.add_argument("--reference", required=True)
     checker.add_argument("--cases", required=True)
@@ -472,6 +562,8 @@ def main():
         (path / "model.json").chmod(0o444)
     elif args.command == "train":
         train(args, model_id=models.D3)
+    elif args.command == "candidate":
+        print(json.dumps(write_candidate(args.adapter, args.out), indent=2))
     else:
         cases = [
             json.loads(line) for line in Path(args.cases).read_text().splitlines() if line.strip()

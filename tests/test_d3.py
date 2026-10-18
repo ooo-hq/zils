@@ -310,6 +310,75 @@ class D3ModuleTest(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, message):
                         d3.validate_candidate(candidate)
 
+    def test_write_candidate_merges_the_adapter_into_the_parent_shards(self):
+        from safetensors.torch import load_file, save_file
+
+        module = "language_model.layers.0.self_attn.q_proj"
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            base, adapter = root / "base", root / "adapter"
+            base.mkdir(), adapter.mkdir()
+            torch.manual_seed(0)
+            weight, other = torch.randn(4, 3).bfloat16(), torch.randn(2, 2).bfloat16()
+            parent = {module + ".weight": SHARDS[0], "visual.other.weight": SHARDS[1]}
+            (base / INDEX).write_text(json.dumps({"metadata": {}, "weight_map": parent}))
+            save_file({module + ".weight": weight}, str(base / SHARDS[0]))
+            save_file({"visual.other.weight": other}, str(base / SHARDS[1]))
+            for name in models.D3_CONTRACT_FILES:
+                (base / name).write_bytes(name.encode())
+            pins = {name: hashlib.sha256(name.encode()).hexdigest() for name in d3.PINS["files"]}
+            self.enterContext(patch.dict(d3.PINS["files"], pins))
+            self.enterContext(patch("zils.d3.pinned_base_path", return_value=base))
+            self.enterContext(patch("zils.d3.TARGET_MODULES", 1))
+            a, b = torch.randn(2, 3).bfloat16(), torch.randn(4, 2).bfloat16()
+            prefix = "base_model.model." + module
+            save_file(
+                {prefix + ".lora_A.weight": a, prefix + ".lora_B.weight": b},
+                str(adapter / "adapter_model.safetensors"),
+            )
+            spec = models.spec(models.D3)
+            (adapter / "adapter_config.json").write_text(
+                json.dumps(
+                    {
+                        "r": 16,
+                        "lora_alpha": 32,
+                        "lora_dropout": 0.05,
+                        "bias": "none",
+                        "base_model_name_or_path": spec["base"],
+                        "revision": spec["base_revision"],
+                        "modules_to_save": None,
+                        "target_modules": [module],
+                    }
+                )
+            )
+            models.write_metadata(adapter, model=models.D3)
+            out = root / "candidate"
+            provenance = d3.write_candidate(adapter, out)
+            merged = load_file(str(out / SHARDS[0]))[module + ".weight"]
+            expected = (weight.float() + 2 * (b.float() @ a.float())).bfloat16()
+            self.assertTrue(torch.equal(merged, expected))
+            self.assertTrue(
+                torch.equal(load_file(str(out / SHARDS[1]))["visual.other.weight"], other)
+            )
+            self.assertEqual(
+                sorted(p.name for p in out.iterdir()), sorted(models.D3_CANDIDATE_FILES)
+            )
+            self.assertEqual((out / "d3_runtime.py").read_bytes(), b"d3_runtime.py")
+            self.assertEqual(models.metadata(out)["kind"], "candidate")
+            self.assertEqual(provenance["merged_tensors"], 1)
+            self.assertEqual(provenance["recipe"]["scaling"], 2.0)
+            d3.validate_candidate(out)
+            save_file(
+                {
+                    prefix + ".lora_A.weight": a,
+                    prefix + ".lora_B.weight": b,
+                    "visual.x.lora_A.weight": a.clone(),
+                },
+                str(adapter / "adapter_model.safetensors"),
+            )
+            with self.assertRaisesRegex(ValueError, "outside the pinned recipe"):
+                d3.write_candidate(adapter, root / "candidate-2")
+
     def test_parity_reports_and_rejects_drift(self):
         reference = [0.7, 0.3]
         model = SimpleNamespace(
