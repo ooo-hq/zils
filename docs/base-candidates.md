@@ -14,8 +14,11 @@ promoted-profile support in the runtime and the dry-run promotion script are
 merged; the full loop was rehearsed end to end on 17/18 October (a synthetic-only
 candidate tied stock d3 on the sealed exams and passed the adapter suite; nothing
 was promoted). A public validator with the intake runs on testnet subnet 579
-since 18 October (chain admission, no weights published yet); miners announce
-with `zils.miner announce-candidate` (below). The channel setting on the platform
+since 18 October (chain admission, no weights published yet). Candidates enter the
+standard Bittensor way: the miner uploads the candidate to its own Hugging Face
+repo and commits repo, revision and checkpoint hash on chain with
+`zils.miner commit-candidate`; every validator reads the commitments and pulls
+(below; replaces the 18 October push announcement). The channel setting on the platform
 is a configuration value (`ZILS_TRAINING_MODEL_LATEST`), not yet a registry
 alias; automatic "follow stable" upgrades are not implemented.
 
@@ -81,46 +84,94 @@ Nothing else: a `candidate.json`, a README or a stray `__pycache__` is rejected.
 Total size must stay under 9.5 GiB (the parent is 9.08 GB; a merged LoRA is the
 same size).
 
-## Announce
+## Commit
 
-`zils.miner announce-candidate` is the miner side of the public validator's
-intake. Run it on the host that holds the candidate, with the registered miner
-hotkey (the hotkey file only; the coldkey is never read). `zils.miner doctor`
-with the same flags checks each prerequisite in order and prints the first fix
-or, when all pass, this command with your flags filled in:
+A candidate is two things: the artifact in **your own public Hugging Face model
+repo**, pinned by commit, and **one chain commitment** made with your registered
+miner hotkey on subnet 579 (the hotkey file only; the coldkey is never read):
 
-```bash
-.venv-kev/bin/python -m zils.miner announce-candidate \
-  --validator http://VALIDATOR_PUBLIC_IPV4:8900 --validator-hotkey VALIDATOR_SS58 \
-  --wallet-name WALLET_NAME --wallet-hotkey MINER_KEY_NAME --wallet-path /absolute/wallets \
-  --candidate candidate --port 8901
+```text
+zils1:<checkpoint sha256>:<revision>:<owner/repo>
 ```
 
-The command checks the directory with the validator's own `validate_candidate`
-(it needs the pinned parent on disk, as the merge recipe does), serves it at
-`http://<this host>:8901/artifacts/<round>/<file>` (the port must be reachable
-from the validator; the validator pins the download to the address your
-announcement came from, so the host needs a public IPv4 on its interface or a
-1:1 NAT, given with `--advertise-host`), reads your uid for that hotkey from the
-subnet 579 metagraph (`--netuid` for another subnet) and refuses a hotkey that is
-not registered, then every round: reads the validator's current round, signs the
-adapter claim plus `"kind": "candidate"` with the hotkey, POSTs it, waits for the
-round result and prints the aggregate `base_tier` row for your uid (Brier and
-accuracy against the incumbent, eligibility, the pending and confirmed winner,
-your weight). It exits with a clear message when the validator has no base-tier
-intake (HTTP 409), when the directory fails validation, when the hotkey is not
-registered, or when the artifact endpoint is not globally routable while the
-validator is. `--rounds N` stops after N results; the default keeps announcing.
-Replies are verified against `--validator-hotkey`; the operator publishes it with
-the validator's URL. Nothing else is required: no bundle, no config file, no
-training-data download.
+`<checkpoint sha256>` is the `zils.checkpoint_hash` of the directory (it covers
+every file in the artifact), `<revision>` the full 40-hex commit sha of the upload
+(never a branch or tag, so the bytes cannot change under the validators) and
+`<owner/repo>` the model repo id. The string is plaintext, at most 305 bytes,
+written as up to three 128-byte Raw fields of the Commitments pallet. Every
+validator reads each registered hotkey's commitment at its round's preflight
+block, freezes it in that round's chain snapshot and pulls the revision itself.
+No validator URL, open port or long-running process is needed.
 
-The checkpoint hash covers every file in the artifact. One live candidate per
-hotkey per round, a claim cannot change within a round, identical hashes from
-different miners are rejected, and the incumbent's own hash is refused. Announce
-every round (the command does): a validator that scores candidates itself keeps
-each hash it has fetched, so a repeated hash costs no download and no rescoring,
-and only the candidates announced in a round are in that round's decision.
+`zils.miner doctor` checks each prerequisite in order (requirements, hotkey file,
+registration, candidate, Hugging Face repo at the revision, the commitment on
+chain) and prints the first fix or, when all pass, the block your commitment
+landed in. `zils.miner commit-candidate` does the work:
+
+```bash
+hf auth login   # once, with a write token for your account
+.venv-kev/bin/python -m zils.miner commit-candidate \
+  --wallet-name WALLET_NAME --wallet-hotkey MINER_KEY_NAME --wallet-path /absolute/wallets \
+  --candidate candidate --repo YOUR_HF_USER/d3-candidate
+```
+
+It checks the directory with the validator's own `validate_candidate` (it needs
+the pinned parent on disk, as the merge recipe does), hashes it, reads your uid
+and current commitment from the chain and prints the commitment it would write.
+That is a dry run; add `--yes` to upload only the candidate files to the repo
+(created public if absent), check through the public API that the repo at the new
+commit holds every file at the local size and LFS digest, write the commitment
+and read it back. With an upload you made yourself, pass `--revision <commit sha>`
+and the command skips the upload. It refuses an unregistered hotkey, a branch
+name for a revision, a revision the repo does not have, and files that differ
+from the local candidate; when the chain already holds exactly this commitment it
+writes nothing, because committing again moves your block later.
+
+What the validator does with it, every round: refuses a commitment that does not
+parse, names the incumbent's hash, or carries a hash another hotkey committed at
+an earlier block; downloads a new hash once from
+`huggingface.co/<repo>/resolve/<revision>/<file>`, only the candidate files, under
+the 9.5 GiB budget declared by the repo listing and enforced on every byte; checks
+the checkpoint hash and the candidate contract; and scores it in the sandbox.
+A hash it has already pulled costs no download and no rescoring, so leave an
+unchanged commitment alone: it stays in every round's decision. Commit again only
+when you have a new candidate (new hash). Keep the repo and revision public until
+your candidate is decided; a validator that has not pulled it yet can only score
+what it can download.
+
+### Copies
+
+A checkpoint hash belongs to the hotkey that committed it at the earliest block.
+The same hash from another hotkey at a later block is refused, so replaying a
+winner's commitment, or re-uploading its files under your own repo, earns
+nothing. A hash two hotkeys committed in that same earliest block belongs to
+nobody (no tie-break a front-runner could win); if that ever happens to you,
+merge again (a new hash) and commit.
+
+Commitments are plaintext, not timelocked (decided 18 October 2026). A sealed
+commitment would hide the pointer only until it reveals, and the repo itself must
+be public for every validator to pull, so a copier watching Hugging Face learns
+nothing later than one watching the chain; sealing would also delay every
+candidate by the reveal period and tie intake to the drand beacon. What timelock
+does stop is a same-block replay of a commitment seen in the mempool, which today
+earns the replayer nothing (the tie rule above); revisit if griefing that way
+appears. Neither scheme stops a near-copy: the same weights re-saved so the hash
+changes. Such a copy scores the same as the original, and `base_round.decide`
+breaks exact ties by uid. The defence there is score-based (prefer the earlier
+commitment unless the later one is better by a margin) and is an open owner
+decision; until then a promoted winner is protected by king of the hill, since a
+copy of the incumbent is never eligible.
+
+### Results
+
+The per-round `base_tier` row (Brier and accuracy against the incumbent,
+eligibility, pending and confirmed winner) is published by each validator in its
+signed round result over its own HTTP API (`GET /results/<round>`); the chain does
+not carry it. What the chain does carry, readable without any URL, is the payout:
+the validator's weights and your incentive, for example
+`btcli subnets metagraph --netuid 579 --network test`. A validator could publish
+its API address on chain (`serve_axon`) so miners find it without an operator
+announcement; not done yet.
 
 ### Reference recipe: train a LoRA, merge it
 

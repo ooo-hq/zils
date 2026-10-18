@@ -1,224 +1,150 @@
-"""An outside miner's commands against a public Zils validator.
+"""An outside miner's base-tier commands. A candidate is a merged d3 checkpoint on the miner's own
+Hugging Face repo plus one chain commitment of repo, revision and checkpoint hash; every validator
+reads the commitments and pulls that revision. No validator URL is needed.
 
 `doctor` checks the setup step by step and prints the one command that fixes the first failing
-step. `announce-candidate` serves a merged base candidate over HTTP, announces it to a validator with a
-base-tier intake every round, and prints the aggregate result the validator publishes."""
+step. `commit-candidate` validates a candidate, uploads it (or takes an uploaded revision), prints the
+commitment and, with --yes, writes it with the hotkey."""
 
 import argparse
-import http.client
+import hashlib
 import importlib
-import ipaddress
-import json
-import math
-import os
-import re
-import shutil
-import signal
-import socket
-import time
 from pathlib import Path
-from urllib.error import HTTPError, URLError
 
 import zils
 
-from . import models, protocol as wire, testnet
-from .runtime import request
+from . import commitments, models, testnet
 
 NETUID = 579
-REQUIRED_MODULES = ("bittensor", "bittensor_wallet", "kev", "torch")
+REQUIRED_MODULES = ("bittensor", "bittensor_wallet", "huggingface_hub", "kev", "torch")
 PINNED_BITTENSOR = "11.1.0"
 
 
-def hotkey_uid(netuid, hotkey, validator_hotkey):
-    """The miner's uid on the subnet, from the same chain read the validator admits members with."""
-    config = {
-        "chain": {"network": "test", "netuid": netuid},
-        "validator_hotkey": validator_hotkey,
-        "admission": "chain",
-    }
+def chain_config(netuid):
+    return {"chain": {"network": "test", "netuid": netuid}}
+
+
+def hotkey_state(netuid, hotkey):
+    """The hotkey's uid (None when unregistered) and current commitment, read from the chain."""
+    config = chain_config(netuid)
     with testnet.connect(config) as sub:
-        members = testnet.preflight(config, sub)["members"]
-    for uid, registered in members.items():
-        if registered == hotkey:
-            return int(uid)
-    raise ValueError(f"hotkey {hotkey} is not registered on testnet subnet {netuid}")
+        return testnet.hotkey_state(config, sub, hotkey)
 
 
-def own_endpoint(validator, port, advertise=None):
-    """The address the validator will see this miner connect from, or an explicit one; globally
-    routable whenever the validator itself is, since the validator pins downloads to that address."""
-    address, validator_port = wire.endpoint_port(validator)
-    if advertise is None:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
-            route.connect((str(address), validator_port))
-            advertise = route.getsockname()[0]
-    endpoint = f"http://{ipaddress.IPv4Address(advertise)}:{port}"
-    public = address.is_global
-    try:
-        wire.endpoint_ok(endpoint, allowed=[endpoint], public=public)
-    except ValueError as error:
-        hint = (
-            "the validator is public, so the artifact endpoint must be a globally routable IPv4 "
-            "address the validator can reach; give --advertise-host when this host sits behind 1:1 NAT"
-            if public
-            else "a private validator needs a private artifact endpoint"
-        )
-        raise ValueError(f"{error}: {endpoint}; {hint}") from error
-    return endpoint
-
-
-def artifact_handler(candidate, files):
-    class Artifacts(wire.Handler):
-        def do_GET(self):
-            match = re.fullmatch(r"/artifacts/[a-f0-9]{32}/([^/]+)", self.path)
-            if not match or match[1] not in files:
-                self.reply(404, {"error": "unknown artifact"})
-                return
-            with (candidate / match[1]).open("rb") as source:
-                self.send_response(200)
-                self.send_header("Content-Length", str(os.fstat(source.fileno()).st_size))
-                self.end_headers()
-                shutil.copyfileobj(source, self.wfile)
-
-    return Artifacts
-
-
-def refusal(error):
-    try:
-        body = json.loads(error.read())
-        return str(body.get("error") or body.get("payload", {}).get("error", ""))[:200]
-    except (ValueError, OSError, AttributeError):
-        return ""
-
-
-def summary(uid, result):
-    """The aggregate base-tier rows a miner is entitled to see."""
-    tier = result.get("base_tier")
-    if tier is None:
-        return "base tier: no decision this round"
-    rejected = tier.get("rejected", {}).get(str(uid))
-    if rejected:
-        return f"base tier: candidate rejected: {rejected}"
-    mine = next((c for c in tier.get("candidates", []) if c.get("uid") == uid), None)
-    if mine is None:
-        return "base tier: candidate not scored this round"
-    winner = (tier.get("pending_winner") or {}).get("uid")
-    confirmed = (tier.get("confirmed_winner") or {}).get("uid")
-    incumbent = tier.get("incumbent", {})
-    return (
-        f"base tier: brier {mine.get('brier')} vs incumbent {incumbent.get('brier')}; "
-        f"accuracy {mine.get('accuracy')} vs {incumbent.get('accuracy')}; "
-        f"eligible {mine.get('eligible')}; pending winner uid {winner}; "
-        f"confirmed winner uid {confirmed}; weight {result.get('weights', {}).get(str(uid), 0)}"
-    )
-
-
-def announce_candidate(args):
-    from bittensor.wallet import Wallet
-
+def local_candidate(path):
     from . import d3
 
-    candidate = Path(args.candidate).resolve()
+    candidate = Path(path).resolve()
     d3.validate_candidate(candidate)
-    sha256 = zils.checkpoint_hash(candidate)
-    files = models.artifact_files(candidate)
-    key = Wallet(name=args.wallet_name, hotkey=args.wallet_hotkey, path=args.wallet_path).hotkey
-    endpoint = own_endpoint(args.validator, args.port, args.advertise_host)
-    uid = hotkey_uid(args.netuid, key.ss58_address, args.validator_hotkey)
-    config = {"validator": args.validator, "validator_hotkey": args.validator_hotkey}
-    chain = {"network": "test", "netuid": args.netuid}
-    announced, finished, last_error = set(), set(), None
-    host = str(wire.endpoint_port(endpoint)[0])
-    with wire.local_server(artifact_handler(candidate, files), host, args.port):
-        print(
-            f"miner {uid}: serving candidate {sha256[:12]} at {endpoint}; validator {args.validator}",
-            flush=True,
-        )
-        while not args.rounds or len(finished) < args.rounds:
-            try:
-                job = request(config, "/round")
-                rid = job.get("round_id")
-                if job.get("kind") != "round" or rid in finished:
-                    time.sleep(args.poll)
-                    continue
-                if not re.fullmatch("[a-f0-9]{32}", rid or ""):
-                    raise ValueError("invalid validator round")
-                if "chain" in job and job["chain"] != chain:
-                    raise ValueError(f"validator round is for another subnet: {job['chain']}")
-                if job["status"] == "collecting" and rid not in announced:
-                    claim = {
-                        "round_id": rid,
-                        "uid": uid,
-                        "hotkey": key.ss58_address,
-                        "sha256": sha256,
-                        "endpoint": endpoint,
-                        "kind": "candidate",
-                    }
-                    try:
-                        reply = request(
-                            config,
-                            "/submit",
-                            {"claim": claim, "signature": key.sign(wire.canonical(claim)).hex()},
-                        )
-                    except HTTPError as error:
-                        detail = refusal(error)
-                        if error.code == 409 and "base candidates" in detail:
-                            raise ValueError(
-                                "this validator has no base-tier intake; announce to one that does"
-                            )
-                        if error.code == 409:
-                            time.sleep(args.poll)  # round changed under us; ask again
-                            continue
-                        raise ValueError(
-                            f"validator refused the claim (HTTP {error.code}): {detail}"
-                        ) from error
-                    if reply.get("status") != "accepted" or reply.get("round_id") != rid:
-                        raise ValueError("validator did not acknowledge this round's announcement")
-                    announced.add(rid)
-                    print(f"miner {uid}: announced {sha256[:12]} for round {rid}", flush=True)
-                if rid in announced:
-                    result = request(config, "/results/" + rid)
-                    if result.get("kind") == "result" and result.get("round_id") == rid:
-                        finished.add(rid)
-                        print(
-                            f"miner {uid}: round {rid} complete; {summary(uid, result)}", flush=True
-                        )
-                last_error = None
-            except HTTPError as error:
-                if error.code not in (404, 409, 503):
-                    raise ValueError(
-                        f"validator rejected request (HTTP {error.code}): {refusal(error)}"
-                    ) from error
-            except (URLError, TimeoutError, ConnectionError, http.client.HTTPException) as error:
-                message = str(error)
-                if message != last_error:
-                    print(f"miner {uid}: validator unavailable; retrying: {message}", flush=True)
-                    last_error = message
-            time.sleep(args.poll)
-    return {"uid": uid, "sha256": sha256, "endpoint": endpoint, "rounds": sorted(finished)}
+    return candidate, zils.checkpoint_hash(candidate)
 
 
-def announce_command(args):
+def check_remote(repo, revision, candidate):
+    """The public repo at this commit holds every candidate file with the local size and LFS digest."""
+    listed = commitments.revision_files(repo, revision)
+    for name in models.D3_CANDIDATE_FILES:
+        local, remote = candidate / name, listed.get(name)
+        if remote is None:
+            raise ValueError(f"{repo} at {revision[:12]} has no {name}")
+        if remote["size"] not in (None, local.stat().st_size):
+            raise ValueError(f"{name} on Hugging Face differs in size from the local candidate")
+        if remote["sha256"] is not None:
+            with local.open("rb") as stream:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != remote["sha256"]:
+                    raise ValueError(f"{name} on Hugging Face differs from the local candidate")
+
+
+def upload(candidate, repo, sha256):
+    """Push only the candidate files to the miner's public model repo; returns the commit sha."""
+    from huggingface_hub import HfApi
+
+    api = HfApi()
+    api.create_repo(repo, repo_type="model", private=False, exist_ok=True)
+    info = api.upload_folder(
+        repo_id=repo,
+        repo_type="model",
+        folder_path=str(candidate),
+        allow_patterns=list(models.D3_CANDIDATE_FILES),
+        commit_message=f"Zils d3 base candidate {sha256[:12]}",
+    )
+    return commitments.check_revision(info.oid)
+
+
+def wallet(args):
+    from bittensor.wallet import Wallet
+
+    return Wallet(name=args.wallet_name, hotkey=args.wallet_hotkey, path=args.wallet_path)
+
+
+def commit_command(args, revision=None):
     command = [
-        "python -m zils.miner announce-candidate",
-        f"--validator {args.validator} --validator-hotkey {args.validator_hotkey}",
+        "python -m zils.miner commit-candidate",
         f"--wallet-name {args.wallet_name} --wallet-hotkey {args.wallet_hotkey}"
         f" --wallet-path {args.wallet_path}",
-        f"--candidate {args.candidate} --port {args.port}",
+        f"--candidate {args.candidate} --repo {args.repo}"
+        + (f" --revision {revision}" if revision else ""),
     ]
-    if args.advertise_host:
-        command.append(f"--advertise-host {args.advertise_host}")
     if args.netuid != NETUID:
         command.append(f"--netuid {args.netuid}")
-    return " \\\n  ".join(command)
+    return " \\\n  ".join(command + ["--yes"])
+
+
+def commit_candidate(args):
+    candidate, sha256 = local_candidate(args.candidate)
+    commitments.check_repo(args.repo)
+    if args.revision is not None:
+        commitments.check_revision(args.revision)
+    keys = wallet(args)
+    hotkey = keys.hotkey.ss58_address
+    state = hotkey_state(args.netuid, hotkey)
+    if state["uid"] is None:
+        raise ValueError(f"hotkey {hotkey} is not registered on testnet subnet {args.netuid}")
+    current = (state["commitment"] or {}).get("data")
+    revision = args.revision
+    print(
+        f"miner {state['uid']}: candidate {sha256}\n"
+        f"  repo {args.repo} at {revision or '<the commit the upload creates>'}\n"
+        f"  commitment {commitments.format_commitment(sha256, revision or '0' * 40, args.repo)}"
+        + ("" if revision else " (revision filled in after the upload)")
+        + f"\n  current on chain: {current or 'none'}",
+        flush=True,
+    )
+    if revision and current == commitments.format_commitment(sha256, revision, args.repo):
+        # Committing again would move the block later and could hand the hash to a copier.
+        print(f"already committed at block {state['commitment']['block']}; nothing to do")
+        return state["commitment"]
+    if not args.yes:
+        print("dry run: nothing uploaded or written; run again with --yes", flush=True)
+        return None
+    if revision is None:
+        revision = upload(candidate, args.repo, sha256)
+        print(f"uploaded {args.repo} at {revision}", flush=True)
+    check_remote(args.repo, revision, candidate)
+    text = commitments.format_commitment(sha256, revision, args.repo)
+    if current == text:
+        print(f"already committed at block {state['commitment']['block']}; nothing to do")
+        return state["commitment"]
+    config = chain_config(args.netuid)
+    with testnet.connect(config, raw_calls=True) as sub:
+        testnet.write_commitment(config, sub, keys, text)
+        after = testnet.hotkey_state(config, sub, hotkey)["commitment"]
+    if (after or {}).get("data") != text:
+        raise ValueError(
+            "the chain does not show the new commitment; read it again before retrying"
+        )
+    print(
+        f"committed at block {after['block']}; validators pull it at their next round",
+        flush=True,
+    )
+    return after
 
 
 def doctor(args):
     """Run the outsider's checklist in order; stop at the first failing step with its fix."""
     from importlib.metadata import PackageNotFoundError, version
 
-    wallet = f"--wallet {args.wallet_name} --wallet-hotkey {args.wallet_hotkey} --wallet-path {args.wallet_path}"
-    btcli = f"btcli --network test {wallet}"
+    flags = f"--wallet {args.wallet_name} --wallet-hotkey {args.wallet_hotkey} --wallet-path {args.wallet_path}"
+    btcli = f"btcli --network test {flags}"
     state = {}
 
     def requirements():
@@ -240,9 +166,7 @@ def doctor(args):
             )
 
     def wallet_hotkey():
-        from bittensor.wallet import Wallet
-
-        key = Wallet(name=args.wallet_name, hotkey=args.wallet_hotkey, path=args.wallet_path)
+        key = wallet(args)
         if not key.hotkey_file.exists_on_device():
             return (
                 f"no hotkey file at {key.hotkey_file.path}; create the identity (coldkey stays on"
@@ -251,15 +175,13 @@ def doctor(args):
         state["hotkey"] = key.hotkey.ss58_address
 
     def registration():
-        try:
-            state["uid"] = hotkey_uid(args.netuid, state["hotkey"], args.validator_hotkey)
-        except ValueError as error:
-            if "not registered" in str(error):
-                return (
-                    f"{error}; fund the coldkey with test TAO, then\n"
-                    f"  {btcli} tx burned-register --netuid {args.netuid}"
-                )
-            return f"{error}; check --validator-hotkey against the operator's publication"
+        state.update(hotkey_state(args.netuid, state["hotkey"]))
+        if state["uid"] is None:
+            return (
+                f"hotkey {state['hotkey']} is not registered on testnet subnet {args.netuid};"
+                f" fund the coldkey with test TAO, then\n"
+                f"  {btcli} tx burned-register --netuid {args.netuid}"
+            )
 
     def candidate():
         if args.candidate is None:
@@ -272,42 +194,43 @@ def doctor(args):
                 " > provenance.json\n"
                 "then run doctor again with --candidate candidate"
             )
-        from . import d3
-
         try:
-            d3.validate_candidate(Path(args.candidate).resolve())
-            state["sha256"] = zils.checkpoint_hash(args.candidate)
+            state["path"], state["sha256"] = local_candidate(args.candidate)
         except (ValueError, OSError) as error:
             return f"{error}; merge again with python -m zils.d3 candidate"
 
-    def validator():
-        try:
-            state["endpoint"] = own_endpoint(args.validator, args.port, args.advertise_host)
-        except ValueError as error:
-            return str(error)
-        config = {"validator": args.validator, "validator_hotkey": args.validator_hotkey}
-        try:
-            job = request(config, "/round")
-        except (URLError, TimeoutError, ConnectionError, http.client.HTTPException) as error:
-            return f"cannot reach {args.validator}: {error}; check the URL the operator published"
-        except ValueError as error:
-            return f"{error}; check --validator-hotkey against the operator's publication"
-        if job.get("kind") != "round":
-            return None
-        if "base_tier" not in job:
+    def hugging_face():
+        if args.repo is None:
             return (
-                "this validator has no base-tier intake; use the base-tier validator the operator"
-                " published"
+                "no --repo; pick a public model repo id under your Hugging Face account"
+                " (log in with hf auth login; commit-candidate creates the repo) and run doctor"
+                " again with --repo owner/name"
             )
-        if job["base_tier"].get("incumbent_sha256") == state["sha256"]:
-            return "the candidate is the stock base; train and merge before announcing"
+        if args.revision is None:
+            return "not uploaded yet; upload and commit with\n  " + commit_command(args)
+        try:
+            commitments.check_repo(args.repo)
+            commitments.check_revision(args.revision)
+            check_remote(args.repo, args.revision, state["path"])
+        except (ValueError, OSError) as error:
+            return f"{error}; make the repo public, or upload again with\n  " + commit_command(args)
+
+    def commitment():
+        wanted = commitments.format_commitment(state["sha256"], args.revision, args.repo)
+        current = (state["commitment"] or {}).get("data")
+        if current != wanted:
+            return (
+                f"the chain holds {current or 'no commitment'} for this hotkey; commit with\n  "
+                + commit_command(args, args.revision)
+            )
 
     steps = [
         ("requirements", requirements),
         ("wallet hotkey", wallet_hotkey),
         ("registration", registration),
         ("candidate", candidate),
-        ("validator", validator),
+        ("hugging face", hugging_face),
+        ("commitment", commitment),
     ]
     for name, check in steps:
         fix = check()
@@ -316,9 +239,10 @@ def doctor(args):
             return False
         print(f"ok  {name}", flush=True)
     print(
-        f"ready: uid {state['uid']}, candidate {state['sha256'][:12]}, artifacts at"
-        f" {state['endpoint']}; open TCP {args.port} to the internet and run\n  "
-        + announce_command(args),
+        f"ready: uid {state['uid']} committed {state['sha256'][:12]} at block"
+        f" {state['commitment']['block']}; every validator pulls it at its next round. Results:"
+        " the chain weights for your uid (btcli subnets metagraph --netuid"
+        f" {args.netuid} --network test)",
         flush=True,
     )
     return True
@@ -328,16 +252,10 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     check = commands.add_parser("doctor", help="check the setup and print the next command")
-    announce = commands.add_parser(
-        "announce-candidate", help="serve and announce a base candidate every round"
+    commit = commands.add_parser(
+        "commit-candidate", help="upload a base candidate and commit it on chain"
     )
-    for command in (check, announce):
-        command.add_argument("--validator", required=True, help="public URL, http://<IPv4>:<port>")
-        command.add_argument(
-            "--validator-hotkey",
-            required=True,
-            help="SS58 hotkey the validator signs its replies with",
-        )
+    for command in (check, commit):
         command.add_argument("--wallet-name", required=True)
         command.add_argument(
             "--wallet-hotkey", required=True, help="hotkey name; the coldkey is never read"
@@ -345,35 +263,24 @@ def main(argv=None):
         command.add_argument("--wallet-path", default="~/.bittensor/wallets")
         command.add_argument(
             "--candidate",
-            required=command is announce,
+            required=command is commit,
             help="directory written by `zils.d3 candidate`",
         )
-        command.add_argument("--port", type=int, default=8901, help="this host's artifact port")
         command.add_argument(
-            "--advertise-host",
-            help="public IPv4 of this host when it differs from the interface address",
+            "--repo", required=command is commit, help="your public Hugging Face model repo"
         )
+        command.add_argument("--revision", help="40-hex commit sha of an upload already in --repo")
         command.add_argument("--netuid", type=int, default=NETUID)
-    announce.add_argument(
-        "--rounds", type=int, default=0, help="0 keeps announcing; N stops after N round results"
+    commit.add_argument(
+        "--yes", action="store_true", help="upload and write the commitment; without it, a dry run"
     )
-    announce.add_argument("--poll", type=float, default=5)
     args = parser.parse_args(argv)
-
-    def stop(*_):
-        raise KeyboardInterrupt
-
-    signal.signal(signal.SIGTERM, stop)
     try:
-        wire.endpoint_port(args.validator)
         if args.command == "doctor":
             if not doctor(args):
                 parser.exit(1)
             return
-        if args.rounds < 0 or not math.isfinite(args.poll) or args.poll <= 0:
-            raise ValueError("rounds must be nonnegative and poll must be positive")
-        announce_candidate(args)
-        print("Zils miner stopped.", flush=True)
+        commit_candidate(args)
     except KeyboardInterrupt:
         print("Zils miner stopped.", flush=True)
     except (ValueError, OSError, RuntimeError, KeyError) as error:

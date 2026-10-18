@@ -201,8 +201,9 @@ nothing; the chain's own normalization then hands its share to the other track.
 If nobody earned on either track, nothing is sent and the previous chain
 weights remain.
 
-Anti-gaming: one live submission per hotkey per round, a claim cannot change
-within a round, a hash already submitted by another miner is rejected, every
+Anti-gaming: one adapter submission per hotkey per round and one base candidate
+commitment per hotkey on chain; a claim cannot change within a round; a candidate
+hash another hotkey committed at an earlier block is refused; every
 sealed split is audited against its manifest before scoring, and payment goes
 only to registered roster UIDs. You receive aggregate metrics, never per-case
 outcomes; a round's cases are published after it closes and are not reused.
@@ -225,16 +226,19 @@ You do not need a bundle, an operator or an invitation to enter the base tier:
 registration on subnet 579 is the admission. About an afternoon end to end, most
 of it the training run.
 
-The public base-tier validator on testnet subnet 579 (18 October 2026):
+The Zils base-tier validator on testnet subnet 579 (18 October 2026). You do not
+need its address or hotkey to compete: candidates are chain commitments that
+every validator reads itself. The address only serves its signed round results
+(`GET /results/<round>`, step 6):
 
 | | |
 | --- | --- |
 | URL | `http://165.245.195.21:8900` |
 | Validator hotkey | `5HTAVUuHxV81VbYoX7DYFzebdyA1SRk3zazdZiiBN7zCcpxy` (uid 0 on subnet 579) |
 
-Plain HTTP; every reply is signed by that hotkey and the commands refuse any
-other signature. Rounds run hourly. Both values are for the testnet only: the
-host is temporary, and on mainnet the validator gets a new hotkey and a new URL.
+Plain HTTP; every reply is signed by that hotkey. Rounds run hourly. Both values
+are for the testnet only: the host is temporary, and on mainnet the validator gets
+a new hotkey and a new URL.
 Use the values this table shows for the network you mine on.
 
 1. **Register a hotkey on testnet subnet 579** following the
@@ -248,34 +252,45 @@ Use the values this table shows for the network you mine on.
    to merge the adapter into the parent's shards. The result is a directory that
    passes the candidate contract; the exam is realistic decisions in families you
    have not seen, so what you train on decides everything.
-4. **Let the doctor lead.** It runs the checks in order (requirements, hotkey
-   file, registration, candidate, validator and artifact endpoint) and stops at
-   the first failing one with the exact command that fixes it; when everything
-   passes it prints the announce command with your flags filled in:
+4. **Upload and commit.** Log in to Hugging Face once (`hf auth login`, a write
+   token), then let `zils.miner commit-candidate` upload the candidate files to
+   your public model repo and commit `zils1:<hash>:<revision>:<repo>` on chain
+   with your hotkey (details in [base candidates: commit](base-candidates.md#commit)):
+
+   ```bash
+   .venv-kev/bin/python -m zils.miner commit-candidate \
+     --wallet-name WALLET_NAME --wallet-hotkey MINER_KEY_NAME --wallet-path /absolute/wallets \
+     --candidate candidate --repo YOUR_HF_USER/d3-candidate
+   ```
+
+   Without `--yes` it is a dry run that prints the commitment; with `--yes` it
+   uploads, checks the public repo at the new commit, writes the commitment and
+   reads it back. No validator URL, no open port, nothing left running: every
+   validator reads the commitments at the start of its round and pulls the
+   revision from Hugging Face, once per distinct hash.
+5. **Let the doctor check.** It runs the checks in order (requirements, hotkey
+   file, registration, candidate, Hugging Face repo at the revision, commitment on
+   chain) and stops at the first failing one with the exact command that fixes it:
 
    ```bash
    .venv-kev/bin/python -m zils.miner doctor \
-     --validator http://165.245.195.21:8900 \
-     --validator-hotkey 5HTAVUuHxV81VbYoX7DYFzebdyA1SRk3zazdZiiBN7zCcpxy \
      --wallet-name WALLET_NAME --wallet-hotkey MINER_KEY_NAME --wallet-path /absolute/wallets \
-     --candidate candidate --port 8901
+     --candidate candidate --repo YOUR_HF_USER/d3-candidate --revision COMMIT_SHA
    ```
 
    You can run it before step 1 (it tells you to create the wallet), before
-   step 3 (it prints the merge recipe) and again after each fix. The URL and
-   hotkey are the ones in the table above.
-5. **Announce every round** with the command the doctor printed
-   (`zils.miner announce-candidate`, same flags; details in
-   [base candidates: announce](base-candidates.md#announce)). Open TCP 8901 to
-   the internet (the validator downloads the 9.1 GB artifact from you, once per
-   distinct hash, pinned to the address you announced from) and leave the
-   command running; it re-announces at every new round.
-6. **Read the round result.** At the end of each round the command prints your
-   aggregate row: Brier and accuracy against the incumbent, whether you are
-   eligible, the pending and confirmed winner and your weight. Per-case results
-   are never returned. An ineligible or rejected candidate earns nothing; fix it,
-   merge again and announce the new hash. A new hash costs the validator one more
-   download and one more scoring pass, so announce when you have something better.
+   step 3 (it prints the merge recipe), before step 4 (it prints the commit
+   command) and again after each fix.
+6. **Read the result.** Your payout is on chain: the validators' weights and your
+   incentive (`btcli subnets metagraph --netuid 579 --network test`). The
+   aggregate row per round (Brier and accuracy against the incumbent, eligibility,
+   the pending and confirmed winner) is in each validator's signed round result on
+   its own API (for the Zils validator, the address in the table above), not on
+   chain. Per-case results are never returned. An ineligible or
+   rejected candidate earns nothing; fix it, merge again and commit the new hash.
+   Leave an unchanged commitment alone: it stays in every round at no cost, and
+   committing it again moves your block later, which can hand the hash to a copier
+   who committed it in between.
 
 ## Results and restarts
 

@@ -20,7 +20,6 @@ from .runtime import CapacityUnavailable, digest, locked, run_child, signed, sig
 
 # The incumbent base is scored as a row outside every roster; the publisher refuses a roster uid there.
 INCUMBENT_UID = 65535
-SUBMISSION_DIRS = {"adapter": "submissions", "candidate": "base-submissions"}
 
 
 def run_evaluate(
@@ -299,6 +298,8 @@ def base_draws(config, directory):
 
     if "base_tier" not in config or "base_reference" not in config:
         raise ValueError("base_round_dir requires a base_tier track and base_reference")
+    if "chain" not in config:
+        raise ValueError("the base-tier intake reads candidates from chain commitments; add chain")
     track = base_round.validate_track(config["base_tier"])
     model = models.validate_spec(config["model"]) if "model" in config else models.KEV
     if model not in models.d3_family():
@@ -329,16 +330,17 @@ def base_tier_epoch(
     args,
     draws,
     *,
-    public_endpoints=False,
     wait_for_capacity=False,
 ):
     """Score this round's base candidates on the sealed draws and write the decision sidecar.
 
-    Every distinct checkpoint hash is downloaded once into a content-addressed store and scored once
-    per draw and split; a hash announced again in a later round costs no download and no GPU time
-    (the cross-round cap). The decision covers the candidates announced this round. The old sidecar
-    is removed first, so an epoch that fails pays nobody. Per-case predictions stay in the store."""
-    from . import base_round
+    `registry` is `commitments.candidates` of the round's chain snapshot. Every distinct checkpoint
+    hash is downloaded once from its Hugging Face revision into a content-addressed store and scored
+    once per draw and split; a hash committed again in a later round costs no download and no GPU time
+    (the cross-round cap). The decision covers the candidates committed at this round's preflight
+    block. The old sidecar is removed first, so an epoch that fails pays nobody. Per-case predictions
+    stay in the store."""
+    from . import base_round, commitments
 
     track = base_round.validate_track(config["base_tier"])
     model = models.validate_spec(config["model"])
@@ -352,22 +354,16 @@ def base_tier_epoch(
     reference = (Path(directory) / config["base_reference"]).resolve()
     entries = {INCUMBENT_UID: (track["incumbent_sha256"], reference)}
     rejected = {}
-    for uid, message in sorted(registry.items()):
-        claim = message["claim"]
+    for uid, claim in sorted(registry.items()):
+        if "error" in claim:
+            rejected[uid] = claim["error"][:400]
+            continue
         target = store / claim["sha256"] / "checkpoint"
         if not target.exists():
             fetched = target.with_name("fetch-" + uuid.uuid4().hex)
             fetched.parent.mkdir(mode=0o700, exist_ok=True)
             try:
-                wire.fetch_checkpoint(
-                    claim,
-                    fetched,
-                    expected_endpoint=claim["endpoint"],
-                    round_scoped=True,
-                    model=model,
-                    kind="candidate",
-                    public=public_endpoints,
-                )
+                commitments.fetch(claim, fetched, model=model)
                 validate_candidate(fetched, model)
                 fetched.rename(target)
             except (ValueError, OSError, http.client.HTTPException) as error:
@@ -439,9 +435,9 @@ def base_tier_epoch(
     return decisions[-1]
 
 
-def accept(config, current, members, registries, rounds, message, source, public_endpoints):
-    """Route one signed announcement into the collecting round: an adapter by default, a base
-    candidate when the claim says `"kind": "candidate"` and this validator scores candidates."""
+def accept(config, current, members, registry, rounds, message, source, public_endpoints):
+    """Register one signed adapter announcement in the collecting round. Base candidates are not
+    announced here: they are chain commitments read at the round's preflight block."""
     if current.get("status") != "collecting":
         return 409, {"error": "round is not collecting"}
     claim = message.get("claim")
@@ -452,12 +448,6 @@ def accept(config, current, members, registries, rounds, message, source, public
         raise ValueError("unknown miner")
     if claim.get("round_id") != current["round_id"]:
         return 409, {"error": "round has changed; request the current round"}
-    kind = "candidate" if claim.get("kind") == "candidate" else "adapter"
-    if kind == "candidate":
-        if "base_tier" not in current:
-            return 409, {"error": "this validator does not collect base candidates"}
-        if claim.get("sha256") == current["base_tier"]["incumbent_sha256"]:
-            raise ValueError("the incumbent base is not a candidate")
     # Pin downloads to the authenticated caller's TCP source address. The artifact port
     # is the operator-assigned one for static members, or the signed claim's for public miners.
     port = (
@@ -465,7 +455,6 @@ def accept(config, current, members, registries, rounds, message, source, public
         if public_endpoints
         else config["members"][str(uid)]["port"]
     )
-    registry = registries[kind]
     updated = dict(registry)
     wire.register(
         message,
@@ -473,17 +462,16 @@ def accept(config, current, members, registries, rounds, message, source, public
         members,
         updated,
         endpoints={uid: f"http://{source}:{port}"},
-        job_sha256=config.get("job_sha256") if kind == "adapter" else None,
+        job_sha256=config.get("job_sha256"),
         public=public_endpoints,
-        kind=kind,
     )
-    path = rounds / current["round_id"] / SUBMISSION_DIRS[kind] / f"{uid}.json"
+    path = rounds / current["round_id"] / "submissions" / f"{uid}.json"
     path.parent.mkdir(mode=0o700, exist_ok=True)
     if not path.exists():
         wire.write_json(path, message)
     registry.clear()
     registry.update(updated)
-    return 200, {"status": "accepted", "round_id": current["round_id"], "kind": kind}
+    return 200, {"status": "accepted", "round_id": current["round_id"]}
 
 
 def round_config(config, admission, members):
@@ -516,7 +504,6 @@ def validator(config, directory, args):
     )
     condition = threading.Condition()
     current, registry, acks = {}, {}, set()
-    registries = {"adapter": registry, "candidate": {}}
     draws = base_draws(config, directory)
     recent = collections.defaultdict(collections.deque)
 
@@ -566,7 +553,7 @@ def validator(config, directory, args):
                             config,
                             current,
                             members,
-                            registries,
+                            registry,
                             rounds,
                             message,
                             self.client_address[0],
@@ -626,8 +613,7 @@ def validator(config, directory, args):
                 rid = uuid.uuid4().hex
                 work = rounds / rid
                 work.mkdir(mode=0o700)
-                for folder in SUBMISSION_DIRS.values():
-                    (work / folder).mkdir(mode=0o700)
+                (work / "submissions").mkdir(mode=0o700)
                 job = {
                     "kind": "round",
                     "round_id": rid,
@@ -674,31 +660,36 @@ def validator(config, directory, args):
                     )
             settings_for_round = round_config(config, admission, members)
             with condition:
-                for kind in registries:
-                    registries[kind].clear()
+                registry.clear()
                 acks.clear()
                 current.clear()
                 current.update(job)
-                for kind, folder in SUBMISSION_DIRS.items():
-                    for path in (work / folder).glob("*.json"):
-                        message = json.loads(path.read_text())
-                        c = message["claim"]
-                        wire.register(
-                            message,
-                            job["round_id"],
-                            members,
-                            registries[kind],
-                            endpoints={c["uid"]: c["endpoint"]},
-                            job_sha256=config.get("job_sha256") if kind == "adapter" else None,
-                            public=public_endpoints,
-                            kind=kind,
-                        )
+                for path in (work / "submissions").glob("*.json"):
+                    message = json.loads(path.read_text())
+                    c = message["claim"]
+                    wire.register(
+                        message,
+                        job["round_id"],
+                        members,
+                        registry,
+                        endpoints={c["uid"]: c["endpoint"]},
+                        job_sha256=config.get("job_sha256"),
+                        public=public_endpoints,
+                    )
                 while len(registry) < len(members) and time.time() < job["deadline"]:
                     condition.wait(min(1, max(0.01, job["deadline"] - time.time())))
                 current["status"] = "evaluating"
+            candidates = {}
+            if draws is not None:
+                from . import commitments
+
+                candidates = commitments.candidates(
+                    json.loads((work / "chain-snapshot.json").read_text()),
+                    config["base_tier"]["incumbent_sha256"],
+                )
             print(
                 f"validator: evaluating round {job['round_id']} ({len(registry)}/{len(members)} "
-                f"submissions, {len(registries['candidate'])} base candidates)",
+                f"submissions, {len(candidates)} base commitments)",
                 flush=True,
             )
             report = (
@@ -713,10 +704,9 @@ def validator(config, directory, args):
                     settings_for_round,
                     directory,
                     work,
-                    registries["candidate"],
+                    candidates,
                     args,
                     draws,
-                    public_endpoints=public_endpoints,
                     wait_for_capacity=True,
                 )
             report = attach_base_tier(settings_for_round, directory, work, report)

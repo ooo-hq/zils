@@ -54,9 +54,11 @@ itself (section 6 below). So, in order:
    jobs as well as base candidates, under miner terms still to be written. Until
    the terms exist and a customer has accepted them, a public validator carries a
    Zils-authored job (public data), not a customer's.
-2. **Base-tier intake (merged).** With `base_round_dir` set, every round also
-   collects base candidates (9.5 GiB each, downloaded once per distinct hash and
-   kept across epochs so a resubmitted hash costs nothing), scores them with
+2. **Base-tier intake (merged; chain commitments since the 18 October owner
+   decision).** With `base_round_dir` set, every round also reads each member's
+   candidate commitment at the preflight block, pulls new hashes from Hugging Face
+   (9.5 GiB each, downloaded once per distinct hash and kept across epochs so an
+   unchanged commitment costs nothing), scores them with
    `base_round` on the configured draws inside the sandbox, and writes the decision
    sidecar itself. The per-hash store is the cross-round submission cap.
 3. **Runbook below**, once 1 holds.
@@ -70,10 +72,13 @@ per distinct candidate hash ever accepted (the store under
 `validator/base-tier/store/` keeps them across epochs; prune by hand). Keep the
 validator hotkey on the host, never a coldkey.
 
-Network: expose only the announcement port (8900 by default) to the internet;
+Network: base candidates need no inbound port at all. The validator reads the
+commitments from the chain and downloads outbound over HTTPS from
+`huggingface.co` (allow its CDN redirects). The announcement port (8900 by
+default) serves only the adapter track and the signed round results; adapter
 artifacts are fetched *outbound* from each miner's announced endpoint, pinned to
-the announcing connection's source address. Plaintext HTTP is accepted for round
-one because claims are signed and artifacts hash-verified; put a TLS terminator in
+the announcing connection's source address. Plaintext HTTP is accepted there
+because claims are signed and artifacts hash-verified; put a TLS terminator in
 front when the operator wants transport privacy.
 
 Config (`/etc/zils-node/fleet/validator/config.json`; the fields the closed
@@ -108,13 +113,15 @@ sealed round directory there) and `base_reference` is the incumbent reference
 Run `python -m zils.testnet preflight --config …` and check that the
 member list is what the metagraph shows minus the validator. Start the unit; it
 refuses to start when a listed draw has no directory or the reference hash is
-not `incumbent_sha256`. Then watch `state/rounds/<round>/chain-snapshot.json`,
-`submissions/` and `base-submissions/` fill. Miners announce with the same
-signed claim as a fleet miner plus `"kind": "candidate"`, against the
-validator's public URL, with their own public artifact port in the claim.
+not `incumbent_sha256`; it also refuses a base tier without a `chain` section,
+since candidates are chain commitments. Then watch
+`state/rounds/<round>/chain-snapshot.json` (its `commitments` map, uid to block
+and `zils1:<hash>:<revision>:<repo>`) and `submissions/` fill. Miners commit with
+`zils.miner commit-candidate` ([base candidates: commit](base-candidates.md#commit));
+they need neither the validator's URL nor its hotkey.
 
-Limits that stay: HTTPS, and a miner may hold one adapter and one candidate
-announcement per round. Rollback: set `"admission": "members"` and remove
+Limits that stay: HTTPS for the adapter track, one adapter announcement per
+miner per round, one candidate commitment per hotkey. Rollback: set `"admission": "members"` and remove
 `public_endpoints`; the next round uses the static roster again. Removing
 `base_round_dir` returns to operator-scored decisions.
 
@@ -240,26 +247,34 @@ names `base_round_dir` (a directory with one sealed draw per subdirectory; each
 listed draw must be present, extra directories are ignored) and
 `base_reference` (the incumbent reference whose checkpoint hash is
 `incumbent_sha256`). Both paths are relative to the config; the fleet refuses to
-start if either check fails or the profile is not a d3-family base. In every
-round, admitted miners may then announce a candidate with the adapter claim plus
-`"kind": "candidate"` (one adapter and one candidate announcement per miner per
-round; the incumbent's own hash and a hash another miner announced are refused).
+start if either check fails, the profile is not a d3-family base, or the config
+has no `chain` section. Candidates are chain commitments, not announcements:
+preflight reads every member's `Commitments.CommitmentOf` at the round's
+preflight block and freezes them in `chain-snapshot.json` under `commitments`.
 After the adapter evaluation the round:
 
-1. downloads each distinct checkpoint hash once into
-   `validator/base-tier/store/<sha256>/checkpoint/` (9.5 GiB budget, the
-   d3 candidate contract checked by `validate_candidate`; a hash seen in an
-   earlier round is neither fetched nor rescored, which is the cross-round cap);
-2. runs `zils evaluate` in the sandbox for the incumbent (uid 65535) and every
+1. turns the snapshot into candidates with `zils.commitments.candidates`:
+   a commitment that is not `zils1:<sha256>:<40-hex revision>:<owner/repo>`, that
+   names the incumbent's hash, or that carries a hash another hotkey committed at
+   an earlier block (or in the same earliest block) is recorded under `rejected`;
+2. downloads each distinct new checkpoint hash once from
+   `https://huggingface.co/<repo>/resolve/<revision>/<file>` into
+   `validator/base-tier/store/<sha256>/checkpoint/`: only
+   `models.D3_CANDIDATE_FILES`, after the repo listing at that exact commit shows
+   them within the 9.5 GiB budget, which is enforced again on every byte; then the
+   checkpoint hash and `validate_candidate`. A hash seen in an earlier round is
+   neither fetched nor rescored, which is the cross-round cap;
+3. runs `zils evaluate` in the sandbox for the incumbent (uid 65535) and every
    candidate without a stored score, on the calibration and test split of each
    listed draw, and keeps each row under the hash
    (`<manifest_sha256>-<split>.json`); a failed evaluation is kept too, so a
    checkpoint that crashes the runner is not retried (delete its entry to force
    a rescore);
-3. calls `base_round.decide` per draw over this round's announced candidates,
-   records refused announcements under `rejected`, and, with two or more draws,
+4. calls `base_round.decide` per draw over this round's committed candidates,
+   records refused commitments and failed downloads under `rejected`, and, with
+   two or more draws,
    adds `confirmed_winner` from `base_round.confirm(first, last)`;
-4. writes the last draw's decision to `validator/base-tier/decision.json` and a
+5. writes the last draw's decision to `validator/base-tier/decision.json` and a
    copy of every draw's decision into the round directory. The sidecar is
    removed at the start of the epoch, so a failed epoch pays nobody.
 

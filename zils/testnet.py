@@ -10,6 +10,7 @@ from pathlib import Path
 import zils
 
 ENDPOINT = "wss://test.finney.opentensor.ai:443"
+COMMITMENT_FIELD = 128  # bytes per Raw field of the Commitments pallet; the chain allows MaxFields
 
 
 def check_config(config):
@@ -26,7 +27,8 @@ def check_config(config):
 
 
 @contextmanager
-def connect(config):
+def connect(config, *, raw_calls=False):
+    """`raw_calls` admits the one raw extrinsic Zils sends, `Commitments.set_commitment`."""
     netuid = check_config(config)
     if version("bittensor") != "11.1.0":
         raise ValueError("install requirements/testnet.txt (bittensor 11.1.0)")
@@ -36,9 +38,73 @@ def connect(config):
         network="test",
         fallback_endpoints=[],
         archive_endpoints=[],
-        policy=bt.Policy(allowed_netuids=[netuid]),
+        policy=bt.Policy(allowed_netuids=[netuid], allow_raw_calls=raw_calls),
     ) as sub:
         yield sub
+
+
+def commitment_text(record):
+    """A plaintext commitment's Raw fields joined as UTF-8; None for no commitment, a timelocked
+    or hashed field, or bytes that are not text. Zils commitments are plaintext only."""
+    if not record:
+        return None
+    data = b""
+    for entry in (record.get("info") or {}).get("fields") or []:
+        for variant, value in (entry or {}).items():
+            if not variant.startswith("Raw"):
+                return None
+            data += (
+                bytes.fromhex(value.removeprefix("0x")) if isinstance(value, str) else bytes(value)
+            )
+    try:
+        return data.decode()
+    except UnicodeDecodeError:
+        return None
+
+
+def read_commitment(sub, netuid, hotkey, block):
+    record = sub.query(("Commitments", "CommitmentOf"), [netuid, hotkey], block=block)
+    text = commitment_text(record)
+    return None if text is None else {"block": int(record["block"]), "data": text}
+
+
+def hotkey_state(config, sub, hotkey):
+    """A miner's own view at one block: its uid on the subnet (None when unregistered) and its
+    current commitment. Needs no validator."""
+    netuid = check_config(config)
+    block = sub.block
+    uid = sub.query(("SubtensorModule", "Uids"), [netuid, hotkey], block=block)
+    if (
+        uid is not None
+        and sub.query(("SubtensorModule", "Keys"), [netuid, uid], block=block) != hotkey
+    ):
+        uid = None
+    return {
+        "block": block,
+        "uid": uid,
+        "commitment": read_commitment(sub, netuid, hotkey, block),
+    }
+
+
+def write_commitment(config, sub, wallet, text):
+    """Sign `Commitments.set_commitment` with the hotkey. Plaintext Raw fields of at most 128 bytes."""
+    import bittensor as bt
+
+    netuid = check_config(config)
+    data = text.encode()
+    fields = [
+        {f"Raw{len(chunk)}": "0x" + chunk.hex()}
+        for chunk in (data[i : i + COMMITMENT_FIELD] for i in range(0, len(data), COMMITMENT_FIELD))
+    ]
+    if not 0 < len(fields) <= 3:
+        raise ValueError("a commitment holds 1 to 3 fields of 128 bytes")
+    call = bt.calls.Commitments.set_commitment(netuid=netuid, info={"fields": fields})
+    result = sub.submit_call(
+        call, wallet, signer="hotkey", wait_for_inclusion=True, wait_for_finalization=True
+    )
+    if not result.success:
+        raise ValueError(f"commitment not included: {result.error or 'unknown error'}")
+    return result
 
 
 def preflight(config, sub):
@@ -90,6 +156,13 @@ def preflight(config, sub):
     last = query("LastUpdate", netuid)
     last_update = last[validator_uid] if validator_uid < len(last) else 0
     rate = query("WeightsSetRateLimit", netuid)
+    commitments = {}
+    if "base_tier" in config:
+        # Base candidates are the members' commitments at this same block, frozen with the round.
+        for uid, item in members.items():
+            found = read_commitment(sub, netuid, item["hotkey"], block)
+            if found is not None:
+                commitments[uid] = found
     return {
         **config["chain"],
         "block": block,
@@ -102,6 +175,7 @@ def preflight(config, sub):
         "required_version": query("WeightsVersionKey", netuid),
         "last_update": last_update,
         "retry_after_block": last_update + rate if last_update else block,
+        **({"commitments": commitments} if "base_tier" in config else {}),
     }
 
 
