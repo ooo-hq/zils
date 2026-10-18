@@ -105,6 +105,13 @@ operator-confirmed URL and your own wallet details:
 The wallet directory must contain the named hotkey on this machine. The worker
 checks that its public address matches `hotkey` before it starts.
 
+Two optional keys apply once [chain admission](miner-admission.md) is on:
+`"terms_sha256"` (the SHA-256 of [the miner terms](mining-terms.md) you accept)
+and `"qualification"` (path to the `qualification.json` written by
+`scripts.qualify_node --terms-sha256 <same hash>`). The worker then admits
+itself at startup and sends the hash with every claim. Operator-registered
+nodes leave both out.
+
 ```bash
 chmod 600 .private/queue-miner.json
 ```

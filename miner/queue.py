@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import re
 import sys
 import time
 import uuid
@@ -47,8 +48,38 @@ class Client:
             response.close()
 
 
+def admit(client, config):
+    """Chain admission (docs/miner-admission.md): once at startup, send the terms version this
+    config accepted and the host's qualification report. Nodes an operator registered by hand
+    carry no terms_sha256 and skip this; a coordinator without admission answers 404 or 409."""
+    terms = config.get("terms_sha256")
+    if terms is None:
+        return None
+    if not isinstance(terms, str) or not re.fullmatch("[a-f0-9]{64}", terms):
+        raise ValueError("terms_sha256 must be the sha256 hex digest of docs/mining-terms.md")
+    report = {}
+    if "qualification" in config:
+        report = json.loads(Path(config["qualification"]).read_text())
+    try:
+        return client.call("admit", {"terms_sha256": terms, "qualification": report})
+    except APIError as error:
+        if error.status not in (404, 409):
+            raise
+        print(f"Chain admission not applied ({error.status}); continuing.", file=sys.stderr)
+        return None
+
+
 def run_once(
-    client, state, reference, runtime, device, *, references=None, busy=None, minimum_mib=0
+    client,
+    state,
+    reference,
+    runtime,
+    device,
+    *,
+    references=None,
+    busy=None,
+    minimum_mib=0,
+    terms_sha256=None,
 ):
     if not gpu_ready(device):
         return False
@@ -71,6 +102,10 @@ def run_once(
         if not available:
             return False
         claim = {"supported_profiles": available}
+        if terms_sha256:
+            claim["terms_sha256"] = (
+                terms_sha256  # the accepted terms version travels in every claim
+            )
     assignment = client.call("claim", claim)["assignment"]
     if assignment is None:
         return False
@@ -242,6 +277,7 @@ def main():
         else:
             key = Keypair.create_from_seed(config["seed"])
         client = Client(config["coordinator"], key)
+        admit(client, config)
         state = Path(args.state)
         state.mkdir(mode=0o700, parents=True, exist_ok=True)
         references = {}
@@ -276,6 +312,7 @@ def main():
                         references=references,
                         busy=busy,
                         minimum_mib=minimum,
+                        terms_sha256=config.get("terms_sha256"),
                     )
                 except (
                     APIError,

@@ -226,6 +226,20 @@ You do not need a bundle, an operator or an invitation to enter the base tier:
 registration on subnet 579 is the admission. About an afternoon end to end, most
 of it the training run.
 
+The Zils base-tier validator on testnet subnet 579 (18 October 2026). You do not
+need its address or hotkey to compete: candidates are chain commitments that
+every validator reads itself. The address only serves its signed round results
+(`GET /results/<round>`, step 6):
+
+| | |
+| --- | --- |
+| URL | `http://165.245.195.21:8900` |
+| Validator hotkey | `5HTAVUuHxV81VbYoX7DYFzebdyA1SRk3zazdZiiBN7zCcpxy` (uid 0 on subnet 579) |
+
+Plain HTTP; every reply is signed by that hotkey. Rounds run hourly. Both values are for the testnet only: the
+host is temporary, and on mainnet the validator gets a new hotkey and a new URL.
+Use the values this table shows for the network you mine on.
+
 1. **Register a hotkey on testnet subnet 579** following the
    [registration guide](bittensor-registration.md); keep the hotkey file on the
    mining host and the coldkey elsewhere.
@@ -270,7 +284,8 @@ of it the training run.
    incentive (`btcli subnets metagraph --netuid 579 --network test`). The
    aggregate row per round (Brier and accuracy against the incumbent, eligibility,
    the pending and confirmed winner) is in each validator's signed round result on
-   its own API, not on chain. Per-case results are never returned. An ineligible or
+   its own API (for the Zils validator, the address in the table above), not on
+   chain. Per-case results are never returned. An ineligible or
    rejected candidate earns nothing; fix it, merge again and commit the new hash.
    Leave an unchanged commitment alone: it stays in every round at no cost, and
    committing it again moves your block later, which can hand the hash to a copier

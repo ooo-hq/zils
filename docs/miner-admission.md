@@ -1,6 +1,8 @@
 # Miner admission
 
-**18 October 2026. Documented only; nothing here is built or enabled.**
+**18 October 2026. Built in zils-platform (`zils_platform/admission.py`, migration
+`202610180001_chain_admission.sql`) and on the miner side (this repository); off in
+production until the owner sets `ZILS_CHAIN_ADMISSION=on` on the coordinator.**
 
 Registration on Bittensor subnet 579 is the admission. There is no application,
 no form and no operator approval. This matches the fleet validator's
@@ -18,7 +20,7 @@ queue, which today only talks to hotkeys an operator inserted by hand.
    customer jobs once three reports pass in the band, and base-tier rounds
    from the validator.
 
-## 2. What the coordinator does (code, not built)
+## 2. What the coordinator does (built, off by default)
 
 - Admit any hotkey registered on 579 at the current chain snapshot: create the
   `fez_training_workers` row on first contact with the next free queue UID,
@@ -61,9 +63,53 @@ the subnet moves to mainnet" with:
 
 zils-web change, out of scope here.
 
-## 6. Code still needed
+## 6. What exists and how to enable it
 
-- Coordinator: admit chain-registered hotkeys, write worker and profile rows on
-  first contact, auto-queue qualification jobs.
-- `terms_sha256` in the signed claim and in `qualification.json`;
-  `terms_sha256` and `terms_accepted_at` on `fez_training_workers`.
+Everything in section 2 is implemented behind one switch. Nothing changes while
+it is off: `fez_worker_nonce` still refuses hotkeys without an operator row.
+
+**Miner side (this repository).** `.private/queue-miner.json` takes two optional
+keys: `terms_sha256` (the SHA-256 of `docs/mining-terms.md` you accept) and
+`qualification` (path to the `qualification.json` written by
+`scripts.qualify_node --terms-sha256 <hash>`). At startup `miner.queue` POSTs
+both to `/v1/workers/admit`, signed by the hotkey; every later claim carries
+`terms_sha256`. A coordinator with admission off answers 409 and the miner
+continues (operator-registered nodes need neither key).
+
+**Coordinator side (zils-platform).**
+
+- `POST /v1/workers/admit`: signature checked, hotkey looked up in the subnet's
+  registration set (read from the testnet chain, cached five minutes; a hotkey
+  that drops off the chain is refused at the next refresh), terms hash compared
+  with the current one, report checked against the pinned profile. Then
+  `zils_admit_worker` writes the `fez_training_workers` row (next free queue UID,
+  `admission='chain'`, `terms_sha256`, `terms_accepted_at`, its own resource
+  UUID) and the `zils_worker_profiles` row from the report (`min_free_mib`
+  12288, `verified_by='chain-admission'`; a row an operator revoked is never
+  revived).
+- Every other signed route: a chain-admitted hotkey must still be registered and
+  on the current terms; any claim presenting a `terms_sha256` must present the
+  current one. Operator rows are untouched.
+- Qualification: one job per hotkey per 30 days, cloned from the operator's
+  validated benchmark job under the internal account (`ZILS_INTERNAL_OWNER_ID`,
+  `ZILS_QUALIFICATION_SOURCE_JOB`), credit debited from that account. When the
+  processor validates it, the job authorizes itself against the benchmark already
+  installed for its model/band and enters the graded qualification lane. Chain
+  rows are graded-pool members without being listed in `routing.json`; customer
+  work still needs three passing graded reports, exactly as for Zils' own nodes.
+- `GET /v1/config` publishes `admission` (`netuid`, `terms_sha256`) when on.
+- Kill switch: `python -m zils_platform.coordinator worker --hotkey <ss58>
+  --disable` (no `--uid` needed) disables the row; `ZILS_CHAIN_ADMISSION=off`
+  restores operator-only behaviour for everyone.
+
+**To enable (owner).** Apply the migration; set on the coordinator
+`ZILS_CHAIN_ADMISSION=on`, `ZILS_INTERNAL_OWNER_ID` (the internal test
+account's UUID, credited), `ZILS_QUALIFICATION_SOURCE_JOB` (one of the
+validated `qual-d3-2048-*` jobs; its three input splits must still exist);
+install `requirements/testnet.txt` in the API's environment for the chain read;
+restart `zils-training-api`. When these terms change, the new hash goes in
+`ZILS_MINER_TERMS_SHA256` (or the platform constant) and miners re-admit by
+restarting with the new `terms_sha256`.
+
+Still open: the miners-page wording (section 5), HTTPS on the public validator,
+and a candidate-announce command for the base tier.
