@@ -81,6 +81,7 @@ testnet fleet already uses, plus admission and the base tier):
 
 ```json
 {
+  "validator": "http://VALIDATOR_PUBLIC_IPV4:8900",
   "chain": {"network": "test", "netuid": 579},
   "validator_hotkey": "VALIDATOR_SS58",
   "admission": "chain",
@@ -96,6 +97,9 @@ testnet fleet already uses, plus admission and the base tier):
 }
 ```
 
+`validator` is the validator's own public IPv4 and announcement port; with
+`public_endpoints` the fleet accepts a global address here (and in a miner's
+config that announces to it) instead of the private pin.
 `members` is omitted: preflight derives it from the chain and freezes it per
 round. `model` is the pinned d3 profile as `zils.fleet init` writes it (the
 intake scores d3-family candidates only). `base_round_dir` holds one sealed draw per subdirectory (copy each
