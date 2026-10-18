@@ -51,9 +51,10 @@ the validator does not yet run base-tier rounds: base candidates are scored by a
 operator running `python -m zils.base_round` against the sealed draws and
 dropping the decision sidecar (section 6 below). So, in order:
 
-1. **Policy (owner).** Whether outside miners may train customer jobs at all. Until
-   yes, a public validator must carry a Zils-authored job (public data), not a
-   customer's, or admit base candidates only.
+1. **Policy (owner, decided 18 October 2026).** Outside miners may train customer
+   jobs as well as base candidates, under miner terms still to be written. Until
+   the terms exist and a customer has accepted them, a public validator carries a
+   Zils-authored job (public data), not a customer's.
 2. **Base-tier intake (code, about two days).** A validator round type that
    collects base candidates (9.5 GiB each, downloaded once per distinct hash and
    kept across epochs so a resubmitted hash costs nothing), scores them with
