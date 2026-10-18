@@ -13,9 +13,11 @@ evaluation, the regression suite, chain-derived admission, the merge recipe,
 promoted-profile support in the runtime and the dry-run promotion script are
 merged; the full loop was rehearsed end to end on 17/18 October (a synthetic-only
 candidate tied stock d3 on the sealed exams and passed the adapter suite; nothing
-was promoted). Open admission is off; no public round has been run; the channel
-setting on the platform is a configuration value (`ZILS_TRAINING_MODEL_LATEST`),
-not yet a registry alias; automatic "follow stable" upgrades are not implemented.
+was promoted). A public validator with the intake runs on testnet subnet 579
+since 18 October (chain admission, no weights published yet); miners announce
+with `zils.miner announce-candidate` (below). The channel setting on the platform
+is a configuration value (`ZILS_TRAINING_MODEL_LATEST`), not yet a registry
+alias; automatic "follow stable" upgrades are not implemented.
 
 ## Promoted profiles
 
@@ -77,12 +79,48 @@ A directory containing exactly these files (`models.D3_CANDIDATE_FILES`):
 
 Nothing else: a `candidate.json`, a README or a stray `__pycache__` is rejected.
 Total size must stay under 9.5 GiB (the parent is 9.08 GB; a merged LoRA is the
-same size). Announce it with the same signed claim as an adapter plus
-`"kind": "candidate"`; the checkpoint hash covers every file above. One live
-candidate per hotkey per round, a claim cannot change within a round, identical
-hashes from different miners are rejected, and the incumbent's own hash is
-refused. Announce every round: a validator that scores candidates itself keeps
-each hash it has fetched, so a repeated hash costs no download and no rescoring.
+same size).
+
+## Announce
+
+`zils.miner announce-candidate` is the miner side of the public validator's
+intake. Run it on the host that holds the candidate, with the registered miner
+hotkey (the hotkey file only; the coldkey is never read). `zils.miner doctor`
+with the same flags checks each prerequisite in order and prints the first fix
+or, when all pass, this command with your flags filled in:
+
+```bash
+.venv-kev/bin/python -m zils.miner announce-candidate \
+  --validator http://VALIDATOR_PUBLIC_IPV4:8900 --validator-hotkey VALIDATOR_SS58 \
+  --wallet-name WALLET_NAME --wallet-hotkey MINER_KEY_NAME --wallet-path /absolute/wallets \
+  --candidate candidate --port 8901
+```
+
+The command checks the directory with the validator's own `validate_candidate`
+(it needs the pinned parent on disk, as the merge recipe does), serves it at
+`http://<this host>:8901/artifacts/<round>/<file>` (the port must be reachable
+from the validator; the validator pins the download to the address your
+announcement came from, so the host needs a public IPv4 on its interface or a
+1:1 NAT, given with `--advertise-host`), reads your uid for that hotkey from the
+subnet 579 metagraph (`--netuid` for another subnet) and refuses a hotkey that is
+not registered, then every round: reads the validator's current round, signs the
+adapter claim plus `"kind": "candidate"` with the hotkey, POSTs it, waits for the
+round result and prints the aggregate `base_tier` row for your uid (Brier and
+accuracy against the incumbent, eligibility, the pending and confirmed winner,
+your weight). It exits with a clear message when the validator has no base-tier
+intake (HTTP 409), when the directory fails validation, when the hotkey is not
+registered, or when the artifact endpoint is not globally routable while the
+validator is. `--rounds N` stops after N results; the default keeps announcing.
+Replies are verified against `--validator-hotkey`; the operator publishes it with
+the validator's URL. Nothing else is required: no bundle, no config file, no
+training-data download.
+
+The checkpoint hash covers every file in the artifact. One live candidate per
+hotkey per round, a claim cannot change within a round, identical hashes from
+different miners are rejected, and the incumbent's own hash is refused. Announce
+every round (the command does): a validator that scores candidates itself keeps
+each hash it has fetched, so a repeated hash costs no download and no rescoring,
+and only the candidates announced in a round are in that round's decision.
 
 ### Reference recipe: train a LoRA, merge it
 

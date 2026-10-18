@@ -486,6 +486,13 @@ def accept(config, current, members, registries, rounds, message, source, public
     return 200, {"status": "accepted", "round_id": current["round_id"], "kind": kind}
 
 
+def round_config(config, admission, members):
+    """The roster every scorer and publisher reads: the static one, or this round's chain snapshot."""
+    if admission != "chain":
+        return config
+    return {**config, "members": {str(uid): {"hotkey": hotkey} for uid, hotkey in members.items()}}
+
+
 def admission_settings(config):
     """Static member allowlist with private transport, or chain-derived members with public endpoints."""
     mode = config.get("admission", "members")
@@ -665,6 +672,7 @@ def validator(config, directory, args):
                     members.update(
                         {int(uid): hotkey for uid, hotkey in snapshot["members"].items()}
                     )
+            settings_for_round = round_config(config, admission, members)
             with condition:
                 for kind in registries:
                     registries[kind].clear()
@@ -696,11 +704,13 @@ def validator(config, directory, args):
             report = (
                 json.loads((work / "report.json").read_text())
                 if (work / "report.json").exists()
-                else evaluate_round(config, directory, work, registry, args, wait_for_capacity=True)
+                else evaluate_round(
+                    settings_for_round, directory, work, registry, args, wait_for_capacity=True
+                )
             )
             if draws is not None and not (work / "base-tier.json").exists():
                 base_tier_epoch(
-                    config,
+                    settings_for_round,
                     directory,
                     work,
                     registries["candidate"],
@@ -709,7 +719,7 @@ def validator(config, directory, args):
                     public_endpoints=public_endpoints,
                     wait_for_capacity=True,
                 )
-            report = attach_base_tier(config, directory, work, report)
+            report = attach_base_tier(settings_for_round, directory, work, report)
             fields = (
                 "uid",
                 "status",
@@ -736,7 +746,7 @@ def validator(config, directory, args):
 
                 with locked(work / "chain.lock"), testnet.connect(config) as sub:
                     outcome = testnet.publish_round(
-                        config,
+                        settings_for_round,
                         work,
                         report,
                         sub,

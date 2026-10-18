@@ -294,7 +294,12 @@ def main(argv=None):
 
             with testnet.connect(config) as sub:
                 testnet.preflight(config, sub)
-        wire.endpoint_ok(config["validator"], allowed=[config["validator"]])
+        # A public validator listens on its global address; miners that announce to one set the same flag.
+        wire.endpoint_ok(
+            config["validator"],
+            allowed=[config["validator"]],
+            public=bool(config.get("public_endpoints")),
+        )
         args.runtime_python = str(Path(args.runtime_python).absolute())
         state = directory / "state"
         state.mkdir(mode=0o700, exist_ok=True)
