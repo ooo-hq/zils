@@ -178,11 +178,12 @@ earn on two tracks, paid from one weight vector on the configured subnet:
   scorer calibrates it on the sealed calibration split and scores the sealed
   test split; you are eligible when your skill is positive, your accuracy is
   not below the incumbent's, your Brier improvement is at least 0.01 and the
-  paired bootstrap 95% lower bound is above zero. Eligible candidates share
-  the base-tier share of every publication in proportion to skill until a
-  newer decision replaces that one, the holdout rotates, or a confirmed winner
-  is promoted. The incumbent itself earns nothing, and a resubmitted stock base
-  is never eligible.
+  paired bootstrap 95% lower bound is above zero. The winner takes all: the
+  pending winner (lowest Brier among eligible candidates) takes the whole
+  base-tier share of every publication until a newer decision replaces that
+  one, the holdout rotates, or a confirmed winner is promoted; eligible
+  runners-up earn nothing (owner decision, 18 October 2026). The incumbent
+  itself earns nothing, and a resubmitted stock base is never eligible.
 - **Adapter rounds (alongside).** The frozen customer job rounds above continue
   unchanged; each round's calibrated test-split skill is the adapter weight.
 

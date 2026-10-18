@@ -166,8 +166,9 @@ publishes adapter weights alone.
 
 The publisher refuses a decision for a draw not in the track, scored with a
 different policy or against a different incumbent, paying a UID outside the
-roster, with duplicate or incumbent hashes among the eligible candidates, or
-whose recorded weights differ from its eligible candidates; it also refuses a
+roster, with duplicate or incumbent hashes among the eligible candidates, whose
+pending winner is not an eligible candidate, or whose recorded weights differ
+from that winner (the winner takes the whole base share); it also refuses a
 report carrying a decision when the config has no track. The attempt and
 receipt record `tracks` (`base_share`, per-track normalized weights) next to
 `requested_weights`, so the on-chain proportions can be traced to each track.
