@@ -20,6 +20,16 @@ Use only data authorized for training and for export to the configured miners.
 The export flag records an operator decision; it does not provide encryption,
 confidential compute, legal authorization, or isolation from miner operators.
 
+**Outside miners (policy decided 18 October 2026, not yet in effect).** Zils is
+a Bittensor subnet. Once the [miner terms](mining-terms.md) are published and
+admission [opens](miner-admission.md), a job's training split goes to the miner
+pool: any hotkey registered on subnet 579 and qualified for the base, whether or
+not Zils runs it. There is no per-job opt-out; authorizing training-data export
+when creating the job is the customer's consent, and the terms bind every miner
+in the pool to that one job: no retention, no redistribution, no training other
+models on it, deletion on completion. Calibration and test splits never leave
+the processor. Until admission opens, every miner in the pool is run by Zils.
+
 Create three JSONL files under ignored `.private/` storage: `train.jsonl`,
 `calibration.jsonl`, and `test.jsonl`. Each line uses the existing decision-case
 format plus a required source `group_id`:
