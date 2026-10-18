@@ -359,6 +359,115 @@ class AnnounceCandidateTest(unittest.TestCase):
             self.refused("http://8.8.8.8:8900", "--advertise-host", "10.0.0.5"),
         )
 
+    def doctor(self, url, *extra):
+        argv = [
+            "doctor",
+            "--validator",
+            url,
+            "--validator-hotkey",
+            self.validator_hotkey,
+            "--wallet-name",
+            self.wallet["name"],
+            "--wallet-hotkey",
+            self.wallet["hotkey"],
+            "--wallet-path",
+            self.wallet["path"],
+            "--port",
+            str(self.port),
+            *extra,
+        ]
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            try:
+                miner.main(argv)
+                code = 0
+            except SystemExit as stopped:
+                code = stopped.code
+        return code, output.getvalue()
+
+    def test_doctor_stops_at_the_first_failing_step_with_its_fix(self):
+        from bittensor.wallet import Wallet
+
+        with wire.local_server(self.api) as url:
+            self.config["validator"] = url
+            self.open_round("d" * 32)
+            code, out = self.doctor(url, "--candidate", str(self.candidate))
+            self.assertEqual(code, 0, out)
+            self.assertEqual(out.count("ok  "), 5)
+            self.assertIn("ready: uid 1", out)
+            self.assertIn(f"artifacts at http://127.0.0.1:{self.port}", out)
+            self.assertIn(
+                f"announce-candidate \\\n  --validator {url} --validator-hotkey "
+                f"{self.validator_hotkey}",
+                out,
+            )
+            self.assertIn(f"--candidate {self.candidate} --port {self.port}", out)
+
+            code, out = self.doctor(url)
+            self.assertEqual(code, 1)
+            self.assertEqual(out.count("ok  "), 3)
+            self.assertIn("fix candidate: no --candidate", out)
+            self.assertIn("python -m zils.d3 candidate --adapter", out)
+            self.assertNotIn("ready", out)
+
+            with patch("zils.d3.validate_candidate", side_effect=ValueError("shard differs")):
+                code, out = self.doctor(url, "--candidate", str(self.candidate))
+            self.assertIn("fix candidate: shard differs; merge again", out)
+
+            code, out = self.doctor(url, "--candidate", str(self.vdir / "reference"))
+            self.assertIn("fix validator: the candidate is the stock base", out)
+
+            Wallet(**{**self.wallet, "hotkey": "stranger"}).regenerate_hotkey(
+                seed=bytes([9]) * 32, suppress=True
+            )
+            code, out = self.doctor(url, "--wallet-hotkey", "stranger")
+            self.assertEqual(out.count("ok  "), 2)
+            self.assertIn("fix registration: hotkey", out)
+            self.assertIn(
+                f"btcli --network test --wallet {self.wallet['name']} --wallet-hotkey stranger"
+                f" --wallet-path {self.wallet['path']} tx burned-register --netuid 579",
+                out,
+            )
+
+            code, out = self.doctor(url, "--wallet-hotkey", "absent")
+            self.assertEqual(out.count("ok  "), 1)
+            self.assertIn("fix wallet hotkey: no hotkey file", out)
+            self.assertIn("wallet create", out)
+
+            code, out = self.doctor(url, "--validator-hotkey", self.miner_key.ss58_address)
+            self.assertIn("fix registration: validator has no permit", out)
+            self.assertIn("check --validator-hotkey", out)
+
+            real = miner.importlib.import_module
+
+            def without_kev(name, *rest):
+                if name == "kev":
+                    raise ImportError("No module named kev")
+                return real(name, *rest)
+
+            with patch("zils.miner.importlib.import_module", without_kev):
+                code, out = self.doctor(url, "--candidate", str(self.candidate))
+            self.assertEqual(out.count("ok  "), 0)
+            self.assertIn("fix requirements: missing kev", out)
+            self.assertIn("requirements/testnet.txt", out)
+
+            self.open_round("e" * 32, intake=False)
+            code, out = self.doctor(url, "--candidate", str(self.candidate))
+            self.assertIn("fix validator: this validator has no base-tier intake", out)
+
+        code, out = self.doctor("http://127.0.0.1:1", "--candidate", str(self.candidate))
+        self.assertEqual(out.count("ok  "), 4)
+        self.assertIn("fix validator: cannot reach http://127.0.0.1:1", out)
+        code, out = self.doctor(
+            "http://8.8.8.8:8900",
+            "--candidate",
+            str(self.candidate),
+            "--advertise-host",
+            "10.0.0.5",
+        )
+        self.assertIn("fix validator: endpoint must match the pinned public IPv4", out)
+        self.assertIn("--advertise-host", out)
+
 
 if __name__ == "__main__":
     unittest.main()

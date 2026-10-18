@@ -236,21 +236,28 @@ of it the training run.
    to merge the adapter into the parent's shards. The result is a directory that
    passes the candidate contract; the exam is realistic decisions in families you
    have not seen, so what you train on decides everything.
-4. **Announce it every round** with the command in
-   [base candidates: announce](base-candidates.md#announce):
+4. **Let the doctor lead.** It runs the checks in order (requirements, hotkey
+   file, registration, candidate, validator and artifact endpoint) and stops at
+   the first failing one with the exact command that fixes it; when everything
+   passes it prints the announce command with your flags filled in:
 
    ```bash
-   .venv-kev/bin/python -m zils.miner announce-candidate \
+   .venv-kev/bin/python -m zils.miner doctor \
      --validator http://VALIDATOR_PUBLIC_IPV4:8900 --validator-hotkey VALIDATOR_SS58 \
      --wallet-name WALLET_NAME --wallet-hotkey MINER_KEY_NAME --wallet-path /absolute/wallets \
      --candidate candidate --port 8901
    ```
 
-   Open TCP 8901 to the internet (the validator downloads the 9.1 GB artifact
-   from you, once per distinct hash, pinned to the address you announced from)
-   and leave the command running; it re-announces at every new round. The
+   You can run it before step 1 (it tells you to create the wallet), before
+   step 3 (it prints the merge recipe) and again after each fix. The
    validator's URL and hotkey are published by the operator.
-5. **Read the round result.** At the end of each round the command prints your
+5. **Announce every round** with the command the doctor printed
+   (`zils.miner announce-candidate`, same flags; details in
+   [base candidates: announce](base-candidates.md#announce)). Open TCP 8901 to
+   the internet (the validator downloads the 9.1 GB artifact from you, once per
+   distinct hash, pinned to the address you announced from) and leave the
+   command running; it re-announces at every new round.
+6. **Read the round result.** At the end of each round the command prints your
    aggregate row: Brier and accuracy against the incumbent, whether you are
    eligible, the pending and confirmed winner and your weight. Per-case results
    are never returned. An ineligible or rejected candidate earns nothing; fix it,
