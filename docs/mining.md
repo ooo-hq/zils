@@ -219,6 +219,44 @@ training fills the idle time. What you train on decides everything: the 18
 October rehearsal candidate, trained only on synthetic rule cases, tied stock d3
 on the sealed exam.
 
+## Compete in the base tier from outside
+
+You do not need a bundle, an operator or an invitation to enter the base tier:
+registration on subnet 579 is the admission. About an afternoon end to end, most
+of it the training run.
+
+1. **Register a hotkey on testnet subnet 579** following the
+   [registration guide](bittensor-registration.md); keep the hotkey file on the
+   mining host and the coldkey elsewhere.
+2. **Read the [miner terms](mining-terms.md).** Running a miner against a Zils
+   validator means you accept them.
+3. **Train and merge a candidate** with the
+   [reference recipe](base-candidates.md#reference-recipe-train-a-lora-merge-it):
+   `zils.d3 reference`, `zils.d3 train` on data of your choosing, `zils.d3 candidate`
+   to merge the adapter into the parent's shards. The result is a directory that
+   passes the candidate contract; the exam is realistic decisions in families you
+   have not seen, so what you train on decides everything.
+4. **Announce it every round** with the command in
+   [base candidates: announce](base-candidates.md#announce):
+
+   ```bash
+   .venv-kev/bin/python -m zils.miner announce-candidate \
+     --validator http://VALIDATOR_PUBLIC_IPV4:8900 --validator-hotkey VALIDATOR_SS58 \
+     --wallet-name WALLET_NAME --wallet-hotkey MINER_KEY_NAME --wallet-path /absolute/wallets \
+     --candidate candidate --port 8901
+   ```
+
+   Open TCP 8901 to the internet (the validator downloads the 9.1 GB artifact
+   from you, once per distinct hash, pinned to the address you announced from)
+   and leave the command running; it re-announces at every new round. The
+   validator's URL and hotkey are published by the operator.
+5. **Read the round result.** At the end of each round the command prints your
+   aggregate row: Brier and accuracy against the incumbent, whether you are
+   eligible, the pending and confirmed winner and your weight. Per-case results
+   are never returned. An ineligible or rejected candidate earns nothing; fix it,
+   merge again and announce the new hash. A new hash costs the validator one more
+   download and one more scoring pass, so announce when you have something better.
+
 ## Results and restarts
 
 Miner logs, frozen candidates, and results are in `state/jobs/`. Full validator
