@@ -18,7 +18,7 @@ from miner.worker import miner
 
 from . import ROOT, models, protocol as wire
 from .runtime import digest, locked, prepare_base, signing_key
-from .validator import validator
+from .validator import base_draws, validator
 
 
 def initialize(
@@ -287,6 +287,7 @@ def main(argv=None):
             if "chain" not in config:
                 raise ValueError("a base-tier track requires a testnet fleet config")
             base_round.validate_track(config["base_tier"])
+        base_draws(config, directory)
         signing_key(config)
         if "chain" in config:
             from . import testnet

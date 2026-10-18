@@ -1,8 +1,10 @@
 # Run a text or image fleet miner
 
-Local and Bittensor testnet fleets support **H2O Lightning 4B text** and
-**ImaJev 4B image** jobs. Each fleet pins one frozen job and its matching model
-reference. Existing Kev 0.8B bundles remain supported; JevK5 4B bundles are retired. For workers that claim different customer jobs,
+Local and Bittensor testnet fleets support **d3-mini 4.5B** text jobs
+(`d3-mini-4.5b-v1`, the base since 17 October 2026). H2O Lightning 4B and the
+ImaJev image profile are retired; existing bundles for them keep working, and new
+bundles should pin d3. Existing Kev 0.8B bundles remain supported; JevK5 4B bundles
+are retired. For workers that claim different customer jobs,
 use the [queue miner guide](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md).
 Queue and fleet miners use the same trainers but different credentials and startup commands.
 
@@ -20,7 +22,7 @@ image runtime described below. Later starts reuse the cache.
 
 ## Prepare bundles on the validator
 
-For a text fleet, create the H2O reference with the
+For a text fleet, create the d3 reference with the
 [queue miner setup](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md#2-install-and-verify-the-reference)
 Prepare authorized, independent training/calibration/test JSONL files using the
 [customer data format](https://github.com/ooo-hq/zils/blob/main/docs/customer-jobs.md#prepare-data).
@@ -29,12 +31,12 @@ policy before evaluating candidates:
 
 ```bash
 .venv-kev/bin/python -m zils.jobs --job-id text-v1 \
-  --model h2o-lightning-4b-v1.2.3 --train .private/train.jsonl \
+  --model d3-mini-4.5b-v1 --train .private/train.jsonl \
   --calibration .private/calibration.jsonl --test .private/test.jsonl \
   --min-accuracy 0.80 --min-brier-improvement 0.01 \
   --allow-training-data-export --out .private/jobs/text-v1
 .venv-kev/bin/python -m zils.fleet init --out .private/fleet-local \
-  --benchmark .private/jobs/text-v1 --checkpoint models/h2o-reference \
+  --benchmark .private/jobs/text-v1 --checkpoint models/d3-reference \
   --host VALIDATOR_PRIVATE_IPV4
 ```
 
@@ -96,28 +98,28 @@ Do not relabel a Kev manifest as a different model.
    Allow validator TCP 8900 from the miner machines.
 4. Run `./start-miner --rounds 1`. It can start before the validator and will retry.
 
-H2O needs a qualified CUDA host and the isolated runtime below on every miner
-and the validator. Image training
-requires qualified CUDA hardware; CPU and Apple MPS fallback apply only to Kev. Use `--device cuda`
+d3 needs a qualified CUDA host and the isolated runtime below on every miner
+and the validator. CPU and Apple MPS fallback apply only to Kev. Use `--device cuda`
 explicitly. To reuse an environment or cache, set `ZILS_PYTHON`
 to its absolute Python path and `HF_HOME` to the cache directory.
 
-For H2O bundles, install the isolated runtime on each host and export it before
+For d3 bundles, install the isolated runtime on each host and export it before
 every start (the validator needs the same variable):
 
 ```bash
-uv venv --python 3.12 .venv-h2o
-uv pip install --python .venv-h2o/bin/python --torch-backend=cu130 -r requirements/h2o.txt
-export ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"
+uv venv --python 3.12 .venv-d3
+uv pip install --python .venv-d3/bin/python --torch-backend=cu130 -r requirements/d3.txt
+export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
 ./start-miner --device cuda --rounds 1
 ```
 
-For d3 bundles (`d3-mini-4.5b-v1`), do the same with `.venv-d3`,
-`requirements/d3.txt` and `ZILS_D3_RUNTIME_PYTHON`.
+For legacy H2O bundles, do the same with `.venv-h2o`, `requirements/h2o.txt`
+and `ZILS_H2O_RUNTIME_PYTHON`.
 
-H2O training waits until at least 12,288 MiB of GPU memory is free
-(`ZILS_H2O_MIN_FREE_MIB` raises that floor). Neither side silently substitutes
-another runtime. See the [H2O model contract](h2o-queue.md) for the pins.
+d3 training waits until at least 12,288 MiB of GPU memory is free
+(`ZILS_D3_MIN_FREE_MIB` raises that floor). Neither side silently substitutes
+another runtime. The pins are `zils/d3-pins.json`; the retired H2O contract is in
+[h2o-queue.md](h2o-queue.md).
 
 For image bundles, also install and verify the isolated runtime on each host:
 
@@ -207,12 +209,15 @@ outcomes; a round's cases are published after it closes and are not reused.
 
 What a base-tier miner needs: the 20–24 GB cards in today's fleet cannot
 full-fine-tune the 4.5B backbone, but a d3 LoRA trains in about 10.5 GB of
-GPU memory. Train a LoRA on d3, merge it into the backbone, and write the two
-bf16 shards with the parent's index layout plus the untouched contract files
-(see [the artifact](base-candidates.md#artifact)); the merge needs about 20 GB
-of RAM or GPU memory and 10 GB of disk per candidate, and the upload is at
-most 9.5 GiB. Customer jobs take priority on a shared card; base training fills
-the idle time.
+GPU memory. Train a LoRA on d3 and merge it with `zils.d3 candidate`, which
+writes the two bf16 shards in the parent's layout plus the untouched contract
+files and validates the result (see
+[the reference recipe](base-candidates.md#reference-recipe-train-a-lora-merge-it));
+the merge needs about 10 GB of RAM and 10 GB of disk per candidate, and the
+upload is at most 9.5 GiB. Customer jobs take priority on a shared card; base
+training fills the idle time. What you train on decides everything: the 18
+October rehearsal candidate, trained only on synthetic rule cases, tied stock d3
+on the sealed exam.
 
 ## Results and restarts
 
@@ -231,4 +236,6 @@ This is a closed development fleet with a fixed one-epoch recipe. Every round
 starts from the same reference with different seeds; winners are not promoted
 automatically. The reused synthetic benchmark measures development progress.
 Signed HTTP authenticates messages but does not encrypt them; use a trusted
-private LAN. Evaluation subprocesses do not isolate hostile checkpoints.
+private LAN. Evaluation runs each submission in a network-less namespace where
+the host allows it (`sandbox` in every report says which mode ran); that bounds
+network and lifetime, not every hostile-checkpoint behaviour.

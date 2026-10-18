@@ -69,16 +69,30 @@ def endpoint_ok(endpoint, allowed=None, public=False):
         raise ValueError("endpoint must match a pinned private IPv4 address")
 
 
-def register(message, round_id, members, registry, endpoints=None, job_sha256=None, public=False):
+def register(
+    message,
+    round_id,
+    members,
+    registry,
+    endpoints=None,
+    job_sha256=None,
+    public=False,
+    kind="adapter",
+):
+    """A base candidate is the same signed claim with `"kind": "candidate"` and no customer job."""
     if not isinstance(message, dict) or set(message) != {"claim", "signature"}:
         raise ValueError("announcement requires claim and signature")
     c, signature = message["claim"], message["signature"]
     fields = {"round_id", "uid", "hotkey", "sha256", "endpoint"}
-    if job_sha256 is not None:
+    if kind == "candidate":
+        fields.add("kind")
+    elif job_sha256 is not None:
         fields.add("job_sha256")
     if not isinstance(c, dict) or set(c) != fields:
         raise ValueError("invalid claim fields")
-    if job_sha256 is not None and c["job_sha256"] != job_sha256:
+    if kind == "candidate" and c["kind"] != "candidate":
+        raise ValueError("announcement is not a base candidate")
+    if kind != "candidate" and job_sha256 is not None and c["job_sha256"] != job_sha256:
         raise ValueError("announcement belongs to another customer job")
     uid = c["uid"]
     if type(uid) is not int or uid not in members or c["hotkey"] != members[uid]:
@@ -169,9 +183,12 @@ def fetch_checkpoint(
     *,
     model=models.KEV,
     kind="adapter",
+    public=False,
 ):
     endpoint_ok(
-        claim["endpoint"], allowed=[expected_endpoint] if expected_endpoint is not None else None
+        claim["endpoint"],
+        allowed=[expected_endpoint] if expected_endpoint is not None else None,
+        public=public,
     )
     if round_scoped and not re.fullmatch("[a-f0-9]{32}", claim["round_id"]):
         raise ValueError("invalid artifact round id")

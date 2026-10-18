@@ -8,6 +8,9 @@ open participation, mainnet support, or production model quality.
 Status of the work for an open competition, as of 17 October 2026:
 
 1. Admission rules: chain-derived admission is implemented and off by default.
+   Opening it is documented in [validators.md](validators.md#open-admission-base-tier-not-yet-enabled);
+   the validator's own base-tier intake (`base_round_dir`) is merged; opening
+   waits on the owner's miner terms (18 October 2026).
 2. Isolated evaluation: the sandboxed evaluation subprocess is merged.
 3. Refreshed held-out benchmarks: the round-one sealed holdout is authored
    (1,458 cases in six families). The first confirmation draw, run on
