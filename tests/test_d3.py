@@ -396,6 +396,7 @@ class D3ModuleTest(unittest.TestCase):
             self.enterContext(patch.dict(models.TEXT_RUNTIME_MODULES, {r1: ".d3"}))
             self.enterContext(patch.dict(models.SPECS, {r1: spec}))
             self.enterContext(patch.dict(models.PINS_FILES, {r1: "d3-r1-pins.json"}))
+            self.enterContext(patch.dict(models.RUNTIME_PYTHON_ENV, {r1: "ZILS_D3_RUNTIME_PYTHON"}))
             self.enterContext(
                 patch.dict(models.CANDIDATE_BASE_ENV, {r1: "ZILS_D3_R1_CANDIDATE_BASE"})
             )
@@ -420,6 +421,13 @@ class D3ModuleTest(unittest.TestCase):
             self.assertEqual(models.d3_family(), (models.D3, r1))
             self.assertIn(r1, models.base_candidate_models())
             self.assertEqual(models.candidate_files(r1, "candidate"), models.D3_CANDIDATE_FILES)
+            # Customer adapters on the promoted base use the d3 adapter format and interpreter.
+            self.assertEqual(models.candidate_files(r1), models.TEXT_ADAPTER_FILES)
+            adapter = root / "adapter"
+            adapter.mkdir()
+            models.write_metadata(adapter, model=r1)
+            self.assertEqual(models.artifact_files(adapter), models.TEXT_ADAPTER_FILES)
+            self.assertEqual(models.runtime_python_env(r1), "ZILS_D3_RUNTIME_PYTHON")
             self.assertEqual(image_contract.capabilities(r1)["max_images"], 4)
             candidate = root / "candidate"
             candidate.mkdir()

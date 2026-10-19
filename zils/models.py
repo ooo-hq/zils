@@ -201,7 +201,7 @@ def candidate_files(model, kind="adapter"):
     return {
         KEV: KEV_FILES,
         H2O: TEXT_ADAPTER_FILES,
-        D3: TEXT_ADAPTER_FILES,
+        **{m: TEXT_ADAPTER_FILES for m in d3_family()},
         IMAJEV: IMAJEV_FILES,
     }[model]
 
