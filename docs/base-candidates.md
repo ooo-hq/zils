@@ -13,8 +13,8 @@ evaluation, the regression suite, chain-derived admission, the merge recipe,
 promoted-profile support in the runtime and the dry-run promotion script are
 merged; the full loop was rehearsed end to end on 17/18 October (a synthetic-only
 candidate tied stock d3 on the sealed exams and passed the adapter suite; nothing
-was promoted). A public validator with the intake runs on testnet subnet 579
-since 18 October (chain admission, no weights published yet). Candidates enter the
+was promoted). Any validator running this code on subnet 579 collects and scores
+candidates. Candidates enter the
 standard Bittensor way: the miner uploads the candidate to its own Hugging Face
 repo and commits repo, revision and checkpoint hash on chain with
 `zils.miner commit-candidate`; every validator reads the commitments and pulls

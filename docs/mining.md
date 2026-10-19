@@ -245,20 +245,10 @@ You do not need a bundle, an operator or an invitation to enter the base tier:
 registration on subnet 579 is the admission. About an afternoon end to end, most
 of it the training run.
 
-The Zils base-tier validator on testnet subnet 579 (18 October 2026). You do not
-need its address or hotkey to compete: candidates are chain commitments that
-every validator reads itself. The address only serves its signed round results
-(`GET /results/<round>`, step 6):
-
-| | |
-| --- | --- |
-| URL | `http://165.245.195.21:8900` |
-| Validator hotkey | `5HTAVUuHxV81VbYoX7DYFzebdyA1SRk3zazdZiiBN7zCcpxy` (uid 0 on subnet 579) |
-
-Plain HTTP; every reply is signed by that hotkey. Rounds run hourly. Both values
-are for the testnet only: the host is temporary, and on mainnet the validator gets
-a new hotkey and a new URL.
-Use the values this table shows for the network you mine on.
+You do not need any validator's address or hotkey to compete: candidates are
+chain commitments that every validator reads itself. Validators are run by
+whoever operates them; find them on the metagraph
+(`btcli subnets metagraph --netuid 579 --network test`).
 
 Start with the installer on the mining host. It clones Zils into `~/.zils/zils`,
 builds the miner runtime and, on Linux x86_64 with an NVIDIA GPU, the d3 training
@@ -316,8 +306,7 @@ From then on `zils doctor` names the next step and prints its command; the steps
    incentive (`btcli subnets metagraph --netuid 579 --network test`). The
    aggregate row per round (Brier and accuracy against the incumbent, eligibility,
    the pending and confirmed winner) is in each validator's signed round result on
-   its own API (for the Zils validator, the address in the table above), not on
-   chain. Per-case results are never returned. An ineligible or
+   its own API (`GET /results/<round>`), not on chain. Per-case results are never returned. An ineligible or
    rejected candidate earns nothing; fix it, merge again and commit the new hash.
    Leave an unchanged commitment alone: it stays in every round at no cost, and
    committing it again moves your block later, which can hand the hash to a copier
