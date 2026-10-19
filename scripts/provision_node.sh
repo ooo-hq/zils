@@ -15,6 +15,13 @@ DRY="${ZILS_NODE_DRY_RUN:-0}"
 case "$DRY" in 0|"") DRY=0;; *) DRY=1;; esac
 
 phase() { echo "phase: $1"; }
+# Check out the fetched remote branch, else a tag or exact commit, detached. A stale local branch of the
+# same name (an old snapshot's `main`) must never win over what was just fetched.
+checkout_ref() {
+  local target="$2"
+  if git -C "$1" rev-parse -q --verify "origin/$2^{commit}" >/dev/null; then target="origin/$2"; fi
+  git -C "$1" checkout -q --detach "$target"
+}
 done_marker() { [ "$DRY" = 1 ] || touch "$MARKERS/$1"; }
 skip() { [ "$DRY" = 0 ] && [ -f "$MARKERS/$1" ]; }
 
@@ -53,10 +60,15 @@ main() {
       command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
       export PATH="${HOME:-/root}/.local/bin:$PATH"
       if [ ! -d $ROOT/.git ]; then git clone -q https://github.com/ooo-hq/zils.git $ROOT; fi
-      git -C $ROOT fetch -q origin && git -C $ROOT checkout -q "$ZILS_SUBNET_REF"
+      git -C $ROOT fetch -q --tags origin && checkout_ref $ROOT "$ZILS_SUBNET_REF"
       chown -R root:zils-compute $ROOT && chmod -R g+rX $ROOT
     fi
     done_marker source
+    # Later phases must come from the checked-out commit, not the copy of this script that started.
+    if [ "$DRY" = 0 ] && [ -z "${ZILS_NODE_REEXEC:-}" ] && [ -f "$0" ] \
+      && ! cmp -s "$0" $ROOT/scripts/provision_node.sh; then
+      ZILS_NODE_REEXEC=1 exec bash $ROOT/scripts/provision_node.sh "$@"
+    fi
   fi
 
   phase environments
