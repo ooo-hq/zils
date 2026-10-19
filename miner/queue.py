@@ -13,11 +13,18 @@ from bittensor_wallet import Keypair
 
 import zils
 from miner.worker import train_candidate
-from zils import image_jobs, models, protocol, queue_protocol, settings
+from zils import image_jobs, miner_grading, models, protocol, queue_protocol, settings
 from zils.cloud import MAX_DATA_BYTES, APIError, download, trusted_url, upload
 from zils.miner_presence import presence_loop
 from zils.queue_protocol import identifier, lease_heartbeat
-from zils.runtime import CapacityUnavailable, digest, gpu_ready, locked, prepare_base
+from zils.runtime import (
+    CapacityUnavailable,
+    digest,
+    gpu_ready,
+    gpu_total_mib,
+    locked,
+    prepare_base,
+)
 
 
 class Client:
@@ -80,6 +87,7 @@ def run_once(
     busy=None,
     minimum_mib=0,
     terms_sha256=None,
+    budget_mib=None,
 ):
     if not gpu_ready(device):
         return False
@@ -133,6 +141,12 @@ def run_once(
                 raise ValueError("job uses an unsupported base revision")
             if zils.checkpoint_hash(reference) != assignment["initial_sha256"]:
                 raise ValueError("job starting checkpoint differs from the installed reference")
+            if not fits(model, assignment.get("workload"), device, budget_mib):
+                client.call("refuse", auth)
+                print(
+                    f"Refused job {job_id}: its longest example does not fit this GPU.", flush=True
+                )
+                return False
             directory = Path(state) / job_id
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             config = {
@@ -207,6 +221,17 @@ def run_once(
         if busy is not None:
             busy.clear()
     return True
+
+
+def fits(model, workload, device, budget_mib=None):
+    """The miner's own fit check: the job's longest example against this GPU's memory budget.
+    A job too long for the whole budget is refused so another miner takes it; momentary
+    shortage stays a capacity deferral."""
+    need = miner_grading.training_mib(model, (workload or {}).get("max_tokens"))
+    if need is None or device != "cuda":
+        return True
+    budget = budget_mib if budget_mib is not None else gpu_total_mib()
+    return budget is None or need <= budget
 
 
 def download_images(client, auth, training, destination, model=models.IMAJEV):
@@ -295,6 +320,9 @@ def main():
         if type(enabled) is not bool:
             raise ValueError("graded_scheduling must be true or false")
         minimum = config.get("graded_min_free_mib", 0) if enabled else 0
+        budget = config.get("gpu_budget_mib")
+        if budget is not None and (type(budget) is not int or budget < 1):
+            raise ValueError("gpu_budget_mib must be a positive integer")
         with (
             locked(state / "queue-worker.lock"),
             presence_loop(
@@ -313,6 +341,7 @@ def main():
                         busy=busy,
                         minimum_mib=minimum,
                         terms_sha256=config.get("terms_sha256"),
+                        budget_mib=budget,
                     )
                 except (
                     APIError,

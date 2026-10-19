@@ -75,7 +75,10 @@ and does the same for `/etc/zils-node/fleet` when it exists (directories 0770,
 files 0640). The miner config it writes enables graded presence
 (`graded_scheduling`, `graded_min_free_mib` 12288), so the node heartbeats to the
 coordinator; it still receives customer jobs only after the operator binds a
-resource and qualifies it (platform `docs/miner-grading.md`). The
+resource and qualifies it (platform `docs/miner-grading.md`). Before training,
+the miner checks each job's longest example against its GPU (total memory, or
+`gpu_budget_mib` in the miner config when another service shares the card) and
+refuses jobs that cannot fit, so the coordinator offers them to another miner. The
 `fleet-validator` role is installed but has no runbook path yet; the first
 multi-host H2O round in `docs/fleet-nodes.md` is its acceptance test.
 

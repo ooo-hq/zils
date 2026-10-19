@@ -63,3 +63,25 @@ class AdmitTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FitCheckTest(unittest.TestCase):
+    def test_refuses_only_what_the_whole_budget_cannot_hold(self):
+        from unittest.mock import patch
+
+        from miner.queue import fits
+        from zils import models
+
+        long, short = {"max_tokens": 8192}, {"max_tokens": 1000}
+        self.assertFalse(fits(models.D3, long, "cuda", budget_mib=12000))
+        self.assertTrue(fits(models.D3, short, "cuda", budget_mib=12000))
+        with patch("miner.queue.gpu_total_mib", return_value=23028):
+            self.assertTrue(fits(models.D3, long, "cuda"))
+        with patch("miner.queue.gpu_total_mib", return_value=None):
+            self.assertTrue(
+                fits(models.D3, long, "cuda")
+            )  # unreadable: training's own gate decides
+        # No curve, no workload or no GPU: nothing to check here.
+        self.assertTrue(fits(models.H2O, long, "cuda", budget_mib=1))
+        self.assertTrue(fits(models.D3, None, "cuda", budget_mib=1))
+        self.assertTrue(fits(models.D3, long, "cpu", budget_mib=1))
