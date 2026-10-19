@@ -1,8 +1,10 @@
-"""`zils.miner commit-candidate` and `doctor` against a fake chain and a fake Hugging Face."""
+"""`zils setup`, `doctor` and `commit-candidate` against a fake chain and a fake Hugging Face."""
 
 import contextlib
 import importlib.util
 import io
+import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -71,6 +73,15 @@ class CommitCandidateTest(unittest.TestCase):
         self.enterContext(patch("zils.commitments.HF_ENDPOINT", hub))
         self.enterContext(patch("zils.d3.validate_candidate", Mock()))
         self.connects = []
+        self.config = root / "zils" / "miner.json"
+        self.enterContext(patch.dict(os.environ, {"ZILS_MINER_CONFIG": str(self.config)}))
+        self.d3 = root / "venv-d3" / "python"
+        self.d3.parent.mkdir()
+        self.d3.touch()
+        self.enterContext(patch("zils.miner.d3_python", lambda: self.d3))
+        self.runtime = SimpleNamespace(returncode=0, stderr="")
+        self.enterContext(patch("zils.miner.subprocess.run", lambda *a, **k: self.runtime))
+        self.enterContext(patch("huggingface_hub.get_token", lambda: "hf_fixture"))
 
         @contextlib.contextmanager
         def connect(config, *, raw_calls=False):
@@ -98,8 +109,8 @@ class CommitCandidateTest(unittest.TestCase):
 
         self.enterContext(patch("huggingface_hub.HfApi", HfApi))
 
-    def run_miner(self, *argv):
-        flags = [
+    def run_miner(self, *argv, wallet=True):
+        flags = wallet * [
             "--wallet-name",
             self.wallet["name"],
             "--wallet-hotkey",
@@ -169,18 +180,22 @@ class CommitCandidateTest(unittest.TestCase):
     def test_doctor_stops_at_the_first_failing_step_with_its_fix(self):
         code, out = self.run_miner("doctor")
         self.assertEqual(code, 1)
-        self.assertEqual(out.count("ok  "), 3)
+        self.assertEqual(out.count("ok  "), 4)
         self.assertIn("fix candidate: no --candidate", out)
+        self.assertIn(f"{self.d3} -m zils.d3 train", out)
 
         code, out = self.run_miner("doctor", "--candidate", str(self.candidate))
-        self.assertEqual(out.count("ok  "), 4)
+        self.assertEqual(out.count("ok  "), 5)
         self.assertIn("fix hugging face: no --repo", out)
 
         flags = ("--candidate", str(self.candidate), "--repo", "alice/d3")
         code, out = self.run_miner("doctor", *flags)
         self.assertIn("fix hugging face: not uploaded yet", out)
-        self.assertIn("commit-candidate", out)
+        self.assertIn("zils commit-candidate", out)
         self.assertIn("--repo alice/d3 \\\n  --yes", out)
+        with patch("huggingface_hub.get_token", lambda: None):
+            code, out = self.run_miner("doctor", *flags)
+        self.assertIn("fix hugging face: not logged in to Hugging Face", out)
 
         self.run_miner("commit-candidate", *flags, "--yes")
         rev = revision("upload-0")
@@ -189,7 +204,7 @@ class CommitCandidateTest(unittest.TestCase):
 
         code, out = self.run_miner("doctor", *flags, "--revision", rev)
         self.assertEqual(code, 0, out)
-        self.assertEqual(out.count("ok  "), 6)
+        self.assertEqual(out.count("ok  "), 7)
         self.assertIn(f"ready: uid 1 committed {self.sha256[:12]} at block 301", out)
 
         self.chain.records.clear()
@@ -199,7 +214,7 @@ class CommitCandidateTest(unittest.TestCase):
 
         self.chain.uids = {}
         code, out = self.run_miner("doctor", *flags, "--revision", rev)
-        self.assertEqual(out.count("ok  "), 2)
+        self.assertEqual(out.count("ok  "), 3)
         self.assertIn("fix registration: hotkey", out)
         self.assertIn("tx burned-register --netuid 579", out)
 
@@ -217,6 +232,48 @@ class CommitCandidateTest(unittest.TestCase):
             code, out = self.run_miner("doctor")
         self.assertEqual(out.count("ok  "), 0)
         self.assertIn("fix requirements: missing huggingface_hub", out)
+
+        self.runtime = SimpleNamespace(returncode=1, stderr="Traceback\nOSError: d3 requires X")
+        code, out = self.run_miner("doctor")
+        self.assertEqual(out.count("ok  "), 1)
+        self.assertIn("fix d3 runtime: " + f"{self.d3}: OSError: d3 requires X", out)
+        self.d3.unlink()
+        code, out = self.run_miner("doctor")
+        self.assertIn("fix d3 runtime: no d3 training runtime", out)
+        self.assertIn("install.sh | sh", out)
+
+    def test_setup_saves_answers_that_later_commands_default_to(self):
+        code, out = self.run_miner("doctor", wallet=False)
+        self.assertEqual(code, 1)
+        self.assertIn("no wallet configured; run zils setup", out)
+
+        repo = "alice/d3"
+        answers = iter([self.wallet["path"], "", "", str(self.candidate), repo])
+        with patch("builtins.input", lambda prompt: next(answers)):
+            code, out = self.run_miner("setup", wallet=False)
+        self.assertIn("wallets there: fixture", out)
+        self.assertIn("hotkeys: miner", out)
+        self.assertIn("fix hugging face: not uploaded yet", out)
+        saved = json.loads(self.config.read_text())
+        self.assertEqual(saved["wallet_name"], "fixture")
+        self.assertEqual(saved["wallet_hotkey"], "miner")
+        self.assertEqual(saved["candidate"], str(self.candidate.resolve()))
+
+        code, out = self.run_miner("commit-candidate", "--yes", wallet=False)
+        self.assertEqual(code, 0, out)
+        rev = revision("upload-0")
+        self.assertEqual(json.loads(self.config.read_text())["revision"], rev)
+        code, out = self.run_miner("doctor", wallet=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn("ready: uid 1", out)
+
+        # Retraining into a new folder drops the stale revision, so doctor asks for an upload.
+        other = candidate(self.root / "retrained", 0.5)
+        answers = iter(["", "", "", str(other), ""])
+        with patch("builtins.input", lambda prompt: next(answers)):
+            code, out = self.run_miner("setup", wallet=False)
+        self.assertNotIn("revision", json.loads(self.config.read_text()))
+        self.assertIn("fix hugging face: not uploaded yet", out)
 
 
 if __name__ == "__main__":

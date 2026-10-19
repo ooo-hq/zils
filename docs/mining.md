@@ -255,6 +255,18 @@ are for the testnet only: the host is temporary, and on mainnet the validator ge
 a new hotkey and a new URL.
 Use the values this table shows for the network you mine on.
 
+Start with the installer on the mining host. It clones Zils into `~/.zils/zils`,
+builds the miner runtime and, on Linux x86_64 with an NVIDIA GPU, the d3 training
+runtime, links `zils` into `~/.local/bin` and starts `zils setup`, which asks for
+your wallet, candidate folder and Hugging Face repo, saves them to
+`~/.zils/miner.json` and runs the doctor. Rerun it to update.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ooo-hq/zils/main/scripts/install.sh | sh
+```
+
+From then on `zils doctor` names the next step and prints its command; the steps are:
+
 1. **Register a hotkey on testnet subnet 579** following the
    [registration guide](bittensor-registration.md); keep the hotkey file on the
    mining host and the coldkey elsewhere.
@@ -267,29 +279,29 @@ Use the values this table shows for the network you mine on.
    passes the candidate contract; the exam is realistic decisions in families you
    have not seen, so what you train on decides everything.
 4. **Upload and commit.** Log in to Hugging Face once (`hf auth login`, a write
-   token), then let `zils.miner commit-candidate` upload the candidate files to
+   token), then let `zils commit-candidate` upload the candidate files to
    your public model repo and commit `zils1:<hash>:<revision>:<repo>` on chain
    with your hotkey (details in [base candidates: commit](base-candidates.md#commit)):
 
    ```bash
-   .venv-kev/bin/python -m zils.miner commit-candidate \
-     --wallet-name WALLET_NAME --wallet-hotkey MINER_KEY_NAME --wallet-path /absolute/wallets \
-     --candidate candidate --repo YOUR_HF_USER/d3-candidate
+   zils commit-candidate
    ```
+
+   It reads the wallet, candidate and repo saved by `zils setup`; flags such as
+   `--candidate` or `--repo` override them for one run.
 
    Without `--yes` it is a dry run that prints the commitment; with `--yes` it
    uploads, checks the public repo at the new commit, writes the commitment and
    reads it back. No validator URL, no open port, nothing left running: every
    validator reads the commitments at the start of its round and pulls the
    revision from Hugging Face, once per distinct hash.
-5. **Let the doctor check.** It runs the checks in order (requirements, hotkey
-   file, registration, candidate, Hugging Face repo at the revision, commitment on
-   chain) and stops at the first failing one with the exact command that fixes it:
+5. **Let the doctor check.** It runs the checks in order (requirements, d3
+   training runtime and GPU, hotkey file, registration, candidate, Hugging Face
+   login and repo at the revision, commitment on chain) and stops at the first
+   failing one with the exact command that fixes it:
 
    ```bash
-   .venv-kev/bin/python -m zils.miner doctor \
-     --wallet-name WALLET_NAME --wallet-hotkey MINER_KEY_NAME --wallet-path /absolute/wallets \
-     --candidate candidate --repo YOUR_HF_USER/d3-candidate --revision COMMIT_SHA
+   zils doctor
    ```
 
    You can run it before step 1 (it tells you to create the wallet), before
