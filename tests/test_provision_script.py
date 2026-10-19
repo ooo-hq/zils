@@ -167,3 +167,46 @@ class ProvisionScriptTest(unittest.TestCase):
             image,
         )
         self.assertIn("d3_pins_sha256_16", image)
+
+    def test_source_checks_out_the_fetched_ref_not_a_stale_local_branch(self):
+        """An old snapshot's local `main` must not win over the fetched origin/main (zils-node-2, 19 Oct)."""
+        import tempfile
+
+        def git(*args, cwd):
+            return subprocess.run(
+                ["git", *args], cwd=cwd, check=True, capture_output=True, text=True
+            ).stdout.strip()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            origin, node = Path(tmp) / "origin", Path(tmp) / "node"
+            origin.mkdir()
+            git("init", "-q", "-b", "main", cwd=origin)
+            ident = ["-c", "user.name=t", "-c", "user.email=t@example.com"]
+            git(*ident, "commit", "-q", "--allow-empty", "-m", "old", cwd=origin)
+            old = git("rev-parse", "HEAD", cwd=origin)
+            git("clone", "-q", str(origin), str(node), cwd=tmp)  # the snapshot: local main at `old`
+            git(*ident, "commit", "-q", "--allow-empty", "-m", "new", cwd=origin)
+            git("tag", "v1", cwd=origin)
+            new = git("rev-parse", "HEAD", cwd=origin)
+            git("fetch", "-q", "--tags", "origin", cwd=node)
+            function = subprocess.run(
+                ["sed", "-n", "/^checkout_ref() {/,/^}/p", str(SCRIPT)],
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            self.assertIn("checkout_ref", function)
+            for ref, expected in (("main", new), (old, old), ("v1", new)):
+                with self.subTest(ref=ref):
+                    subprocess.run(
+                        ["bash", "-c", function + '\ncheckout_ref "$1" "$2"', "_", str(node), ref],
+                        check=True,
+                    )
+                    self.assertEqual(git("rev-parse", "HEAD", cwd=node), expected)
+            self.assertEqual(git("rev-parse", "main", cwd=node), old)  # stale branch left alone
+
+    def test_later_phases_run_from_the_checked_out_script(self):
+        text = SCRIPT.read_text()
+        source = text[text.index("phase source") : text.index("phase environments")]
+        self.assertIn("exec bash $ROOT/scripts/provision_node.sh", source)
+        self.assertIn('[ -z "${ZILS_NODE_REEXEC:-}" ]', source)
