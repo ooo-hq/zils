@@ -10,12 +10,12 @@ repo="${ZILS_REPO:-https://github.com/ooo-hq/zils.git}"
 dir="$home/zils"
 bin="$HOME/.local/bin"
 user_path="$PATH"
+PATH="$bin:$PATH"
 
 command -v git >/dev/null || { echo "zils: install git first" >&2; exit 1; }
 if ! command -v uv >/dev/null; then
   echo "installing uv"
   curl -LsSf https://astral.sh/uv/install.sh | sh
-  PATH="$bin:$PATH"
 fi
 
 if [ -d "$dir/.git" ]; then
@@ -45,13 +45,14 @@ else
 fi
 
 mkdir -p "$bin"
-ln -sf "$dir/.venv-kev/bin/zils" "$bin/zils"
+# btcli (from bittensor) creates and registers the wallet that doctor asks for.
+for tool in zils btcli; do ln -sf "$dir/.venv-kev/bin/$tool" "$bin/$tool"; done
 case ":$user_path:" in
   *":$bin:"*) ;;
   *) echo "add $bin to PATH: echo 'export PATH=\"$bin:\$PATH\"' >> ~/.profile" ;;
 esac
 
-echo "installed: $bin/zils"
+echo "installed: $bin/zils and $bin/btcli"
 if [ -t 1 ] && [ -r /dev/tty ]; then
   "$bin/zils" setup </dev/tty || true
 else
