@@ -193,6 +193,13 @@ earn on two tracks, paid from one weight vector on the configured subnet:
   stock base or a copy of the king is never eligible.
 - **Adapter rounds (alongside).** The frozen customer job rounds above continue
   unchanged; each round's calibrated test-split skill is the adapter weight.
+  A validator may instead take the adapter track from real customer work in the
+  [hosted queue](queue-miners.md) (`adapter_evidence`, off by default; see
+  [validators §7](validators.md#7-pay-the-adapter-track-from-hosted-queue-work)).
+  Then you earn for customer jobs the queue routed to your hotkey and delivered
+  to the customer, weighted by training tokens × held-out skill × your
+  reliability over the window. Qualification runs and operator-owned jobs earn
+  nothing, and your queue hotkey must be registered on the subnet.
 
 Split: the base tier takes `base_tier.share` of the vector (currently **0.7**;
 the validator records the share in every chain attempt and receipt), adapters

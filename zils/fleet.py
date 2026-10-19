@@ -287,6 +287,12 @@ def main(argv=None):
             if "chain" not in config:
                 raise ValueError("a base-tier track requires a testnet fleet config")
             base_round.validate_track(config["base_tier"])
+        if "adapter_evidence" in config:
+            from . import queue_evidence
+
+            if "chain" not in config:
+                raise ValueError("queue adapter evidence requires a testnet fleet config")
+            queue_evidence.validate_track(config["adapter_evidence"])
         base_draws(config, directory)
         signing_key(config)
         if "chain" in config:

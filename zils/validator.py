@@ -289,6 +289,23 @@ def attach_base_tier(config, directory, work, report):
     return {**report, "base_tier": json.loads(frozen.read_text())}
 
 
+def attach_adapter_evidence(config, work, report, now=None):
+    """Embed the platform's signed queue evidence, frozen with the round the first time it is published.
+
+    A failed fetch raises, so the pending round retries after a restart instead of burning the share.
+    """
+    if "adapter_evidence" not in config:
+        return report
+    frozen = work / "adapter-evidence.json"
+    if not frozen.exists():
+        from . import queue_evidence
+
+        track = queue_evidence.validate_track(config["adapter_evidence"])
+        until = queue_evidence.window_end(now)
+        wire.write_json(frozen, queue_evidence.fetch(track, until))
+    return {**report, "adapter_evidence": json.loads(frozen.read_text())}
+
+
 def base_draws(config, directory):
     """The sealed draws this validator scores itself, audited now and ordered as the track lists them
     (the first decides, the last confirms). None when the config has no `base_round_dir`."""
@@ -710,6 +727,7 @@ def validator(config, directory, args):
                     wait_for_capacity=True,
                 )
             report = attach_base_tier(settings_for_round, directory, work, report)
+            report = attach_adapter_evidence(settings_for_round, work, report)
             fields = (
                 "uid",
                 "status",
@@ -744,8 +762,8 @@ def validator(config, directory, args):
                         publish=args.publish_weights,
                     )
                 public.update(chain=outcome, chain_write=outcome["chain_write"])
-                if "tracks" in outcome:
-                    # Miners see the blended vector, not the adapter round alone.
+                if "tracks" in outcome or "adapter_source" in outcome:
+                    # Miners see the published vector, not the frozen-job round alone.
                     public["weights"] = outcome["requested_weights"]
                 print(f"validator: testnet weights {outcome['status']}", flush=True)
             wire.write_json(work / "result.json", signed(public, key))

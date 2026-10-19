@@ -11,8 +11,10 @@ is retired (keep its runtime only if the operator still routes legacy H2O jobs t
 you) and the ImaJev image profile is retired: image jobs run on d3. For a
 **Bittensor testnet fleet**, use
 [registration](bittensor-registration.md) and
-[bundle setup](mining.md). Queue assignments do not publish Bittensor weights
-or establish on-chain earnings.
+[bundle setup](mining.md). Queue assignments publish no Bittensor weights by
+themselves. A testnet validator can pay delivered queue work from its adapter
+share ([validators §7](validators.md#7-pay-the-adapter-track-from-hosted-queue-work),
+off by default); only hotkeys registered on that subnet earn.
 
 Operators can enable [graded job assignment](miner-grading.md) after qualification.
 Miners opt into signed availability only after the coordinator upgrade; existing
@@ -37,8 +39,10 @@ RTX 4090 (d3 training peaks about 10.5 GB; the worker needs 12,288 MiB free).
 d3 and H2O use isolated CUDA runtimes below. CPU and Apple MPS training are
 unsupported; the retired JevK5 Mac path no longer exists.
 
-The operator assigns a local queue UID. On-chain registration is not required
-for this queue, and a Bittensor UID alone does not authorize job access.
+The operator assigns a local queue UID. It is not your subnet UID. On-chain
+registration is not required for this queue, and a Bittensor UID alone does not
+authorize job access; to earn on chain for queue work, register the same hotkey
+on the subnet.
 
 Operators standing up a rented node can run `scripts/provision_node.sh` in
 place of step 2 (it performs the same installation and writes a qualification
