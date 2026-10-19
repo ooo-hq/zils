@@ -49,7 +49,7 @@ case ":$PATH:" in
 esac
 
 echo "installed: $bin/zils"
-if [ -r /dev/tty ]; then
+if [ -t 1 ] && [ -r /dev/tty ]; then
   "$bin/zils" setup </dev/tty || true
 else
   echo "next: zils setup"
