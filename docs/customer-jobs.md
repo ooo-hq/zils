@@ -49,6 +49,13 @@ and a representative split. The exporter sends only training states, questions,
 and labels to miners. Calibration/test cases and acceptance policy stay with
 the validator; miners receive the job ID and manifest hash.
 
+Training cases may add optional `target_probabilities`, one probability per
+option summing to one (for example annotator vote shares,
+`{"billing":0.8,"technical":0.2}`). Miners then train against that distribution
+instead of the single `label`. `label` stays required: calibration and test are
+always scored against it, so soft targets are refused outside the training split
+and on image cases.
+
 For a reproducible plumbing example, generate synthetic inputs first. These are
 not customer data and cannot establish customer-task quality:
 

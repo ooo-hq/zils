@@ -39,6 +39,17 @@ def options(question):
     raise ValueError("question must be noul, or choice/score with 2..255 options")
 
 
+def validate_targets(targets, keys):
+    """Optional soft training targets: one probability per option, summing to one."""
+    if not isinstance(targets, dict) or set(targets) != set(keys):
+        raise ValueError("target_probabilities must cover exactly the available options")
+    values = list(targets.values())
+    if any(type(p) not in (int, float) or not math.isfinite(p) or not 0 <= p <= 1 for p in values):
+        raise ValueError("target_probabilities must be finite numbers in [0, 1]")
+    if not math.isclose(sum(values), 1.0, abs_tol=1e-6):
+        raise ValueError("target_probabilities must sum to one")
+
+
 def validate_cases(cases):
     if not isinstance(cases, list) or not cases:
         raise ValueError("evaluation cases must be a nonempty list")
@@ -57,6 +68,8 @@ def validate_cases(cases):
         seen.add(case["id"])
         if not isinstance(case["question"], dict) or case["label"] not in options(case["question"]):
             raise ValueError("label must identify an available option")
+        if "target_probabilities" in case:
+            validate_targets(case["target_probabilities"], options(case["question"]))
         if len(json.dumps(case, allow_nan=False).encode()) > 128 * 1024:
             raise ValueError("case exceeds 128 KiB")
 

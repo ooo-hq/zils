@@ -648,6 +648,37 @@ class TrainingRowsTest(unittest.TestCase):
                 train(self.write(Path(tmp), [{"sha256": sha}]), model_id=models.D3)
         self.assertEqual(model.seen, [[png()], (batch, 2)])
 
+    def test_soft_targets_train_against_probabilities(self):
+        from zils.jevk5 import train
+
+        model, _ = self.model("lora_A")
+        model.encode = lambda state, q: ([1, 2, 3], ["a", "b"])
+        model.logits = lambda inputs, count: torch.zeros(count, requires_grad=True)
+        seen = []
+
+        def loss(logits, target):
+            seen.append(target.tolist())
+            raise Stop
+
+        row = {"state": {}, "questions": {"decision": {**QUESTION, "label": "a"}}}
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch("zils.d3.DecisionModel", return_value=model),
+            patch("torch.nn.functional.cross_entropy", loss),
+            patch("torch.cpu.synchronize", create=True),
+        ):
+            args = self.write(Path(tmp), [])
+            data = Path(args.data)
+            for soft, expected in ((None, [0]), ({"a": 0.25, "b": 0.75}, [[0.25, 0.75]])):
+                extra = {"target_probabilities": soft} if soft else {}
+                data.write_text(json.dumps({**row, **extra}) + "\n")
+                with self.assertRaises(Stop):
+                    train(args, model_id=models.D3)
+                self.assertEqual(seen.pop(), expected)
+            data.write_text(json.dumps({**row, "target_probabilities": {"a": 1.0}}) + "\n")
+            with self.assertRaisesRegex(ValueError, "cover exactly"):
+                train(args, model_id=models.D3)
+
     def test_training_refuses_a_trainable_vision_tower(self):
         from zils.jevk5 import train
 
