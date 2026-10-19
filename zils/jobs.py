@@ -51,6 +51,9 @@ def validate_splits(splits):
             ids.add(case["id"])
             if groups.setdefault(group, split) != split:
                 raise ValueError("related source group overlaps splits")
+            # Soft targets steer training only; calibration and test are scored on `label`.
+            if "target_probabilities" in case and (split != "train" or "image" in case):
+                raise ValueError("target_probabilities are allowed only on text training cases")
             fingerprint = json.dumps([case["state"], case["question"]], sort_keys=True)
             if prompts.setdefault(fingerprint, split) != split:
                 raise ValueError("duplicate prompt overlaps splits")

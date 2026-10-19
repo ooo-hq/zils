@@ -62,7 +62,9 @@ def train(args, *, model_id):
         if not line.strip():
             continue
         row = json.loads(line)
-        if set(row) - {"images"} != {"state", "questions"} or set(row["questions"]) != {"decision"}:
+        if set(row) - {"images", "target_probabilities"} != {"state", "questions"} or set(
+            row["questions"]
+        ) != {"decision"}:
             raise ValueError("training export must contain exactly one decision per example")
         images = row.get("images", [])
         if images and "inputs" not in models.spec(model_id):
@@ -100,7 +102,13 @@ def train(args, *, model_id):
             if model_id == models.H2O
             else 1.0
         )
-        rows.append((inputs, keys.index(label), len(keys), temperature))
+        target = keys.index(label)
+        if "target_probabilities" in row:
+            soft = row["target_probabilities"]
+            if not isinstance(soft, dict) or set(soft) != set(keys):
+                raise ValueError("target_probabilities must cover exactly the allowed outcomes")
+            target = [float(soft[key]) for key in keys]
+        rows.append((inputs, target, len(keys), temperature))
     params = [p for p in model.peft.parameters() if p.requires_grad]
     if not params or any(
         "lora_" not in n for n, p in model.peft.named_parameters() if p.requires_grad
@@ -118,11 +126,13 @@ def train(args, *, model_id):
     getattr(torch, args.device).synchronize()
     started = time.perf_counter()
     for step, index in enumerate(order):
-        inputs, label, count, temperature = rows[index]
+        inputs, target, count, temperature = rows[index]
         with torch.autocast(args.device, dtype=torch.bfloat16):
             logits = model.logits(inputs, count) / temperature
             loss = torch.nn.functional.cross_entropy(
-                logits[None], torch.tensor([label], device=args.device)
+                logits[None],
+                # A class index for hard labels; a probability row for soft targets.
+                torch.tensor([target], device=args.device),
             )
         if not torch.isfinite(loss):
             raise RuntimeError("nonfinite training loss")
@@ -159,6 +169,7 @@ def train(args, *, model_id):
             {
                 "model": models.spec(model_id),
                 "examples": len(rows),
+                "soft_target_examples": sum(isinstance(row[1], list) for row in rows),
                 "optimizer_steps": math.ceil(len(rows) / 4),
                 "epochs": 1,
                 "learning_rate": 2e-5,
