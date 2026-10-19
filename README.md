@@ -35,8 +35,8 @@ reward vector.
 
 Two tracks pay from one testnet weight vector. In the **base tier**, a miner
 registered on testnet subnet 579 uploads a full-weight d3 candidate to Hugging Face
-and commits it on chain with `python -m zils.miner commit-candidate`; registration
-is the admission. Only kings are paid: the last five distinct registered miners
+and commits it on chain with `zils commit-candidate`; registration is the admission.
+Start with `curl -fsSL https://zils.ai/install.sh | sh`, then `zils doctor` names each next step. Only kings are paid: the last five distinct registered miners
 whose candidates were promoted split the base share, and an unearned share is
 burned ([base candidates](docs/base-candidates.md),
 [two-track payment](docs/mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)).

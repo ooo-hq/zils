@@ -2,13 +2,17 @@
 Hugging Face repo plus one chain commitment of repo, revision and checkpoint hash; every validator
 reads the commitments and pulls that revision. No validator URL is needed.
 
-`doctor` checks the setup step by step and prints the one command that fixes the first failing
-step. `commit-candidate` validates a candidate, uploads it (or takes an uploaded revision), prints the
-commitment and, with --yes, writes it with the hotkey."""
+`setup` asks for the wallet, candidate and repo once and saves them; every flag below then
+defaults to the saved value. `doctor` checks the setup step by step and prints the one command
+that fixes the first failing step. `commit-candidate` validates a candidate, uploads it (or takes
+an uploaded revision), prints the commitment and, with --yes, writes it with the hotkey."""
 
 import argparse
 import hashlib
 import importlib
+import json
+import os
+import subprocess
 from pathlib import Path
 
 import zils
@@ -18,6 +22,37 @@ from . import commitments, models, testnet
 NETUID = 579
 REQUIRED_MODULES = ("bittensor", "bittensor_wallet", "huggingface_hub", "kev", "torch")
 PINNED_BITTENSOR = "11.1.0"
+WALLET_PATH = "~/.bittensor/wallets"
+SAVED = ("wallet_name", "wallet_hotkey", "wallet_path", "candidate", "repo", "revision")
+INSTALL = "curl -fsSL https://zils.ai/install.sh | sh"
+
+
+def paint(code, text):
+    """ANSI color on a terminal (green 32, red 31, cyan 36, bold 1, dim 2); plain otherwise."""
+    if not os.isatty(1) or os.environ.get("NO_COLOR"):
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
+def config_path():
+    return Path(os.environ.get("ZILS_MINER_CONFIG", "~/.zils/miner.json")).expanduser()
+
+
+def load_config():
+    path = config_path()
+    return json.loads(path.read_text()) if path.is_file() else {}
+
+
+def write_config(config):
+    path = config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, indent=2) + "\n")
+
+
+def d3_python():
+    """The isolated d3 training interpreter: the exported variable, else install.sh's venv."""
+    name = os.environ.get(models.runtime_python_env(models.D3))
+    return Path(name) if name else zils.ROOT / ".venv-d3/bin/python"
 
 
 def chain_config(netuid):
@@ -78,7 +113,7 @@ def wallet(args):
 
 def commit_command(args, revision=None):
     command = [
-        "python -m zils.miner commit-candidate",
+        "zils commit-candidate",
         f"--wallet-name {args.wallet_name} --wallet-hotkey {args.wallet_hotkey}"
         f" --wallet-path {args.wallet_path}",
         f"--candidate {args.candidate} --repo {args.repo}"
@@ -132,6 +167,9 @@ def commit_candidate(args):
         raise ValueError(
             "the chain does not show the new commitment; read it again before retrying"
         )
+    write_config(
+        load_config() | {"candidate": str(candidate), "repo": args.repo, "revision": revision}
+    )
     print(
         f"committed at block {after['block']}; validators pull it at their next round",
         flush=True,
@@ -160,10 +198,29 @@ def doctor(args):
             pinned = False
         if missing or not pinned:
             return (
-                f"missing {', '.join(missing) or 'bittensor ' + PINNED_BITTENSOR}; run\n"
-                "  uv pip install --python .venv-kev/bin/python -r requirements/model.txt"
-                " -r requirements/rehearsal.txt -r requirements/testnet.txt"
+                f"missing {', '.join(missing) or 'bittensor ' + PINNED_BITTENSOR}; rerun the"
+                f" installer\n  {INSTALL}"
             )
+
+    def d3_runtime():
+        python = d3_python()
+        if not python.exists():
+            return (
+                f"no d3 training runtime at {python}; it needs Linux x86_64 with an NVIDIA GPU."
+                f" On that host rerun the installer\n  {INSTALL}"
+            )
+        check = (
+            "import torch; from zils import d3; d3.verify_runtime();"
+            " assert torch.cuda.is_available() and torch.cuda.is_bf16_supported(),"
+            " 'no BF16-capable CUDA GPU is visible'"
+        )
+        done = subprocess.run(
+            [str(python), "-c", check], cwd=zils.ROOT, capture_output=True, text=True
+        )
+        if done.returncode:
+            reason = (done.stderr.strip().splitlines() or ["the check failed"])[-1]
+            return f"{python}: {reason}; rerun the installer\n  {INSTALL}"
+        state["d3"] = python
 
     def wallet_hotkey():
         key = wallet(args)
@@ -184,29 +241,33 @@ def doctor(args):
             )
 
     def candidate():
+        d3 = f"{state['d3']} -m zils.d3"
         if args.candidate is None:
             return (
                 "no --candidate; train and merge one with the reference recipe\n"
-                "  python -m zils.d3 reference --out models/d3-reference\n"
-                "  python -m zils.d3 train --data train.jsonl --reference models/d3-reference"
+                f"  {d3} reference --out models/d3-reference\n"
+                f"  {d3} train --data train.jsonl --reference models/d3-reference"
                 " --out candidate-adapter --seed 553 --device cuda\n"
-                "  python -m zils.d3 candidate --adapter candidate-adapter --out candidate"
+                f"  {d3} candidate --adapter candidate-adapter --out candidate"
                 " > provenance.json\n"
-                "then run doctor again with --candidate candidate"
+                "then run zils setup again (or doctor with --candidate candidate)"
             )
         try:
             state["path"], state["sha256"] = local_candidate(args.candidate)
         except (ValueError, OSError) as error:
-            return f"{error}; merge again with python -m zils.d3 candidate"
+            return f"{error}; merge again with {d3} candidate"
 
     def hugging_face():
         if args.repo is None:
             return (
                 "no --repo; pick a public model repo id under your Hugging Face account"
-                " (log in with hf auth login; commit-candidate creates the repo) and run doctor"
-                " again with --repo owner/name"
+                " (commit-candidate creates the repo) and run zils setup again"
             )
         if args.revision is None:
+            from huggingface_hub import get_token
+
+            if get_token() is None:
+                return "not logged in to Hugging Face; run\n  hf auth login"
             return "not uploaded yet; upload and commit with\n  " + commit_command(args)
         try:
             commitments.check_repo(args.repo)
@@ -226,20 +287,26 @@ def doctor(args):
 
     steps = [
         ("requirements", requirements),
+        ("d3 runtime", d3_runtime),
         ("wallet hotkey", wallet_hotkey),
         ("registration", registration),
         ("candidate", candidate),
         ("hugging face", hugging_face),
         ("commitment", commitment),
     ]
+    print(paint("1", "Zils doctor"), flush=True)
     for name, check in steps:
         fix = check()
         if fix:
-            print(f"fix {name}: {fix}", flush=True)
+            print(f"{paint('1;31', '✗')} {paint('1', name)}", flush=True)
+            for line in fix.splitlines():
+                # Indented lines are commands to run; the rest explains why.
+                indented = line.startswith("  ")
+                print(f"    {paint('36', line.strip())}" if indented else f"  {line}", flush=True)
             return False
-        print(f"ok  {name}", flush=True)
+        print(f"{paint('32', '✓')} {name}", flush=True)
     print(
-        f"ready: uid {state['uid']} committed {state['sha256'][:12]} at block"
+        f"\n{paint('1;32', 'Ready.')} uid {state['uid']} committed {state['sha256'][:12]} at block"
         f" {state['commitment']['block']}; every validator pulls it at its next round. Results:"
         " the chain weights for your uid (btcli subnets metagraph --netuid"
         f" {args.netuid} --network test)",
@@ -248,42 +315,94 @@ def doctor(args):
     return True
 
 
+def ask(question, default=None):
+    hint = paint("2", f" [{default}]") if default else ""
+    answer = input(f"{paint('36', '?')} {question}{hint}: ").strip()
+    return answer or default
+
+
+def setup(args):
+    """Ask for each saved value (Enter keeps the shown one), save them, then run doctor."""
+    config = load_config()
+    print(
+        f"{paint('1;32', '◆ Zils miner setup')}  {paint('2', 'Enter keeps the value in brackets')}"
+    )
+    path = ask("Bittensor wallet folder", config.get("wallet_path", WALLET_PATH))
+    wallets = Path(path).expanduser()
+    found = sorted(p.name for p in wallets.iterdir() if p.is_dir()) if wallets.is_dir() else []
+    if found:
+        print(paint("2", f"  wallets there: {', '.join(found)}"))
+    name = ask("Wallet name", config.get("wallet_name") or (found[0] if found else None))
+    hotkeys = wallets / (name or "") / "hotkeys"
+    found_keys = hotkeys.iterdir() if name and hotkeys.is_dir() else ()
+    keys = sorted(p.name for p in found_keys if not p.name.endswith("pub.txt"))
+    if keys:
+        print(paint("2", f"  hotkeys: {', '.join(keys)}"))
+    hotkey = ask("Hotkey name", config.get("wallet_hotkey") or (keys[0] if keys else "default"))
+    candidate = ask(
+        "Candidate folder from zils.d3 candidate (Enter if not trained yet)",
+        config.get("candidate"),
+    )
+    repo = ask("Public Hugging Face repo for it, owner/name", config.get("repo"))
+    if not name:
+        raise ValueError("a wallet name is needed; create one with btcli wallet create")
+    candidate = str(Path(candidate).expanduser().resolve()) if candidate else None
+    if candidate != config.get("candidate"):
+        config.pop("revision", None)  # a different candidate is not the uploaded one
+    config |= {"wallet_path": path, "wallet_name": name, "wallet_hotkey": hotkey}
+    config |= {"candidate": candidate, "repo": repo}
+    write_config(config)
+    print(f"{paint('32', '✓')} saved to {config_path()}\n", flush=True)
+    for key in SAVED:
+        setattr(args, key, config.get(key))
+    return doctor(args)
+
+
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(prog="zils", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
+    start = commands.add_parser("setup", help="ask for the wallet, candidate and repo; save them")
     check = commands.add_parser("doctor", help="check the setup and print the next command")
     commit = commands.add_parser(
         "commit-candidate", help="upload a base candidate and commit it on chain"
     )
-    for command in (check, commit):
-        command.add_argument("--wallet-name", required=True)
-        command.add_argument(
-            "--wallet-hotkey", required=True, help="hotkey name; the coldkey is never read"
-        )
-        command.add_argument("--wallet-path", default="~/.bittensor/wallets")
-        command.add_argument(
-            "--candidate",
-            required=command is commit,
-            help="directory written by `zils.d3 candidate`",
-        )
-        command.add_argument(
-            "--repo", required=command is commit, help="your public Hugging Face model repo"
-        )
-        command.add_argument("--revision", help="40-hex commit sha of an upload already in --repo")
+    for command in (start, check, commit):
         command.add_argument("--netuid", type=int, default=NETUID)
+    for command in (check, commit):
+        command.add_argument("--wallet-name")
+        command.add_argument("--wallet-hotkey", help="hotkey name; the coldkey is never read")
+        command.add_argument("--wallet-path")
+        command.add_argument("--candidate", help="directory written by `zils.d3 candidate`")
+        command.add_argument("--repo", help="your public Hugging Face model repo")
+        command.add_argument("--revision", help="40-hex commit sha of an upload already in --repo")
     commit.add_argument(
         "--yes", action="store_true", help="upload and write the commitment; without it, a dry run"
     )
     args = parser.parse_args(argv)
     try:
+        if args.command == "setup":
+            if not setup(args):
+                parser.exit(1)
+            return
+        config = load_config()
+        if args.command == "commit-candidate":
+            config.pop("revision", None)  # a fresh upload must not reuse the last one
+        for key in SAVED:
+            if getattr(args, key) is None:
+                setattr(args, key, config.get(key))
+        args.wallet_path = args.wallet_path or WALLET_PATH
+        if args.wallet_name is None or args.wallet_hotkey is None:
+            raise ValueError("no wallet configured; run zils setup (or pass --wallet-name)")
         if args.command == "doctor":
             if not doctor(args):
                 parser.exit(1)
             return
+        if args.candidate is None or args.repo is None:
+            raise ValueError("no candidate or repo configured; run zils setup")
         commit_candidate(args)
     except KeyboardInterrupt:
         print("Zils miner stopped.", flush=True)
-    except (ValueError, OSError, RuntimeError, KeyError) as error:
+    except (ValueError, OSError, RuntimeError, KeyError, EOFError) as error:
         parser.exit(1, f"zils miner: {error}\n")
 
 
