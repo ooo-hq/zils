@@ -113,6 +113,20 @@ class GradingTests(unittest.TestCase):
         self.assertEqual(decision["selected_hotkey"], "fast")
         self.assertEqual(decision["exclusions"][0]["reason"], "deadline")
 
+    def test_training_time_limit_defaults_to_six_hours(self):
+        day = job(deadline=(NOW + timedelta(hours=24)).isoformat())  # 1,000 tokens
+        three_hours, eight_hours = worker(rate=10.0), worker(rate=30.0)
+        self.assertEqual(grading.MAX_TRAINING_SECONDS, 21600)
+        self.assertEqual(
+            grading.rank_candidates(day, [three_hours], NOW)["selected_hotkey"], "worker"
+        )
+        for decision in (
+            grading.rank_candidates(day, [eight_hours], NOW),
+            grading.rank_candidates(day, [three_hours], NOW, max_seconds=3600),
+        ):
+            self.assertIsNone(decision["selected_hotkey"])
+            self.assertEqual(decision["exclusions"][0]["reason"], "deadline")
+
     def test_workload_boundaries_and_invalid_lengths(self):
         for length, band in [
             (512, "tokens-512"),
