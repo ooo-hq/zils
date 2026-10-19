@@ -223,7 +223,8 @@ for the payment rule. Add the track to `validator/config.json` by hand:
 "base_tier": {
   "share": 0.7,
   "incumbent_sha256": "CHECKPOINT_HASH_OF_THE_PINNED_BASE_REFERENCE",
-  "incumbent_uid": 1,
+  "kings": ["HOTKEY_OF_THE_CURRENT_KING", "HOTKEY_OF_THE_PREVIOUS_KING"],
+  "burn_uid": 0,
   "draws": [{"manifest_sha256": "…", "dataset_sha256": "…"}],
   "policy": {"min_brier_improvement": 0.01}
 }
@@ -231,11 +232,26 @@ for the payment rule. Add the track to `validator/config.json` by hand:
 
 `share` is the base tier's fraction of the vector and must be explicit.
 `incumbent_sha256` is the `zils submit` checkpoint hash of the incumbent
-reference the scorer compares against. `incumbent_uid`, optional, is the roster
-UID of the miner whose promoted candidate is the incumbent: king of the hill,
-it keeps the whole base share in every epoch without an eligible challenger,
-including epochs with no decision file. Leave it unset while the incumbent is
-the vendor base, which nobody owns. `draws` lists every sealed draw whose
+reference the scorer compares against. `kings`, optional, is the king history:
+hotkeys, newest first, the first being the miner whose promoted candidate is
+the incumbent. King of the hill (Teutonic's rule): the base share of every
+publication is split equally over the first five distinct hotkeys of the
+history that are registered at the round's preflight block, wherever their uid
+is now, with or without a decision file; a deregistered king's slice goes to
+the rest, and exam and confirmed winners are paid nothing. Leave it empty
+while the incumbent is the vendor base, which nobody owns. `burn_uid`
+(default 0) receives the share of a track with no recipient: no registered
+king, or no adapter earner; with both empty it receives the whole vector, so
+the validator keeps setting weights. Publication refuses a burn slice unless
+`burn_uid` is the uid of the subnet owner hotkey (subtensor burns the owner
+hotkey's incentive and keeps only the owner's self-weight; another
+validator's weight on itself is masked by Yuma). Crowning is a config change in
+the owner's promotion PR: set `incumbent_sha256` to the promoted candidate's
+hash and prepend its miner's hotkey to `kings` (`scripts/promote_base.py
+--king-hotkey HOTKEY --previous-kings CURRENT,KINGS` prints both as
+`proposed_base_tier`), point `base_reference` at the promoted checkpoint, and
+restart the validator. `incumbent_uid` is gone; remove it from older configs.
+`draws` lists every sealed draw whose
 decision may pay in this epoch; print an entry with
 `python -m zils.base_round --round SEALED_DIR --describe-draw`, which audits the
 directory first. Remove a draw to rotate the holdout. `policy` may only override
@@ -276,7 +292,8 @@ After the adapter evaluation the round:
    adds `confirmed_winner` from `base_round.confirm(first, last)`;
 5. writes the last draw's decision to `validator/base-tier/decision.json` and a
    copy of every draw's decision into the round directory. The sidecar is
-   removed at the start of the epoch, so a failed epoch pays nobody.
+   removed at the start of the epoch, so a failed epoch records no challenger
+   (the kings, if any, are still paid).
 
 List the confirmation draw only once the required interval since the decision
 draw has passed; the validator scores every listed draw in the same epoch.
@@ -289,16 +306,19 @@ replaces the first draw's; the incumbent row must use a UID outside the roster,
 such as 65535). Either way, each round freezes the current decision into its
 directory as `base-tier.json` before the first publish attempt and embeds it in
 the report, so the report hash binds it and a restart republishes the same
-weights. A missing decision file means nothing was scored this epoch: the round
-publishes adapter weights alone.
+weights. A missing decision file means nothing was scored this epoch: the
+kings, if any, are still paid their share.
 
 The publisher refuses a decision for a draw not in the track, scored with a
 different policy or against a different incumbent, paying a UID outside the
-roster, with duplicate or incumbent hashes among the eligible candidates, whose
-pending winner is not an eligible candidate, or whose recorded weights differ
-from that winner (the winner takes the whole base share); it also refuses a
-report carrying a decision when the config has no track. The attempt and
-receipt record `tracks` (`base_share`, per-track normalized weights) next to
+roster, with duplicate or incumbent hashes among the eligible candidates, or
+whose pending winner is not an eligible candidate; it also refuses a report
+carrying a decision when the config has no track. An accepted decision pays
+nobody by itself: the base track is always the kings (`kings`) or empty.
+A decision written before 19 October may still carry `weights`; they are
+ignored. The attempt and
+receipt record `tracks` (`base_share`, `burn_uid`, the `burned` fraction,
+per-track normalized weights) next to
 `requested_weights`, so the on-chain proportions can be traced to each track.
 
 The [first verified testnet round](testnet-round-001.md) demonstrates this closed

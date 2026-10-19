@@ -180,15 +180,17 @@ earn on two tracks, paid from one weight vector on the configured subnet:
   scorer calibrates it on the sealed calibration split and scores the sealed
   test split; you are eligible when your skill is positive, your accuracy is
   not below the incumbent's, your Brier improvement is at least 0.01 and the
-  paired bootstrap 95% lower bound is above zero. The winner takes all: the
-  pending winner (lowest Brier among eligible candidates) takes the whole
-  base-tier share of every publication until a newer decision replaces that
-  one, the holdout rotates, or a confirmed winner is promoted; eligible
-  runners-up earn nothing (owner decision, 18 October 2026). King of the
-  hill: once a winner is promoted, its miner keeps the whole base share in
-  every epoch without an eligible challenger, until dethroned. The vendor base
-  has no owner and earns nothing, and a resubmitted stock base is never
-  eligible.
+  paired bootstrap 95% lower bound is above zero. King of the hill (owner
+  decisions, 19 October 2026, following Teutonic): only kings are paid.
+  Winning the exam makes you a challenger and pays nothing. You are crowned
+  only after you also pass the confirmation draw and the adapter regression
+  suite and the owner's promotion PR makes your candidate the incumbent and
+  your hotkey the newest entry in the track's king history. The base share of
+  every publication is split equally over the last five distinct kings still
+  registered, so a dethroned king keeps earning until five newer kings have
+  reigned; deregister and your slice goes to the others. The vendor base has no
+  owner, so until the first promotion the base share is burned; a resubmitted
+  stock base or a copy of the king is never eligible.
 - **Adapter rounds (alongside).** The frozen customer job rounds above continue
   unchanged; each round's calibrated test-split skill is the adapter weight.
 
@@ -196,10 +198,15 @@ Split: the base tier takes `base_tier.share` of the vector (currently **0.7**;
 the validator records the share in every chain attempt and receipt), adapters
 the rest. Each track is normalized over its own earners first, so a miner with
 no eligible base candidate still earns its adapter share and a miner that trains
-no customer adapter still earns its base share. A track nobody earned on pays
-nothing; the chain's own normalization then hands its share to the other track.
-If nobody earned on either track, nothing is sent and the previous chain
-weights remain.
+no customer adapter still earns its base share. A track nobody earned on is
+not handed to the other track: its share goes to `base_tier.burn_uid` (default
+0), as Teutonic burns to the subnet owner's uid. For example, with no king the
+vector is 0.7 to the burn uid and 0.3 to adapter earners in their own
+proportions. If nobody earned on either track, the whole vector goes to the
+burn uid, so the validator keeps setting weights. Subtensor burns incentive
+paid to the subnet owner's hotkey and keeps the owner's own self-weight, so
+the validator refuses to publish a burn slice unless `burn_uid` is the subnet
+owner hotkey's uid at that block.
 
 Anti-gaming: one adapter submission per hotkey per round and one base candidate
 commitment per hotkey on chain; a claim cannot change within a round; a candidate

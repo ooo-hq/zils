@@ -169,6 +169,7 @@ def preflight(config, sub):
         "validator_uid": validator_uid,
         "validator_hotkey": validator,
         "members": {uid: m["hotkey"] for uid, m in members.items()},
+        "owner_uid": query("Uids", netuid, owner) if owner else None,
         "commit_reveal": bool(query("CommitRevealWeightsEnabled", netuid)),
         "min_allowed_weights": query("MinAllowedWeights", netuid),
         "max_weight_limit": query("MaxWeightsLimit", netuid),
@@ -230,18 +231,29 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
     if track is not None:
         from . import base_round
 
-        share = base_round.validate_track(track)["share"]
-        # A missing decision means nothing was scored this epoch; the king, if any, keeps the base share.
+        track = base_round.validate_track(track)
+        share, burn = track["share"], track["burn_uid"]
+        # Only kings earn the base share, with or without a decision this epoch; exam winners earn
+        # nothing. An empty track (no registered king, e.g. the unowned vendor base; no adapter
+        # earner) burns its share at burn_uid, as Teutonic does, instead of enlarging the other.
         base = (
             base_round.track_weights(track, decision, config["members"])
             if decision is not None
             else base_round.king_weights(track, config["members"])
         )
         weights = zils.blend_weights(
-            {"base": base, "adapter": adapter}, {"base": share, "adapter": 1 - share}
+            {"base": base, "adapter": adapter},
+            {"base": share, "adapter": 1 - share},
+            burn_uid=burn,
         )
+        burned = (0 if base else share) + (0 if adapter else 1 - share)
+        if burned > 0 and burn != state["owner_uid"]:
+            # Subtensor burns incentive only at the owner's hotkey and masks other self-weights.
+            raise ValueError("base_tier.burn_uid must be the subnet owner hotkey's uid")
         tracks = {
             "base_share": share,
+            "burn_uid": burn,
+            "burned": burned,
             "base": {str(k): v for k, v in base.items()},
             "adapter": {str(k): v for k, v in adapter.items()},
         }

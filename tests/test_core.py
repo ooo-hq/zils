@@ -264,6 +264,17 @@ class LocalSubnetTest(unittest.TestCase):
         self.assertEqual(core.blend_weights({"base": {}, "adapter": adapter}, shares), adapter)
         self.assertEqual(core.blend_weights({"base": base, "adapter": {}}, shares), {2: 1.0})
         self.assertEqual(core.blend_weights({"base": {}, "adapter": {}}, shares), {})
+        # With a burn uid an empty track's share is burned, never redistributed (Teutonic).
+        for tracks, wanted in (
+            ({"base": {}, "adapter": adapter}, {0: 0.7, 1: 0.225, 2: 0.075}),
+            ({"base": base, "adapter": {}}, {0: 0.3, 2: 0.7}),
+            ({"base": {}, "adapter": {}}, {0: 1.0}),
+            ({"base": base, "adapter": adapter}, both),
+        ):
+            burned = core.blend_weights(tracks, shares, burn_uid=0)
+            self.assertEqual(set(burned), set(wanted))
+            for uid, weight in wanted.items():
+                self.assertAlmostEqual(burned[uid], weight)
         # Per-track normalization first: raw skills in one track do not dilute the other.
         skewed = core.blend_weights({"base": {2: 0.1}, "adapter": {1: 0.9}}, shares)
         self.assertAlmostEqual(skewed[2], 0.7)

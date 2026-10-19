@@ -141,11 +141,12 @@ def weight_vector(rows):
     return {uid: skill / total for uid, skill in skills.items() if skill > 0} if total else {}
 
 
-def blend_weights(weights_by_track, shares):
+def blend_weights(weights_by_track, shares, *, burn_uid=None):
     """One chain vector from per-track weight vectors, each normalized over its own earners first.
 
-    ``shares`` sums to one. A track with no earner pays nothing: the chain normalizes the result, so its
-    share flows to the other tracks. Every track empty gives ``{}`` (nothing is sent).
+    ``shares`` sums to one. A track with no earner pays nothing. With ``burn_uid`` its share goes to that
+    uid (every track empty: the whole vector), so it is never redistributed. Without one the chain
+    normalizes the result, so its share flows to the other tracks, and every track empty gives ``{}``.
     """
     if set(weights_by_track) != set(shares) or not shares:
         raise ValueError("every track needs exactly one share")
@@ -159,6 +160,8 @@ def blend_weights(weights_by_track, shares):
         normalized = weight_vector([{"uid": int(uid), "skill": w} for uid, w in weights.items()])
         for uid, weight in normalized.items():
             combined[uid] += shares[track] * weight
+        if not normalized and burn_uid is not None and shares[track] > 0:
+            combined[burn_uid] += shares[track]
     total = sum(combined.values())
     return {uid: w / total for uid, w in sorted(combined.items()) if w > 0} if total else {}
 

@@ -22,6 +22,8 @@ from . import benchmark
 
 VERSION = "zils-base-holdout/v1"
 SPLITS = ("calibration", "test")
+# Kings paid from the base share, newest first (Teutonic's MAIN_SHARES with no specialists).
+KINGS_PAID = 5
 DEFAULT_POLICY = {
     "min_brier_improvement": 0.01,
     "bootstrap_resamples": 2000,
@@ -192,8 +194,8 @@ def decide(cases, incumbent_uid, calibration_rows, test_rows, policy=None):
         },
         "policy": policy,
         "candidates": candidates,
-        # Winner takes all (owner decision, 18 October 2026): eligible runners-up earn nothing.
-        "weights": {winner["uid"]: 1.0} if winner else {},
+        # The exam winner is only a challenger: it earns nothing until promoted (king of the hill,
+        # owner decision, 19 October 2026). Eligible runners-up are not challengers at all.
         "pending_winner": None
         if winner is None
         else {"uid": winner["uid"], "sha256": winner["sha256"]},
@@ -215,21 +217,25 @@ def validate_track(track):
     if not isinstance(track, dict) or set(track) - {
         "share",
         "incumbent_sha256",
-        "incumbent_uid",
+        "kings",
+        "burn_uid",
         "draws",
         "policy",
     }:
         raise ValueError(
-            "base_tier accepts share, incumbent_sha256, incumbent_uid, draws and policy"
+            "base_tier accepts share, incumbent_sha256, kings, burn_uid, draws and policy"
         )
     share = track.get("share")
     if type(share) not in (int, float) or not 0 <= share <= 1:
         raise ValueError("base_tier.share must be a number in [0, 1]")
     if not re.fullmatch("[a-f0-9]{64}", str(track.get("incumbent_sha256"))):
         raise ValueError("base_tier.incumbent_sha256 must be the incumbent checkpoint hash")
-    king = track.get("incumbent_uid")
-    if king is not None and (type(king) is not int or not 0 <= king <= 65535):
-        raise ValueError("base_tier.incumbent_uid must be the roster uid that owns the incumbent")
+    kings = track.get("kings", [])
+    if not isinstance(kings, list) or any(type(k) is not str or not k for k in kings):
+        raise ValueError("base_tier.kings must list king hotkeys, newest (the incumbent's) first")
+    burn = track.get("burn_uid", 0)
+    if type(burn) is not int or not 0 <= burn <= 65535:
+        raise ValueError("base_tier.burn_uid must be a uid")
     draws = track.get("draws")
     if not isinstance(draws, list) or not draws:
         raise ValueError("base_tier.draws must list at least one sealed draw")
@@ -243,23 +249,23 @@ def validate_track(track):
         type(v) not in (int, float) or v < 0 for v in policy.values()
     ):
         raise ValueError("base_tier.policy may only override the base_round policy keys")
-    return {**track, "policy": policy}
+    return {**track, "kings": kings, "burn_uid": burn, "policy": policy}
 
 
 def king_weights(track, members):
-    """King of the hill: with no eligible challenger the incumbent's miner keeps the whole base share.
-    The vendor base has no owner (`incumbent_uid` unset) and pays nobody."""
-    king = validate_track(track).get("incumbent_uid")
-    if king is None:
-        return {}
-    if str(king) not in members:
-        raise ValueError("base_tier.incumbent_uid is outside this registered fleet")
-    return {king: 1.0}
+    """King history, as Teutonic pays its main competition: the last five distinct kings (by hotkey,
+    newest first) split the base share equally. A king no longer registered drops out and the rest
+    share its slice. The vendor base has no owner (empty history) and pays nobody."""
+    recent = list(dict.fromkeys(validate_track(track)["kings"]))[:KINGS_PAID]
+    uid_by_hotkey = {item["hotkey"]: int(uid) for uid, item in members.items()}
+    paid = [uid_by_hotkey[k] for k in recent if k in uid_by_hotkey]
+    return {uid: 1 / len(paid) for uid in paid}
 
 
 def track_weights(track, decision, members):
-    """Base-tier weights a decision earns under a track: the pending winner takes the whole share,
-    otherwise the incumbent's miner keeps it (king of the hill)."""
+    """Base-tier weights under a track, after checking the decision belongs to it. Only kings are
+    paid: a pending or confirmed winner earns nothing until the owner's promotion PR crowns it by
+    setting `incumbent_sha256` and prepending its hotkey to `kings` (owner decision, 19 October 2026)."""
     track = validate_track(track)
     for key in (
         "manifest_sha256",
@@ -284,19 +290,13 @@ def track_weights(track, decision, members):
     if len(set(hashes)) != len(hashes) or track["incumbent_sha256"] in hashes:
         raise ValueError("eligible base candidates must be distinct and differ from the incumbent")
     if any(str(c["uid"]) not in members for c in eligible):
-        raise ValueError("base-tier decision pays a miner outside this registered fleet")
+        raise ValueError("base-tier decision names a miner outside this registered fleet")
     pending = decision["pending_winner"]
-    if pending is None:
-        weights = {}
-    elif any(c["uid"] == pending["uid"] and c["sha256"] == pending["sha256"] for c in eligible):
-        weights = {pending["uid"]: 1.0}
-    else:
+    if pending is not None and not any(
+        c["uid"] == pending["uid"] and c["sha256"] == pending["sha256"] for c in eligible
+    ):
         raise ValueError("base-tier pending winner is not an eligible candidate")
-    if {str(k): v for k, v in weights.items()} != {
-        str(k): v for k, v in decision.get("weights", weights).items()
-    }:
-        raise ValueError("base-tier decision weights differ from its pending winner")
-    return weights or king_weights(track, members)
+    return king_weights(track, members)
 
 
 def confirm(first, second):
@@ -361,7 +361,6 @@ def main():
                 k: decision[k]
                 for k in (
                     "pending_winner",
-                    "weights",
                     *(["confirmed_winner"] if args.confirm else []),
                 )
             }
