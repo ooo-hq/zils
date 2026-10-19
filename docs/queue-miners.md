@@ -179,7 +179,7 @@ for explicitly supported legacy assignments.
 Queue work is customer adapters. The network's primary job, improving the pinned
 base itself, is the [base tier](base-candidates.md): a full-weight candidate you
 train and merge yourself, examined on a sealed holdout by a fleet validator and
-paid from the chain's weight vector (king of the hill: only the promoted base's
-miner is paid). It needs a registered
+paid from the chain's weight vector (king of the hill: only the miners of
+promoted bases are paid). It needs a registered
 testnet hotkey and a validator that admits it; see
 [open admission](validators.md#open-admission-base-tier-not-yet-enabled).

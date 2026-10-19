@@ -157,6 +157,10 @@ class BaseCandidateTest(unittest.TestCase):
                     "3",
                     "--staging",
                     str(root / "staging"),
+                    "--king-hotkey",
+                    "hk-new",
+                    "--previous-kings",
+                    "hk-old,hk-older",
                 ]
                 out = io.StringIO()
                 with (
@@ -176,10 +180,12 @@ class BaseCandidateTest(unittest.TestCase):
                 self.assertEqual(entry["parent"]["id"], model)
                 self.assertEqual(entry["base"], result["repo"])
                 self.assertEqual(entry["max_input_tokens"], models.spec(model)["max_input_tokens"])
-                # The same promotion PR crowns the winner's miner as king.
+                # The same promotion PR crowns the winner: new incumbent, its hotkey prepended.
                 self.assertEqual(
-                    result["proposed_base_tier"], {"incumbent_sha256": digest, "incumbent_uid": 7}
+                    result["proposed_base_tier"],
+                    {"incumbent_sha256": digest, "kings": ["hk-new", "hk-old", "hk-older"]},
                 )
+                self.assertEqual(result["crowned_uid"], 7)
                 registration = result["proposed_registration"]
                 self.assertEqual(
                     registration["TEXT_RUNTIME_MODULES"], models.TEXT_RUNTIME_MODULES[model]
@@ -211,6 +217,7 @@ class BaseCandidateTest(unittest.TestCase):
             decision.write_text(json.dumps({"confirmed_winner": {"sha256": "x"}}))
             argv = ["promote_base.py", "--model", models.D3, "--candidate", str(weights)]
             argv += ["--decision", str(decision), "--round", "1", "--staging", str(root / "s")]
+            argv += ["--king-hotkey", "hk"]
             with patch.object(sys, "argv", argv), self.assertRaisesRegex(SystemExit, "not a d3"):
                 runpy.run_path(
                     str(Path(__file__).parents[1] / "scripts/promote_base.py"), run_name="__main__"

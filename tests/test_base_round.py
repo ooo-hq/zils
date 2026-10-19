@@ -206,7 +206,7 @@ class BaseRoundTest(unittest.TestCase):
         self.assertEqual(base_round.track_weights(track, nobody, members), {})
         # A crowned king is paid with no challenger, and keeps the whole share while a challenger
         # (pending, or even confirmed) waits for promotion.
-        crowned = {**track, "incumbent_uid": 1}
+        crowned = {**track, "kings": ["a"]}
         self.assertEqual(base_round.track_weights(crowned, nobody, members), {1: 1.0})
         self.assertEqual(base_round.track_weights(crowned, decision, members), {1: 1.0})
         confirmed = {**decision, "confirmed_winner": decision["pending_winner"]}
@@ -215,10 +215,11 @@ class BaseRoundTest(unittest.TestCase):
         # A decision written before king of the hill still carries payout weights; they are ignored.
         legacy = {**decision, "weights": {"2": 1.0}}
         self.assertEqual(base_round.track_weights(crowned, legacy, members), {1: 1.0})
-        # Promotion crowns the challenger: the owner's PR sets the track to its hash and uid. Decisions
-        # scored against the old incumbent stop counting, and the new king alone is paid.
-        promoted = {**track, "incumbent_sha256": "d" * 64, "incumbent_uid": 2}
-        self.assertEqual(base_round.king_weights(promoted, members), {2: 1.0})
+        # Promotion crowns the challenger: the owner's PR sets the track to its hash and prepends its
+        # hotkey to the history. Decisions scored against the old incumbent stop counting; the new
+        # king and the previous one share the base.
+        promoted = {**track, "incumbent_sha256": "d" * 64, "kings": ["b", "a"]}
+        self.assertEqual(base_round.king_weights(promoted, members), {2: 0.5, 1: 0.5})
         with self.assertRaisesRegex(ValueError, "different incumbent"):
             base_round.track_weights(promoted, decision, members)
         rescored = {
@@ -227,7 +228,7 @@ class BaseRoundTest(unittest.TestCase):
             "candidates": [{"uid": 1, "sha256": "e" * 64, "eligible": False, "skill": 0.3}],
             "pending_winner": None,
         }
-        self.assertEqual(base_round.track_weights(promoted, rescored, members), {2: 1.0})
+        self.assertEqual(base_round.track_weights(promoted, rescored, members), {2: 0.5, 1: 0.5})
         # A copy of the king is never an eligible challenger.
         copy = {
             **rescored,
@@ -236,10 +237,10 @@ class BaseRoundTest(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "differ from the incumbent"):
             base_round.track_weights(promoted, copy, members)
-        with self.assertRaisesRegex(ValueError, "outside this registered fleet"):
-            base_round.king_weights({**track, "incumbent_uid": 9}, members)
-        with self.assertRaisesRegex(ValueError, "incumbent_uid"):
-            base_round.validate_track({**track, "incumbent_uid": "1"})
+        for bad in ({"kings": "a"}, {"kings": [""]}, {"burn_uid": "0"}, {"incumbent_uid": 1}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                base_round.validate_track({**track, **bad})
+        self.assertEqual(base_round.validate_track(track)["burn_uid"], 0)
         shared = [
             {"uid": 1, "sha256": "d" * 64, "eligible": True, "skill": 0.4},
             {"uid": 2, "sha256": "d" * 64, "eligible": True, "skill": 0.4},
@@ -276,6 +277,24 @@ class BaseRoundTest(unittest.TestCase):
             base_round.track_weights(
                 {**track, "draws": [{**draw, "dataset_sha256": "0" * 64}]}, decision, members
             )
+
+    def test_king_history_pays_the_last_five_distinct_kings(self):
+        draw = {"manifest_sha256": "a" * 64, "dataset_sha256": "b" * 64}
+        track = {"share": 0.7, "incumbent_sha256": "c" * 64, "draws": [draw]}
+        members = {str(u): {"hotkey": f"k{u}"} for u in range(1, 8)}
+        # Newest first, de-duplicated by hotkey, five slots; an unregistered king's slot is shared
+        # by the rest, and kings past the fifth distinct one are not paid (Teutonic MAIN_SHARES[0]).
+        kings = ["k7", "k6", "k6", "gone", "k5", "k4", "k3", "k2"]
+        paid = base_round.king_weights({**track, "kings": kings}, members)
+        self.assertEqual(paid, {7: 0.25, 6: 0.25, 5: 0.25, 4: 0.25})
+        three = base_round.king_weights({**track, "kings": ["k3", "k2", "k1"]}, members)
+        self.assertEqual(three, {3: 1 / 3, 2: 1 / 3, 1: 1 / 3})
+        # Paid by hotkey: a king re-registered at another uid is paid there; its old uid is not.
+        moved = {**members, "9": {"hotkey": "k1"}, "1": {"hotkey": "newcomer"}}
+        self.assertEqual(base_round.king_weights({**track, "kings": ["k1"]}, moved), {9: 1.0})
+        # Every king gone, or no king at all (the stock base): nobody is paid.
+        self.assertEqual(base_round.king_weights({**track, "kings": ["gone"]}, members), {})
+        self.assertEqual(base_round.king_weights(track, members), {})
 
     def test_rows_reject_foreign_reports(self):
         cases = make_cases("x", 3)

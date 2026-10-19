@@ -218,26 +218,31 @@ format perfectly and still tied stock d3 on the sealed draws.
    tolerance) and better on at least one.
 5. A candidate that passes all three gates is promoted in an owner-reviewed
    pull request, which also **crowns** it: the validator track's
-   `incumbent_sha256` and `incumbent_uid` become the candidate's hash and its
-   miner's uid (`scripts/promote_base.py` prints both as `proposed_base_tier`).
+   `incumbent_sha256` becomes the candidate's hash and its miner's hotkey is
+   prepended to `kings` (`scripts/promote_base.py --king-hotkey … --previous-kings …`
+   prints both as `proposed_base_tier`).
    It becomes the `latest` base, and `stable`, the default for new customer
    jobs, after surviving a full window on `latest`.
 
-**King of the hill** (owner decision, 19 October 2026): only the king, the
-promoted base the network actually runs, is paid. Its miner takes the whole
-base-tier share of every publication, whether or not anyone challenges. A
-challenger earns nothing until it is crowned, and then it is the next king; to
-dethrone it a new challenger must beat it by the same 0.01 margin on the exam
-and pass the confirmation draw and the suite. A copy of the king is never
-eligible. The stock `d3-mini-4.5b-v1` has no owner, so until the first
-promotion the base tier pays nobody.
+**King of the hill** (owner decisions, 19 October 2026, following Teutonic):
+only kings are paid. The king is the promoted base the network actually runs;
+the track keeps a history of kings, newest first. The base-tier share of every
+publication is split equally over the last five distinct kings (by hotkey),
+whether or not anyone challenges; with fewer than five, the ones there are
+share it. A king whose hotkey is no longer registered drops out and the others
+share its slice. A challenger earns nothing until it is crowned, and then it
+is the newest king; to dethrone the current king a challenger must beat it by
+the same 0.01 margin on the exam and pass the confirmation draw and the suite.
+A copy of the king is never eligible. The stock `d3-mini-4.5b-v1` has no owner,
+so until the first promotion the history is empty and the base share is
+burned (below), not paid to anyone.
 
 Per-case results are never returned; you learn aggregate metrics only. The
 round's questions are published after the round closes and are not reused.
 
-On a testnet fleet with a `base_tier` track, the king's miner is paid at every
+On a testnet fleet with a `base_tier` track, the kings are paid at every
 publication from the base tier's share of the one weight vector, blended with
-the adapter round's weights; see
+the adapter round's weights; a share with no recipient goes to the burn uid; see
 [the two-track rule](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first).
 
 ## Validator and publisher tooling
@@ -280,6 +285,6 @@ verdict rule is the same. `promote_base.py` proposes ids
 
 ## What is not promised
 
-The incumbent can win. If no candidate is eligible, the round pays nobody and
+The incumbent can win. If no candidate is eligible, no challenger is paid and
 the base does not change. A candidate that clears the exam but makes adapters
 worse is rejected regardless of its exam score.

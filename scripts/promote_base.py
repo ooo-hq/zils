@@ -2,8 +2,8 @@
 
 Dry run by default. ``--upload`` publishes the staged directory to the Hugging Face organisation with the
 ``hf`` CLI and prints the resulting revision to pin. Nothing here edits ``zils/models.py`` or a validator
-config; the printed entry and the ``base_tier`` crowning (new ``incumbent_sha256`` and ``incumbent_uid``) are
-applied in a reviewed pull request.
+config; the printed entry and the ``base_tier`` crowning (new ``incumbent_sha256``, the new king's hotkey
+prepended to ``kings``) are applied in a reviewed pull request.
 """
 
 import argparse
@@ -49,6 +49,16 @@ def main():
         "--repo",
         default=None,
         help="Hugging Face repo id, default zils-ai/<h2o-lightning-4b|d3-mini-4.5b>-zils-r<round>",
+    )
+    parser.add_argument(
+        "--king-hotkey",
+        required=True,
+        help="hotkey of the confirmed winner's uid, as in the round's chain-snapshot.json",
+    )
+    parser.add_argument(
+        "--previous-kings",
+        default="",
+        help="the track's current base_tier.kings, comma-separated, newest first",
     )
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--hf", default=str(Path.home() / ".local/bin/hf"))
@@ -126,9 +136,13 @@ def main():
         "proposed_pin_files": pins,
         "proposed_pins_file": str(pins_path),
         "proposed_registration": registration,
-        # Crowning: the same promotion PR sets the validator track to the new king, which is then the
-        # only base-tier miner paid (king of the hill). Its uid is the confirmed winner's roster uid.
-        "proposed_base_tier": {"incumbent_sha256": digest, "incumbent_uid": winner["uid"]},
+        # Crowning: the same promotion PR sets the validator track to the new incumbent and prepends
+        # the new king to the history (king of the hill; the last five distinct kings share the base).
+        "proposed_base_tier": {
+            "incumbent_sha256": digest,
+            "kings": [args.king_hotkey, *filter(None, args.previous_kings.split(","))],
+        },
+        "crowned_uid": winner["uid"],
         "uploaded": False,
     }
     if args.upload:

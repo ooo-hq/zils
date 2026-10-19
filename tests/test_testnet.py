@@ -346,9 +346,9 @@ class TestnetTest(unittest.TestCase):
                 "base_tier": base_tier,
             }
 
-        # King of the hill: uid 1 holds the crowned base; uid 2's eligible challenger earns nothing
-        # before promotion. Both tracks: 0.7 * {1: 1} + 0.3 * {1: 0.75, 2: 0.25}.
-        crowned = {**config, "base_tier": {**track, "incumbent_uid": 1}}
+        # King of the hill: uid 1 (hotkey miner-a) holds the crowned base; uid 2's eligible
+        # challenger earns nothing before promotion. Both tracks: 0.7 * {1: 1} + 0.3 * adapter.
+        crowned = {**config, "base_tier": {**track, "kings": ["miner-a"]}}
         with tempfile.TemporaryDirectory() as tmp:
             dry = t.publish_round(crowned, tmp, report(adapter_rows, decision), sub, wallet)
             self.assertEqual(dry["status"], "dry_run")
@@ -357,6 +357,7 @@ class TestnetTest(unittest.TestCase):
             self.assertEqual(dry["tracks"]["base"], {"1": 1.0})
             self.assertEqual(dry["tracks"]["adapter"], {"1": 0.75, "2": 0.25})
             self.assertEqual(dry["tracks"]["base_share"], 0.7)
+            self.assertEqual((dry["tracks"]["burn_uid"], dry["tracks"]["burned"]), (0, 0))
             self.assertEqual(sent, [])
             receipt = t.publish_round(
                 crowned, tmp, report(adapter_rows, decision), sub, wallet, publish=True
@@ -369,22 +370,32 @@ class TestnetTest(unittest.TestCase):
                 json.loads((Path(tmp) / "chain-receipt.json").read_text())["tracks"],
                 receipt["tracks"],
             )
+        # An empty track burns its share at burn_uid (default 0, here the subnet owner's uid) instead
+        # of enlarging the other track; both empty burns the whole vector, so weights keep flowing.
         rejected = [{"uid": 1, "status": "rejected", "skill": 0.0}, {"uid": 2, "status": "missing"}]
         for decided in (decision, None):
-            with tempfile.TemporaryDirectory() as tmp:
-                # The king is paid with no adapter earners, with or without a decision this epoch.
+            with self.subTest(decision=decided is not None), tempfile.TemporaryDirectory() as tmp:
                 dry = t.publish_round(crowned, tmp, report(rejected, decided), sub, wallet)
-                self.assertEqual(dry["requested_weights"], {"1": 1.0})
-                # The unowned stock base pays nobody, whatever the exam found. With adapter
-                # earners the vector is the adapter track alone, in its own proportions
-                # (blend_weights' empty-track rule); with none, nothing is sent.
+                self.assertEqual(set(dry["requested_weights"]), {"0", "1"})
+                self.assertAlmostEqual(dry["requested_weights"]["0"], 0.3)
+                self.assertAlmostEqual(dry["requested_weights"]["1"], 0.7)
+                # The unowned stock base pays no miner, whatever the exam found.
                 dry = t.publish_round(config, tmp, report(adapter_rows, decided), sub, wallet)
-                self.assertEqual(dry["requested_weights"], {"1": 0.75, "2": 0.25})
+                self.assertEqual(set(dry["requested_weights"]), {"0", "1", "2"})
+                self.assertAlmostEqual(dry["requested_weights"]["0"], 0.7)
+                self.assertAlmostEqual(dry["requested_weights"]["1"], 0.225)
+                self.assertAlmostEqual(dry["requested_weights"]["2"], 0.075)
                 self.assertEqual(dry["tracks"]["base"], {})
-                self.assertEqual(
-                    t.publish_round(config, tmp, report(rejected, decided), sub, wallet)["status"],
-                    "no_weights",
-                )
+                self.assertAlmostEqual(dry["tracks"]["burned"], 0.7)
+                dry = t.publish_round(config, tmp, report(rejected, decided), sub, wallet)
+                self.assertEqual((dry["status"], dry["requested_weights"]), ("dry_run", {"0": 1.0}))
+        # A burn uid that is not the subnet owner's would pay a validator self-weight Yuma masks,
+        # or a miner; refused before anything is sent.
+        with tempfile.TemporaryDirectory() as tmp:
+            for burn in (1, 3):
+                elsewhere = {**config, "base_tier": {**track, "burn_uid": burn}}
+                with self.assertRaisesRegex(ValueError, "subnet owner"):
+                    t.publish_round(elsewhere, tmp, report(rejected, None), sub, wallet)
         # Refusals: a decision the track does not cover, a decision without a track, a bad track.
         with tempfile.TemporaryDirectory() as tmp:
             for bad in (
