@@ -53,6 +53,11 @@ references instead; provision each hotkey separately.
 
 ### Image fleets
 
+Fleet image bundles use the retired ImaJev profile only; `zils.fleet init`
+takes `--images` for ImaJev jobs and no other profile. New d3 image jobs run in
+the [hosted queue](queue-miners.md), where a d3 miner downloads a job's frozen
+training photos itself. Use this section only to rerun an existing ImaJev job.
+
 Complete the pinned runtime and maximum-context hardware qualification in
 [image training](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md#worker-and-service-setup)
 for every participating miner and the validator. Use a fresh published starting
@@ -121,7 +126,7 @@ d3 training waits until at least 12,288 MiB of GPU memory is free
 another runtime. The pins are `zils/d3-pins.json`; the retired H2O contract is in
 [h2o-queue.md](h2o-queue.md).
 
-For image bundles, also install and verify the isolated runtime on each host:
+For legacy ImaJev image bundles, also install and verify the isolated runtime on each host:
 
 ```bash
 uv venv --python 3.13 .venv-image

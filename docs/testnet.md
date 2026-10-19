@@ -4,13 +4,20 @@ The [first closed round](testnet-round-001.md) completed on **testnet subnet 579
 on September 25, 2026. Three fresh checkpoints were trained and scored; their
 timelocked weights were revealed and independently verified on-chain.
 
-The fleet has an optional Bittensor path for a **closed testnet rehearsal**.
+The fleet has an optional Bittensor path for testnet.
 The subnet ID is configured explicitly; mainnet is rejected. It uses registered
 wallet hotkeys for signed submissions, checks UID ↔
 hotkey registrations before each round and before publication, and submits
-weights through `bittensor==11.1.0`. The existing private LAN artifact transport
-and validator-owned inference stay in place. This is not an open internet
-competition: it has no public miner discovery or untrusted-model sandbox.
+weights through `bittensor==11.1.0`. A closed fleet keeps the private LAN artifact
+transport and a static roster. A validator can instead open the base tier to
+every hotkey registered on the subnet ([open admission](validators.md#open-admission-base-tier)):
+miners commit candidates on chain and the validator scores them in its sandboxed
+runner. Base and adapter tracks pay from one weight vector; an unearned share is
+burned at `base_tier.burn_uid`
+([two-track payment](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)).
+A Zils base-tier validator has run on subnet 579 since 18 October 2026; it is
+temporary and may be offline, so check the metagraph rather than assuming
+uptime. Mainnet is not implemented.
 
 Local fleets remain offline from Bittensor. Testnet fleets also require the
 validator's explicit `--publish-weights` flag before their loop sends weights.
@@ -61,8 +68,8 @@ entry for each machine:
 `777` is an example only; use the operator-confirmed subnet ID. Each miner UID
 must be the value returned by the chain for that hotkey, not a local queue ID.
 
-Create a frozen H2O text or ImaJev image job and its matching reference using
-the [miner guide](mining.md#prepare-bundles-on-the-validator). Legacy Kev benchmarks
+Create a frozen d3 text job (or reuse a legacy H2O, ImaJev or Kev job) and its
+matching reference using the [miner guide](mining.md#prepare-bundles-on-the-validator). Legacy Kev benchmarks
 remain supported. A fleet and its round scores always belong to one model profile.
 Replace `VALIDATOR_PRIVATE_IPV4` with the validator's numeric private address.
 Generate a fresh fleet. Match `--miner-ports` to the roster's order and count
@@ -72,7 +79,7 @@ The command copies public wallet references into bundles, **never key files**:
 ```bash
 .venv-kev/bin/python -m zils.fleet init --out .private/testnet-fleet \
   --host VALIDATOR_PRIVATE_IPV4 --miner-ports 8901 \
-  --benchmark .private/jobs/text-v1 --checkpoint models/h2o-reference \
+  --benchmark .private/jobs/text-v1 --checkpoint models/d3-reference \
   --testnet-identities .private/testnet-identities.json
 .venv-kev/bin/python -m zils.testnet preflight \
   --config .private/testnet-fleet/validator/config.json
@@ -84,11 +91,13 @@ networking and startup command. A changed or deregistered UID stops the chain
 path; regenerate the roster with current registrations. Scores are never
 silently reassigned to a replacement hotkey.
 
-For an image fleet, use the image job/reference and add the verified image cache
-and measured capacity arguments from [image fleet setup](mining.md#image-fleets).
+For a legacy ImaJev image fleet, use the image job/reference and add the verified
+image cache and measured capacity arguments from [image fleet setup](mining.md#image-fleets).
 The same registered identities can be used in a later vertical-specific rehearsal,
 but only one process may publish weights for the validator hotkey/subnet. There
-is no cross-vertical reward aggregation. Reports carry the frozen model profile;
+is no cross-vertical reward aggregation. With `base_tier` and, optionally,
+`adapter_evidence` in the validator config, the base tier and the adapter track
+share that one vector ([validators §6–7](validators.md#6-pay-the-base-tier-from-the-same-vector)). Reports carry the frozen model profile;
 the publisher rejects a report from a different profile.
 
 ## Run one round
@@ -144,7 +153,8 @@ and the expected proportions after SDK clipping/quantization. It reports the
 current weight state; it cannot uniquely attribute identical weights to one
 commit if another process writes for the same hotkey. `rate_limited` and
 `no_weights` send nothing; previous on-chain weights remain. Zils never invents
-uniform rewards when every candidate fails.
+uniform rewards when every candidate fails: with a `base_tier` track, a share
+nobody earned goes to `base_tier.burn_uid` instead.
 
 ## Validation
 

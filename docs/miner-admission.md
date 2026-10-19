@@ -17,8 +17,10 @@ queue, which today only talks to hotkeys an operator inserted by hand.
 3. Install the runtime and the d3 reference ([queue miners](queue-miners.md)),
    run `scripts.qualify_node --model d3-mini-4.5b-v1`, start the worker.
 4. Work arrives: qualification jobs first (synthetic, grade the host), then
-   customer jobs once three reports pass in the band, and base-tier rounds
-   from the validator.
+   customer jobs once three reports pass in the band. The base tier is separate:
+   upload a candidate to Hugging Face and commit it with
+   `python -m zils.miner commit-candidate`
+   ([compete from outside](mining.md#compete-in-the-base-tier-from-outside)).
 
 ## 2. What the coordinator does (built, off by default)
 
@@ -37,9 +39,10 @@ queue, which today only talks to hotkeys an operator inserted by hand.
   with no special path ([customer jobs](customer-jobs.md#prepare-data)).
 
 The base-tier path is the
-[open-admission runbook](validators.md#open-admission-base-tier-not-yet-enabled)
-(merged); the validator's base-tier intake is merged too (#53), so that path
-only waits on the config flip.
+[open-admission runbook](validators.md#open-admission-base-tier)
+(merged); the validator's base-tier intake reads candidates from chain
+commitments made with `zils.miner commit-candidate` (ooo-hq/zils#59), so the
+base tier needs no coordinator admission.
 
 ## 3. Operator duties left
 
@@ -111,5 +114,7 @@ restart `zils-training-api`. When these terms change, the new hash goes in
 `ZILS_MINER_TERMS_SHA256` (or the platform constant) and miners re-admit by
 restarting with the new `terms_sha256`.
 
-Still open: the miners-page wording (section 5), HTTPS on the public validator,
-and a candidate-announce command for the base tier.
+Still open: the miners-page wording (section 5) and HTTPS on the public
+validator. The base-tier submission command exists (`zils.miner commit-candidate`,
+ooo-hq/zils#59, which replaced the earlier announce command); `zils.miner doctor`
+checks a miner's setup step by step.

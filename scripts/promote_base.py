@@ -43,7 +43,7 @@ def main():
     parser.add_argument("--candidate", required=True, help="confirmed candidate directory")
     parser.add_argument("--decision", required=True, help="decision.json with confirmed_winner")
     parser.add_argument("--round", type=int, required=True)
-    parser.add_argument("--model", choices=list(CANDIDATE_ID_PREFIX), default=models.H2O)
+    parser.add_argument("--model", choices=list(CANDIDATE_ID_PREFIX), default=models.D3)
     parser.add_argument("--staging", required=True, help="new directory to stage the release")
     parser.add_argument(
         "--repo",

@@ -5,12 +5,17 @@ The [first registered training-to-chain round](testnet-round-001.md) recorded a
 completed commit–reveal cycle. That evidence does not establish current uptime,
 open participation, mainnet support, or production model quality.
 
-Status of the work for an open competition, as of 17 October 2026:
+Status of the work for an open competition, as of 19 October 2026 (merged on
+`main`; this page does not record what a given host runs):
 
-1. Admission rules: chain-derived admission is implemented and off by default.
-   Opening it is documented in [validators.md](validators.md#open-admission-base-tier-not-yet-enabled);
-   the validator's own base-tier intake (`base_round_dir`) is merged; opening
-   waits on the owner's miner terms (18 October 2026).
+1. Admission rules: base-tier entry is registration on testnet subnet 579. Miners
+   upload a candidate to Hugging Face and commit it on chain with
+   `zils.miner commit-candidate` (ooo-hq/zils#59); `zils.miner doctor` checks
+   each setup step (#57). A validator reads the commitments itself
+   ([open admission](validators.md#open-admission-base-tier), intake #53). The
+   [miner terms](mining-terms.md) are published (#52) and their hash travels in
+   every signed queue claim (#56). The hosted queue's chain-derived
+   [admission](miner-admission.md) is built and off.
 2. Isolated evaluation: the sandboxed evaluation subprocess is merged.
 3. Refreshed held-out benchmarks: the round-one sealed holdout is authored
    (1,458 cases in six families). The first confirmation draw, run on
@@ -22,7 +27,14 @@ Status of the work for an open competition, as of 17 October 2026:
    channel is platform configuration today; since 17 October 2026 `stable` and
    `latest` both name d3-mini by owner decision. A registry alias and automatic
    follow-stable upgrades remain.
-5. Public health and chain reporting: remaining.
+5. Payment: base and adapter tracks pay from one weight vector (#49). King of
+   the hill (#60): the last five distinct registered kings split the base share,
+   and an empty track burns at `base_tier.burn_uid`. The adapter track can pay
+   from delivered hosted-queue customer jobs (`adapter_evidence`, #61, off by
+   default).
+6. Public health, chain reporting and a public leaderboard: remaining. A Zils
+   base-tier validator has run on testnet 579 since 18 October 2026 (#54, #58);
+   it is temporary and its uptime is not guaranteed. Mainnet is not implemented.
 
 ## Base tier
 
@@ -35,7 +47,7 @@ are merged. A testnet fleet pays the last five kings, the promoted bases'
 miners, from the base tier's share of the one weight vector (challengers earn
 nothing until promoted; an unpaid share is burned), blended with adapter rounds
 ([two-track payment](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)).
-No public round has been run.
+No outside miner has been crowned king yet.
 
 ## d3-mini
 
@@ -64,7 +76,8 @@ the promotion rule rather than a win under it. The same afternoon the hosted
 platform set `stable` and `latest` to d3-mini, qualified a d3 miner and serving
 host, moved the owner's H2O task to d3 through a `base_change` upgrade and
 switched H2O serving off. JevK5 was retired from the code on 17 October 2026 (its
-frozen checkpoints stay readable); Imajev retires once nothing served depends on it.
+frozen checkpoints stay readable). Imajev is retired too: d3 serves image jobs,
+and existing frozen Imajev jobs keep their profile.
 Stock d3-mini is the base-tier incumbent for round two. The recorded evidence is in
 [model research](model-research.md#d3-mini-evidence-16-october-2026).
 

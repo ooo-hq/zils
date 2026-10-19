@@ -35,5 +35,6 @@ downloads added `release.json`. Training used one epoch, attention-only rank-16
 LoRA, alpha 32, dropout 0.05, learning rate 0.00002, batch size one and
 accumulation of four examples. The same recipe continues for the current profiles
 through the shared trainer. For current miner setup read
-[queued miners](queue-miners.md); for the current text contract read the
-[H2O model contract](h2o-queue.md).
+[queued miners](queue-miners.md); the current base is d3-mini
+(`d3-mini-4.5b-v1`, pins in `zils/d3-pins.json`); the retired
+[H2O model contract](h2o-queue.md) covers frozen H2O jobs only.
