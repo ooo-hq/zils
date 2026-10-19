@@ -334,7 +334,8 @@ def setup(args):
         print(paint("2", f"  wallets there: {', '.join(found)}"))
     name = ask("Wallet name", config.get("wallet_name") or (found[0] if found else None))
     hotkeys = wallets / (name or "") / "hotkeys"
-    keys = sorted(p.name for p in hotkeys.iterdir()) if name and hotkeys.is_dir() else []
+    found_keys = hotkeys.iterdir() if name and hotkeys.is_dir() else ()
+    keys = sorted(p.name for p in found_keys if not p.name.endswith("pub.txt"))
     if keys:
         print(paint("2", f"  hotkeys: {', '.join(keys)}"))
     hotkey = ask("Hotkey name", config.get("wallet_hotkey") or (keys[0] if keys else "default"))

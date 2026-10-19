@@ -79,7 +79,7 @@ wire_path() {
   if ! grep -qs '# Zils miner command' "$rc"; then
     mkdir -p "$(dirname "$rc")"
     printf '\n# Zils miner command\n%s\n' "$line" >>"$rc"
-    ok "added ~/.local/bin to PATH in $rc"
+    ok "added ~/.local/bin to PATH in ~/${rc#"$HOME"/}"
   fi
   path_hint="$reload"
 }
