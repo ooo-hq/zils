@@ -22,6 +22,7 @@ CONTEXT_KEYS = frozenset(
     )
 )
 WINDOW = timedelta(days=30)
+MAX_TRAINING_SECONDS = 6 * 3600  # default per-job training limit; routing policy may override
 FAILURES = {"invalid_artifact", "worker_failure", "abandoned"}
 NEUTRAL = {
     "capacity_deferred",
@@ -301,7 +302,7 @@ def performance_grade(attempts, context, now):
     }
 
 
-def rank_candidates(job, workers, now):
+def rank_candidates(job, workers, now, *, max_seconds=MAX_TRAINING_SECONDS):
     now = timestamp(now)
     context = job.get("context") or {}
     workload = job.get("workload")
@@ -370,7 +371,7 @@ def rank_candidates(job, workers, now):
                 performance["p90_seconds_per_token"] or 0,
             )
             estimate = rate * workload["total_tokens"]
-            if estimate > 3600 or estimate + 60 > remaining:
+            if estimate > max_seconds or estimate + 60 > remaining:
                 reason = "deadline"
         if reason:
             exclusions.append({"hotkey": hotkey, "reason": reason})
