@@ -25,6 +25,7 @@ WINDOW = timedelta(days=30)
 FAILURES = {"invalid_artifact", "worker_failure", "abandoned"}
 NEUTRAL = {
     "capacity_deferred",
+    "does_not_fit",
     "validator_error",
     "infrastructure_error",
     "cancelled",
@@ -82,6 +83,37 @@ def input_cap(model):
 
 def bands(model):
     return tuple(f"tokens-{n}" for n in BANDS if n <= input_cap(model))
+
+
+# Training memory of the shared trainer (MiB) at a job's longest example, for the miner's own fit
+# check. d3: 10,538 MiB measured at ~1.9k tokens (hosted trainer), 13,036 MiB reserved at 6,931
+# tokens (Claims run, RTX 4090). ponytail: linear fit over two points; refit when a probe at 8k runs.
+TRAINING_MIB = {".d3": (9500, 0.6)}
+
+
+def training_mib(model, max_tokens):
+    """Estimated peak training memory, or None when the profile has no measured curve."""
+    fit = TRAINING_MIB.get(models.TEXT_RUNTIME_MODULES.get(model))
+    if fit is None or type(max_tokens) is not int or max_tokens < 1:
+        return None
+    return math.ceil(fit[0] + fit[1] * max_tokens)
+
+
+def band_tokens(band):
+    return int(band.removeprefix("tokens-"))
+
+
+def covering_context(contexts, workload):
+    """A context's band is a ceiling: it serves every job of its model up to that many tokens.
+    Memory is each miner's own fit check, so the smallest covering context wins."""
+    fits = [
+        c
+        for c in contexts.values()
+        if c["model"] == workload.get("model")
+        and type(workload.get("max_tokens")) is int
+        and workload["max_tokens"] <= band_tokens(c["band"])
+    ]
+    return min(fits, key=lambda c: band_tokens(c["band"]), default=None)
 
 
 def context_key(value):
@@ -279,7 +311,7 @@ def rank_candidates(job, workers, now):
         validate_workload(workload, model=context["model"], examples=workload["examples"])
         if (
             not valid_context(context)
-            or context_key(workload) != context_key(context)
+            or workload["max_tokens"] > band_tokens(context["band"])
             or job.get("consent") is not True
         ):
             raise ValueError("invalid job")
@@ -326,20 +358,15 @@ def rank_candidates(job, workers, now):
             reason = next((message for passed, message in checks if not passed), None)
         if not reason and qualification and quality["status"] == "qualified":
             reason = "already_qualified"
-        envelope = [
-            r
-            for r in reports
-            if workload
-            and all(
-                r["capacity"][k] >= workload[k] for k in ("examples", "total_tokens", "max_tokens")
-            )
-        ]
-        if not reason and not envelope:
-            reason = "capacity"
+        if not reason and any(
+            a.get("job_id") == job.get("id") and a.get("outcome") == "does_not_fit"
+            for a in worker.get("attempts", [])
+        ):
+            reason = "does_not_fit"  # the miner's own fit check refused this job
         estimate = None
         if not reason:
             rate = max(
-                max(r["seconds_per_token"] for r in envelope),
+                max(r["seconds_per_token"] for r in reports),
                 performance["p90_seconds_per_token"] or 0,
             )
             estimate = rate * workload["total_tokens"]

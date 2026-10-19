@@ -233,12 +233,41 @@ class GradingTests(unittest.TestCase):
                 self.assertEqual(result["exclusions"][0]["reason"], reason)
         result = grading.rank_candidates(job(workload=None), [worker()], NOW)
         self.assertIsNone(result["selected_hotkey"])
-        oversized = job()
-        oversized["workload"] = grading.workload_profile([300] * 100, model=models.H2O)
+        # Size beyond the measured probe is the miner's own fit check, not a routing exclusion.
+        larger = job()
+        larger["workload"] = grading.workload_profile([300] * 100, model=models.H2O)
         self.assertEqual(
-            grading.rank_candidates(oversized, [worker()], NOW)["exclusions"][0]["reason"],
-            "capacity",
+            grading.rank_candidates(larger, [worker()], NOW)["selected_hotkey"], "worker"
         )
+        # A job longer than the context's band ceiling is not this context's work.
+        longer = job(workload=grading.workload_profile([1000], model=models.H2O))
+        self.assertEqual(
+            grading.rank_candidates(longer, [worker()], NOW)["exclusions"][0]["reason"],
+            "unverified_workload_or_consent",
+        )
+        refused = {"id": "r", "job_id": "job", "outcome": "does_not_fit", "context": CONTEXT}
+        result = grading.rank_candidates(job(), [worker("a", attempts=[refused]), worker("b")], NOW)
+        self.assertEqual(result["selected_hotkey"], "b")
+        self.assertEqual(result["exclusions"], [{"hotkey": "a", "reason": "does_not_fit"}])
+
+    def test_band_is_a_ceiling_and_the_smallest_covering_context_wins(self):
+        small, large = {**CONTEXT, "band": "tokens-512"}, {**CONTEXT, "band": "tokens-2048"}
+        contexts = {grading.context_key(c): c for c in (large, small)}
+        short = grading.workload_profile([100], model=models.H2O)
+        long = grading.workload_profile([1500], model=models.H2O)
+        self.assertIs(grading.covering_context(contexts, short), small)
+        self.assertIs(grading.covering_context(contexts, long), large)
+        self.assertIsNone(grading.covering_context({"x": small}, long))
+        self.assertIsNone(
+            grading.covering_context(contexts, grading.workload_profile([100], model=models.D3))
+        )
+
+    def test_training_memory_estimate_covers_measured_d3_peaks(self):
+        self.assertGreaterEqual(grading.training_mib(models.D3, 1895), 10538)
+        self.assertGreaterEqual(grading.training_mib(models.D3, 6931), 13036)
+        self.assertLess(grading.training_mib(models.D3, 8192), 24 * 1024)
+        self.assertIsNone(grading.training_mib(models.H2O, 1000))
+        self.assertIsNone(grading.training_mib(models.D3, None))
 
     def test_reliability_and_speed_are_separate_from_customer_acceptance(self):
         attempts = []
@@ -283,7 +312,7 @@ class GradingTests(unittest.TestCase):
 
     def test_oldest_qualification_opportunity_and_no_grade_forgery(self):
         a, b = worker("a", reports=[]), worker("b", reports=[])
-        # Provisional work still needs a verified capacity report (one run is sufficient).
+        # Provisional work still needs one verified report.
         a["reports"] = [report("a")]
         b["reports"] = [report("b")]
         a["last_qualification_at"] = NOW.isoformat()

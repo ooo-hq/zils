@@ -125,6 +125,26 @@ def gpu_ready(device, *, model=None, minimum_mib=0):
         return False
 
 
+def gpu_total_mib():
+    """Total memory of GPU 0, or None when it cannot be read."""
+    try:
+        result = subprocess.run(
+            [
+                settings.get("ZILS_NVIDIA_SMI", "nvidia-smi"),
+                "--query-gpu=memory.total",
+                "--format=csv,noheader,nounits",
+                "--id=0",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=True,
+        )
+        return int(result.stdout.strip())
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
+
+
 def run_child(command, log, device, timeout=3600, *, model=None, minimum_mib=0, check_lease=None):
     image_environment = {
         "PATH",
