@@ -144,7 +144,7 @@ class BaseCandidateTest(unittest.TestCase):
                 models.write_metadata(weights, kind="candidate", model=model)
                 digest = zils.checkpoint_hash(weights)
                 decision = root / "decision.json"
-                decision.write_text(json.dumps({"confirmed_winner": {"sha256": digest}}))
+                decision.write_text(json.dumps({"confirmed_winner": {"uid": 7, "sha256": digest}}))
                 argv = [
                     "promote_base.py",
                     "--model",
@@ -176,6 +176,10 @@ class BaseCandidateTest(unittest.TestCase):
                 self.assertEqual(entry["parent"]["id"], model)
                 self.assertEqual(entry["base"], result["repo"])
                 self.assertEqual(entry["max_input_tokens"], models.spec(model)["max_input_tokens"])
+                # The same promotion PR crowns the winner's miner as king.
+                self.assertEqual(
+                    result["proposed_base_tier"], {"incumbent_sha256": digest, "incumbent_uid": 7}
+                )
                 registration = result["proposed_registration"]
                 self.assertEqual(
                     registration["TEXT_RUNTIME_MODULES"], models.TEXT_RUNTIME_MODULES[model]
