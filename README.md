@@ -19,19 +19,30 @@ and the guarded Bittensor testnet integration.
 
 | Role | Guide |
 | --- | --- |
-| Run an H2O miner on NVIDIA hardware | [Queued miners](docs/queue-miners.md) |
-| Run a qualified ImaJev image miner | [Image queue setup](docs/queue-miners.md#add-the-image-vertical), [image fleet setup](docs/mining.md#image-fleets) |
-| Join the closed Bittensor testnet fleet | [Registration](docs/bittensor-registration.md), then [miner setup](docs/mining.md) |
+| Run a d3 queue miner on NVIDIA hardware | [Queued miners](docs/queue-miners.md) |
+| Compete in the base tier on testnet subnet 579 | [Registration](docs/bittensor-registration.md), then [base tier from outside](docs/mining.md#compete-in-the-base-tier-from-outside) |
+| Join a closed Bittensor testnet fleet | [Registration](docs/bittensor-registration.md), then [miner setup](docs/mining.md) |
 | Run a validator | [Validator setup](docs/validators.md) |
 | Develop or evaluate the subnet | [Local development](docs/development.md), [evaluation contract](docs/evaluation.md) |
 
-Both workflows require operator admission. Customer workers support d3-mini text and
-image jobs (a d3 queue miner downloads a job's frozen training photos itself); closed
-Bittensor fleets support H2O Lightning 4B and d3-mini 4.5B text and qualified ImaJev 4B image jobs;
-Kev 0.8B jobs remain supported. JevK5 4B is retired: its frozen checkpoints stay readable,
-but nothing creates, trains or serves them. Each fleet pins one job and model. Text and image scores
-are not combined into one reward vector. Queue evaluation does not publish
-chain weights. Mainnet participation and public miner discovery are not implemented.
+d3-mini 4.5B (`d3-mini-4.5b-v1`) is the only served base since 17 October 2026, for
+text and image jobs; a d3 queue miner downloads a job's frozen training photos itself.
+H2O Lightning 4B and ImaJev 4B are retired: existing frozen jobs and bundles keep
+working, but new work uses d3. JevK5 4B is retired: its frozen checkpoints stay
+readable, but nothing creates, trains or serves them. Kev 0.8B jobs remain supported.
+Each fleet pins one job and model. Text and image scores are not combined into one
+reward vector.
+
+Two tracks pay from one testnet weight vector. In the **base tier**, a miner
+registered on testnet subnet 579 uploads a full-weight d3 candidate to Hugging Face
+and commits it on chain with `python -m zils.miner commit-candidate`; registration
+is the admission. Only kings are paid: the last five distinct registered miners
+whose candidates were promoted split the base share, and an unearned share is
+burned ([base candidates](docs/base-candidates.md),
+[two-track payment](docs/mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)).
+**Adapter rounds** pay the rest. The hosted customer queue still requires operator
+admission and does not publish chain weights; its chain-derived admission is
+built but off. Mainnet participation is not implemented.
 
 ## Repository scope
 
@@ -49,20 +60,17 @@ The platform uses this repository's evaluation code as a dependency. See
 
 ## Miner setup
 
-Use [queued miner setup](docs/queue-miners.md) to create a verified H2O reference
+Use [queued miner setup](docs/queue-miners.md) to create a verified d3 reference
 and private hotkey configuration. Then, from this repository:
 
 ```sh
-export ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"
+export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
 .venv-kev/bin/python -m miner.queue \
   --config .private/queue-miner.json --state .private/queue-miner \
-  --reference models/h2o-reference --device cuda
+  --reference models/d3-reference --device cuda
 ```
 
-For d3, also pass `--reference models/d3-reference` and export
-`ZILS_D3_RUNTIME_PYTHON` as described in the queued miner setup.
-
-H2O and d3 require CUDA. The miner uses
+d3 requires CUDA. The miner uses
 outbound HTTPS and receives only approved training data and signed upload URLs.
 Keep calibration/test data and operator service credentials off miner accounts.
 For the separate testnet fleet, run `./start-miner --rounds 1` from its assigned
@@ -102,7 +110,7 @@ uv pip install --python .venv-kev/bin/python \
 .venv-kev/bin/python -m scripts.download_models
 ```
 
-For H2O, d3 and ImaJev fleets, follow the [model-specific fleet setup](docs/mining.md).
+For d3 fleets (and legacy H2O and ImaJev bundles), follow the [model-specific fleet setup](docs/mining.md).
 References are downloaded from pinned upstream revisions. Private
 checkpoints, wallets, datasets, and generated bundles are excluded from Git.
 

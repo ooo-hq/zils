@@ -1,5 +1,11 @@
 # Fleet nodes on DigitalOcean
 
+> **Dated design (14 October 2026).** This page records the plan as written then,
+> when H2O was the served text base. Since 17 October 2026 d3-mini is the only
+> served base and H2O serving is off. For current setup read
+> [queued miners](queue-miners.md), [mining](mining.md) and
+> [validators](validators.md).
+
 Status: design, 14 October 2026; phase 1 (node image, miner and fleet-validator roles, provisioning, runbook) is implemented on this branch; serving roles and release delivery are not.
 
 Zils needs more than one CUDA host. The single RTX 4090 trains, serves H2O

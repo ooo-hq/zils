@@ -2,8 +2,9 @@
 
 Validators independently verify submitted artifacts, calibrate probabilities,
 and score held-out examples. Miner-reported metrics do not determine rewards.
-The closed Bittensor fleet can publish testnet weights only after explicit
-configuration and review. Public discovery and mainnet are not implemented.
+A testnet fleet validator publishes weights only after explicit configuration
+and review (`--publish-weights`). Base-tier miners join by registering on testnet
+subnet 579; mainnet is not implemented.
 
 ## Queue validator
 
@@ -14,15 +15,15 @@ its setup moved to
 Only approved operators should receive its service credentials. Miners need no
 platform installation or database credential.
 
-For image jobs, install the isolated runtime, configure its environment, and
-complete [image qualification](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md#worker-and-service-setup). Add
-`--additional-reference models/imajev-starting-checkpoint` to the processor.
-It selects the matching model for each frozen job; keep image admission off until
-evaluation and activation are verified. This does not change the primary text reference.
+d3-mini serves both text and image jobs, so one d3 reference covers both. The
+Imajev image profile is retired; a processor that still evaluates frozen Imajev
+jobs keeps its isolated runtime, [image qualification](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md#worker-and-service-setup)
+and `--additional-reference models/imajev-starting-checkpoint`, which selects the
+matching model for each frozen job without changing the primary reference.
 
-## Open admission (base tier; not yet enabled)
+## Open admission (base tier)
 
-The default validator admits only the static `members` allowlist and pins each
+Off by default. The default validator admits only the static `members` allowlist and pins each
 miner's artifact endpoint to a private or Tailscale address. Two settings relax
 this for an open competition, and both must be set together with a `chain`
 section:
@@ -51,9 +52,10 @@ validator configured with `base_round_dir` collects and scores base candidates
 itself (section 6 below). So, in order:
 
 1. **Policy (owner, decided 18 October 2026).** Outside miners may train customer
-   jobs as well as base candidates, under miner terms still to be written. Until
-   the terms exist and a customer has accepted them, a public validator carries a
-   Zils-authored job (public data), not a customer's.
+   jobs as well as base candidates, under the [miner terms](mining-terms.md)
+   (published 18 October 2026; their hash travels in every signed queue claim).
+   The hosted queue's chain-derived admission is built but off, so a public
+   validator carries a Zils-authored job (public data), not a customer's.
 2. **Base-tier intake (merged; chain commitments since the 18 October owner
    decision).** With `base_round_dir` set, every round also reads each member's
    candidate commitment at the preflight block, pulls new hashes from Hugging Face
@@ -61,7 +63,7 @@ itself (section 6 below). So, in order:
    unchanged commitment costs nothing), scores them with
    `base_round` on the configured draws inside the sandbox, and writes the decision
    sidecar itself. The per-hash store is the cross-round submission cap.
-3. **Runbook below**, once 1 holds.
+3. **Runbook below.**
 
 ### Runbook: a public validator for the base tier
 
@@ -94,6 +96,8 @@ testnet fleet already uses, plus admission and the base tier):
   "base_tier": {
     "share": 0.7,
     "incumbent_sha256": "CHECKPOINT_HASH_OF_THE_REFERENCE",
+    "kings": [],
+    "burn_uid": 0,
     "draws": [{"manifest_sha256": "…", "dataset_sha256": "…"}],
     "policy": {"min_brier_improvement": 0.01}
   },
@@ -105,6 +109,8 @@ testnet fleet already uses, plus admission and the base tier):
 `validator` is the validator's own public IPv4 and announcement port; with
 `public_endpoints` the fleet accepts a global address here (and in a miner's
 config that announces to it) instead of the private pin.
+`kings` starts empty (stock d3 has no owner, so the base share burns) and
+`burn_uid` must be the subnet owner hotkey's uid; see §6.
 `members` is omitted: preflight derives it from the chain and freezes it per
 round. `model` is the pinned d3 profile as `zils.fleet init` writes it (the
 intake scores d3-family candidates only). `base_round_dir` holds one sealed draw per subdirectory (copy each
@@ -127,8 +133,9 @@ miner per round, one candidate commitment per hotkey. Rollback: set `"admission"
 
 ## Bittensor testnet validator
 
-This path uses a model-pinned fleet and private-network transport. It is a closed
-rehearsal, not public miner discovery or an untrusted-checkpoint sandbox.
+This path uses a model-pinned fleet, a static roster and private-network
+transport. For the base tier open to every registered hotkey, see
+[open admission](#open-admission-base-tier) above.
 
 ### 1. Register and check eligibility
 

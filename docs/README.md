@@ -1,18 +1,18 @@
 # Miner and validator documentation
 
 This repository covers workers, evaluation, signed protocols, and testnet
-participation. Customer workers and fleets support d3-mini text and image jobs
-(the default for new jobs since 17 October 2026), the retiring H2O text profile
-(frozen jobs only) and the Imajev image profile, with one model pinned per job. Start with the guide matching your role.
+participation. d3-mini (`d3-mini-4.5b-v1`) is the only served base for text and image jobs
+since 17 October 2026. The retired H2O text and Imajev image profiles keep their
+existing frozen jobs only; one model is pinned per job. Start with the guide matching your role.
 
 | Task | Guide |
 | --- | --- |
 | Operate a miner | [Queued miners](queue-miners.md), [closed fleet](mining.md) |
 | Operate a validator | [Validator setup](validators.md), [evaluation contract](evaluation.md) |
 | Join the testnet | [Registration](bittensor-registration.md), [testnet operation](testnet.md) |
-| Prepare models or training data | [H2O reference](queue-miners.md#2-install-and-verify-the-reference), [H2O model contract](h2o-queue.md), [customer data contract](customer-jobs.md), [version selection](version-selection.md) |
+| Prepare models or training data | [d3 reference](queue-miners.md#2-install-and-verify-the-reference), [retired H2O contract](h2o-queue.md), [customer data contract](customer-jobs.md), [version selection](version-selection.md) |
 | Compare tuned open models and miner hardware tradeoffs | [Official Jev comparisons and B300 research](model-research.md) |
-| Submit a replacement base (implemented, no round run) | [Base candidates](base-candidates.md), [two-track payment](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first) |
+| Submit a replacement base on testnet 579 | [Base candidates](base-candidates.md), [compete from outside](mining.md#compete-in-the-base-tier-from-outside), [two-track payment](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first) |
 | Develop and inspect evidence | [Development](development.md), [benchmark](benchmark.md), [experiments](experiments.md), [JevBench](jevbench-public.md), [recorded testnet round](testnet-round-001.md) |
 
 [Repository boundaries](repositories.md) explains where hosted services, client
