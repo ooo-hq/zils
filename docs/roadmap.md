@@ -32,9 +32,8 @@ Status of the work for an open competition, as of 19 October 2026 (merged on
    and an empty track burns at `base_tier.burn_uid`. The adapter track can pay
    from delivered hosted-queue customer jobs (`adapter_evidence`, #61, off by
    default).
-6. Public health, chain reporting and a public leaderboard: remaining. A Zils
-   base-tier validator has run on testnet 579 since 18 October 2026 (#54, #58);
-   it is temporary and its uptime is not guaranteed. Mainnet is not implemented.
+6. Public health, chain reporting and a public leaderboard: remaining. Mainnet
+   is not implemented.
 
 ## Base tier
 

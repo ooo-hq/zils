@@ -15,9 +15,8 @@ miners commit candidates on chain and the validator scores them in its sandboxed
 runner. Base and adapter tracks pay from one weight vector; an unearned share is
 burned at `base_tier.burn_uid`
 ([two-track payment](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)).
-A Zils base-tier validator has run on subnet 579 since 18 October 2026; it is
-temporary and may be offline, so check the metagraph rather than assuming
-uptime. Mainnet is not implemented.
+Which validators are running is on the metagraph, not in these docs. Mainnet is
+not implemented.
 
 Local fleets remain offline from Bittensor. Testnet fleets also require the
 validator's explicit `--publish-weights` flag before their loop sends weights.
