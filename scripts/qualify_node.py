@@ -303,7 +303,7 @@ def main(argv=None):
     parser.add_argument(
         "--root", default=".", help="zils checkout (runtime imports zils from here)"
     )
-    parser.add_argument("--model", choices=(models.H2O, *models.d3_family()), default=models.H2O)
+    parser.add_argument("--model", choices=(models.H2O, *models.d3_family()), default=models.D3)
     parser.add_argument(
         "--runtime-python", required=True, help=".venv-h2o/bin/python or .venv-d3/bin/python"
     )

@@ -73,7 +73,7 @@ class H2OTest(unittest.TestCase):
             self.assertFalse(gpu_ready("cuda", model=models.H2O))
 
     def test_pin_and_checkpoint_cannot_be_relabelled(self):
-        self.assertEqual(models.DEFAULT_TRAINING_MODEL, models.H2O)
+        self.assertEqual(models.DEFAULT_TRAINING_MODEL, models.D3)
         self.assertEqual(
             models.spec(models.H2O)["base_revision"], "acaf0d4ea251e54de928c75ef4352670d33192d3"
         )

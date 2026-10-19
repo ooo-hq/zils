@@ -110,9 +110,9 @@ class RegressionSuiteTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             weights = Path(tmp) / "candidate"
             weights.mkdir()
-            models.write_metadata(weights, kind="candidate", model=models.D3)
+            models.write_metadata(weights, kind="candidate", model=models.H2O)
             flags = ["--incumbent", tmp, "--candidate", str(weights)]
-            with self.assertRaisesRegex(SystemExit, "h2o-lightning-4b-v1.2.3 base candidate"):
+            with self.assertRaisesRegex(SystemExit, "d3-mini-4.5b-v1 base candidate"):
                 run_suite(flags)
 
     def test_cross_profile_mode_trains_each_side_on_its_own_profile(self):

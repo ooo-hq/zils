@@ -10,7 +10,7 @@ from pathlib import Path
 KEV = "kev-0.8b-v1"
 H2O = "h2o-lightning-4b-v1.2.3"
 D3 = "d3-mini-4.5b-v1"
-DEFAULT_TRAINING_MODEL = H2O
+DEFAULT_TRAINING_MODEL = D3
 TEXT_ADAPTER_MODELS = (H2O, D3)
 # Retired text profiles: their frozen model.json stays readable for historical reports,
 # but nothing creates, trains, transfers or evaluates them.
