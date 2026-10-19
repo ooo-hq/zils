@@ -9,6 +9,7 @@ ref="${ZILS_REF:-main}"
 repo="${ZILS_REPO:-https://github.com/ooo-hq/zils.git}"
 dir="$home/zils"
 bin="$HOME/.local/bin"
+user_path="$PATH"
 
 command -v git >/dev/null || { echo "zils: install git first" >&2; exit 1; }
 if ! command -v uv >/dev/null; then
@@ -33,7 +34,9 @@ uv venv --quiet --allow-existing --python 3.13 .venv-kev
 uv pip install --quiet --python .venv-kev/bin/python -r requirements/model.txt \
   -r requirements/rehearsal.txt -r requirements/testnet.txt -e .
 
-if [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ] && command -v nvidia-smi >/dev/null; then
+# WSL keeps nvidia-smi in /usr/lib/wsl/lib, which is often not on PATH.
+if [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ] &&
+  { command -v nvidia-smi >/dev/null || [ -x /usr/lib/wsl/lib/nvidia-smi ]; }; then
   echo "building the d3 training runtime (.venv-d3, Python 3.12, CUDA 13.0)"
   uv venv --quiet --allow-existing --python 3.12 .venv-d3
   uv pip install --quiet --python .venv-d3/bin/python --torch-backend=cu130 -r requirements/d3.txt
@@ -43,7 +46,7 @@ fi
 
 mkdir -p "$bin"
 ln -sf "$dir/.venv-kev/bin/zils" "$bin/zils"
-case ":$PATH:" in
+case ":$user_path:" in
   *":$bin:"*) ;;
   *) echo "add $bin to PATH: echo 'export PATH=\"$bin:\$PATH\"' >> ~/.profile" ;;
 esac
