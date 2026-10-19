@@ -120,7 +120,8 @@ class BaseRoundTest(unittest.TestCase):
         self.assertFalse(by_uid[3]["eligible"])
         self.assertLess(by_uid[3]["improvement"], 0)
         self.assertEqual(decision["pending_winner"]["uid"], 1)
-        self.assertEqual(set(decision["weights"]), {1})
+        # The exam names a challenger; it carries no payout of its own (king of the hill).
+        self.assertNotIn("weights", decision)
         self.assertTrue(0.25 <= decision["incumbent"]["temperature"] <= 4)
         # Confirmation needs a disjoint draw where the same checkpoint stays eligible.
         second_test = make_cases("second")
@@ -197,29 +198,44 @@ class BaseRoundTest(unittest.TestCase):
                 {"uid": 1, "sha256": "e" * 64, "eligible": False, "skill": 0.5},
             ],
             "pending_winner": {"uid": 2, "sha256": "d" * 64},
-            "weights": {"2": 1.0},
         }
-        self.assertEqual(base_round.track_weights(track, decision, members), {2: 1.0})
-        # Winner takes all: a second eligible candidate earns nothing.
-        two = [
-            *decision["candidates"],
-            {"uid": 1, "sha256": "e" * 64, "eligible": True, "skill": 0.9},
-        ]
-        self.assertEqual(
-            base_round.track_weights(track, {**decision, "candidates": two}, members), {2: 1.0}
-        )
-        with self.assertRaisesRegex(ValueError, "not an eligible"):
-            base_round.track_weights(
-                track, {**decision, "pending_winner": {"uid": 1, "sha256": "e" * 64}}, members
-            )
-        nobody = {**decision, "pending_winner": None, "weights": {}}
+        # Unowned stock base: an eligible challenger is not paid, and nobody else is either.
+        self.assertEqual(base_round.track_weights(track, decision, members), {})
+        self.assertEqual(base_round.king_weights(track, members), {})
+        nobody = {**decision, "pending_winner": None}
         self.assertEqual(base_round.track_weights(track, nobody, members), {})
-        # King of the hill: the incumbent's miner keeps the share until a challenger is eligible.
+        # A crowned king is paid with no challenger, and keeps the whole share while a challenger
+        # (pending, or even confirmed) waits for promotion.
         crowned = {**track, "incumbent_uid": 1}
         self.assertEqual(base_round.track_weights(crowned, nobody, members), {1: 1.0})
-        self.assertEqual(base_round.track_weights(crowned, decision, members), {2: 1.0})
+        self.assertEqual(base_round.track_weights(crowned, decision, members), {1: 1.0})
+        confirmed = {**decision, "confirmed_winner": decision["pending_winner"]}
+        self.assertEqual(base_round.track_weights(crowned, confirmed, members), {1: 1.0})
         self.assertEqual(base_round.king_weights(crowned, members), {1: 1.0})
-        self.assertEqual(base_round.king_weights(track, members), {})
+        # A decision written before king of the hill still carries payout weights; they are ignored.
+        legacy = {**decision, "weights": {"2": 1.0}}
+        self.assertEqual(base_round.track_weights(crowned, legacy, members), {1: 1.0})
+        # Promotion crowns the challenger: the owner's PR sets the track to its hash and uid. Decisions
+        # scored against the old incumbent stop counting, and the new king alone is paid.
+        promoted = {**track, "incumbent_sha256": "d" * 64, "incumbent_uid": 2}
+        self.assertEqual(base_round.king_weights(promoted, members), {2: 1.0})
+        with self.assertRaisesRegex(ValueError, "different incumbent"):
+            base_round.track_weights(promoted, decision, members)
+        rescored = {
+            **decision,
+            "incumbent": {"uid": 65535, "sha256": "d" * 64},
+            "candidates": [{"uid": 1, "sha256": "e" * 64, "eligible": False, "skill": 0.3}],
+            "pending_winner": None,
+        }
+        self.assertEqual(base_round.track_weights(promoted, rescored, members), {2: 1.0})
+        # A copy of the king is never an eligible challenger.
+        copy = {
+            **rescored,
+            "candidates": [{"uid": 1, "sha256": "d" * 64, "eligible": True, "skill": 0.4}],
+            "pending_winner": {"uid": 1, "sha256": "d" * 64},
+        }
+        with self.assertRaisesRegex(ValueError, "differ from the incumbent"):
+            base_round.track_weights(promoted, copy, members)
         with self.assertRaisesRegex(ValueError, "outside this registered fleet"):
             base_round.king_weights({**track, "incumbent_uid": 9}, members)
         with self.assertRaisesRegex(ValueError, "incumbent_uid"):
@@ -248,10 +264,9 @@ class BaseRoundTest(unittest.TestCase):
                     **decision,
                     "candidates": [{"uid": 7, "sha256": "d" * 64, "eligible": True, "skill": 0.4}],
                     "pending_winner": {"uid": 7, "sha256": "d" * 64},
-                    "weights": {"7": 1.0},
                 },
             ),
-            ("differ", {**decision, "weights": {"2": 0.5, "1": 0.5}}),
+            ("not an eligible", {**decision, "pending_winner": {"uid": 1, "sha256": "e" * 64}}),
             ("missing", {k: v for k, v in decision.items() if k != "candidates"}),
         ):
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):

@@ -1,8 +1,9 @@
 """Prepare a confirmed base-tier winner for publication: verify, stage with licence files, print the profile entry.
 
 Dry run by default. ``--upload`` publishes the staged directory to the Hugging Face organisation with the
-``hf`` CLI and prints the resulting revision to pin. Nothing here edits ``zils/models.py``; the printed entry
-is applied in a reviewed pull request.
+``hf`` CLI and prints the resulting revision to pin. Nothing here edits ``zils/models.py`` or a validator
+config; the printed entry and the ``base_tier`` crowning (new ``incumbent_sha256`` and ``incumbent_uid``) are
+applied in a reviewed pull request.
 """
 
 import argparse
@@ -125,6 +126,9 @@ def main():
         "proposed_pin_files": pins,
         "proposed_pins_file": str(pins_path),
         "proposed_registration": registration,
+        # Crowning: the same promotion PR sets the validator track to the new king, which is then the
+        # only base-tier miner paid (king of the hill). Its uid is the confirmed winner's roster uid.
+        "proposed_base_tier": {"incumbent_sha256": digest, "incumbent_uid": winner["uid"]},
         "uploaded": False,
     }
     if args.upload:

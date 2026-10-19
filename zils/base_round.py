@@ -192,8 +192,8 @@ def decide(cases, incumbent_uid, calibration_rows, test_rows, policy=None):
         },
         "policy": policy,
         "candidates": candidates,
-        # Winner takes all (owner decision, 18 October 2026): eligible runners-up earn nothing.
-        "weights": {winner["uid"]: 1.0} if winner else {},
+        # The exam winner is only a challenger: it earns nothing until promoted (king of the hill,
+        # owner decision, 19 October 2026). Eligible runners-up are not challengers at all.
         "pending_winner": None
         if winner is None
         else {"uid": winner["uid"], "sha256": winner["sha256"]},
@@ -247,7 +247,7 @@ def validate_track(track):
 
 
 def king_weights(track, members):
-    """King of the hill: with no eligible challenger the incumbent's miner keeps the whole base share.
+    """King of the hill: the crowned incumbent's miner takes the whole base share.
     The vendor base has no owner (`incumbent_uid` unset) and pays nobody."""
     king = validate_track(track).get("incumbent_uid")
     if king is None:
@@ -258,8 +258,9 @@ def king_weights(track, members):
 
 
 def track_weights(track, decision, members):
-    """Base-tier weights a decision earns under a track: the pending winner takes the whole share,
-    otherwise the incumbent's miner keeps it (king of the hill)."""
+    """Base-tier weights under a track, after checking the decision belongs to it. Only the king is
+    paid: a pending or confirmed winner earns nothing until the owner's promotion PR crowns it by
+    setting `incumbent_sha256` and `incumbent_uid` (owner decision, 19 October 2026)."""
     track = validate_track(track)
     for key in (
         "manifest_sha256",
@@ -284,19 +285,13 @@ def track_weights(track, decision, members):
     if len(set(hashes)) != len(hashes) or track["incumbent_sha256"] in hashes:
         raise ValueError("eligible base candidates must be distinct and differ from the incumbent")
     if any(str(c["uid"]) not in members for c in eligible):
-        raise ValueError("base-tier decision pays a miner outside this registered fleet")
+        raise ValueError("base-tier decision names a miner outside this registered fleet")
     pending = decision["pending_winner"]
-    if pending is None:
-        weights = {}
-    elif any(c["uid"] == pending["uid"] and c["sha256"] == pending["sha256"] for c in eligible):
-        weights = {pending["uid"]: 1.0}
-    else:
+    if pending is not None and not any(
+        c["uid"] == pending["uid"] and c["sha256"] == pending["sha256"] for c in eligible
+    ):
         raise ValueError("base-tier pending winner is not an eligible candidate")
-    if {str(k): v for k, v in weights.items()} != {
-        str(k): v for k, v in decision.get("weights", weights).items()
-    }:
-        raise ValueError("base-tier decision weights differ from its pending winner")
-    return weights or king_weights(track, members)
+    return king_weights(track, members)
 
 
 def confirm(first, second):
@@ -361,7 +356,6 @@ def main():
                 k: decision[k]
                 for k in (
                     "pending_winner",
-                    "weights",
                     *(["confirmed_winner"] if args.confirm else []),
                 )
             }

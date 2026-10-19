@@ -336,7 +336,6 @@ class TestnetTest(unittest.TestCase):
                 {"uid": 1, "sha256": "e" * 64, "eligible": False, "skill": 0.5},
             ],
             "pending_winner": {"uid": 2, "sha256": "d" * 64},
-            "weights": {"2": 1.0},
         }
 
         def report(miners, base_tier):
@@ -347,44 +346,45 @@ class TestnetTest(unittest.TestCase):
                 "base_tier": base_tier,
             }
 
-        # Both tracks: 0.7 * {2: 1} + 0.3 * {1: 0.75, 2: 0.25}.
+        # King of the hill: uid 1 holds the crowned base; uid 2's eligible challenger earns nothing
+        # before promotion. Both tracks: 0.7 * {1: 1} + 0.3 * {1: 0.75, 2: 0.25}.
+        crowned = {**config, "base_tier": {**track, "incumbent_uid": 1}}
         with tempfile.TemporaryDirectory() as tmp:
-            dry = t.publish_round(config, tmp, report(adapter_rows, decision), sub, wallet)
+            dry = t.publish_round(crowned, tmp, report(adapter_rows, decision), sub, wallet)
             self.assertEqual(dry["status"], "dry_run")
-            self.assertAlmostEqual(dry["requested_weights"]["1"], 0.225)
-            self.assertAlmostEqual(dry["requested_weights"]["2"], 0.775)
-            self.assertEqual(dry["tracks"]["base"], {"2": 1.0})
+            self.assertAlmostEqual(dry["requested_weights"]["1"], 0.925)
+            self.assertAlmostEqual(dry["requested_weights"]["2"], 0.075)
+            self.assertEqual(dry["tracks"]["base"], {"1": 1.0})
             self.assertEqual(dry["tracks"]["adapter"], {"1": 0.75, "2": 0.25})
             self.assertEqual(dry["tracks"]["base_share"], 0.7)
             self.assertEqual(sent, [])
             receipt = t.publish_round(
-                config, tmp, report(adapter_rows, decision), sub, wallet, publish=True
+                crowned, tmp, report(adapter_rows, decision), sub, wallet, publish=True
             )
             self.assertEqual(receipt["status"], "included")
             self.assertEqual(len(sent), 1)
-            self.assertAlmostEqual(sent[0][1], 0.225)
-            self.assertAlmostEqual(sent[0][2], 0.775)
+            self.assertAlmostEqual(sent[0][1], 0.925)
+            self.assertAlmostEqual(sent[0][2], 0.075)
             self.assertEqual(
                 json.loads((Path(tmp) / "chain-receipt.json").read_text())["tracks"],
                 receipt["tracks"],
             )
-        # Base only: nobody earned on adapters this round.
         rejected = [{"uid": 1, "status": "rejected", "skill": 0.0}, {"uid": 2, "status": "missing"}]
-        with tempfile.TemporaryDirectory() as tmp:
-            dry = t.publish_round(config, tmp, report(rejected, decision), sub, wallet)
-            self.assertEqual(dry["status"], "dry_run")
-            self.assertEqual(dry["requested_weights"], {"2": 1.0})
-            self.assertEqual(dry["tracks"]["adapter"], {})
-        # Adapter only: nothing was scored on the base tier this epoch.
-        with tempfile.TemporaryDirectory() as tmp:
-            dry = t.publish_round(config, tmp, report(adapter_rows, None), sub, wallet)
-            self.assertEqual(dry["requested_weights"], {"1": 0.75, "2": 0.25})
-            self.assertEqual(dry["tracks"]["base"], {})
-        with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(
-                t.publish_round(config, tmp, report(rejected, None), sub, wallet)["status"],
-                "no_weights",
-            )
+        for decided in (decision, None):
+            with tempfile.TemporaryDirectory() as tmp:
+                # The king is paid with no adapter earners, with or without a decision this epoch.
+                dry = t.publish_round(crowned, tmp, report(rejected, decided), sub, wallet)
+                self.assertEqual(dry["requested_weights"], {"1": 1.0})
+                # The unowned stock base pays nobody, whatever the exam found. With adapter
+                # earners the vector is the adapter track alone, in its own proportions
+                # (blend_weights' empty-track rule); with none, nothing is sent.
+                dry = t.publish_round(config, tmp, report(adapter_rows, decided), sub, wallet)
+                self.assertEqual(dry["requested_weights"], {"1": 0.75, "2": 0.25})
+                self.assertEqual(dry["tracks"]["base"], {})
+                self.assertEqual(
+                    t.publish_round(config, tmp, report(rejected, decided), sub, wallet)["status"],
+                    "no_weights",
+                )
         # Refusals: a decision the track does not cover, a decision without a track, a bad track.
         with tempfile.TemporaryDirectory() as tmp:
             for bad in (

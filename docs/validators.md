@@ -232,10 +232,15 @@ for the payment rule. Add the track to `validator/config.json` by hand:
 `share` is the base tier's fraction of the vector and must be explicit.
 `incumbent_sha256` is the `zils submit` checkpoint hash of the incumbent
 reference the scorer compares against. `incumbent_uid`, optional, is the roster
-UID of the miner whose promoted candidate is the incumbent: king of the hill,
-it keeps the whole base share in every epoch without an eligible challenger,
-including epochs with no decision file. Leave it unset while the incumbent is
-the vendor base, which nobody owns. `draws` lists every sealed draw whose
+UID of the miner whose promoted candidate is the incumbent, the king. King of
+the hill: the king's miner is the only base-tier payee and takes the whole base
+share at every publication, with or without a decision file; exam and
+confirmed winners are paid nothing. Leave it unset while the incumbent is the
+vendor base, which nobody owns; the base share then pays nobody. Crowning is a
+config change in the owner's promotion PR: set `incumbent_sha256` and
+`incumbent_uid` to the promoted candidate's hash and its miner's UID
+(`scripts/promote_base.py` prints them as `proposed_base_tier`), point
+`base_reference` at the promoted checkpoint, and restart the validator. `draws` lists every sealed draw whose
 decision may pay in this epoch; print an entry with
 `python -m zils.base_round --round SEALED_DIR --describe-draw`, which audits the
 directory first. Remove a draw to rotate the holdout. `policy` may only override
@@ -289,15 +294,17 @@ replaces the first draw's; the incumbent row must use a UID outside the roster,
 such as 65535). Either way, each round freezes the current decision into its
 directory as `base-tier.json` before the first publish attempt and embeds it in
 the report, so the report hash binds it and a restart republishes the same
-weights. A missing decision file means nothing was scored this epoch: the round
-publishes adapter weights alone.
+weights. A missing decision file means nothing was scored this epoch: the king,
+if any, is still paid its share.
 
 The publisher refuses a decision for a draw not in the track, scored with a
 different policy or against a different incumbent, paying a UID outside the
-roster, with duplicate or incumbent hashes among the eligible candidates, whose
-pending winner is not an eligible candidate, or whose recorded weights differ
-from that winner (the winner takes the whole base share); it also refuses a
-report carrying a decision when the config has no track. The attempt and
+roster, with duplicate or incumbent hashes among the eligible candidates, or
+whose pending winner is not an eligible candidate; it also refuses a report
+carrying a decision when the config has no track. An accepted decision pays
+nobody by itself: the base track is always the king (`incumbent_uid`) or empty.
+A decision written before 19 October may still carry `weights`; they are
+ignored. The attempt and
 receipt record `tracks` (`base_share`, per-track normalized weights) next to
 `requested_weights`, so the on-chain proportions can be traced to each track.
 

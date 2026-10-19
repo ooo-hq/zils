@@ -231,7 +231,9 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
         from . import base_round
 
         share = base_round.validate_track(track)["share"]
-        # A missing decision means nothing was scored this epoch; the king, if any, keeps the base share.
+        # Only the crowned king earns the base share, with or without a decision this epoch; exam
+        # winners earn nothing. No king (the unowned vendor base) leaves the base track empty, and
+        # blend_weights' empty-track rule sends the adapter track alone, in its own proportions.
         base = (
             base_round.track_weights(track, decision, config["members"])
             if decision is not None
