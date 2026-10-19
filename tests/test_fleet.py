@@ -113,6 +113,22 @@ class FleetTest(unittest.TestCase):
             with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
                 fleet.main(["validator", "--config", str(config)])
             self.assertIn("testnet fleet config", err.getvalue())
+            config.write_text(
+                json.dumps(
+                    {
+                        "base_revision": models.spec(models.KEV)["base_revision"],
+                        "adapter_evidence": {
+                            "url": "https://x",
+                            "signer": "5" * 48,
+                            "window_hours": 72,
+                        },
+                    }
+                )
+            )
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                fleet.main(["validator", "--config", str(config)])
+            self.assertIn("testnet fleet config", err.getvalue())
 
     def test_public_validator_address_needs_public_endpoints(self):
         import contextlib

@@ -220,9 +220,26 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
     rows = report["miners"]
     if any(str(row["uid"]) not in config["members"] for row in rows):
         raise ValueError("report contains a miner outside this registered fleet")
-    adapter = zils.weight_vector(
-        [{**row, "skill": row["skill"] if row["status"] == "evaluated" else 0.0} for row in rows]
-    )
+    evidence = report.get("adapter_evidence")
+    if evidence is not None and "adapter_evidence" not in config:
+        raise ValueError("report carries queue evidence but the fleet takes no adapter evidence")
+    if "adapter_evidence" in config:
+        from . import queue_evidence
+
+        # Customer work from the hosted queue replaces the frozen-job round as the adapter track.
+        if evidence is None:
+            raise ValueError("fleet takes adapter weights from queue evidence; the report has none")
+        source = queue_evidence.validate_track(config["adapter_evidence"])
+        adapter = queue_evidence.track_weights(
+            queue_evidence.verify(evidence, source), config["members"]
+        )
+    else:
+        adapter = zils.weight_vector(
+            [
+                {**row, "skill": row["skill"] if row["status"] == "evaluated" else 0.0}
+                for row in rows
+            ]
+        )
     track, decision = config.get("base_tier"), report.get("base_tier")
     if decision is not None and track is None:
         raise ValueError("report carries a base-tier decision but the fleet has no base-tier track")
@@ -262,6 +279,7 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
         "report_sha256": report_hash,
         "requested_weights": {str(k): v for k, v in weights.items()},
         **({"tracks": tracks} if tracks else {}),
+        **({"adapter_source": "queue"} if "adapter_evidence" in config else {}),
         "chain_write": False,
         "weights_verified": False,
     }
