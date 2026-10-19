@@ -1,18 +1,23 @@
 # Register a miner on Bittensor
 
-**Confirm the testnet subnet ID with the Zils operator before registering.**
 This guide joins an existing subnet; a miner does not create a subnet.
 
-Zils connects a **closed, model-pinned fleet** to Bittensor testnet. The operator
-selects H2O Lightning 4B or d3-mini 4.5B text, ImaJev 4B image, or a legacy Kev 0.8B job and qualifies
-the participating hardware. Registration alone does not select a model.
-The [verified round on subnet 579](testnet-round-001.md) is a historical result,
-not an invitation to register on that subnet today. The fleet rejects mainnet.
-The current [hosted queue](queue-miners.md) uses approved hotkeys and local queue
-UIDs; it does not require on-chain registration or publish chain weights.
+Zils runs on Bittensor **testnet subnet 579**; the fleet rejects mainnet.
+Registration serves two paths:
 
-Registration gives a hotkey a chain UID. To receive work in the closed fleet,
-the operator must also add that UID and hotkey to the validator's roster.
+- **Base tier (open).** Registration on 579 is the admission: register, then
+  [compete from outside](mining.md#compete-in-the-base-tier-from-outside) by
+  committing a d3-mini candidate on chain. No operator approval is needed.
+- **Closed, model-pinned fleets.** The operator selects a d3-mini 4.5B text job
+  (or a legacy H2O, ImaJev or Kev job) and qualifies the participating hardware.
+  To receive work there, the operator must also add your UID and hotkey to the
+  validator's roster. Confirm the subnet ID with that operator.
+
+The [hosted queue](queue-miners.md) uses approved hotkeys and local queue UIDs;
+it does not require on-chain registration or publish chain weights. Its
+chain-derived [admission](miner-admission.md) is built but off.
+
+Registration gives a hotkey a chain UID.
 For validator operation, continue with [Run a validator](validators.md).
 
 ## 1. Install the pinned CLI
@@ -36,13 +41,14 @@ commands use its [v11 CLI flags](https://www.bittensor.com/docs/cli).
 Set these values in the terminal you will use for the following steps:
 
 ```bash
-export ZILS_NETUID=REPLACE_WITH_OPERATOR_TESTNET_NETUID
+export ZILS_NETUID=579
 export ZILS_WALLET=zils-testnet-miner
 export ZILS_HOTKEY=miner-1
 export ZILS_WALLET_PATH="$HOME/.bittensor/wallets"
 ```
 
-Replace `ZILS_NETUID` with the operator's numeric subnet ID (1–4095). The wallet
+579 is the Zils testnet subnet; for a closed fleet on another subnet, use the
+operator's numeric subnet ID (1–4095) instead. The wallet
 and hotkey names above are examples for a new, dedicated testnet identity.
 If you already have an identity, use its names and wallet directory instead.
 
@@ -82,8 +88,8 @@ Read the current subnet details, registration price, and admission settings:
   --netuid "$ZILS_NETUID"
 ```
 
-Stop if the subnet is missing, registration is disabled, or the operator has not
-confirmed admission. The price changes with chain state; check the current
+Stop if the subnet is missing or registration is disabled (and, for a closed
+fleet, if the operator has not confirmed admission). The price changes with chain state; check the current
 collateral settings too. Preview the coldkey-signed transaction first:
 
 ```bash
@@ -126,7 +132,9 @@ machine that will run that identity; they are not key material.
 
 ## 5. Join the Zils fleet
 
-The operator uses those public identities to generate the
+For the base tier, stop here and continue with
+[compete from outside](mining.md#compete-in-the-base-tier-from-outside). For a
+closed fleet, the operator uses those public identities to generate the
 [registered fleet and run preflight](testnet.md#provision-the-registered-identities).
 Receive your assigned `miner-UID.tar.gz`, provision only your hotkey on the miner
 host through a private channel, and follow the [miner setup](mining.md#set-up-each-machine-once).

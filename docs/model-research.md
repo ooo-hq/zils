@@ -180,25 +180,25 @@ its release answered a text call and a one-image call. An existing H2O task was
 upgraded to a d3 adapter with `base_change`: previous H2O release Brier 0.1805,
 d3 candidate 0.1667, improvement 0.0138 against a threshold of 0.01.
 
-**Consequences.** `latest` is not set (no latest base is configured). `stable`
-and the default for new jobs remain H2O Lightning 4B v1.2.3, H2O remains the
-base-tier incumbent, and no round-two decision was frozen. d3-mini remains a
-merged, available profile (qualified miners and validators can run it; its
-platform migrations are applied) but it is not the default and is not promoted.
+**Consequences at the time (before the decision below).** `latest` was not set
+(no latest base was configured). `stable` and the default for new jobs were
+H2O Lightning 4B v1.2.3, H2O was the base-tier incumbent, and no round-two
+decision was frozen. d3-mini was a merged, available profile (qualified miners
+and validators could run it; its platform migrations were applied) but it was
+not the default and was not promoted.
 
 **Decision (17 October 2026, owner).** d3-mini becomes the Zils base regardless
 of the stock exam, by the owner's decision and recorded as an override of the
 promotion rule, not as a win under it. The grounds are capability: adapters
 trained on d3 beat adapters trained on H2O on the reference job and on ABCD, and
-d3 takes images and video, which H2O does not serve. `latest` moves to d3 once a
-permanent d3 fleet exists (a qualified d3 miner, a processor with the d3
-reference, an always-warm d3 adapter runtime behind the gateway, and gateway and
-workflow on code that knows the profile, in the rollout order of
-`docs/d3-rollout.md`); `stable` follows after one real customer job has trained
-and served on that fleet. Existing H2O jobs and releases keep their frozen
-profile and move only through `base_change` upgrade jobs. From the moment
-`latest` moves, stock d3-mini is the base-tier incumbent that future candidates
-must beat under the unchanged rule.
+d3 takes images and video, which H2O does not serve. The plan was for `latest` to move to d3
+once a permanent d3 fleet existed and for `stable` to follow after one real
+customer job. In the event both moved the same afternoon: since 17 October 2026
+`stable` and `latest` both name d3-mini, a d3 miner and serving host were
+qualified, and H2O serving was switched off (see the
+[roadmap](roadmap.md#d3-mini)). Existing H2O jobs and releases keep their frozen
+profile and move only through `base_change` upgrade jobs. Stock d3-mini is the
+base-tier incumbent that future candidates must beat under the unchanged rule.
 
 Caveats: one card and one night; nothing above 4,096 input tokens was tested;
 and the holdouts are teacher-authored, not customer data. These results do not

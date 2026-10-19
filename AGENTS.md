@@ -26,4 +26,4 @@ here. Keep signed protocol versions and model identities stable during moves.
 - Read `docs/repositories.md` for ownership and dependency direction.
 - Read `docs/evaluation.md` and `docs/customer-jobs.md` for data and acceptance.
 - Read `docs/validators.md`, `docs/mining.md`, and `docs/queue-miners.md` for operators.
-- Read `docs/roadmap.md` for limits. Mainnet and public discovery are not implemented.
+- Read `docs/roadmap.md` for limits. Mainnet is not implemented; testnet base-tier entry is by registration on subnet 579.

@@ -285,6 +285,7 @@ verdict rule is the same. `promote_base.py` proposes ids
 
 ## What is not promised
 
-The incumbent can win. If no candidate is eligible, no challenger is paid and
-the base does not change. A candidate that clears the exam but makes adapters
+The incumbent can win. Challengers are never paid, only kings: if no candidate
+is promoted, the base does not change, the existing kings keep their share and,
+with no king yet, the base share is burned at `base_tier.burn_uid`. A candidate that clears the exam but makes adapters
 worse is rejected regardless of its exam score.
