@@ -24,7 +24,14 @@ REQUIRED_MODULES = ("bittensor", "bittensor_wallet", "huggingface_hub", "kev", "
 PINNED_BITTENSOR = "11.1.0"
 WALLET_PATH = "~/.bittensor/wallets"
 SAVED = ("wallet_name", "wallet_hotkey", "wallet_path", "candidate", "repo", "revision")
-INSTALL = "curl -fsSL https://raw.githubusercontent.com/ooo-hq/zils/main/scripts/install.sh | sh"
+INSTALL = "curl -fsSL https://zils.ai/install.sh | sh"
+
+
+def paint(code, text):
+    """ANSI color on a terminal (green 32, red 31, cyan 36, bold 1, dim 2); plain otherwise."""
+    if not os.isatty(1) or os.environ.get("NO_COLOR"):
+        return text
+    return f"\033[{code}m{text}\033[0m"
 
 
 def config_path():
@@ -287,14 +294,19 @@ def doctor(args):
         ("hugging face", hugging_face),
         ("commitment", commitment),
     ]
+    print(paint("1", "Zils doctor"), flush=True)
     for name, check in steps:
         fix = check()
         if fix:
-            print(f"fix {name}: {fix}", flush=True)
+            print(f"{paint('1;31', '✗')} {paint('1', name)}", flush=True)
+            for line in fix.splitlines():
+                # Indented lines are commands to run; the rest explains why.
+                indented = line.startswith("  ")
+                print(f"    {paint('36', line.strip())}" if indented else f"  {line}", flush=True)
             return False
-        print(f"ok  {name}", flush=True)
+        print(f"{paint('32', '✓')} {name}", flush=True)
     print(
-        f"ready: uid {state['uid']} committed {state['sha256'][:12]} at block"
+        f"\n{paint('1;32', 'Ready.')} uid {state['uid']} committed {state['sha256'][:12]} at block"
         f" {state['commitment']['block']}; every validator pulls it at its next round. Results:"
         " the chain weights for your uid (btcli subnets metagraph --netuid"
         f" {args.netuid} --network test)",
@@ -304,24 +316,27 @@ def doctor(args):
 
 
 def ask(question, default=None):
-    answer = input(f"{question}{f' [{default}]' if default else ''}: ").strip()
+    hint = paint("2", f" [{default}]") if default else ""
+    answer = input(f"{paint('36', '?')} {question}{hint}: ").strip()
     return answer or default
 
 
 def setup(args):
     """Ask for each saved value (Enter keeps the shown one), save them, then run doctor."""
     config = load_config()
-    print(f"Zils miner setup; answers are saved to {config_path()}", flush=True)
+    print(
+        f"{paint('1;32', '◆ Zils miner setup')}  {paint('2', 'Enter keeps the value in brackets')}"
+    )
     path = ask("Bittensor wallet folder", config.get("wallet_path", WALLET_PATH))
     wallets = Path(path).expanduser()
     found = sorted(p.name for p in wallets.iterdir() if p.is_dir()) if wallets.is_dir() else []
     if found:
-        print(f"  wallets there: {', '.join(found)}")
+        print(paint("2", f"  wallets there: {', '.join(found)}"))
     name = ask("Wallet name", config.get("wallet_name") or (found[0] if found else None))
     hotkeys = wallets / (name or "") / "hotkeys"
     keys = sorted(p.name for p in hotkeys.iterdir()) if name and hotkeys.is_dir() else []
     if keys:
-        print(f"  hotkeys: {', '.join(keys)}")
+        print(paint("2", f"  hotkeys: {', '.join(keys)}"))
     hotkey = ask("Hotkey name", config.get("wallet_hotkey") or (keys[0] if keys else "default"))
     candidate = ask(
         "Candidate folder from zils.d3 candidate (Enter if not trained yet)",
@@ -336,7 +351,7 @@ def setup(args):
     config |= {"wallet_path": path, "wallet_name": name, "wallet_hotkey": hotkey}
     config |= {"candidate": candidate, "repo": repo}
     write_config(config)
-    print("saved; checking the setup\n", flush=True)
+    print(f"{paint('32', '✓')} saved to {config_path()}\n", flush=True)
     for key in SAVED:
         setattr(args, key, config.get(key))
     return doctor(args)

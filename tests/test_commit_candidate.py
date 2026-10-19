@@ -180,46 +180,46 @@ class CommitCandidateTest(unittest.TestCase):
     def test_doctor_stops_at_the_first_failing_step_with_its_fix(self):
         code, out = self.run_miner("doctor")
         self.assertEqual(code, 1)
-        self.assertEqual(out.count("ok  "), 4)
-        self.assertIn("fix candidate: no --candidate", out)
+        self.assertEqual(out.count("✓ "), 4)
+        self.assertIn("✗ candidate\n  no --candidate", out)
         self.assertIn(f"{self.d3} -m zils.d3 train", out)
 
         code, out = self.run_miner("doctor", "--candidate", str(self.candidate))
-        self.assertEqual(out.count("ok  "), 5)
-        self.assertIn("fix hugging face: no --repo", out)
+        self.assertEqual(out.count("✓ "), 5)
+        self.assertIn("✗ hugging face\n  no --repo", out)
 
         flags = ("--candidate", str(self.candidate), "--repo", "alice/d3")
         code, out = self.run_miner("doctor", *flags)
-        self.assertIn("fix hugging face: not uploaded yet", out)
+        self.assertIn("✗ hugging face\n  not uploaded yet", out)
         self.assertIn("zils commit-candidate", out)
-        self.assertIn("--repo alice/d3 \\\n  --yes", out)
+        self.assertIn("--repo alice/d3 \\\n    --yes", out)
         with patch("huggingface_hub.get_token", lambda: None):
             code, out = self.run_miner("doctor", *flags)
-        self.assertIn("fix hugging face: not logged in to Hugging Face", out)
+        self.assertIn("✗ hugging face\n  not logged in to Hugging Face", out)
 
         self.run_miner("commit-candidate", *flags, "--yes")
         rev = revision("upload-0")
         code, out = self.run_miner("doctor", *flags, "--revision", revision("none"))
-        self.assertIn("fix hugging face: HTTP Error 404", out)
+        self.assertIn("✗ hugging face\n  HTTP Error 404", out)
 
         code, out = self.run_miner("doctor", *flags, "--revision", rev)
         self.assertEqual(code, 0, out)
-        self.assertEqual(out.count("ok  "), 7)
-        self.assertIn(f"ready: uid 1 committed {self.sha256[:12]} at block 301", out)
+        self.assertEqual(out.count("✓ "), 7)
+        self.assertIn(f"Ready. uid 1 committed {self.sha256[:12]} at block 301", out)
 
         self.chain.records.clear()
         code, out = self.run_miner("doctor", *flags, "--revision", rev)
-        self.assertIn("fix commitment: the chain holds no commitment", out)
-        self.assertIn(f"--revision {rev} \\\n  --yes", out)
+        self.assertIn("✗ commitment\n  the chain holds no commitment", out)
+        self.assertIn(f"--revision {rev} \\\n    --yes", out)
 
         self.chain.uids = {}
         code, out = self.run_miner("doctor", *flags, "--revision", rev)
-        self.assertEqual(out.count("ok  "), 3)
-        self.assertIn("fix registration: hotkey", out)
+        self.assertEqual(out.count("✓ "), 3)
+        self.assertIn("✗ registration\n  hotkey", out)
         self.assertIn("tx burned-register --netuid 579", out)
 
         code, out = self.run_miner("doctor", "--wallet-hotkey", "absent")
-        self.assertIn("fix wallet hotkey: no hotkey file", out)
+        self.assertIn("✗ wallet hotkey\n  no hotkey file", out)
 
         real = miner.importlib.import_module
 
@@ -230,16 +230,16 @@ class CommitCandidateTest(unittest.TestCase):
 
         with patch("zils.miner.importlib.import_module", without_hub):
             code, out = self.run_miner("doctor")
-        self.assertEqual(out.count("ok  "), 0)
-        self.assertIn("fix requirements: missing huggingface_hub", out)
+        self.assertEqual(out.count("✓ "), 0)
+        self.assertIn("✗ requirements\n  missing huggingface_hub", out)
 
         self.runtime = SimpleNamespace(returncode=1, stderr="Traceback\nOSError: d3 requires X")
         code, out = self.run_miner("doctor")
-        self.assertEqual(out.count("ok  "), 1)
-        self.assertIn("fix d3 runtime: " + f"{self.d3}: OSError: d3 requires X", out)
+        self.assertEqual(out.count("✓ "), 1)
+        self.assertIn("✗ d3 runtime\n  " + f"{self.d3}: OSError: d3 requires X", out)
         self.d3.unlink()
         code, out = self.run_miner("doctor")
-        self.assertIn("fix d3 runtime: no d3 training runtime", out)
+        self.assertIn("✗ d3 runtime\n  no d3 training runtime", out)
         self.assertIn("install.sh | sh", out)
 
     def test_setup_saves_answers_that_later_commands_default_to(self):
@@ -253,7 +253,7 @@ class CommitCandidateTest(unittest.TestCase):
             code, out = self.run_miner("setup", wallet=False)
         self.assertIn("wallets there: fixture", out)
         self.assertIn("hotkeys: miner", out)
-        self.assertIn("fix hugging face: not uploaded yet", out)
+        self.assertIn("✗ hugging face\n  not uploaded yet", out)
         saved = json.loads(self.config.read_text())
         self.assertEqual(saved["wallet_name"], "fixture")
         self.assertEqual(saved["wallet_hotkey"], "miner")
@@ -265,7 +265,7 @@ class CommitCandidateTest(unittest.TestCase):
         self.assertEqual(json.loads(self.config.read_text())["revision"], rev)
         code, out = self.run_miner("doctor", wallet=False)
         self.assertEqual(code, 0, out)
-        self.assertIn("ready: uid 1", out)
+        self.assertIn("Ready. uid 1", out)
 
         # Retraining into a new folder drops the stale revision, so doctor asks for an upload.
         other = candidate(self.root / "retrained", 0.5)
@@ -273,7 +273,7 @@ class CommitCandidateTest(unittest.TestCase):
         with patch("builtins.input", lambda prompt: next(answers)):
             code, out = self.run_miner("setup", wallet=False)
         self.assertNotIn("revision", json.loads(self.config.read_text()))
-        self.assertIn("fix hugging face: not uploaded yet", out)
+        self.assertIn("✗ hugging face\n  not uploaded yet", out)
 
 
 if __name__ == "__main__":

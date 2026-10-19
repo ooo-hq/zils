@@ -262,7 +262,7 @@ your wallet, candidate folder and Hugging Face repo, saves them to
 `~/.zils/miner.json` and runs the doctor. Rerun it to update.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ooo-hq/zils/main/scripts/install.sh | sh
+curl -fsSL https://zils.ai/install.sh | sh
 ```
 
 From then on `zils doctor` names the next step and prints its command; the steps are:
