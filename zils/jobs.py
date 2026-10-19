@@ -12,6 +12,9 @@ import zils
 from . import benchmark, models
 
 VERSION = "fez-customer-job/v1"
+# A forced move off a retiring base passes when the new adapter is no worse than the frozen
+# release by more than this Brier margin (spec §18); ordinary upgrades must beat it.
+MIGRATION_TOLERANCE = 0.005
 
 
 def validate_policy(policy):
@@ -19,7 +22,7 @@ def validate_policy(policy):
     if (
         not isinstance(policy, dict)
         or not required <= set(policy)
-        or set(policy) - required - {"previous_job_id", "base_change"}
+        or set(policy) - required - {"previous_job_id", "base_change", "migration"}
     ):
         raise ValueError("acceptance requires min_accuracy and min_brier_improvement")
     if "previous_job_id" in policy:
@@ -30,6 +33,10 @@ def validate_policy(policy):
         policy["base_change"] is not True or "previous_job_id" not in policy
     ):
         raise ValueError("base_change is only true, with a previous_job_id")
+    if "migration" in policy and (
+        policy["migration"] is not True or policy.get("base_change") is not True
+    ):
+        raise ValueError("migration is only true, on a base_change upgrade")
     for name, maximum in (("min_accuracy", 1), ("min_brier_improvement", 2)):
         value = policy[name]
         if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= maximum:
@@ -190,8 +197,12 @@ def select(baseline, rows, policy, *, model=None):
         and (model != models.IMAJEV or image_policy_passes(row, policy))
         and row["skill"] > 0
         and row["accuracy"] >= policy["min_accuracy"]
-        and baseline["brier"] - row["brier"] > 0
-        and baseline["brier"] - row["brier"] >= policy["min_brier_improvement"]
+        and (
+            baseline["brier"] - row["brier"] >= -MIGRATION_TOLERANCE
+            if policy.get("migration")
+            else baseline["brier"] - row["brier"] > 0
+            and baseline["brier"] - row["brier"] >= policy["min_brier_improvement"]
+        )
     ]
     if not eligible:
         return {"status": "no_qualifying_model", "acceptance": policy}

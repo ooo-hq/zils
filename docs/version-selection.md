@@ -86,6 +86,17 @@ the default for new jobs on both the `stable` and `latest` channels. The owner
 elected it on capability grounds after the base tier's confirmation draw tied.
 H2O serving is off; frozen H2O jobs can still be evaluated.
 
+### Moving off a retiring base
+
+When Zils retires a base, the tasks still served on it move with a `base_change`
+upgrade that also sets `"migration": true`. Such a run asks for continuity, not
+a gain: the lowest-Brier candidate is accepted when its Brier is no more than
+0.005 above the frozen release's on the new test data, it meets `min_accuracy`,
+and it beats the uniform forecast. `min_brier_improvement` stays in the policy
+but this rule replaces it. `migration` is refused without `base_change`. A run
+that fails it leaves the task on its old release, and the retirement waits for
+that task's owner.
+
 ## Activation and API names
 
 After runtime verification, new versioned releases receive an immutable model ID

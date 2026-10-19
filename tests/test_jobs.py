@@ -108,9 +108,32 @@ class JobTest(unittest.TestCase):
             {**previous, "base_change": False},
             {**previous, "base_change": "yes"},
             {**previous, "follow": "latest"},
+            {**previous, "migration": True},  # a migration is a base change
+            {**previous, "base_change": True, "migration": False},
         ):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 jobs.validate_policy(bad)
+
+    def test_forced_migration_accepts_no_worse_within_tolerance(self):
+        """Moving a task off a retiring base needs continuity, not a gain (spec §18)."""
+        baseline = {"status": "evaluated", "brier": 0.3}
+        candidate = {"uid": 1, "sha256": "a" * 64, "status": "evaluated", "accuracy": 0.9}
+        previous = {**POLICY, "previous_job_id": "0" * 8 + "-0000-4000-8000-" + "0" * 12}
+        upgrade = {**previous, "base_change": True}
+        migration = {**upgrade, "migration": True}
+        slightly_worse = {**candidate, "brier": 0.304, "skill": 0.6}
+        result = jobs.select(baseline, [slightly_worse], migration)
+        self.assertEqual(result["status"], "accepted")
+        self.assertAlmostEqual(result["brier_improvement"], -0.004)
+        self.assertEqual(
+            jobs.select(baseline, [slightly_worse], upgrade)["status"], "no_qualifying_model"
+        )
+        for changes in ({"brier": 0.306}, {"accuracy": 0.7}, {"skill": 0}):
+            with self.subTest(changes=changes):
+                self.assertEqual(
+                    jobs.select(baseline, [{**slightly_worse, **changes}], migration)["status"],
+                    "no_qualifying_model",
+                )
 
     @unittest.skipUnless(
         importlib.util.find_spec("kev") and importlib.util.find_spec("bittensor_wallet"),
