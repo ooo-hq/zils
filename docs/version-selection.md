@@ -81,9 +81,10 @@ The validator scores the frozen previous release with its own base and runtime,
 then scores the new candidate on the same test data. The usual upgrade
 requirements apply. Without `base_change`, a profile change is refused. After
 acceptance, the task alias follows the new release as it does for any other
-version; earlier immutable IDs remain callable. As of 17 October 2026 d3-mini is
-not the default for new jobs and is not promoted (it did not pass the base
-tier's confirmation draw); its platform migrations are applied.
+version; earlier immutable IDs remain callable. Since 17 October 2026 d3-mini is
+the default for new jobs on both the `stable` and `latest` channels. The owner
+elected it on capability grounds after the base tier's confirmation draw tied.
+H2O serving is off; frozen H2O jobs can still be evaluated.
 
 ## Activation and API names
 

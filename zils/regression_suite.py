@@ -147,7 +147,7 @@ def main():
     )
     parser.add_argument("--out", required=True)
     parser.add_argument(
-        "--model", choices=text_models, help=f"same-profile mode, default {models.H2O}"
+        "--model", choices=text_models, help=f"same-profile mode, default {models.D3}"
     )
     parser.add_argument("--incumbent-model", choices=text_models, help="cross-profile mode")
     parser.add_argument("--candidate-model", choices=text_models, help="cross-profile mode")
@@ -168,7 +168,7 @@ def main():
         )
     if args.candidate_runtime_python and not cross:
         parser.error("--candidate-runtime-python applies to cross-profile mode only")
-    incumbent_model = args.incumbent_model or args.model or models.H2O
+    incumbent_model = args.incumbent_model or args.model or models.D3
     candidate_model = args.candidate_model or incumbent_model
 
     def interpreter(model, given):
