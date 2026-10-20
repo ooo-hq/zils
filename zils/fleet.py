@@ -289,6 +289,10 @@ def main(argv=None):
             if "chain" not in config:
                 raise ValueError("model pools require a testnet fleet config")
             model_pools.validate(config["base_pools"])
+        if "feature_tracks" in config:
+            from . import feature_tracks
+
+            feature_tracks.validate_budget(config)
         if "base_tier" in config:
             from . import base_round
 

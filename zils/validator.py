@@ -340,8 +340,16 @@ def pool_rounds(config, directory):
 
 
 def base_pools_epoch(config, directory, work, snapshot, args, rounds):
-    from . import commitments
+    from . import commitments, feature_commitments
 
+    snapshot = {
+        **snapshot,
+        "commitments": {
+            uid: item
+            for uid, item in snapshot.get("commitments", {}).items()
+            if not str(item.get("data", "")).startswith(feature_commitments.PREFIX + ":")
+        },
+    }
     routed, rejected = commitments.route_pools(
         commitments.candidates(snapshot, None), config["base_pools"]
     )
@@ -375,6 +383,25 @@ def attach_adapter_evidence(config, work, report, now=None):
         until = queue_evidence.window_end(now)
         wire.write_json(frozen, queue_evidence.fetch(track, until))
     return {**report, "adapter_evidence": json.loads(frozen.read_text())}
+
+
+def publication_report(config, directory, work):
+    """Reconstruct only already-frozen evidence for a manual publication retry."""
+    from . import feature_round
+
+    for key, filename in (
+        ("base_tier", "base-tier.json"),
+        ("base_pools", "base-pools.json"),
+        ("feature_tracks", "feature-tracks.json"),
+        ("adapter_evidence", "adapter-evidence.json"),
+    ):
+        if key in config and not (work / filename).is_file():
+            raise ValueError(f"publication requires frozen {filename}")
+    report = json.loads((work / "report.json").read_text())
+    report = attach_base_tier(config, directory, work, report)
+    report = attach_base_pools(config, directory, work, report)
+    report = feature_round.attach(config, directory, work, report)
+    return attach_adapter_evidence(config, work, report)
 
 
 def base_draws(config, directory):
@@ -604,6 +631,8 @@ def admission_settings(config):
 
 
 def validator(config, directory, args):
+    from . import feature_round, feature_tracks
+
     key = signing_key(config)
     admission, public_endpoints = admission_settings(config)
     members = (
@@ -615,6 +644,7 @@ def validator(config, directory, args):
     current, registry, acks = {}, {}, set()
     draws = base_draws(config, directory)
     pools = pool_rounds(config, directory)
+    features = feature_round.rounds(config, directory)
     recent = collections.defaultdict(collections.deque)
 
     def throttled(address):
@@ -749,12 +779,22 @@ def validator(config, directory, args):
                     from . import model_pools
 
                     job["base_pools"] = model_pools.validate(config["base_pools"])
+                if "feature_tracks" in config:
+                    job["feature_tracks"] = feature_tracks.validate(config["feature_tracks"])
+                    job["feature_scope"] = feature_tracks.SCOPE
                 wire.write_json(work / "job.json", job)
             if "base_pools" in config:
                 from . import model_pools
 
                 if job.get("base_pools") != model_pools.validate(config["base_pools"]):
                     raise ValueError("pending round differs from installed pool configuration")
+            expected_features = (
+                feature_tracks.validate(config["feature_tracks"])
+                if "feature_tracks" in config
+                else None
+            )
+            if job.get("feature_tracks") != expected_features:
+                raise ValueError("pending round differs from installed feature configuration")
             for name in (
                 "base_revision",
                 "initial_sha256",
@@ -839,6 +879,16 @@ def validator(config, directory, args):
                     pools,
                 )
             report = attach_base_pools(settings_for_round, directory, work, report)
+            if features and not (work / "feature-tracks.json").exists():
+                feature_round.epoch(
+                    settings_for_round,
+                    directory,
+                    work,
+                    json.loads((work / "chain-snapshot.json").read_text()),
+                    args,
+                    features,
+                )
+            report = feature_round.attach(settings_for_round, directory, work, report)
             report = attach_adapter_evidence(settings_for_round, work, report)
             fields = (
                 "uid",
@@ -863,6 +913,8 @@ def validator(config, directory, args):
                 public["base_tier"] = report["base_tier"]
             if "base_pools" in report:
                 public["base_pools"] = report["base_pools"]
+            if "feature_tracks" in report:
+                public["feature_tracks"] = report["feature_tracks"]
             if chain_state is not None:
                 from bittensor.wallet import Wallet
 
