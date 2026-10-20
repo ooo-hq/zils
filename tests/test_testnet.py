@@ -7,11 +7,86 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 @unittest.skipUnless(importlib.util.find_spec("bittensor"), "install requirements/testnet.txt")
 class TestnetTest(unittest.TestCase):
+    def test_chain_admission_preserves_every_evaluated_identity_before_publication(self):
+        from bittensor.result import ExtrinsicResult
+
+        from zils import testnet as t
+
+        config = {
+            "chain": {"network": "test", "netuid": 553},
+            "admission": "chain",
+            "validator_hotkey": "validator",
+            "members": {"1": {"hotkey": "miner-a"}, "2": {"hotkey": "miner-b"}},
+        }
+        report = {
+            "chain": config["chain"],
+            "identities": {"1": "miner-a", "2": "miner-b"},
+            "miners": [
+                {"uid": 1, "status": "evaluated", "skill": 0.75},
+                {"uid": 2, "status": "rejected", "skill": 0.0},
+            ],
+        }
+        wallet = SimpleNamespace(hotkey=SimpleNamespace(ss58_address="validator"))
+        # Even an unpaid frozen member must retain its identity. New registrations
+        # are safe when every frozen UID still belongs to the evaluated hotkey.
+        for keys, allowed in (
+            ({0: "validator", 1: "replacement", 2: "miner-b"}, False),
+            ({0: "validator", 2: "miner-b"}, False),
+            ({0: "validator", 1: "miner-a"}, False),
+            ({0: "validator", 1: "miner-a", 2: "miner-b", 3: "new-miner"}, True),
+        ):
+            state = {
+                "NetworksAdded": True,
+                "SubnetworkN": 4,
+                "Uids": {hotkey: uid for uid, hotkey in keys.items()},
+                "Keys": keys,
+                "ValidatorPermit": [True, False, False, False],
+                "SubnetOwnerHotkey": "validator",
+                "CommitRevealWeightsEnabled": False,
+                "MinAllowedWeights": 1,
+                "MaxWeightsLimit": 65535,
+                "WeightsSetRateLimit": 0,
+                "WeightsVersionKey": 0,
+                "LastUpdate": [0, 0, 0, 0],
+            }
+
+            def query(item, params, *, block):
+                self.assertEqual((params[0], block), (553, 250))
+                value = state[item[1]]
+                return value.get(params[1]) if isinstance(value, dict) else value
+
+            sub = SimpleNamespace(
+                network="test",
+                endpoint=t.ENDPOINT,
+                block=250,
+                query=query,
+                execute=Mock(return_value=ExtrinsicResult(True)),
+                plan=Mock(),
+            )
+            with self.subTest(keys=keys), tempfile.TemporaryDirectory() as tmp:
+                work = Path(tmp)
+                receipt = t.publish_round(config, work, report, sub, wallet, publish=True)
+                sub.plan.assert_not_called()
+                if allowed:
+                    self.assertEqual(receipt["status"], "included")
+                    self.assertTrue(receipt["chain_write"])
+                    self.assertEqual(receipt["requested_weights"], {"1": 1.0})
+                    sub.execute.assert_called_once()
+                    self.assertEqual(sub.execute.call_args.args[0].uids, [1])
+                else:
+                    self.assertEqual(receipt["status"], "registration_changed")
+                    self.assertIs(receipt["chain_write"], False)
+                    self.assertIs(receipt["weights_verified"], False)
+                    self.assertEqual(receipt["requested_weights"], {})
+                    sub.execute.assert_not_called()
+                    self.assertFalse((work / "chain-attempt.json").exists())
+                    self.assertFalse((work / "chain-receipt.json").exists())
+
     def test_registration_and_publication_fail_closed(self):
         from bittensor.result import ChainError, ErrorCode, ExtrinsicResult
 

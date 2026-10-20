@@ -245,6 +245,18 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
                 }
             )
     state = preflight(config, sub)
+    # Open admission discovers current registrations; scores belong to the frozen
+    # round identities. Additional members are safe only while all frozen ones match.
+    if any(state["members"].get(uid) != hotkey for uid, hotkey in identities.items()):
+        return {
+            **state,
+            "report_sha256": report_hash,
+            "requested_weights": {},
+            "chain_write": False,
+            "weights_verified": False,
+            "status": "registration_changed",
+            "detail": "nothing sent; evaluated registrations changed; start a fresh round",
+        }
     if wallet.hotkey.ss58_address != config["validator_hotkey"]:
         raise ValueError("wallet does not match the configured validator")
     rows = report["miners"]

@@ -94,6 +94,7 @@ def fixture():
 
 def publish(config, report):
     state = {
+        "members": report["identities"],
         "owner_uid": 0,
         "validator_uid": 0,
         "block": 10,
