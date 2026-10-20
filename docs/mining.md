@@ -8,6 +8,11 @@ are retired. For workers that claim different customer jobs,
 use the [queue miner guide](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md).
 Queue and fleet miners use the same trainers but different credentials and startup commands.
 
+For the synthetic bounding-box adapter pilot, see the
+[feature competition guide](feature-tracks.md). It covers public training data,
+exact-parent adapters, feature commitments, and the planned 50/20/30 allocation;
+each validator's signed round records which tracks and reward shares it enables.
+
 After the one-time setup below, run this in your assigned miner folder:
 
 ```bash
