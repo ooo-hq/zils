@@ -384,6 +384,7 @@ class D3ModuleTest(unittest.TestCase):
         from zils import image_contract
 
         r1 = "d3-mini-4.5b-zils-r1"
+        registered = models.d3_family()
         spec = {
             **models.spec(models.D3),
             "id": r1,
@@ -418,7 +419,7 @@ class D3ModuleTest(unittest.TestCase):
                     lambda download=False, model=models.D3: root / "r1-base",
                 )
             )
-            self.assertEqual(models.d3_family(), (models.D3, r1))
+            self.assertEqual(models.d3_family(), (*registered, r1))
             self.assertIn(r1, models.base_candidate_models())
             self.assertEqual(models.candidate_files(r1, "candidate"), models.D3_CANDIDATE_FILES)
             # Customer adapters on the promoted base use the d3 adapter format and interpreter.
