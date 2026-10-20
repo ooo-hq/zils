@@ -295,3 +295,69 @@ The incumbent can win. Challengers are never paid, only kings: if no candidate
 is promoted, the base does not change, the existing kings keep their share and,
 with no king yet, the base share is burned at `base_tier.burn_uid`. A candidate that clears the exam but makes adapters
 worse is rejected regardless of its exam score.
+
+## Frozen-adapter migration coverage
+
+The retraining comparison above does not establish that an adapter already being
+served can migrate. Add `--migration-references references.json` to score one
+frozen, calibrated reference release per suite job on that job's new test split.
+Use only public or Zils-owned benchmark releases and datasets, never customer
+releases. The manifest must cover every suite job exactly:
+
+```json
+{
+  "abcd": {
+    "release": "frozen/zils-adapter-JOB_UUID-CHECKPOINT_SHA256",
+    "fingerprint": "SHA256_FROM_SERVING_JSON",
+    "splits": "original-abcd-splits"
+  },
+  "flight-delay": {
+    "release": "frozen/zils-adapter-JOB_UUID-CHECKPOINT_SHA256",
+    "fingerprint": "SHA256_FROM_SERVING_JSON",
+    "splits": "original-flight-delay-splits"
+  }
+}
+```
+
+Replace the placeholders with immutable accepted reference releases (including
+`serving.json`, `source.json`, `manifest.json` and every listed artifact). Retain
+their original `train.jsonl`, `calibration.jsonl`, and `test.jsonl` in each
+`splits` directory. Paths are relative to the reference manifest. These are
+operator-provisioned inputs; the suite does not create or fetch releases.
+Freeze the manifest before evaluating candidate bases. Prepare new suite test
+conversations not present in any of those three original splits; training and
+calibration may be reused. The tool checks original split hashes, release
+fingerprints, current split separation, and new-test IDs, groups and exact
+prompts. Operators must still audit semantic overlap and source provenance.
+
+```bash
+python -m zils.regression_suite --model d3-mini-4.5b-v1 --suite SUITE \
+  --incumbent models/d3-reference --candidate CANDIDATE --out OUT \
+  --migration-references references.json --seeds 553 771 991 \
+  --min-accuracy 0.8 --min-brier-improvement 0.01
+```
+
+The frozen release is verified and evaluated once per job, using its own
+incumbent profile/interpreter and stored serving temperature. It is never
+retrained or recalibrated. Candidate adapters use the production training recipe
+and are calibrated on the current calibration split. Both strict upgrade and
+migration outcomes use `zils.jobs.select`, including the accuracy and positive
+skill requirements. Migration permits Brier up to 0.005 worse than the frozen
+release; `--tolerance` controls only the separate retraining regression gate.
+
+Without migration references, the historical default remains seed 553. With
+references the default is three distinct seeds: 553, 771 and 991. `runs` records
+each seed; `jobs` contains mean Brier/accuracy/skill when multiple seeds run.
+The existing base regression verdict uses mean Brier per job. Migration uses
+**every job, every seed**, not the mean: `migration.stable_eligible` requires at
+least three distinct seeds, all migration comparisons passing, and the base
+regression verdict passing. A single-seed diagnostic can never certify stable
+eligibility. `strict_upgrade_yield` is the fraction of job/seed comparisons that
+would pass the stricter customer upgrade policy, not an estimate for customers.
+
+Migration results are report-only for the `latest` promotion helper; its existing
+exam and retraining regression gates remain unchanged. Before a `stable` move,
+operators must require `migration.stable_eligible: true` from this bound report.
+There is no automatic stable-channel mover or follow-stable migration scheduler
+in this repository. This suite does not test hosted publishing or routing; those
+require an end-to-end platform migration test as well.

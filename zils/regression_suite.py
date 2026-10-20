@@ -10,6 +10,7 @@ Training and inference use the production recipe through the profile's trainer (
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -17,7 +18,7 @@ from pathlib import Path
 
 import zils
 
-from . import base_round, benchmark, models
+from . import base_round, benchmark, jobs as customer_jobs, migration_regression, models
 
 DEFAULT_TOLERANCE = 0.005
 
@@ -54,7 +55,9 @@ def _run(command, env, cwd):
     return result
 
 
-def train_and_score(job, base_dir, label, out, runtime_python, env, device, module, base_revision):
+def train_and_score(
+    job, base_dir, label, out, runtime_python, env, device, module, base_revision, seed=553
+):
     """Train the production LoRA with trainer `module` on `job` against the base that `env` selects; return
     calibrated test Brier."""
     work = Path(out) / job.name / label
@@ -76,43 +79,25 @@ def train_and_score(job, base_dir, label, out, runtime_python, env, device, modu
             "--out",
             str(adapter),
             "--seed",
-            "553",
+            str(seed),
             "--device",
             device,
         ],
         env,
         str(Path(__file__).resolve().parents[1]),
     )
-    submissions = work / "submissions.json"
-    submissions.write_text(json.dumps([zils.submission(str(adapter), 1)]))
-    reports = {}
-    for split in ("calibration", "test"):
-        report = work / f"{split}-report.json"
-        _run(
-            [
-                runtime_python,
-                "-m",
-                "zils",
-                "evaluate",
-                "--submissions",
-                str(submissions),
-                "--cases",
-                str(job / f"{split}.jsonl"),
-                "--base-revision",
-                base_revision,
-                "--runner-python",
-                runtime_python,
-                "--device",
-                device,
-                "--timeout",
-                "7200",
-                "--report",
-                str(report),
-            ],
+    reports = {
+        split: evaluate_adapter(
+            adapter,
+            job / f"{split}.jsonl",
+            work / f"{split}-report.json",
+            runtime_python,
             env,
-            str(Path(__file__).resolve().parents[1]),
+            device,
+            base_revision,
         )
-        reports[split] = json.loads(report.read_text())
+        for split in ("calibration", "test")
+    }
     cases = {s: benchmark.read_jsonl(job / f"{s}.jsonl") for s in ("calibration", "test")}
     rows_cal = base_round.rows_for(reports["calibration"], cases["calibration"])
     rows_test = base_round.rows_for(reports["test"], cases["test"])
@@ -128,9 +113,40 @@ def train_and_score(job, base_dir, label, out, runtime_python, env, device, modu
     return {
         "brier": scored["brier"],
         "accuracy": scored["accuracy"],
+        "skill": scored["skill"],
         "temperature": temperature,
         "adapter_sha256": zils.checkpoint_hash(adapter),
     }
+
+
+def evaluate_adapter(adapter, cases, report, runtime_python, env, device, base_revision):
+    submissions = report.with_suffix(".submissions.json")
+    submissions.write_text(json.dumps([zils.submission(str(adapter), 1)]))
+    _run(
+        [
+            runtime_python,
+            "-m",
+            "zils",
+            "evaluate",
+            "--submissions",
+            str(submissions),
+            "--cases",
+            str(cases),
+            "--base-revision",
+            base_revision,
+            "--runner-python",
+            runtime_python,
+            "--device",
+            device,
+            "--timeout",
+            "7200",
+            "--report",
+            str(report),
+        ],
+        env,
+        str(Path(__file__).resolve().parents[1]),
+    )
+    return json.loads(report.read_text())
 
 
 def main():
@@ -160,7 +176,26 @@ def main():
     )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
+    parser.add_argument(
+        "--seeds", nargs="+", type=int, help="training seeds; migration default: 553 771 991"
+    )
+    parser.add_argument(
+        "--migration-references",
+        help="JSON mapping suite jobs to frozen public releases and original splits",
+    )
+    parser.add_argument("--min-accuracy", type=float, default=0.8)
+    parser.add_argument("--min-brier-improvement", type=float, default=0.01)
     args = parser.parse_args()
+    if not math.isfinite(args.tolerance) or args.tolerance < 0:
+        parser.error("Tolerance must be finite and nonnegative")
+    seeds = args.seeds or ([553, 771, 991] if args.migration_references else [553])
+    if len(seeds) != len(set(seeds)) or any(seed < 0 for seed in seeds):
+        parser.error("Seeds must be distinct nonnegative integers")
+    policy = {
+        "min_accuracy": args.min_accuracy,
+        "min_brier_improvement": args.min_brier_improvement,
+    }
+    customer_jobs.validate_policy(policy)
     cross = bool(args.incumbent_model or args.candidate_model)
     if cross and not (args.incumbent_model and args.candidate_model and not args.model):
         parser.error(
@@ -214,27 +249,99 @@ def main():
         "incumbent": (incumbent_model, Path(args.incumbent), incumbent_python, incumbent_env),
         "candidate": (candidate_model, Path(candidate_reference), candidate_python, candidate_env),
     }
-    results, detail = {}, {}
-    for job in jobs(args.suite):
-        detail[job.name] = {
-            label: train_and_score(
-                job,
-                reference,
-                label,
-                out,
-                python,
-                env,
+    suite_jobs = jobs(args.suite)
+    frozen = (
+        migration_regression.references(args.migration_references, suite_jobs, incumbent_model)
+        if args.migration_references
+        else {}
+    )
+    results, detail, runs, migration = {}, {}, {}, {}
+    for job in suite_jobs:
+        baseline = None
+        if frozen:
+            adapter, release = frozen[job.name]
+            report_path = out / f"{job.name}-frozen-test-report.json"
+            report = evaluate_adapter(
+                adapter,
+                job / "test.jsonl",
+                report_path,
+                incumbent_python,
+                incumbent_env,
                 args.device,
-                "zils" + models.TEXT_RUNTIME_MODULES[model],
-                models.spec(model)["base_revision"],
+                models.spec(incumbent_model)["base_revision"],
             )
-            for label, (model, reference, python, env) in sides.items()
-        }
+            cases = benchmark.read_jsonl(job / "test.jsonl")
+            rows = base_round.rows_for(report, cases)
+            if 1 not in rows:
+                raise RuntimeError("Frozen migration release evaluation rejected")
+            # The runtime applies the release's stored temperature; never recalibrate it.
+            baseline = zils.score(cases, rows[1]["predictions"])
+            migration[job.name] = {}
+        runs[job.name] = {}
+        for seed in seeds:
+            run_out = out if len(seeds) == 1 else out / f"seed-{seed}"
+            run = {
+                label: train_and_score(
+                    job,
+                    reference,
+                    label,
+                    run_out,
+                    python,
+                    env,
+                    args.device,
+                    "zils" + models.TEXT_RUNTIME_MODULES[model],
+                    models.spec(model)["base_revision"],
+                    seed=seed,
+                )
+                for label, (model, reference, python, env) in sides.items()
+            }
+            runs[job.name][str(seed)] = run
+            if baseline is not None:
+                migration[job.name][str(seed)] = migration_regression.compare(
+                    baseline, run["candidate"], release, policy
+                )
+        detail[job.name] = (
+            run
+            if len(seeds) == 1
+            else {
+                side: {
+                    key: sum(r[side][key] for r in runs[job.name].values()) / len(seeds)
+                    for key in ("brier", "accuracy", "skill")
+                }
+                for side in sides
+            }
+        )
         results[job.name] = {k: v["brier"] for k, v in detail[job.name].items()}
         (out / "progress.json").write_text(json.dumps(results, indent=2) + "\n")
     decision = verdict(results, args.tolerance)
+    migration_report = migration_regression.summary(migration) if frozen else None
+    if migration_report is not None:
+        migration_report["stable_eligible"] &= decision["passed"]
     result = {
         "verdict": decision,
+        "seeds": seeds,
+        "regression_seed_rule": "mean-brier-per-job",
+        "runs": runs,
+        "migration": (
+            {
+                **migration_report,
+                "policy": policy,
+                "tolerance": customer_jobs.MIGRATION_TOLERANCE,
+                "references": {
+                    name: {
+                        "fingerprint": release["fingerprint"],
+                        "checkpoint_sha256": release["checkpoint_sha256"],
+                        "temperature": release["temperature"],
+                        "test_sha256": benchmark.file_hash(
+                            Path(args.suite) / "jobs" / name / "test.jsonl"
+                        ),
+                    }
+                    for name, (_, release) in frozen.items()
+                },
+            }
+            if frozen
+            else None
+        ),
         "jobs": detail,
         "candidate": str(args.candidate),
         "incumbent_model": incumbent_model,
