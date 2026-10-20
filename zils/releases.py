@@ -13,9 +13,7 @@ from . import jobs, models, version_selection
 from .queue_protocol import identifier
 
 VERSION = "zils-customer-adapter/v1"
-PROMPT_VERSION = "zils-training-decision-v1"
-RUNTIME_REVISION = "f26426d16f59e8bbe1470e5b162cc89329e29b29"
-FILES = (*models.JEVK5_FILES, "release.json", "manifest.json", "source.json")
+FILES = (*models.TEXT_ADAPTER_FILES, "release.json", "manifest.json", "source.json")
 JSON_LIMIT = 4 * 1024 * 1024
 SOURCE_FIELDS = (
     "id",
@@ -209,12 +207,8 @@ def _manifest(root):
         "model": spec,
         "checkpoint_sha256": checkpoint,
         "temperature": meta["temperature"],
-        "runtime_revision": spec["runtime_revision"]
-        if model in (models.H2O, models.IMAJEV)
-        else RUNTIME_REVISION,
-        "prompt_version": spec["prompt"]
-        if model in (models.H2O, models.IMAJEV)
-        else PROMPT_VERSION,
+        "runtime_revision": spec["runtime_revision"],
+        "prompt_version": spec["prompt"],
         "release_date": date.date().isoformat(),
         "files": {n: _hash(root / n) for n in files},
         **extra,

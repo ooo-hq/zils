@@ -59,6 +59,44 @@ was trained or calibrated on. The existing split audit checks the current job;
 operators remain responsible for semantic overlap and repeated use of evaluation
 data across jobs. Acceptance measures this dataset, not guaranteed future quality.
 
+### Changing the base profile
+
+A task stays on its base profile unless the request says otherwise. To move a
+task from one profile to another, for example from H2O to d3-mini, set
+`"base_change": true` in the acceptance policy next to `previous_job_id`:
+
+```json
+{
+  "name": "flight-v3",
+  "acceptance": {
+    "min_accuracy": 0.80,
+    "min_brier_improvement": 0.01,
+    "previous_job_id": "REPLACE_WITH_PRIOR_READY_JOB_UUID",
+    "base_change": true
+  }
+}
+```
+
+The validator scores the frozen previous release with its own base and runtime,
+then scores the new candidate on the same test data. The usual upgrade
+requirements apply. Without `base_change`, a profile change is refused. After
+acceptance, the task alias follows the new release as it does for any other
+version; earlier immutable IDs remain callable. Since 17 October 2026 d3-mini is
+the default for new jobs on both the `stable` and `latest` channels. The owner
+elected it on capability grounds after the base tier's confirmation draw tied.
+H2O serving is off; frozen H2O jobs can still be evaluated.
+
+### Moving off a retiring base
+
+When Zils retires a base, the tasks still served on it move with a `base_change`
+upgrade that also sets `"migration": true`. Such a run asks for continuity, not
+a gain: the lowest-Brier candidate is accepted when its Brier is no more than
+0.005 above the frozen release's on the new test data, it meets `min_accuracy`,
+and it beats the uniform forecast. `min_brier_improvement` stays in the policy
+but this rule replaces it. `migration` is refused without `base_change`. A run
+that fails it leaves the task on its old release, and the retirement waits for
+that task's owner.
+
 ## Activation and API names
 
 After runtime verification, new versioned releases receive an immutable model ID

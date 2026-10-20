@@ -14,10 +14,10 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-from . import ROOT, models, settings
+from . import ROOT, models, sandbox, settings
 
 ARTIFACT_FILES = ("adapter_config.json", "adapter_model.safetensors", "head.pt")
-MAX_ARTIFACT_BYTES = 512 * 1024 * 1024
+MAX_ARTIFACT_BYTES = models.MAX_ADAPTER_BYTES
 BASE = "Qwen/Qwen3.5-0.8B-Base"
 RUBRIC = "fez-decisions/v1"
 
@@ -39,6 +39,17 @@ def options(question):
     raise ValueError("question must be noul, or choice/score with 2..255 options")
 
 
+def validate_targets(targets, keys):
+    """Optional soft training targets: one probability per option, summing to one."""
+    if not isinstance(targets, dict) or set(targets) != set(keys):
+        raise ValueError("target_probabilities must cover exactly the available options")
+    values = list(targets.values())
+    if any(type(p) not in (int, float) or not math.isfinite(p) or not 0 <= p <= 1 for p in values):
+        raise ValueError("target_probabilities must be finite numbers in [0, 1]")
+    if not math.isclose(sum(values), 1.0, abs_tol=1e-6):
+        raise ValueError("target_probabilities must sum to one")
+
+
 def validate_cases(cases):
     if not isinstance(cases, list) or not cases:
         raise ValueError("evaluation cases must be a nonempty list")
@@ -57,6 +68,8 @@ def validate_cases(cases):
         seen.add(case["id"])
         if not isinstance(case["question"], dict) or case["label"] not in options(case["question"]):
             raise ValueError("label must identify an available option")
+        if "target_probabilities" in case:
+            validate_targets(case["target_probabilities"], options(case["question"]))
         if len(json.dumps(case, allow_nan=False).encode()) > 128 * 1024:
             raise ValueError("case exceeds 128 KiB")
 
@@ -66,9 +79,18 @@ def score(cases, predictions):
     if any("image" in c for c in cases):
         if not all("image" in c for c in cases):
             raise ValueError("Mixed image and text evaluation is unsupported")
-        from .image_metrics import score as image_score
+        from .image_contract import UNKNOWN
 
-        return image_score(cases, predictions)
+        # Imajev answers with an unknown outcome; d3 answers only the declared ones, scored as text.
+        if isinstance(predictions, list) and any(
+            isinstance(row, dict)
+            and isinstance(row.get("probabilities"), dict)
+            and UNKNOWN in row["probabilities"]
+            for row in predictions
+        ):
+            from .image_metrics import score as image_score
+
+            return image_score(cases, predictions)
     if not isinstance(predictions, list) or len(predictions) != len(cases):
         raise ValueError("exactly one prediction per case is required")
     by_id = {}
@@ -132,16 +154,42 @@ def weight_vector(rows):
     return {uid: skill / total for uid, skill in skills.items() if skill > 0} if total else {}
 
 
+def blend_weights(weights_by_track, shares, *, burn_uid=None):
+    """One chain vector from per-track weight vectors, each normalized over its own earners first.
+
+    ``shares`` sums to one. A track with no earner pays nothing. With ``burn_uid`` its share goes to that
+    uid (every track empty: the whole vector), so it is never redistributed. Without one the chain
+    normalizes the result, so its share flows to the other tracks, and every track empty gives ``{}``.
+    """
+    if set(weights_by_track) != set(shares) or not shares:
+        raise ValueError("every track needs exactly one share")
+    if any(
+        type(s) not in (int, float) or not math.isfinite(s) or not 0 <= s <= 1
+        for s in shares.values()
+    ) or not math.isclose(sum(shares.values()), 1.0, abs_tol=1e-9):
+        raise ValueError("track shares must lie in [0, 1] and sum to one")
+    combined = defaultdict(float)
+    for track, weights in weights_by_track.items():
+        normalized = weight_vector([{"uid": int(uid), "skill": w} for uid, w in weights.items()])
+        for uid, weight in normalized.items():
+            combined[uid] += shares[track] * weight
+        if not normalized and burn_uid is not None and shares[track] > 0:
+            combined[burn_uid] += shares[track]
+    total = sum(combined.values())
+    return {uid: w / total for uid, w in sorted(combined.items()) if w > 0} if total else {}
+
+
 def checkpoint_hash(path):
     path = Path(path)
     records, total = [], 0
+    budget = models.artifact_budget(models.artifact_kind(path))
     for name in models.artifact_files(path):
         artifact = path / name
         if artifact.is_symlink() or not artifact.is_file():
             raise ValueError(f"checkpoint requires a regular, non-symlink {name}")
         total += artifact.stat().st_size
-        if total > MAX_ARTIFACT_BYTES:
-            raise ValueError("checkpoint exceeds 512 MiB adapter budget")
+        if total > budget:
+            raise ValueError(f"checkpoint exceeds its {budget // 1024**2} MiB artifact budget")
         with artifact.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         records.append([name, digest])
@@ -214,13 +262,14 @@ def evaluate(args):
     base = models.spec(model)["base"]
     runner = Path(__file__).with_name(
         {
-            models.JEVK5: "jevk5_runner.py",
             models.H2O: "jevk5_runner.py",
+            **{m: "jevk5_runner.py" for m in models.d3_family()},
             models.IMAJEV: "imajev_runner.py",
             models.KEV: "kev_runner.py",
         }[model]
     )
-    if model == models.IMAJEV:
+    media = any("image" in c for c in cases) and "inputs" in models.spec(model)
+    if model == models.IMAJEV or media:
         from . import benchmark
 
         root = Path(args.cases).parent
@@ -235,7 +284,13 @@ def evaluate(args):
             raise ValueError("Image evaluation requires verified local image assets")
         for request, case in zip(requests, cases, strict=True):
             asset = manifest["assets"][case["image"]["asset_id"]]
-            request["image"] = {"asset_id": asset["id"], "sha256": asset["canonical_sha256"]}
+            if model == models.IMAJEV:
+                request["image"] = {"asset_id": asset["id"], "sha256": asset["canonical_sha256"]}
+            else:
+                from .imajev import image_path
+
+                path = image_path(args.images, {"sha256": asset["canonical_sha256"]})
+                request["images"] = [str(path.resolve())]
     elif any("image" in c for c in cases):
         raise ValueError("Image data cannot use a text runtime")
     environment = {
@@ -265,8 +320,8 @@ def evaluate(args):
                 if models.checkpoint_model(checkpoint) != model:
                     raise ValueError("checkpoint belongs to a different model")
                 command = [
-                    settings.required("ZILS_H2O_RUNTIME_PYTHON")
-                    if model == models.H2O
+                    settings.required(env)
+                    if (env := models.runtime_python_env(model))
                     else args.runner_python,
                     str(runner),
                     "--checkpoint",
@@ -282,7 +337,7 @@ def evaluate(args):
                     command.extend(["--base", base, "--base-revision", args.base_revision])
                 try:
                     result = subprocess.run(
-                        command,
+                        sandbox.wrap(command),
                         input=json.dumps(requests, allow_nan=False),
                         text=True,
                         capture_output=True,
@@ -324,6 +379,7 @@ def evaluate(args):
         "dataset_sha256": hashlib.sha256(
             json.dumps(cases, sort_keys=True, allow_nan=False).encode()
         ).hexdigest(),
+        "sandbox": sandbox.mode(),
         "miners": rows,
         "weights": weight_vector(rows),
     }

@@ -69,6 +69,10 @@ class FleetTest(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 r.endpoint_ok(url, allowed=[url])
+        # Tailscale addresses are an overlay LAN, accepted only when pinned.
+        r.endpoint_ok("http://100.108.80.3:8900", allowed=["http://100.108.80.3:8900"])
+        with self.assertRaises(ValueError):
+            r.endpoint_ok("http://100.108.80.3:8900", allowed=["http://100.108.80.4:8900"])
         payload = {"kind": "round", "round_id": "a" * 32, "status": "collecting"}
         message = runtime.signed(payload, key)
         self.assertEqual(runtime.verified(message, key.ss58_address), payload)
@@ -87,6 +91,69 @@ class FleetTest(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 r.write_json(destination, {"complete": False})
             self.assertEqual(json.loads(destination.read_text()), {"complete": True})
+
+    def test_base_tier_track_needs_a_testnet_fleet(self):
+        import contextlib
+        import io
+
+        from zils import models
+
+        fleet = self.module()
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "base_revision": models.spec(models.KEV)["base_revision"],
+                        "base_tier": {"share": 0.7, "incumbent_sha256": "c" * 64, "draws": []},
+                    }
+                )
+            )
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                fleet.main(["validator", "--config", str(config)])
+            self.assertIn("testnet fleet config", err.getvalue())
+            config.write_text(
+                json.dumps(
+                    {
+                        "base_revision": models.spec(models.KEV)["base_revision"],
+                        "adapter_evidence": {
+                            "url": "https://x",
+                            "signer": "5" * 48,
+                            "window_hours": 72,
+                        },
+                    }
+                )
+            )
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                fleet.main(["validator", "--config", str(config)])
+            self.assertIn("testnet fleet config", err.getvalue())
+
+    def test_public_validator_address_needs_public_endpoints(self):
+        import contextlib
+        import io
+
+        from zils import models
+
+        fleet = self.module()
+        base = {
+            "base_revision": models.spec(models.KEV)["base_revision"],
+            "seed": "0x" + "07" * 32,
+            "validator": "http://93.184.216.34:8900",  # global; 203.0.113.0/24 counts as private
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            config.write_text(json.dumps(base))
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                fleet.main(["validator", "--config", str(config)])
+            self.assertIn("pinned private IPv4", err.getvalue())
+            config.write_text(json.dumps({**base, "public_endpoints": True}))
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(BaseException):
+                fleet.main(["validator", "--config", str(config)])
+            self.assertNotIn("pinned", err.getvalue())
 
     def test_three_miners_complete_two_rounds_and_keep_private_data_local(self):
         from miner.worker import train_candidate

@@ -1,0 +1,21 @@
+[Unit]
+Description=Zils queue miner (customer adapter training)
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=zilsminer
+Group=zilsminer
+SupplementaryGroups=zils-compute
+WorkingDirectory=/opt/zils
+EnvironmentFile=/etc/zils-node/node.env
+ExecStart=/opt/zils/.venv-kev/bin/python -m miner.queue --config /etc/zils-node/queue-miner.json --state /var/lib/zils-node/queue-miner --reference /opt/zils/models/h2o-reference --reference /opt/zils/models/d3-reference --runtime-python /opt/zils/.venv-h2o/bin/python --device cuda
+Restart=on-failure
+RestartSec=15
+KillMode=control-group
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/zils-node /var/lock/zils-training
+[Install]
+WantedBy=multi-user.target

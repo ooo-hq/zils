@@ -10,8 +10,8 @@ from zils import miner_grading as grading, models
 
 NOW = datetime(2026, 10, 9, tzinfo=UTC)
 CONTEXT = {
-    "model": models.JEVK5,
-    **models.profile_identity(models.JEVK5),
+    "model": models.H2O,
+    **models.profile_identity(models.H2O),
     "trainer_sha256": "a" * 64,
     "rubric": "test/v1",
     "benchmark_sha256": "b" * 64,
@@ -42,7 +42,7 @@ def job(**overrides):
         "id": "job",
         "job_sha256": "c" * 64,
         "context": dict(CONTEXT),
-        "workload": grading.workload_profile([100] * 10, model=models.JEVK5),
+        "workload": grading.workload_profile([100] * 10, model=models.H2O),
         "deadline": (NOW + timedelta(hours=2)).isoformat(),
         "consent": True,
         "purpose": "customer",
@@ -56,7 +56,7 @@ def worker(hotkey="worker", improvement=0.12, rate=0.1, **overrides):
         "enabled": True,
         "approved": True,
         "resource_id": hotkey,
-        "profile": models.profile_identity(models.JEVK5),
+        "profile": models.profile_identity(models.H2O),
         "received_at": NOW.isoformat(),
         "ready": True,
         "reserved": False,
@@ -73,14 +73,14 @@ class GradingTests(unittest.TestCase):
         from zils import jobs
 
         splits = examples()
-        workload = grading.workload_profile([100] * len(splits["train"]), model=models.JEVK5)
+        workload = grading.workload_profile([100] * len(splits["train"]), model=models.H2O)
         with tempfile.TemporaryDirectory() as tmp:
             old = jobs.build(
                 Path(tmp) / "old",
                 "old",
                 splits,
                 POLICY,
-                model=models.JEVK5,
+                model=models.H2O,
                 allow_training_data_export=True,
             )
             self.assertNotIn("workload", old)
@@ -90,7 +90,7 @@ class GradingTests(unittest.TestCase):
                 "new",
                 splits,
                 POLICY,
-                model=models.JEVK5,
+                model=models.H2O,
                 allow_training_data_export=True,
                 workload=workload,
             )
@@ -113,6 +113,20 @@ class GradingTests(unittest.TestCase):
         self.assertEqual(decision["selected_hotkey"], "fast")
         self.assertEqual(decision["exclusions"][0]["reason"], "deadline")
 
+    def test_training_time_limit_defaults_to_six_hours(self):
+        day = job(deadline=(NOW + timedelta(hours=24)).isoformat())  # 1,000 tokens
+        three_hours, eight_hours = worker(rate=10.0), worker(rate=30.0)
+        self.assertEqual(grading.MAX_TRAINING_SECONDS, 21600)
+        self.assertEqual(
+            grading.rank_candidates(day, [three_hours], NOW)["selected_hotkey"], "worker"
+        )
+        for decision in (
+            grading.rank_candidates(day, [eight_hours], NOW),
+            grading.rank_candidates(day, [three_hours], NOW, max_seconds=3600),
+        ):
+            self.assertIsNone(decision["selected_hotkey"])
+            self.assertEqual(decision["exclusions"][0]["reason"], "deadline")
+
     def test_workload_boundaries_and_invalid_lengths(self):
         for length, band in [
             (512, "tokens-512"),
@@ -120,10 +134,57 @@ class GradingTests(unittest.TestCase):
             (1024, "tokens-1024"),
             (1025, "tokens-2048"),
         ]:
-            self.assertEqual(grading.workload_profile([length], model=models.JEVK5)["band"], band)
+            self.assertEqual(grading.workload_profile([length], model=models.H2O)["band"], band)
         for lengths in ([], [0], [2049], [True], [1.5]):
             with self.assertRaises(ValueError):
-                grading.workload_profile(lengths, model=models.JEVK5)
+                grading.workload_profile(lengths, model=models.H2O)
+
+    def test_workload_cap_follows_the_profile(self):
+        self.assertEqual(grading.workload_profile([4096], model=models.D3)["band"], "tokens-4096")
+        with self.assertRaisesRegex(ValueError, "1..4096"):
+            grading.workload_profile([4097], model=models.D3)
+        with self.assertRaisesRegex(ValueError, "1..2048"):
+            grading.workload_profile([4096], model=models.H2O)
+        self.assertNotEqual(
+            grading.trainer_identity(models.D3), grading.trainer_identity(models.H2O)
+        )
+        d3 = grading.workload_profile([4096] * 2, model=models.D3)
+        self.assertEqual(grading.validate_workload(d3, model=models.D3, examples=2), d3)
+        with self.assertRaisesRegex(ValueError, "model mismatch|invalid workload tokens"):
+            grading.validate_workload(d3, model=models.H2O, examples=2)
+
+    def test_contexts_are_keyed_by_model_and_band(self):
+        self.assertEqual(grading.context_key(CONTEXT), f"{models.H2O}/tokens-512")
+        identity = {k: "f" * 64 for k in ("profile_sha256", "runtime_sha256")}
+        d3 = {**CONTEXT, **identity, "model": models.D3, "band": "tokens-4096"}
+        h2o = {**CONTEXT, **identity, "model": models.H2O, "band": "tokens-2048"}
+        self.assertTrue(grading.valid_context(d3))
+        # Stored H2O evidence stays readable; a band above H2O's cap was never produced.
+        self.assertTrue(grading.valid_context(h2o))
+        self.assertFalse(grading.valid_context({**h2o, "band": "tokens-4096"}))
+        self.assertEqual(grading.bands(models.H2O), ("tokens-512", "tokens-1024", "tokens-2048"))
+        self.assertEqual(grading.bands(models.D3)[-1], "tokens-4096")
+        # The same band under another model never grades this context.
+        attempt = {
+            "id": "other-model",
+            "context": {**CONTEXT, "model": models.D3},
+            "outcome": "valid",
+            "finished_at": NOW.isoformat(),
+            "started_at": (NOW - timedelta(seconds=100)).isoformat(),
+            "submitted_at": NOW.isoformat(),
+            "total_tokens": 1000,
+        }
+        self.assertEqual(grading.performance_grade([attempt], CONTEXT, NOW)["successes"], 0)
+        self.assertEqual(
+            grading.qualification_grade(
+                [{**report(1), "context": {**CONTEXT, "model": models.D3}}], CONTEXT, NOW
+            )["quality_runs"],
+            0,
+        )
+        crossed = job(workload=grading.workload_profile([100] * 10, model=models.D3))
+        result = grading.rank_candidates(crossed, [worker()], NOW)
+        self.assertIsNone(result["selected_hotkey"])
+        self.assertEqual(result["exclusions"][0]["reason"], "unverified_workload_or_consent")
 
     def test_grade_requires_three_unique_comparable_recent_reports(self):
         reports = [report(i) for i in range(3)]
@@ -186,12 +247,41 @@ class GradingTests(unittest.TestCase):
                 self.assertEqual(result["exclusions"][0]["reason"], reason)
         result = grading.rank_candidates(job(workload=None), [worker()], NOW)
         self.assertIsNone(result["selected_hotkey"])
-        oversized = job()
-        oversized["workload"] = grading.workload_profile([300] * 100, model=models.JEVK5)
+        # Size beyond the measured probe is the miner's own fit check, not a routing exclusion.
+        larger = job()
+        larger["workload"] = grading.workload_profile([300] * 100, model=models.H2O)
         self.assertEqual(
-            grading.rank_candidates(oversized, [worker()], NOW)["exclusions"][0]["reason"],
-            "capacity",
+            grading.rank_candidates(larger, [worker()], NOW)["selected_hotkey"], "worker"
         )
+        # A job longer than the context's band ceiling is not this context's work.
+        longer = job(workload=grading.workload_profile([1000], model=models.H2O))
+        self.assertEqual(
+            grading.rank_candidates(longer, [worker()], NOW)["exclusions"][0]["reason"],
+            "unverified_workload_or_consent",
+        )
+        refused = {"id": "r", "job_id": "job", "outcome": "does_not_fit", "context": CONTEXT}
+        result = grading.rank_candidates(job(), [worker("a", attempts=[refused]), worker("b")], NOW)
+        self.assertEqual(result["selected_hotkey"], "b")
+        self.assertEqual(result["exclusions"], [{"hotkey": "a", "reason": "does_not_fit"}])
+
+    def test_band_is_a_ceiling_and_the_smallest_covering_context_wins(self):
+        small, large = {**CONTEXT, "band": "tokens-512"}, {**CONTEXT, "band": "tokens-2048"}
+        contexts = {grading.context_key(c): c for c in (large, small)}
+        short = grading.workload_profile([100], model=models.H2O)
+        long = grading.workload_profile([1500], model=models.H2O)
+        self.assertIs(grading.covering_context(contexts, short), small)
+        self.assertIs(grading.covering_context(contexts, long), large)
+        self.assertIsNone(grading.covering_context({"x": small}, long))
+        self.assertIsNone(
+            grading.covering_context(contexts, grading.workload_profile([100], model=models.D3))
+        )
+
+    def test_training_memory_estimate_covers_measured_d3_peaks(self):
+        self.assertGreaterEqual(grading.training_mib(models.D3, 1895), 10538)
+        self.assertGreaterEqual(grading.training_mib(models.D3, 6931), 13036)
+        self.assertLess(grading.training_mib(models.D3, 8192), 24 * 1024)
+        self.assertIsNone(grading.training_mib(models.H2O, 1000))
+        self.assertIsNone(grading.training_mib(models.D3, None))
 
     def test_reliability_and_speed_are_separate_from_customer_acceptance(self):
         attempts = []
@@ -236,7 +326,7 @@ class GradingTests(unittest.TestCase):
 
     def test_oldest_qualification_opportunity_and_no_grade_forgery(self):
         a, b = worker("a", reports=[]), worker("b", reports=[])
-        # Provisional work still needs a verified capacity report (one run is sufficient).
+        # Provisional work still needs one verified report.
         a["reports"] = [report("a")]
         b["reports"] = [report("b")]
         a["last_qualification_at"] = NOW.isoformat()

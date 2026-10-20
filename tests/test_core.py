@@ -1,16 +1,45 @@
 """Offline contract checks. Prediction fixtures are not model benchmarks."""
 
+import contextlib
 import copy
 import importlib.util
+import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+from zils import core, models
 
 
 class LocalSubnetTest(unittest.TestCase):
+    def test_image_cases_pick_the_scorer_from_the_prediction_contract(self):
+        question = {"type": "choice", "criteria": {"normal": None, "damaged": None}}
+        cases = [
+            {"id": "a", "family": "f", "state": {}, "question": question, "label": "normal"},
+            {"id": "b", "family": "f", "state": {}, "question": question, "label": "damaged"},
+        ]
+        images = [{**c, "image": {"asset_id": c["id"]}} for c in cases]
+        plain = [
+            {"id": "a", "probabilities": {"normal": 0.8, "damaged": 0.2}, "elapsed_ms": 1},
+            {"id": "b", "probabilities": {"normal": 0.3, "damaged": 0.7}, "elapsed_ms": 1},
+        ]
+        # d3 answers only the declared outcomes: image cases score exactly like text cases.
+        self.assertEqual(core.score(images, plain), core.score(cases, plain))
+        unknown = [
+            {**row, "probabilities": {**row["probabilities"], "__unknown__": 0.0}} for row in plain
+        ]
+        with patch("zils.image_metrics.score", return_value={"imajev": True}) as imajev:
+            self.assertEqual(core.score(images, unknown), {"imajev": True})
+        imajev.assert_called_once_with(images, unknown)
+        with self.assertRaisesRegex(ValueError, "Mixed image and text"):
+            core.score([images[0], cases[1]], plain)
+
     def test_validator_contract(self):
         self.assertIsNotNone(importlib.util.find_spec("zils"), "local validator is missing")
         import zils
@@ -187,6 +216,95 @@ class LocalSubnetTest(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("cannot start evaluation runtime", result.stderr)
             self.assertFalse(failed_report.exists())
+
+    def evaluate_one(self, model, base_model, unset=()):
+        case = {
+            "id": "one",
+            "family": "policy",
+            "state": "Approved.",
+            "question": {"type": "noul", "instructions": "Is this approved?"},
+            "label": "true",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            checkpoint = root / "checkpoint"
+            checkpoint.mkdir()
+            for name in models.candidate_files(model):
+                (checkpoint / name).write_text("fixture")
+            models.write_metadata(checkpoint, model=model)
+            (root / "cases.jsonl").write_text(json.dumps(case))
+            (root / "manifest.json").write_text(json.dumps([core.submission(checkpoint, 1)]))
+            args = SimpleNamespace(
+                cases=root / "cases.jsonl",
+                submissions=root / "manifest.json",
+                base_revision=models.spec(base_model)["base_revision"],
+                timeout=10,
+                report=root / "report.json",
+                device="cpu",
+                runner_python=sys.executable,
+            )
+            quiet = contextlib.ExitStack()
+            quiet.enter_context(contextlib.redirect_stdout(io.StringIO()))
+            quiet.enter_context(contextlib.redirect_stderr(io.StringIO()))
+            with quiet, patch.dict(os.environ, {"HF_HOME": str(root)}):
+                for variable in unset:
+                    for name in (variable, "FEZ_" + variable.removeprefix("ZILS_")):
+                        os.environ.pop(name, None)
+                core.evaluate(args)
+            return json.loads(args.report.read_text())["miners"][0]
+
+    def test_blend_weights_pays_each_track_its_share(self):
+        base, adapter = {"2": 1.0}, {1: 0.75, 2: 0.25}
+        shares = {"base": 0.7, "adapter": 0.3}
+        both = core.blend_weights({"base": base, "adapter": adapter}, shares)
+        self.assertAlmostEqual(both[1], 0.225)
+        self.assertAlmostEqual(both[2], 0.775)
+        self.assertAlmostEqual(sum(both.values()), 1.0)
+        # An empty track pays nothing, so the other track takes the whole vector.
+        self.assertEqual(core.blend_weights({"base": {}, "adapter": adapter}, shares), adapter)
+        self.assertEqual(core.blend_weights({"base": base, "adapter": {}}, shares), {2: 1.0})
+        self.assertEqual(core.blend_weights({"base": {}, "adapter": {}}, shares), {})
+        # With a burn uid an empty track's share is burned, never redistributed (Teutonic).
+        for tracks, wanted in (
+            ({"base": {}, "adapter": adapter}, {0: 0.7, 1: 0.225, 2: 0.075}),
+            ({"base": base, "adapter": {}}, {0: 0.3, 2: 0.7}),
+            ({"base": {}, "adapter": {}}, {0: 1.0}),
+            ({"base": base, "adapter": adapter}, both),
+        ):
+            burned = core.blend_weights(tracks, shares, burn_uid=0)
+            self.assertEqual(set(burned), set(wanted))
+            for uid, weight in wanted.items():
+                self.assertAlmostEqual(burned[uid], weight)
+        # Per-track normalization first: raw skills in one track do not dilute the other.
+        skewed = core.blend_weights({"base": {2: 0.1}, "adapter": {1: 0.9}}, shares)
+        self.assertAlmostEqual(skewed[2], 0.7)
+        for bad in (
+            {"base": 0.7},
+            {"base": 0.7, "adapter": 0.4},
+            {"base": 1.2, "adapter": -0.2},
+            {"base": float("nan"), "adapter": 1.0},
+        ):
+            with self.assertRaises(ValueError):
+                core.blend_weights({"base": base, "adapter": adapter}, bad)
+        with self.assertRaises(ValueError):
+            core.blend_weights({"base": {"x": 1.0}, "adapter": {}}, shares)
+
+    def test_profile_interpreter_is_required_for_evaluation(self):
+        for model, variable in (
+            (models.D3, "ZILS_D3_RUNTIME_PYTHON"),
+            (models.H2O, "ZILS_H2O_RUNTIME_PYTHON"),
+        ):
+            with self.subTest(model=model):
+                row = self.evaluate_one(model, model, unset=(variable,))
+                self.assertEqual(row["status"], "rejected")
+                self.assertIn(variable, row["error"])
+
+    def test_checkpoint_under_another_profile_revision_is_rejected(self):
+        for model, base_model in ((models.D3, models.H2O), (models.H2O, models.D3)):
+            with self.subTest(checkpoint=model, revision=base_model):
+                row = self.evaluate_one(model, base_model)
+                self.assertEqual(row["status"], "rejected")
+                self.assertIn("checkpoint belongs to a different model", row["error"])
 
 
 if __name__ == "__main__":

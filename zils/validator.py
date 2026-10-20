@@ -1,19 +1,85 @@
 """Collect checkpoints, calibrate and score them, and optionally publish testnet weights."""
 
+import collections
 import http.client
 import json
+import os
 import re
 import shutil
 import sys
 import threading
 import time
 import uuid
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import zils
 
 from . import models, protocol as wire, settings
 from .runtime import CapacityUnavailable, digest, locked, run_child, signed, signing_key, verified
+
+# The incumbent base is scored as a row outside every roster; the publisher refuses a roster uid there.
+INCUMBENT_UID = 65535
+
+
+def run_evaluate(
+    args,
+    attempt,
+    name,
+    submissions,
+    cases,
+    *,
+    base_revision,
+    model,
+    images=None,
+    minimum_mib=0,
+    wait_for_capacity=False,
+):
+    """One sandboxed `zils evaluate` of `submissions` on `cases`, deferred while GPU capacity is unavailable."""
+    manifest = attempt / f"{name}-submissions.json"
+    wire.write_json(manifest, submissions)
+    report = attempt / f"{name}.json"
+    command = [
+        sys.executable,
+        "-m",
+        "zils",
+        "evaluate",
+        "--submissions",
+        str(manifest),
+        "--cases",
+        str(cases),
+        "--base-revision",
+        base_revision,
+        "--runner-python",
+        settings.required("ZILS_IMAGE_RUNTIME_PYTHON")
+        if model == models.IMAJEV
+        else args.runtime_python,
+        "--device",
+        args.device,
+        "--report",
+        str(report),
+    ]
+    if images is not None:
+        command.extend(["--images", str(images)])
+    waiting = False
+    while True:
+        try:
+            run_child(
+                command,
+                attempt / f"{name}.log",
+                args.device,
+                timeout=120 + 600 * len(submissions),
+                **({"model": model, "minimum_mib": minimum_mib} if model == models.IMAJEV else {}),
+            )
+            break
+        except CapacityUnavailable:
+            if not wait_for_capacity:
+                raise
+            if not waiting:
+                print("validator: waiting for evaluation capacity", flush=True)
+                waiting = True
+            time.sleep(max(1, args.poll))
+    return json.loads(report.read_text())
 
 
 def evaluate_round(
@@ -29,6 +95,7 @@ def evaluate_round(
     benchmark.audit(data)
     manifest = json.loads((data / "manifest.json").read_text())
     model = models.validate_spec(manifest["model"]) if "model" in manifest else models.KEV
+    frozen_images = model == models.IMAJEV or "assets" in manifest  # verified <sha256>.png cache
     if config["base_revision"] != models.spec(model)["base_revision"]:
         raise ValueError("Evaluation configuration differs from the frozen model profile")
     if config.get("job_sha256") != (
@@ -45,6 +112,8 @@ def evaluate_round(
             options = {"expected_endpoint": claim["endpoint"], "round_scoped": True}
             if fetch_checkpoint is None:
                 options["model"] = model
+                if admission_settings(config)[1]:
+                    options["public"] = True
             (fetch_checkpoint or wire.fetch_checkpoint)(claim, path, **options)
             if models.checkpoint_model(path) != model:
                 raise ValueError("Submission differs from the job model profile")
@@ -52,57 +121,22 @@ def evaluate_round(
         except (ValueError, OSError, http.client.HTTPException) as error:
             failed[uid] = str(error)
 
-    def evaluate(submissions, cases, name):
-        manifest = attempt / f"{name}-submissions.json"
-        wire.write_json(manifest, submissions)
-        report = attempt / f"{name}.json"
-        command = [
-            sys.executable,
-            "-m",
-            "zils",
-            "evaluate",
-            "--submissions",
-            str(manifest),
-            "--cases",
-            str(cases),
-            "--base-revision",
-            config["base_revision"],
-            "--runner-python",
-            settings.required("ZILS_IMAGE_RUNTIME_PYTHON")
-            if model == models.IMAJEV
-            else args.runtime_python,
-            "--device",
-            args.device,
-            "--report",
-            str(report),
-        ]
-        if model == models.IMAJEV:
-            command.extend(["--images", str(directory / "images")])
-        waiting = False
-        while True:
-            try:
-                run_child(
-                    command,
-                    attempt / f"{name}.log",
-                    args.device,
-                    timeout=120 + 600 * len(submissions),
-                    **(
-                        {"model": model, "minimum_mib": config.get("min_free_mib", 0)}
-                        if model == models.IMAJEV
-                        else {}
-                    ),
-                )
-                break
-            except CapacityUnavailable:
-                if not wait_for_capacity:
-                    raise
-                if not waiting:
-                    print("validator: waiting for evaluation capacity", flush=True)
-                    waiting = True
-                time.sleep(max(1, args.poll))
-        return json.loads(report.read_text())
+    def evaluate(submissions, cases, name, base_revision=None):
+        return run_evaluate(
+            args,
+            attempt,
+            name,
+            submissions,
+            cases,
+            base_revision=base_revision or config["base_revision"],
+            model=model,
+            images=directory / "images" if frozen_images else None,
+            minimum_mib=config.get("min_free_mib", 0),
+            wait_for_capacity=wait_for_capacity,
+        )
 
     baseline = None
+    baseline_model = model
     selection = manifest.get("selection")
     previous = selection["previous"] if selection else None
     if "job_id" in config:
@@ -116,6 +150,10 @@ def evaluate_round(
         if previous:
             # Score the exact version the customer can call, including its serving temperature.
             fitted_baseline = source
+            # An upgrade may change base: the frozen release runs on the base it was trained on.
+            baseline_model = models.checkpoint_model(source)
+            if baseline_model != model and selection.get("base_change") is not True:
+                raise ValueError("cross-profile upgrade requires base_change")
         else:
             raw = attempt / "baseline-raw"
             zils.stage(entry, raw)
@@ -128,12 +166,18 @@ def evaluate_round(
             fitted_baseline = attempt / "baseline-calibrated"
             calibrate.fit(data, calibration, 0, raw, fitted_baseline)
         baseline_report = evaluate(
-            [zils.submission(fitted_baseline, 0)], data / "test.jsonl", "baseline-test"
+            [zils.submission(fitted_baseline, 0)],
+            data / "test.jsonl",
+            "baseline-test",
+            base_revision=models.spec(baseline_model)["base_revision"],
         )
         jobs.verify_report(data, baseline_report, "test")
         baseline = baseline_report["miners"][0]
         if baseline["status"] != "evaluated":
-            raise RuntimeError("baseline evaluation failed; no customer model can be accepted")
+            raise RuntimeError(
+                "baseline evaluation failed; no customer model can be accepted: "
+                + baseline.get("error", "no error recorded")
+            )
 
     fitted = []
     if entries:
@@ -219,6 +263,7 @@ def evaluate_round(
             job_sha256=config["job_sha256"],
             benchmark_use="customer-held-out-reused-across-rounds",
             baseline=baseline,
+            baseline_model=baseline_model,
             delivery=delivery,
         )
         if selection:
@@ -233,11 +278,261 @@ def evaluate_round(
     return report
 
 
+def attach_base_tier(config, directory, work, report):
+    """Embed the epoch's base-tier decision, frozen with the round the first time it is published."""
+    if "base_tier" not in config:
+        return report
+    frozen = work / "base-tier.json"
+    if not frozen.exists():
+        current = directory / "base-tier" / "decision.json"
+        wire.write_json(frozen, json.loads(current.read_text()) if current.exists() else None)
+    return {**report, "base_tier": json.loads(frozen.read_text())}
+
+
+def attach_adapter_evidence(config, work, report, now=None):
+    """Embed the platform's signed queue evidence, frozen with the round the first time it is published.
+
+    A failed fetch raises, so the pending round retries after a restart instead of burning the share.
+    """
+    if "adapter_evidence" not in config:
+        return report
+    frozen = work / "adapter-evidence.json"
+    if not frozen.exists():
+        from . import queue_evidence
+
+        track = queue_evidence.validate_track(config["adapter_evidence"])
+        until = queue_evidence.window_end(now)
+        wire.write_json(frozen, queue_evidence.fetch(track, until))
+    return {**report, "adapter_evidence": json.loads(frozen.read_text())}
+
+
+def base_draws(config, directory):
+    """The sealed draws this validator scores itself, audited now and ordered as the track lists them
+    (the first decides, the last confirms). None when the config has no `base_round_dir`."""
+    if "base_round_dir" not in config:
+        return None
+    from . import base_round
+
+    if "base_tier" not in config or "base_reference" not in config:
+        raise ValueError("base_round_dir requires a base_tier track and base_reference")
+    if "chain" not in config:
+        raise ValueError("the base-tier intake reads candidates from chain commitments; add chain")
+    track = base_round.validate_track(config["base_tier"])
+    model = models.validate_spec(config["model"]) if "model" in config else models.KEV
+    if model not in models.d3_family():
+        raise ValueError("the base-tier intake scores d3-family candidates only")
+    found = {}
+    root = Path(directory) / config["base_round_dir"]
+    for path in sorted(p for p in root.iterdir() if (p / "manifest.json").is_file()):
+        found[frozenset(base_round.draw(path).items())] = path
+    draws = []
+    for item in track["draws"]:
+        if frozenset(item.items()) not in found:
+            raise ValueError(f"base_round_dir has no sealed draw {item['manifest_sha256'][:12]}")
+        draws.append((item, found[frozenset(item.items())]))
+    reference = Path(directory) / config["base_reference"]
+    if (
+        models.checkpoint_model(reference) != model
+        or zils.checkpoint_hash(reference) != track["incumbent_sha256"]
+    ):
+        raise ValueError("base_reference is not the track's incumbent checkpoint")
+    return draws
+
+
+def base_tier_epoch(
+    config,
+    directory,
+    work,
+    registry,
+    args,
+    draws,
+    *,
+    wait_for_capacity=False,
+):
+    """Score this round's base candidates on the sealed draws and write the decision sidecar.
+
+    `registry` is `commitments.candidates` of the round's chain snapshot. Every distinct checkpoint
+    hash is downloaded once from its Hugging Face revision into a content-addressed store and scored
+    once per draw and split; a hash committed again in a later round costs no download and no GPU time
+    (the cross-round cap). The decision covers the candidates committed at this round's preflight
+    block. The old sidecar is removed first, so an epoch that fails pays nobody. Per-case predictions
+    stay in the store."""
+    from . import base_round, commitments
+
+    track = base_round.validate_track(config["base_tier"])
+    model = models.validate_spec(config["model"])
+    validate_candidate = models.text_runtime(model).validate_candidate
+    store = Path(directory) / "base-tier" / "store"
+    sidecar = Path(directory) / "base-tier" / "decision.json"
+    sidecar.unlink(missing_ok=True)
+    store.mkdir(mode=0o700, parents=True, exist_ok=True)
+    attempt = work / ("base-tier-" + uuid.uuid4().hex)
+    attempt.mkdir(mode=0o700)
+    reference = (Path(directory) / config["base_reference"]).resolve()
+    entries = {INCUMBENT_UID: (track["incumbent_sha256"], reference)}
+    rejected = {}
+    for uid, claim in sorted(registry.items()):
+        if "error" in claim:
+            rejected[uid] = claim["error"][:400]
+            continue
+        target = store / claim["sha256"] / "checkpoint"
+        if not target.exists():
+            fetched = target.with_name("fetch-" + uuid.uuid4().hex)
+            fetched.parent.mkdir(mode=0o700, exist_ok=True)
+            try:
+                commitments.fetch(claim, fetched, model=model)
+                validate_candidate(fetched, model)
+                fetched.rename(target)
+            except (ValueError, OSError, http.client.HTTPException) as error:
+                shutil.rmtree(fetched, ignore_errors=True)
+                rejected[uid] = str(error)[:400]
+                continue
+        entries[uid] = (claim["sha256"], target)
+    decisions = []
+    for item, path in draws:
+        _, cases = base_round.audit(path)
+        key = item["manifest_sha256"]
+
+        def scores(sha256, split):
+            return store / sha256 / f"{key}-{split}.json"
+
+        for split in base_round.SPLITS:
+            pending = [
+                {"uid": uid, "checkpoint": str(checkpoint), "sha256": sha256}
+                for uid, (sha256, checkpoint) in sorted(entries.items())
+                if not scores(sha256, split).exists()
+            ]
+            if not pending:
+                continue
+            report = run_evaluate(
+                args,
+                attempt,
+                f"{key[:12]}-{split}",
+                pending,
+                path / f"{split}.jsonl",
+                base_revision=models.spec(model)["base_revision"],
+                model=model,
+                wait_for_capacity=wait_for_capacity,
+            )
+            for row in report["miners"]:
+                if row["uid"] == INCUMBENT_UID and row["status"] != "evaluated":
+                    raise RuntimeError(
+                        "incumbent evaluation failed; no base candidate can be scored: "
+                        + row.get("error", "no error recorded")
+                    )
+                target = scores(entries[row["uid"]][0], split)
+                target.parent.mkdir(mode=0o700, exist_ok=True)
+                wire.write_json(
+                    target, {"dataset_sha256": report["dataset_sha256"], "miners": [row]}
+                )
+        rows = {}
+        for split in base_round.SPLITS:
+            rows[split] = {}
+            for uid, (sha256, _) in entries.items():
+                stored = json.loads(scores(sha256, split).read_text())
+                for row in base_round.rows_for(stored, cases[split]).values():
+                    rows[split][uid] = {**row, "uid": uid}
+                if uid not in rows[split]:
+                    rejected[uid] = stored["miners"][0].get("error", "evaluation failed")[:400]
+        decision = base_round.decide(
+            cases, INCUMBENT_UID, rows["calibration"], rows["test"], track["policy"]
+        )
+        decision.update(
+            manifest_sha256=key,
+            round_id=work.name,
+            rejected={str(uid): error for uid, error in sorted(rejected.items())},
+        )
+        decisions.append(decision)
+    if len(decisions) > 1:
+        decisions[-1]["confirmed_winner"] = base_round.confirm(decisions[0], decisions[-1])
+    for decision in decisions:
+        wire.write_json(attempt / f"decision-{decision['manifest_sha256'][:12]}.json", decision)
+    wire.write_json(attempt / "decision.json", decisions[-1])
+    os.replace(attempt / "decision.json", sidecar)
+    return decisions[-1]
+
+
+def accept(config, current, members, registry, rounds, message, source, public_endpoints):
+    """Register one signed adapter announcement in the collecting round. Base candidates are not
+    announced here: they are chain commitments read at the round's preflight block."""
+    if current.get("status") != "collecting":
+        return 409, {"error": "round is not collecting"}
+    claim = message.get("claim")
+    if not isinstance(claim, dict):
+        raise ValueError("claim must be an object")
+    uid = claim.get("uid")
+    if type(uid) is not int or uid not in members:
+        raise ValueError("unknown miner")
+    if claim.get("round_id") != current["round_id"]:
+        return 409, {"error": "round has changed; request the current round"}
+    # Pin downloads to the authenticated caller's TCP source address. The artifact port
+    # is the operator-assigned one for static members, or the signed claim's for public miners.
+    port = (
+        wire.endpoint_port(claim.get("endpoint"))[1]
+        if public_endpoints
+        else config["members"][str(uid)]["port"]
+    )
+    updated = dict(registry)
+    wire.register(
+        message,
+        current["round_id"],
+        members,
+        updated,
+        endpoints={uid: f"http://{source}:{port}"},
+        job_sha256=config.get("job_sha256"),
+        public=public_endpoints,
+    )
+    path = rounds / current["round_id"] / "submissions" / f"{uid}.json"
+    path.parent.mkdir(mode=0o700, exist_ok=True)
+    if not path.exists():
+        wire.write_json(path, message)
+    registry.clear()
+    registry.update(updated)
+    return 200, {"status": "accepted", "round_id": current["round_id"]}
+
+
+def round_config(config, admission, members):
+    """The roster every scorer and publisher reads: the static one, or this round's chain snapshot."""
+    if admission != "chain":
+        return config
+    return {**config, "members": {str(uid): {"hotkey": hotkey} for uid, hotkey in members.items()}}
+
+
+def admission_settings(config):
+    """Static member allowlist with private transport, or chain-derived members with public endpoints."""
+    mode = config.get("admission", "members")
+    public = bool(config.get("public_endpoints"))
+    if mode not in ("members", "chain"):
+        raise ValueError("admission must be 'members' or 'chain'")
+    if mode == "chain" and ("chain" not in config or not public):
+        raise ValueError("chain admission requires a testnet configuration and public_endpoints")
+    if mode == "members" and public and any("port" not in m for m in config["members"].values()):
+        raise ValueError("members need artifact ports")
+    return mode, public
+
+
 def validator(config, directory, args):
     key = signing_key(config)
-    members = {int(uid): item["hotkey"] for uid, item in config["members"].items()}
+    admission, public_endpoints = admission_settings(config)
+    members = (
+        {int(uid): item["hotkey"] for uid, item in config["members"].items()}
+        if admission == "members"
+        else {}
+    )
     condition = threading.Condition()
     current, registry, acks = {}, {}, set()
+    draws = base_draws(config, directory)
+    recent = collections.defaultdict(collections.deque)
+
+    def throttled(address):
+        now, queue = time.time(), recent[address]
+        while queue and now - queue[0] > 60:
+            queue.popleft()
+        if len(queue) >= wire.SUBMITS_PER_MINUTE:
+            return True
+        queue.append(now)
+        return False
+
     rounds = directory / "state/rounds"
     rounds.mkdir(mode=0o700, parents=True, exist_ok=True)
 
@@ -268,39 +563,22 @@ def validator(config, directory, args):
                     raise ValueError("message must be an object")
                 with condition:
                     if self.path == "/submit":
-                        if current.get("status") != "collecting":
-                            self.send(409, {"error": "round is not collecting"})
+                        if public_endpoints and throttled(self.client_address[0]):
+                            self.send(429, {"error": "too many submissions from this address"})
                             return
-                        claim = message.get("claim")
-                        if not isinstance(claim, dict):
-                            raise ValueError("claim must be an object")
-                        uid = claim.get("uid")
-                        if type(uid) is not int or uid not in members:
-                            raise ValueError("unknown miner")
-                        if claim.get("round_id") != current["round_id"]:
-                            self.send(
-                                409, {"error": "round has changed; request the current round"}
-                            )
-                            return
-                        # Pin downloads to the authenticated caller's TCP source address and assigned artifact port.
-                        endpoint = (
-                            f"http://{self.client_address[0]}:{config['members'][str(uid)]['port']}"
-                        )
-                        updated = dict(registry)
-                        wire.register(
-                            message,
-                            current["round_id"],
+                        code, payload = accept(
+                            config,
+                            current,
                             members,
-                            updated,
-                            endpoints={uid: endpoint},
-                            job_sha256=config.get("job_sha256"),
+                            registry,
+                            rounds,
+                            message,
+                            self.client_address[0],
+                            public_endpoints,
                         )
-                        path = rounds / current["round_id"] / "submissions" / f"{uid}.json"
-                        if not path.exists():
-                            wire.write_json(path, message)
-                        registry.clear()
-                        registry.update(updated)
-                        self.send(200, {"status": "accepted", "round_id": current["round_id"]})
+                        self.send(code, payload)
+                        if code != 200:
+                            return
                     elif self.path == "/ack":
                         if not isinstance(message.get("payload"), dict):
                             raise ValueError("payload must be an object")
@@ -369,6 +647,11 @@ def validator(config, directory, args):
                 for name in ("model", "min_free_mib", "max_seconds"):
                     if name in config:
                         job[name] = config[name]
+                if draws is not None:
+                    job["base_tier"] = {
+                        "incumbent_sha256": config["base_tier"]["incumbent_sha256"],
+                        "draws": [item for item, _ in draws],
+                    }
                 wire.write_json(work / "job.json", job)
             for name in (
                 "base_revision",
@@ -384,6 +667,15 @@ def validator(config, directory, args):
                     raise ValueError("pending round differs from the installed job configuration")
             if chain_state is not None and not (work / "chain-snapshot.json").exists():
                 wire.write_json(work / "chain-snapshot.json", chain_state)
+            if admission == "chain":
+                # Membership is the chain snapshot frozen with this round, never a live lookup mid-round.
+                snapshot = json.loads((work / "chain-snapshot.json").read_text())
+                with condition:
+                    members.clear()
+                    members.update(
+                        {int(uid): hotkey for uid, hotkey in snapshot["members"].items()}
+                    )
+            settings_for_round = round_config(config, admission, members)
             with condition:
                 registry.clear()
                 acks.clear()
@@ -399,19 +691,43 @@ def validator(config, directory, args):
                         registry,
                         endpoints={c["uid"]: c["endpoint"]},
                         job_sha256=config.get("job_sha256"),
+                        public=public_endpoints,
                     )
                 while len(registry) < len(members) and time.time() < job["deadline"]:
                     condition.wait(min(1, max(0.01, job["deadline"] - time.time())))
                 current["status"] = "evaluating"
+            candidates = {}
+            if draws is not None:
+                from . import commitments
+
+                candidates = commitments.candidates(
+                    json.loads((work / "chain-snapshot.json").read_text()),
+                    config["base_tier"]["incumbent_sha256"],
+                )
             print(
-                f"validator: evaluating round {job['round_id']} ({len(registry)}/{len(members)} submissions)",
+                f"validator: evaluating round {job['round_id']} ({len(registry)}/{len(members)} "
+                f"submissions, {len(candidates)} base commitments)",
                 flush=True,
             )
             report = (
                 json.loads((work / "report.json").read_text())
                 if (work / "report.json").exists()
-                else evaluate_round(config, directory, work, registry, args, wait_for_capacity=True)
+                else evaluate_round(
+                    settings_for_round, directory, work, registry, args, wait_for_capacity=True
+                )
             )
+            if draws is not None and not (work / "base-tier.json").exists():
+                base_tier_epoch(
+                    settings_for_round,
+                    directory,
+                    work,
+                    candidates,
+                    args,
+                    draws,
+                    wait_for_capacity=True,
+                )
+            report = attach_base_tier(settings_for_round, directory, work, report)
+            report = attach_adapter_evidence(settings_for_round, work, report)
             fields = (
                 "uid",
                 "status",
@@ -430,12 +746,15 @@ def validator(config, directory, args):
                 "miners": [{k: m[k] for k in fields if k in m} for m in report["miners"]],
                 "chain_write": False,
             }
+            if report.get("base_tier") is not None:
+                # Aggregate base-tier metrics for miners; per-case predictions never leave the store.
+                public["base_tier"] = report["base_tier"]
             if chain_state is not None:
                 from bittensor.wallet import Wallet
 
                 with locked(work / "chain.lock"), testnet.connect(config) as sub:
                     outcome = testnet.publish_round(
-                        config,
+                        settings_for_round,
                         work,
                         report,
                         sub,
@@ -443,6 +762,9 @@ def validator(config, directory, args):
                         publish=args.publish_weights,
                     )
                 public.update(chain=outcome, chain_write=outcome["chain_write"])
+                if "tracks" in outcome or "adapter_source" in outcome:
+                    # Miners see the published vector, not the frozen-job round alone.
+                    public["weights"] = outcome["requested_weights"]
                 print(f"validator: testnet weights {outcome['status']}", flush=True)
             wire.write_json(work / "result.json", signed(public, key))
             with condition:

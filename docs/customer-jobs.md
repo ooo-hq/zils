@@ -8,17 +8,29 @@ local workflow, not a hosted customer service or a published model release.
 This page describes the local bundle workflow, where one fleet configuration
 pins one job. For a shared pool that claims different customer jobs without
 regenerating bundles, use the [Supabase training queue](https://github.com/ooo-hq/zils-platform/blob/main/docs/supabase-training.md).
-It adds private uploads and approved-miner assignments; cross-job chain rewards
-remain unimplemented. The existing synthetic fleet remains supported.
+It adds private uploads and approved-miner assignments. A testnet validator can
+pay the adapter track from that queue's delivered customer jobs
+(`adapter_evidence`, merged and off by default; see
+[validators §7](validators.md#7-pay-the-adapter-track-from-hosted-queue-work)). The existing synthetic fleet remains supported.
 
 ## Prepare data
 
-Complete the Python 3.13 [H2O setup](queue-miners.md#2-install-and-verify-the-reference),
-including creation of `models/h2o-reference` on a qualified host. Work from the
-repository root; the setup guide identifies supported CUDA and Apple MPS hardware.
+Complete the Python 3.13 [d3 setup](queue-miners.md#2-install-and-verify-the-reference),
+including creation of `models/d3-reference` on a qualified host. Work from the
+repository root; the setup guide identifies supported CUDA hardware.
 Use only data authorized for training and for export to the configured miners.
 The export flag records an operator decision; it does not provide encryption,
 confidential compute, legal authorization, or isolation from miner operators.
+
+**Outside miners (policy decided 18 October 2026, not yet in effect).** Zils is
+a Bittensor subnet. The [miner terms](mining-terms.md) were published on
+18 October 2026; once queue admission [opens](miner-admission.md) (built, off), a job's training split goes to the miner
+pool: any hotkey registered on subnet 579 and qualified for the base, whether or
+not Zils runs it. There is no per-job opt-out; authorizing training-data export
+when creating the job is the customer's consent, and the terms bind every miner
+in the pool to that one job: no retention, no redistribution, no training other
+models on it, deletion on completion. Calibration and test splits never leave
+the processor. Until admission opens, every miner in the pool is run by Zils.
 
 Create three JSONL files under ignored `.private/` storage: `train.jsonl`,
 `calibration.jsonl`, and `test.jsonl`. Each line uses the existing decision-case
@@ -37,6 +49,13 @@ and a representative split. The exporter sends only training states, questions,
 and labels to miners. Calibration/test cases and acceptance policy stay with
 the validator; miners receive the job ID and manifest hash.
 
+Training cases may add optional `target_probabilities`, one probability per
+option summing to one (for example annotator vote shares,
+`{"billing":0.8,"technical":0.2}`). Miners then train against that distribution
+instead of the single `label`. `label` stays required: calibration and test are
+always scored against it, so soft targets are refused outside the training split
+and on image cases.
+
 For a reproducible plumbing example, generate synthetic inputs first. These are
 not customer data and cannot establish customer-task quality:
 
@@ -48,7 +67,7 @@ not customer data and cannot establish customer-task quality:
   --calibration .private/job-example-input/calibration.jsonl \
   --test .private/job-example-input/test.jsonl \
   --min-accuracy 0.80 --min-brier-improvement 0.01 \
-  --model h2o-lightning-4b-v1.2.3 \
+  --model d3-mini-4.5b-v1 \
   --allow-training-data-export --out .private/jobs/example-decisions-v1
 ```
 
@@ -63,7 +82,7 @@ output directories and a new job version when changing inputs or thresholds.
 ```bash
 .venv-kev/bin/python -m zils.fleet init \
   --benchmark .private/jobs/example-decisions-v1 \
-  --checkpoint models/h2o-reference --host 127.0.0.1 \
+  --checkpoint models/d3-reference --host 127.0.0.1 \
   --out .private/fleet-example-decisions-v1
 .venv-kev/bin/python -m zils.fleet validator \
   --config .private/fleet-example-decisions-v1/validator/config.json --rounds 1
@@ -73,7 +92,8 @@ In separate terminals, start each miner as in the [fleet setup](../README.md#min
 
 ```bash
 ZILS_PYTHON="$PWD/.venv-kev/bin/python" HF_HOME="$PWD/.cache/huggingface" \
-  .private/fleet-example-decisions-v1/miner-1/start-miner --rounds 1
+  ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python" \
+  .private/fleet-example-decisions-v1/miner-1/start-miner --device cuda --rounds 1
 ```
 
 Repeat for `miner-2` and `miner-3`. Each bundle contains the job's training data;
@@ -115,6 +135,7 @@ no model meets the delivery criteria. Scores from different customer jobs must
 not be pooled as if they measured the same task. Repeated rounds reuse test data;
 acceptance is a measured threshold on that set, not a guarantee of generalization
 or statistical significance. Reserve independent final evaluation data for real
-deployment decisions. The separate [Zils decision API](https://github.com/ooo-hq/zils-platform/blob/main/docs/decision-api.md) serves approved shared JevK5
-weights in a local pilot. Deployment of these training artifacts, automated release
-approval/rollback, billing, and cross-job reward allocation remain future work.
+deployment decisions. The separate [Zils decision API](https://github.com/ooo-hq/zils-platform/blob/main/docs/decision-api.md) serves approved
+shared weights through the hosted service. Deployment of these local training artifacts and automated release
+approval/rollback remain future work; the hosted queue's cross-job adapter
+payment is the opt-in `adapter_evidence` track above.

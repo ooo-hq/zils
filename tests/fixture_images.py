@@ -20,13 +20,17 @@ POLICY = {
 }
 
 
-def fixture():
+TEXT_POLICY = {"min_accuracy": 0.8, "min_brier_improvement": 0.01}
+
+
+def fixture(model=models.IMAJEV):
+    """An Imajev job carries image targets; a d3 job freezes the same photos under the text policy."""
     job = {
         "id": JOB,
         "owner_id": OWNER,
         "status": "uploading",
-        "model_profile": models.spec(models.IMAJEV),
-        "acceptance": POLICY,
+        "model_profile": models.spec(model),
+        "acceptance": POLICY if model == models.IMAJEV else TEXT_POLICY,
     }
     splits, assets = {}, {}
     for split in ("train", "calibration", "test"):
@@ -45,7 +49,7 @@ def fixture():
                 "canonical_bytes": 100,
                 "width": 8,
                 "height": 8,
-                "preprocessor": models.spec(models.IMAJEV)["preprocessor"],
+                "preprocessor": "zils-image-rgb-png/v1",
                 "expires_at": "2099-01-01T00:00:00Z",
                 "filename": "secret-" + label + ".png",
                 "canonical_path": "private/path",

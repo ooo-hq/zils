@@ -18,7 +18,7 @@ from miner.worker import miner
 
 from . import ROOT, models, protocol as wire
 from .runtime import digest, locked, prepare_base, signing_key
-from .validator import validator
+from .validator import base_draws, validator
 
 
 def initialize(
@@ -281,13 +281,31 @@ def main(argv=None):
             raise ValueError("Fleet configuration differs from its pinned model profile")
         if getattr(args, "publish_weights", False) and "chain" not in config:
             raise ValueError("--publish-weights requires a testnet fleet config")
+        if "base_tier" in config:
+            from . import base_round
+
+            if "chain" not in config:
+                raise ValueError("a base-tier track requires a testnet fleet config")
+            base_round.validate_track(config["base_tier"])
+        if "adapter_evidence" in config:
+            from . import queue_evidence
+
+            if "chain" not in config:
+                raise ValueError("queue adapter evidence requires a testnet fleet config")
+            queue_evidence.validate_track(config["adapter_evidence"])
+        base_draws(config, directory)
         signing_key(config)
         if "chain" in config:
             from . import testnet
 
             with testnet.connect(config) as sub:
                 testnet.preflight(config, sub)
-        wire.endpoint_ok(config["validator"], allowed=[config["validator"]])
+        # A public validator listens on its global address; miners that announce to one set the same flag.
+        wire.endpoint_ok(
+            config["validator"],
+            allowed=[config["validator"]],
+            public=bool(config.get("public_endpoints")),
+        )
         args.runtime_python = str(Path(args.runtime_python).absolute())
         state = directory / "state"
         state.mkdir(mode=0o700, exist_ok=True)

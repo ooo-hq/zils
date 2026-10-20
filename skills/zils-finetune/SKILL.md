@@ -5,8 +5,8 @@ description: Fine-tune a Zils decision-model candidate on a user's labelled data
 
 # Fine-tune a Zils decision model
 
-This skill covers the legacy Kev own-data workflow. For the current JevK5 hosted
-base, follow the [JevK5 queue guide](../../docs/jevk5-queue.md) and
+This skill covers the legacy Kev own-data workflow. For the current hosted
+queue, follow the [queue miner guide](../../docs/queue-miners.md) and
 [automatic workflow](../../docs/automatic-training.md).
 
 Produce an experimental Zils candidate, calibrated probabilities, and a measured

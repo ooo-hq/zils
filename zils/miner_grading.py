@@ -22,9 +22,11 @@ CONTEXT_KEYS = frozenset(
     )
 )
 WINDOW = timedelta(days=30)
+MAX_TRAINING_SECONDS = 6 * 3600  # default per-job training limit; routing policy may override
 FAILURES = {"invalid_artifact", "worker_failure", "abandoned"}
 NEUTRAL = {
     "capacity_deferred",
+    "does_not_fit",
     "validator_error",
     "infrastructure_error",
     "cancelled",
@@ -55,27 +57,81 @@ def finite(value, minimum=0, maximum=math.inf):
     return type(value) in (int, float) and math.isfinite(value) and minimum <= value <= maximum
 
 
-def trainer_identity(model=models.JEVK5):
+TRAINER_FILES = {
+    models.H2O: ("zils/h2o.py", "zils/jevk5.py", "zils/h2o-pins.json", "requirements/h2o.txt"),
+    **{
+        m: ("zils/d3.py", "zils/jevk5.py", "zils/" + models.PINS_FILES[m], "requirements/d3.txt")
+        for m in models.d3_family()
+    },
+}
+# Tuned bands; a profile's input cap decides which of them it can reach.
+BANDS = (512, 1024, 2048, 4096)
+
+
+def trainer_identity(model):
     root = Path(__file__).resolve().parents[1]
     return digest(
         {
             name: hashlib.sha256((root / name).read_bytes()).hexdigest()
-            for name in (
-                ("zils/h2o.py", "zils/jevk5.py", "zils/h2o-pins.json", "requirements/h2o.txt")
-                if model == models.H2O
-                else ("zils/jevk5.py", "requirements/model.txt", "requirements/jevk5-source.txt")
-            )
+            for name in TRAINER_FILES[model]
         }
     )
 
 
+def input_cap(model):
+    return models.spec(model).get("max_input_tokens", 2048)
+
+
+def bands(model):
+    return tuple(f"tokens-{n}" for n in BANDS if n <= input_cap(model))
+
+
+# Training memory of the shared trainer (MiB) at a job's longest example, for the miner's own fit
+# check. d3: 10,538 MiB measured at ~1.9k tokens (hosted trainer), 13,036 MiB reserved at 6,931
+# tokens (Claims run, RTX 4090). ponytail: linear fit over two points; refit when a probe at 8k runs.
+TRAINING_MIB = {".d3": (9500, 0.6)}
+
+
+def training_mib(model, max_tokens):
+    """Estimated peak training memory, or None when the profile has no measured curve."""
+    fit = TRAINING_MIB.get(models.TEXT_RUNTIME_MODULES.get(model))
+    if fit is None or type(max_tokens) is not int or max_tokens < 1:
+        return None
+    return math.ceil(fit[0] + fit[1] * max_tokens)
+
+
+def band_tokens(band):
+    return int(band.removeprefix("tokens-"))
+
+
+def covering_context(contexts, workload):
+    """A context's band is a ceiling: it serves every job of its model up to that many tokens.
+    Memory is each miner's own fit check, so the smallest covering context wins."""
+    fits = [
+        c
+        for c in contexts.values()
+        if c["model"] == workload.get("model")
+        and type(workload.get("max_tokens")) is int
+        and workload["max_tokens"] <= band_tokens(c["band"])
+    ]
+    return min(fits, key=lambda c: band_tokens(c["band"]), default=None)
+
+
+def context_key(value):
+    """Routing configurations key benchmark contexts by model and band, never band alone."""
+    return f"{value['model']}/{value['band']}"
+
+
 def workload_profile(token_lengths, *, model):
+    cap = input_cap(model)
     if (
         model not in models.TEXT_ADAPTER_MODELS
         or not token_lengths
-        or any(type(n) is not int or not 1 <= n <= 2048 for n in token_lengths)
+        or any(type(n) is not int or not 1 <= n <= cap for n in token_lengths)
     ):
-        raise ValueError("workload requires encoded text adapter training inputs of 1..2048 tokens")
+        raise ValueError(
+            f"workload requires encoded text adapter training inputs of 1..{cap} tokens"
+        )
     maximum = max(token_lengths)
     return {
         "model": model,
@@ -83,7 +139,7 @@ def workload_profile(token_lengths, *, model):
         "examples": len(token_lengths),
         "total_tokens": sum(token_lengths),
         "max_tokens": maximum,
-        "band": next(f"tokens-{n}" for n in (512, 1024, 2048) if maximum <= n),
+        "band": next(f"tokens-{n}" for n in BANDS if maximum <= n),
     }
 
 
@@ -107,7 +163,7 @@ def validate_workload(value, *, model, examples):
     count, total, maximum = (value[k] for k in ("examples", "total_tokens", "max_tokens"))
     if any(type(n) is not int or n < 1 for n in (count, total, maximum)) or count != examples:
         raise ValueError("invalid workload counts")
-    if maximum > 2048 or not maximum + count - 1 <= total <= count * maximum:
+    if maximum > input_cap(model) or not maximum + count - 1 <= total <= count * maximum:
         raise ValueError("invalid workload tokens")
     if value["band"] != workload_profile([maximum], model=model)["band"]:
         raise ValueError("invalid workload band")
@@ -130,7 +186,7 @@ def valid_context(context):
         )
         and isinstance(context["rubric"], str)
         and 1 <= len(context["rubric"]) <= 128
-        and context["band"] in {"tokens-512", "tokens-1024", "tokens-2048"}
+        and context["band"] in bands(context["model"])
     )
 
 
@@ -246,7 +302,7 @@ def performance_grade(attempts, context, now):
     }
 
 
-def rank_candidates(job, workers, now):
+def rank_candidates(job, workers, now, *, max_seconds=MAX_TRAINING_SECONDS):
     now = timestamp(now)
     context = job.get("context") or {}
     workload = job.get("workload")
@@ -256,7 +312,7 @@ def rank_candidates(job, workers, now):
         validate_workload(workload, model=context["model"], examples=workload["examples"])
         if (
             not valid_context(context)
-            or workload["band"] != context["band"]
+            or workload["max_tokens"] > band_tokens(context["band"])
             or job.get("consent") is not True
         ):
             raise ValueError("invalid job")
@@ -303,24 +359,19 @@ def rank_candidates(job, workers, now):
             reason = next((message for passed, message in checks if not passed), None)
         if not reason and qualification and quality["status"] == "qualified":
             reason = "already_qualified"
-        envelope = [
-            r
-            for r in reports
-            if workload
-            and all(
-                r["capacity"][k] >= workload[k] for k in ("examples", "total_tokens", "max_tokens")
-            )
-        ]
-        if not reason and not envelope:
-            reason = "capacity"
+        if not reason and any(
+            a.get("job_id") == job.get("id") and a.get("outcome") == "does_not_fit"
+            for a in worker.get("attempts", [])
+        ):
+            reason = "does_not_fit"  # the miner's own fit check refused this job
         estimate = None
         if not reason:
             rate = max(
-                max(r["seconds_per_token"] for r in envelope),
+                max(r["seconds_per_token"] for r in reports),
                 performance["p90_seconds_per_token"] or 0,
             )
             estimate = rate * workload["total_tokens"]
-            if estimate > 3600 or estimate + 60 > remaining:
+            if estimate > max_seconds or estimate + 60 > remaining:
                 reason = "deadline"
         if reason:
             exclusions.append({"hotkey": hotkey, "reason": reason})

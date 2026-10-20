@@ -10,6 +10,7 @@ from pathlib import Path
 import zils
 
 ENDPOINT = "wss://test.finney.opentensor.ai:443"
+COMMITMENT_FIELD = 128  # bytes per Raw field of the Commitments pallet; the chain allows MaxFields
 
 
 def check_config(config):
@@ -26,7 +27,8 @@ def check_config(config):
 
 
 @contextmanager
-def connect(config):
+def connect(config, *, raw_calls=False):
+    """`raw_calls` admits the one raw extrinsic Zils sends, `Commitments.set_commitment`."""
     netuid = check_config(config)
     if version("bittensor") != "11.1.0":
         raise ValueError("install requirements/testnet.txt (bittensor 11.1.0)")
@@ -36,9 +38,73 @@ def connect(config):
         network="test",
         fallback_endpoints=[],
         archive_endpoints=[],
-        policy=bt.Policy(allowed_netuids=[netuid]),
+        policy=bt.Policy(allowed_netuids=[netuid], allow_raw_calls=raw_calls),
     ) as sub:
         yield sub
+
+
+def commitment_text(record):
+    """A plaintext commitment's Raw fields joined as UTF-8; None for no commitment, a timelocked
+    or hashed field, or bytes that are not text. Zils commitments are plaintext only."""
+    if not record:
+        return None
+    data = b""
+    for entry in (record.get("info") or {}).get("fields") or []:
+        for variant, value in (entry or {}).items():
+            if not variant.startswith("Raw"):
+                return None
+            data += (
+                bytes.fromhex(value.removeprefix("0x")) if isinstance(value, str) else bytes(value)
+            )
+    try:
+        return data.decode()
+    except UnicodeDecodeError:
+        return None
+
+
+def read_commitment(sub, netuid, hotkey, block):
+    record = sub.query(("Commitments", "CommitmentOf"), [netuid, hotkey], block=block)
+    text = commitment_text(record)
+    return None if text is None else {"block": int(record["block"]), "data": text}
+
+
+def hotkey_state(config, sub, hotkey):
+    """A miner's own view at one block: its uid on the subnet (None when unregistered) and its
+    current commitment. Needs no validator."""
+    netuid = check_config(config)
+    block = sub.block
+    uid = sub.query(("SubtensorModule", "Uids"), [netuid, hotkey], block=block)
+    if (
+        uid is not None
+        and sub.query(("SubtensorModule", "Keys"), [netuid, uid], block=block) != hotkey
+    ):
+        uid = None
+    return {
+        "block": block,
+        "uid": uid,
+        "commitment": read_commitment(sub, netuid, hotkey, block),
+    }
+
+
+def write_commitment(config, sub, wallet, text):
+    """Sign `Commitments.set_commitment` with the hotkey. Plaintext Raw fields of at most 128 bytes."""
+    import bittensor as bt
+
+    netuid = check_config(config)
+    data = text.encode()
+    fields = [
+        {f"Raw{len(chunk)}": "0x" + chunk.hex()}
+        for chunk in (data[i : i + COMMITMENT_FIELD] for i in range(0, len(data), COMMITMENT_FIELD))
+    ]
+    if not 0 < len(fields) <= 3:
+        raise ValueError("a commitment holds 1 to 3 fields of 128 bytes")
+    call = bt.calls.Commitments.set_commitment(netuid=netuid, info={"fields": fields})
+    result = sub.submit_call(
+        call, wallet, signer="hotkey", wait_for_inclusion=True, wait_for_finalization=True
+    )
+    if not result.success:
+        raise ValueError(f"commitment not included: {result.error or 'unknown error'}")
+    return result
 
 
 def preflight(config, sub):
@@ -57,7 +123,15 @@ def preflight(config, sub):
     validator_uid = query("Uids", netuid, validator)
     if validator_uid is None or query("Keys", netuid, validator_uid) != validator:
         raise ValueError("validator registration is missing or changed")
-    members = config.get("members", {str(config.get("uid")): {"hotkey": config.get("hotkey")}})
+    if config.get("admission") == "chain":
+        # Open admission: every hotkey registered on the subnet at this block, except the validator's own.
+        members = {}
+        for uid in range(int(query("SubnetworkN", netuid) or 0)):
+            hotkey = query("Keys", netuid, uid)
+            if hotkey and hotkey != validator:
+                members[str(uid)] = {"hotkey": hotkey}
+    else:
+        members = config.get("members", {str(config.get("uid")): {"hotkey": config.get("hotkey")}})
     seen = {validator}
     for uid, item in members.items():
         hotkey = item["hotkey"]
@@ -82,18 +156,27 @@ def preflight(config, sub):
     last = query("LastUpdate", netuid)
     last_update = last[validator_uid] if validator_uid < len(last) else 0
     rate = query("WeightsSetRateLimit", netuid)
+    commitments = {}
+    if "base_tier" in config:
+        # Base candidates are the members' commitments at this same block, frozen with the round.
+        for uid, item in members.items():
+            found = read_commitment(sub, netuid, item["hotkey"], block)
+            if found is not None:
+                commitments[uid] = found
     return {
         **config["chain"],
         "block": block,
         "validator_uid": validator_uid,
         "validator_hotkey": validator,
         "members": {uid: m["hotkey"] for uid, m in members.items()},
+        "owner_uid": query("Uids", netuid, owner) if owner else None,
         "commit_reveal": bool(query("CommitRevealWeightsEnabled", netuid)),
         "min_allowed_weights": query("MinAllowedWeights", netuid),
         "max_weight_limit": query("MaxWeightsLimit", netuid),
         "required_version": query("WeightsVersionKey", netuid),
         "last_update": last_update,
         "retry_after_block": last_update + rate if last_update else block,
+        **({"commitments": commitments} if "base_tier" in config else {}),
     }
 
 
@@ -137,13 +220,66 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
     rows = report["miners"]
     if any(str(row["uid"]) not in config["members"] for row in rows):
         raise ValueError("report contains a miner outside this registered fleet")
-    weights = zils.weight_vector(
-        [{**row, "skill": row["skill"] if row["status"] == "evaluated" else 0.0} for row in rows]
-    )
+    evidence = report.get("adapter_evidence")
+    if evidence is not None and "adapter_evidence" not in config:
+        raise ValueError("report carries queue evidence but the fleet takes no adapter evidence")
+    if "adapter_evidence" in config:
+        from . import queue_evidence
+
+        # Customer work from the hosted queue replaces the frozen-job round as the adapter track.
+        if evidence is None:
+            raise ValueError("fleet takes adapter weights from queue evidence; the report has none")
+        source = queue_evidence.validate_track(config["adapter_evidence"])
+        adapter = queue_evidence.track_weights(
+            queue_evidence.verify(evidence, source), config["members"]
+        )
+    else:
+        adapter = zils.weight_vector(
+            [
+                {**row, "skill": row["skill"] if row["status"] == "evaluated" else 0.0}
+                for row in rows
+            ]
+        )
+    track, decision = config.get("base_tier"), report.get("base_tier")
+    if decision is not None and track is None:
+        raise ValueError("report carries a base-tier decision but the fleet has no base-tier track")
+    tracks = None
+    weights = adapter
+    if track is not None:
+        from . import base_round
+
+        track = base_round.validate_track(track)
+        share, burn = track["share"], track["burn_uid"]
+        # Only kings earn the base share, with or without a decision this epoch; exam winners earn
+        # nothing. An empty track (no registered king, e.g. the unowned vendor base; no adapter
+        # earner) burns its share at burn_uid, as Teutonic does, instead of enlarging the other.
+        base = (
+            base_round.track_weights(track, decision, config["members"])
+            if decision is not None
+            else base_round.king_weights(track, config["members"])
+        )
+        weights = zils.blend_weights(
+            {"base": base, "adapter": adapter},
+            {"base": share, "adapter": 1 - share},
+            burn_uid=burn,
+        )
+        burned = (0 if base else share) + (0 if adapter else 1 - share)
+        if burned > 0 and burn != state["owner_uid"]:
+            # Subtensor burns incentive only at the owner's hotkey and masks other self-weights.
+            raise ValueError("base_tier.burn_uid must be the subnet owner hotkey's uid")
+        tracks = {
+            "base_share": share,
+            "burn_uid": burn,
+            "burned": burned,
+            "base": {str(k): v for k, v in base.items()},
+            "adapter": {str(k): v for k, v in adapter.items()},
+        }
     record = {
         **state,
         "report_sha256": report_hash,
         "requested_weights": {str(k): v for k, v in weights.items()},
+        **({"tracks": tracks} if tracks else {}),
+        **({"adapter_source": "queue"} if "adapter_evidence" in config else {}),
         "chain_write": False,
         "weights_verified": False,
     }

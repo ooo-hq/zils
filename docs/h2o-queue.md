@@ -1,6 +1,11 @@
-# Pinned H2O text adapters
+# Pinned H2O text adapters (retiring)
 
-New text training jobs default to `h2o-lightning-4b-v1.2.3`:
+H2O Lightning 4B v1.2.3 was the default text base from 10 to 17 October 2026.
+Since 17 October new text jobs train on `d3-mini-4.5b-v1`; H2O is retiring
+under the base-tier spec's shortened window (the owner's served H2O adapter was
+re-released on d3 through a `base_change` upgrade and the one remaining internal
+test task was dropped on 17 October; H2O serving is off), so this page documents
+the profile that existing frozen jobs still pin:
 
 | Component | Pin |
 | --- | --- |
@@ -13,7 +18,7 @@ New text training jobs default to `h2o-lightning-4b-v1.2.3`:
 
 The [miner setup](queue-miners.md) creates the isolated runtime. The coordinator
 and queue client retain Python 3.13. Set `ZILS_H2O_RUNTIME_PYTHON` for both miners
-and validators; neither silently substitutes the older JevK5 runtime.
+and validators; neither silently substitutes another runtime.
 Use an NVIDIA driver compatible with CUDA 13.0. The runtime rejects missing fast
 kernels and different pinned package versions before loading a model.
 
@@ -27,7 +32,8 @@ directory. Every required file is still checked.
 
 The supported text contract is choice, true/false, or score with up to 255
 outcomes and 2,048 full prompt tokens. Oversized inputs and images are rejected;
-examples and options are never silently truncated. Image jobs retain ImaJev.
+examples and options are never silently truncated. Image jobs run on d3-mini
+(frozen `zils.image_jobs` datasets), no longer on ImaJev.
 
 Prompts use H2O's native non-thinking chat template and `Answer:` prefix. Native
 temperatures are 0.75 for choice, 0.8 for true/false, and 0.65 for score; the
@@ -58,12 +64,13 @@ and each worker's capacity still require independent evaluation and qualificatio
 
 ## Existing jobs
 
-JevK5 and Kev identities, references and artifact formats remain supported.
-Keep their references installed while their jobs finish. A worker may supply
-multiple `--reference` arguments; it claims only the profiles separately approved
-by the operator. Never rewrite a JevK5 job or adapter as H2O.
+d3 and Kev identities, references and artifact formats remain supported. Keep
+their references installed while their jobs finish. A worker may supply multiple
+`--reference` arguments; it claims only the profiles separately approved by the
+operator. Never rewrite a job or adapter from one profile as another. JevK5 is
+[retired](jevk5-queue.md): its checkpoints stay readable, nothing trains them.
 
-H2O requires fresh worker qualification and runtime hashes. Existing JevK5
+H2O requires fresh worker qualification and runtime hashes. Another profile's
 capacity/quality reports do not transfer. Hosted migration, release-serving
 isolation and rollback are described in
 [the platform rollout guide](https://github.com/ooo-hq/zils-platform/blob/main/docs/h2o-rollout.md).

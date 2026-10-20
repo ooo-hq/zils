@@ -105,7 +105,7 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
             runtime,
             "-u",
             "-m",
-            "zils.h2o" if model == models.H2O else "zils.jevk5",
+            "zils" + models.TEXT_RUNTIME_MODULES[model],
             "train",
             "--data",
             str(directory / "miner-training.jsonl"),
@@ -138,8 +138,8 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
             "--out",
             str(raw),
         ]
-    if model == models.H2O:
-        command[0] = settings.required("ZILS_H2O_RUNTIME_PYTHON")
+    if model in models.TEXT_ADAPTER_MODELS and (env := models.runtime_python_env(model)):
+        command[0] = settings.required(env)
     print(
         f"miner {config['uid']}: training round {job['round_id']} on {device}; log {work / 'training.log'}",
         flush=True,
@@ -258,8 +258,13 @@ def miner(config, directory, args):
                 last_error = None
             except HTTPError as error:
                 if error.code not in (404, 409, 503):
+                    try:
+                        body = json.loads(error.read())
+                        detail = str(body.get("error") or body.get("payload", {}).get("error", ""))
+                    except (ValueError, OSError, AttributeError):
+                        detail = ""
                     raise RuntimeError(
-                        f"validator rejected request (HTTP {error.code}); check config and validator log"
+                        f"validator rejected request (HTTP {error.code}): {detail[:200]}; check config and validator log"
                     ) from error
             except CapacityUnavailable:
                 pass

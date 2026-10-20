@@ -54,6 +54,31 @@ class JobTest(unittest.TestCase):
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, "overlaps"):
                 jobs.validate_splits(splits)
 
+    def test_soft_targets_reach_the_miner_export_from_training_only(self):
+        soft = {"false": 0.25, "true": 0.75}
+        splits = examples()
+        splits["train"][0]["target_probabilities"] = soft
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "job"
+            jobs.build(root, "soft-v1", splits, POLICY, allow_training_data_export=True)
+            exported = benchmark.read_jsonl(root / "miner-training.jsonl")
+            self.assertEqual(exported[0]["target_probabilities"], soft)
+            self.assertNotIn("target_probabilities", exported[1])
+            self.assertEqual(benchmark.audit(root), splits)
+        for split, value, message in (
+            ("test", soft, "only on text training"),
+            ("train", {"false": 0.5, "true": 0.6}, "sum to one"),
+            ("train", {"true": 1.0}, "cover exactly"),
+            ("train", {"false": -0.5, "true": 1.5}, r"\[0, 1\]"),
+        ):
+            bad = examples()
+            bad[split][0]["target_probabilities"] = value
+            with (
+                self.subTest(split=split, value=value),
+                self.assertRaisesRegex(ValueError, message),
+            ):
+                jobs.validate_splits(bad)
+
     def test_delivery_requires_improvement_and_customer_threshold(self):
         baseline = {"status": "evaluated", "brier": 0.3}
         candidate = {
@@ -75,6 +100,40 @@ class JobTest(unittest.TestCase):
             jobs.select({"status": "rejected"}, [candidate], POLICY)
         with self.assertRaises(ValueError):
             jobs.validate_policy({**POLICY, "min_accuracy": float("nan")})
+        previous = {**POLICY, "previous_job_id": "0" * 8 + "-0000-4000-8000-" + "0" * 12}
+        jobs.validate_policy(previous)
+        jobs.validate_policy({**previous, "base_change": True})  # cross-profile upgrade opt-in
+        for bad in (
+            {**POLICY, "base_change": True},  # no previous model to change the base of
+            {**previous, "base_change": False},
+            {**previous, "base_change": "yes"},
+            {**previous, "follow": "latest"},
+            {**previous, "migration": True},  # a migration is a base change
+            {**previous, "base_change": True, "migration": False},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                jobs.validate_policy(bad)
+
+    def test_forced_migration_accepts_no_worse_within_tolerance(self):
+        """Moving a task off a retiring base needs continuity, not a gain (spec §18)."""
+        baseline = {"status": "evaluated", "brier": 0.3}
+        candidate = {"uid": 1, "sha256": "a" * 64, "status": "evaluated", "accuracy": 0.9}
+        previous = {**POLICY, "previous_job_id": "0" * 8 + "-0000-4000-8000-" + "0" * 12}
+        upgrade = {**previous, "base_change": True}
+        migration = {**upgrade, "migration": True}
+        slightly_worse = {**candidate, "brier": 0.304, "skill": 0.6}
+        result = jobs.select(baseline, [slightly_worse], migration)
+        self.assertEqual(result["status"], "accepted")
+        self.assertAlmostEqual(result["brier_improvement"], -0.004)
+        self.assertEqual(
+            jobs.select(baseline, [slightly_worse], upgrade)["status"], "no_qualifying_model"
+        )
+        for changes in ({"brier": 0.306}, {"accuracy": 0.7}, {"skill": 0}):
+            with self.subTest(changes=changes):
+                self.assertEqual(
+                    jobs.select(baseline, [{**slightly_worse, **changes}], migration)["status"],
+                    "no_qualifying_model",
+                )
 
     @unittest.skipUnless(
         importlib.util.find_spec("kev") and importlib.util.find_spec("bittensor_wallet"),

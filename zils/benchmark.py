@@ -386,9 +386,10 @@ def training_rows(cases, assets=None):
             if question["type"] == "score"
             else case["label"]
         )
-        rows.append(
-            {"state": case["state"], "questions": {"decision": {**question, "label": label}}}
-        )
+        row = {"state": case["state"], "questions": {"decision": {**question, "label": label}}}
+        if "target_probabilities" in case:
+            row["target_probabilities"] = case["target_probabilities"]
+        rows.append(row)
     return rows
 
 

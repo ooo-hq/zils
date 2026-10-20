@@ -111,7 +111,7 @@ class TestnetTest(unittest.TestCase):
         wallet = SimpleNamespace(hotkey=SimpleNamespace(ss58_address="validator"))
         from zils import models
 
-        for model in (models.JEVK5, models.IMAJEV):
+        for model in (models.H2O, models.D3, models.IMAJEV):
             profiled = {**config, "model": models.spec(model)}
             with tempfile.TemporaryDirectory() as tmp:
                 with self.assertRaisesRegex(ValueError, "profile"):
@@ -125,7 +125,7 @@ class TestnetTest(unittest.TestCase):
                     )
                 with self.assertRaisesRegex(ValueError, "profile"):
                     t.publish_round(profiled, tmp, report, sub, wallet, publish=True)
-                wrong = models.IMAJEV if model == models.JEVK5 else models.JEVK5
+                wrong = models.H2O if model == models.IMAJEV else models.IMAJEV
                 with self.assertRaisesRegex(ValueError, "profile"):
                     t.publish_round(
                         profiled,
@@ -261,6 +261,187 @@ class TestnetTest(unittest.TestCase):
             )
             self.assertEqual(receipt["status"], "committed")
             self.assertEqual(receipt["netuid"], 777)
+
+    def test_base_tier_track_blends_into_one_weight_vector(self):
+        from zils import base_round, testnet as t, validator
+
+        draw = {"manifest_sha256": "a" * 64, "dataset_sha256": "b" * 64}
+        track = {"share": 0.7, "incumbent_sha256": "c" * 64, "draws": [draw]}
+        config = {
+            "chain": {"network": "test", "netuid": 579},
+            "validator_hotkey": "validator",
+            "members": {
+                "1": {"hotkey": "miner-a", "port": 8901},
+                "2": {"hotkey": "miner-b", "port": 8902},
+            },
+            "base_tier": track,
+        }
+        state = {
+            "NetworksAdded": True,
+            "Uids": {"validator": 0, "miner-a": 1, "miner-b": 2},
+            "Keys": {0: "validator", 1: "miner-a", 2: "miner-b"},
+            "ValidatorPermit": [True, False, False],
+            "SubnetOwnerHotkey": "validator",
+            "CommitRevealWeightsEnabled": False,
+            "MinAllowedWeights": 1,
+            "MaxWeightsLimit": 65535,
+            "WeightsSetRateLimit": 100,
+            "WeightsVersionKey": 0,
+            "LastUpdate": [100, 0, 0],
+            "CommitmentOf": {},
+        }
+        sent = []
+
+        class Chain:
+            network = "test"
+            endpoint = "wss://test.finney.opentensor.ai:443"
+            block = 250
+
+            def query(self, item, params, *, block=None):
+                assert params[0] == 579
+                value = state[item[1]]
+                return value.get(params[1]) if isinstance(value, dict) else value
+
+            def plan(self, intent, wallet):
+                from bittensor.intents.plan import Plan
+
+                return Plan(
+                    op=intent.op,
+                    summary="fixture",
+                    signer="hotkey",
+                    signer_address="validator",
+                    fee=None,
+                    effects=[],
+                    warnings=[],
+                )
+
+            def execute(self, intent, wallet, **kwargs):
+                from bittensor.result import ExtrinsicResult
+
+                sent.append(dict(zip(intent.uids, intent.weights)))
+                return ExtrinsicResult(True, block_hash="0xabc", extrinsic_id="251-1", data={})
+
+        sub = Chain()
+        wallet = SimpleNamespace(hotkey=SimpleNamespace(ss58_address="validator"))
+        adapter_rows = [
+            {"uid": 1, "status": "evaluated", "skill": 0.75},
+            {"uid": 2, "status": "evaluated", "skill": 0.25},
+        ]
+        decision = {
+            **draw,
+            "policy": dict(base_round.DEFAULT_POLICY),
+            "incumbent": {"uid": 65535, "sha256": "c" * 64},
+            "candidates": [
+                {"uid": 2, "sha256": "d" * 64, "eligible": True, "skill": 0.4},
+                {"uid": 1, "sha256": "e" * 64, "eligible": False, "skill": 0.5},
+            ],
+            "pending_winner": {"uid": 2, "sha256": "d" * 64},
+        }
+
+        def report(miners, base_tier):
+            return {
+                "chain": config["chain"],
+                "identities": {"1": "miner-a", "2": "miner-b"},
+                "miners": miners,
+                "base_tier": base_tier,
+            }
+
+        # King of the hill: uid 1 (hotkey miner-a) holds the crowned base; uid 2's eligible
+        # challenger earns nothing before promotion. Both tracks: 0.7 * {1: 1} + 0.3 * adapter.
+        crowned = {**config, "base_tier": {**track, "kings": ["miner-a"]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            dry = t.publish_round(crowned, tmp, report(adapter_rows, decision), sub, wallet)
+            self.assertEqual(dry["status"], "dry_run")
+            self.assertAlmostEqual(dry["requested_weights"]["1"], 0.925)
+            self.assertAlmostEqual(dry["requested_weights"]["2"], 0.075)
+            self.assertEqual(dry["tracks"]["base"], {"1": 1.0})
+            self.assertEqual(dry["tracks"]["adapter"], {"1": 0.75, "2": 0.25})
+            self.assertEqual(dry["tracks"]["base_share"], 0.7)
+            self.assertEqual((dry["tracks"]["burn_uid"], dry["tracks"]["burned"]), (0, 0))
+            self.assertEqual(sent, [])
+            receipt = t.publish_round(
+                crowned, tmp, report(adapter_rows, decision), sub, wallet, publish=True
+            )
+            self.assertEqual(receipt["status"], "included")
+            self.assertEqual(len(sent), 1)
+            self.assertAlmostEqual(sent[0][1], 0.925)
+            self.assertAlmostEqual(sent[0][2], 0.075)
+            self.assertEqual(
+                json.loads((Path(tmp) / "chain-receipt.json").read_text())["tracks"],
+                receipt["tracks"],
+            )
+        # An empty track burns its share at burn_uid (default 0, here the subnet owner's uid) instead
+        # of enlarging the other track; both empty burns the whole vector, so weights keep flowing.
+        rejected = [{"uid": 1, "status": "rejected", "skill": 0.0}, {"uid": 2, "status": "missing"}]
+        for decided in (decision, None):
+            with self.subTest(decision=decided is not None), tempfile.TemporaryDirectory() as tmp:
+                dry = t.publish_round(crowned, tmp, report(rejected, decided), sub, wallet)
+                self.assertEqual(set(dry["requested_weights"]), {"0", "1"})
+                self.assertAlmostEqual(dry["requested_weights"]["0"], 0.3)
+                self.assertAlmostEqual(dry["requested_weights"]["1"], 0.7)
+                # The unowned stock base pays no miner, whatever the exam found.
+                dry = t.publish_round(config, tmp, report(adapter_rows, decided), sub, wallet)
+                self.assertEqual(set(dry["requested_weights"]), {"0", "1", "2"})
+                self.assertAlmostEqual(dry["requested_weights"]["0"], 0.7)
+                self.assertAlmostEqual(dry["requested_weights"]["1"], 0.225)
+                self.assertAlmostEqual(dry["requested_weights"]["2"], 0.075)
+                self.assertEqual(dry["tracks"]["base"], {})
+                self.assertAlmostEqual(dry["tracks"]["burned"], 0.7)
+                dry = t.publish_round(config, tmp, report(rejected, decided), sub, wallet)
+                self.assertEqual((dry["status"], dry["requested_weights"]), ("dry_run", {"0": 1.0}))
+        # A burn uid that is not the subnet owner's would pay a validator self-weight Yuma masks,
+        # or a miner; refused before anything is sent.
+        with tempfile.TemporaryDirectory() as tmp:
+            for burn in (1, 3):
+                elsewhere = {**config, "base_tier": {**track, "burn_uid": burn}}
+                with self.assertRaisesRegex(ValueError, "subnet owner"):
+                    t.publish_round(elsewhere, tmp, report(rejected, None), sub, wallet)
+        # Refusals: a decision the track does not cover, a decision without a track, a bad track.
+        with tempfile.TemporaryDirectory() as tmp:
+            for bad in (
+                {**decision, "dataset_sha256": "f" * 64},
+                {**decision, "incumbent": {"uid": 65535, "sha256": "f" * 64}},
+                {
+                    **decision,
+                    "candidates": [{"uid": 9, "sha256": "d" * 64, "eligible": True, "skill": 0.4}],
+                    "weights": {"9": 1.0},
+                },
+            ):
+                with self.assertRaises(ValueError):
+                    t.publish_round(config, tmp, report(adapter_rows, bad), sub, wallet)
+            untracked = {k: v for k, v in config.items() if k != "base_tier"}
+            with self.assertRaisesRegex(ValueError, "no base-tier track"):
+                t.publish_round(untracked, tmp, report(adapter_rows, decision), sub, wallet)
+            with self.assertRaisesRegex(ValueError, "share"):
+                t.publish_round(
+                    {**config, "base_tier": {**track, "share": 2}},
+                    tmp,
+                    report(adapter_rows, decision),
+                    sub,
+                    wallet,
+                )
+            self.assertEqual(len(sent), 1)
+        # The validator freezes the current decision with the round; a restart republishes the same one.
+        with tempfile.TemporaryDirectory() as tmp:
+            directory, work = Path(tmp) / "validator", Path(tmp) / "round"
+            (directory / "base-tier").mkdir(parents=True)
+            work.mkdir()
+            plain = {"miners": adapter_rows}
+            self.assertEqual(validator.attach_base_tier(untracked, directory, work, plain), plain)
+            self.assertFalse((work / "base-tier.json").exists())
+            self.assertIsNone(
+                validator.attach_base_tier(config, directory, work, plain)["base_tier"]
+            )
+            (directory / "base-tier" / "decision.json").write_text(json.dumps(decision))
+            self.assertIsNone(
+                validator.attach_base_tier(config, directory, work, plain)["base_tier"]
+            )
+            later = Path(tmp) / "later"
+            later.mkdir()
+            attached = validator.attach_base_tier(config, directory, later, plain)
+            self.assertEqual(attached["base_tier"], decision)
+            self.assertEqual(json.loads((later / "base-tier.json").read_text()), decision)
+            self.assertNotIn("base_tier", plain)
 
     def test_wallet_signing_and_bundles_keep_keys_out(self):
         from bittensor.wallet import Wallet

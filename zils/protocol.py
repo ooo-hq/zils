@@ -29,7 +29,12 @@ def canonical(claim):
     )
 
 
-def endpoint_ok(endpoint, allowed=None):
+# Tailscale/CGNAT space: a trusted overlay, not public, but not RFC 1918 either.
+TAILSCALE = ipaddress.IPv4Network("100.64.0.0/10")
+SUBMITS_PER_MINUTE = 30  # per public source address per minute; private fleets are not throttled
+
+
+def endpoint_port(endpoint):
     match = (
         re.fullmatch(r"http://([0-9.]+):([1-9][0-9]{0,4})", endpoint)
         if isinstance(endpoint, str)
@@ -37,22 +42,42 @@ def endpoint_ok(endpoint, allowed=None):
     )
     if not match or int(match[2]) > 65535:
         raise ValueError("endpoint must be http://<numeric-IPv4>:<port>")
-    address = ipaddress.IPv4Address(match[1])
+    return ipaddress.IPv4Address(match[1]), int(match[2])
+
+
+def endpoint_ok(endpoint, allowed=None, public=False):
+    """Pinned private transport by default; `public` admits globally routable addresses, still pinned."""
+    address, _ = endpoint_port(endpoint)
     if allowed is None:
         if str(address) != "127.0.0.1":
             raise ValueError("remote endpoints require an explicit pin")
-    elif (
-        endpoint not in allowed
-        or not (address.is_private or address.is_loopback)
-        or address.is_link_local
+        return
+    special = (
+        address.is_link_local
         or address.is_unspecified
         or address.is_multicast
         or address.is_reserved
+    )
+    if public:
+        if endpoint not in allowed or special or not address.is_global:
+            raise ValueError("endpoint must match the pinned public IPv4 address")
+    elif (
+        endpoint not in allowed
+        or not (address.is_private or address.is_loopback or address in TAILSCALE)
+        or special
     ):
         raise ValueError("endpoint must match a pinned private IPv4 address")
 
 
-def register(message, round_id, members, registry, endpoints=None, job_sha256=None):
+def register(
+    message,
+    round_id,
+    members,
+    registry,
+    endpoints=None,
+    job_sha256=None,
+    public=False,
+):
     if not isinstance(message, dict) or set(message) != {"claim", "signature"}:
         raise ValueError("announcement requires claim and signature")
     c, signature = message["claim"], message["signature"]
@@ -70,7 +95,9 @@ def register(message, round_id, members, registry, endpoints=None, job_sha256=No
         raise ValueError("announcement belongs to another round")
     if not isinstance(c["sha256"], str) or not re.fullmatch("[a-f0-9]{64}", c["sha256"]):
         raise ValueError("invalid checkpoint hash")
-    endpoint_ok(c["endpoint"], allowed=[endpoints[uid]] if endpoints is not None else None)
+    endpoint_ok(
+        c["endpoint"], allowed=[endpoints[uid]] if endpoints is not None else None, public=public
+    )
     if not isinstance(signature, str) or not re.fullmatch("[a-f0-9]{128}", signature):
         raise ValueError("invalid signature format")
     if not Keypair(ss58_address=c["hotkey"]).verify(canonical(c), bytes.fromhex(signature)):
@@ -143,10 +170,19 @@ def opener():
 
 
 def fetch_checkpoint(
-    claim, destination, expected_endpoint=None, round_scoped=False, *, model=models.KEV
+    claim,
+    destination,
+    expected_endpoint=None,
+    round_scoped=False,
+    *,
+    model=models.KEV,
+    kind="adapter",
+    public=False,
 ):
     endpoint_ok(
-        claim["endpoint"], allowed=[expected_endpoint] if expected_endpoint is not None else None
+        claim["endpoint"],
+        allowed=[expected_endpoint] if expected_endpoint is not None else None,
+        public=public,
     )
     if round_scoped and not re.fullmatch("[a-f0-9]{32}", claim["round_id"]):
         raise ValueError("invalid artifact round id")
@@ -154,19 +190,19 @@ def fetch_checkpoint(
     destination = Path(destination)
     destination.mkdir()
     started, total = time.monotonic(), 0
-    files = models.candidate_files(model)
+    files = models.candidate_files(model, kind)
+    budget = models.artifact_budget(kind)
+    deadline = 1800 if kind == "candidate" else 300 if model == models.IMAJEV else 30
     for name in files:
         with opener().open(claim["endpoint"] + prefix + name, timeout=5) as response:
             size = int(response.headers.get("Content-Length", "-1"))
-            if not 0 <= size <= zils.MAX_ARTIFACT_BYTES - total:
+            if not 0 <= size <= budget - total:
                 raise ValueError("invalid artifact size or checkpoint exceeds byte budget")
             received = 0
             with (destination / name).open("xb") as output:
                 while chunk := response.read(1024 * 1024):
                     received += len(chunk)
-                    if received > size or time.monotonic() - started > (
-                        300 if model == models.IMAJEV else 30
-                    ):
+                    if received > size or time.monotonic() - started > deadline:
                         raise ValueError("artifact exceeds declared size or download deadline")
                     output.write(chunk)
             if received != size:

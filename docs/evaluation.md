@@ -37,6 +37,20 @@ production baseline. Benchmark refresh, copying resistance, and submission timin
 need explicit rules before opening the competition.
 
 
+## Isolation
+
+Every submission is scored in a separate inference process that receives only
+`id`, `state` and `question`, runs with Hugging Face and Transformers offline
+flags, and is killed at the configured timeout. On hosts that allow
+unprivileged user namespaces, the validator additionally launches that process
+under `unshare --net --map-root-user --kill-child`, so it has no network
+interface except loopback and dies with its launcher. The mode used is written
+to each report as `sandbox` (`unshare` or `none`); `ZILS_SANDBOX` forces a
+mode. This bounds network exfiltration and runaway children. It does not
+bound GPU or host memory, and it is not a substitute for the artifact checks
+(fixed file list, byte budget, hash-pinned contract files, strict weight
+loading) that reject malformed checkpoints before any inference runs.
+
 ## Timing
 
 The runner keeps each model loaded across its evaluation batch and makes typed

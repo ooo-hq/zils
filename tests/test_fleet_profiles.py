@@ -1,5 +1,6 @@
 """Fleet profile selection and private image exports; no GPU weights are downloaded."""
 
+import contextlib
 import hashlib
 import io
 import json
@@ -23,7 +24,7 @@ from tests.fixture_images import (
     fixture as image_fixture,
 )
 from tests.test_jobs import POLICY, examples
-from zils import fleet, image_jobs, jobs, models, protocol, validator
+from zils import benchmark, core, fleet, image_jobs, jobs, models, protocol, validator
 from zils.runtime import CapacityUnavailable, run_child
 
 
@@ -35,8 +36,8 @@ def checkpoint(path, model):
     return path
 
 
-def image_dataset(root):
-    job, splits, assets = image_fixture()
+def image_dataset(root, model=models.IMAJEV):
+    job, splits, assets = image_fixture(model)
     images = root / "photos"
     images.mkdir()
     for index, asset in enumerate(assets.values()):
@@ -47,13 +48,13 @@ def image_dataset(root):
         asset.update(canonical_sha256=sha, pixel_sha256=sha, canonical_bytes=len(data))
         (images / (sha + ".png")).write_bytes(data)
     data = root / "data"
-    manifest = image_jobs.build(data, job, splits, assets, IMAGE_POLICY)
+    manifest = image_jobs.build(data, job, splits, assets, job["acceptance"])
     return data, images, manifest["assets"]
 
 
 class FleetProfilesTest(unittest.TestCase):
     def test_each_vertical_completes_a_signed_training_and_evaluation_round(self):
-        for model in (models.JEVK5, models.IMAJEV):
+        for model in (models.H2O, models.IMAJEV, models.D3):
             with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 options = {}
@@ -88,13 +89,13 @@ class FleetProfilesTest(unittest.TestCase):
 from pathlib import Path
 from zils import models
 if '-m' in sys.argv:
-    assert sys.argv[sys.argv.index('-m')+1]=='zils.jevk5'
+    assert sys.argv[sys.argv.index('-m')+1]==TRAINER
     rows=[json.loads(s) for s in Path(sys.argv[sys.argv.index('--data')+1]).read_text().splitlines()]
     assert all(set(r)=={'state','questions'} for r in rows)
     out=Path(sys.argv[sys.argv.index('--out')+1]);out.mkdir()
     (out/'adapter_config.json').write_text('{}')
     (out/'adapter_model.safetensors').write_text('trained')
-    models.write_metadata(out)
+    models.write_metadata(out, model=MODEL)
 else:
     path=Path(sys.argv[sys.argv.index('--checkpoint')+1])
     p=.9 if (path/'adapter_model.safetensors').read_text()=='trained' else .5
@@ -104,9 +105,14 @@ else:
     print(json.dumps({'runtime':{'temperature':temp},'predictions':[
       {'id':r['id'],'probabilities':{'true':a/(a+b),'false':b/(a+b)},'elapsed_ms':1} for r in rows]}))
 """
+                trainer = "zils" + models.TEXT_RUNTIME_MODULES.get(model, ".h2o")
                 runtime.write_text(
                     f"#!{sys.executable}\n"
-                    + (IMAGE_SCRIPT if model == models.IMAJEV else text_script)
+                    + (
+                        IMAGE_SCRIPT
+                        if model == models.IMAJEV
+                        else f"TRAINER={trainer!r}\nMODEL={model!r}\n" + text_script
+                    )
                 )
                 runtime.chmod(0o700)
                 capacity = root / "nvidia-smi"
@@ -115,6 +121,8 @@ else:
                 env = {
                     **os.environ,
                     "ZILS_IMAGE_RUNTIME_PYTHON": str(runtime),
+                    "ZILS_H2O_RUNTIME_PYTHON": str(runtime),
+                    "ZILS_D3_RUNTIME_PYTHON": str(runtime),
                     "ZILS_NVIDIA_SMI": str(capacity),
                     "ZILS_COMPUTE_LOCK": str(root / "gpu.lock"),
                     "ZILS_PYTHON": sys.executable,
@@ -137,7 +145,7 @@ else:
                                 [
                                     *command,
                                     "--device",
-                                    "cuda" if model == models.IMAJEV else "cpu",
+                                    "cuda",
                                     "--runtime-python",
                                     str(runtime),
                                     "--no-download",
@@ -234,6 +242,156 @@ else:
                     for log in logs:
                         log.close()
 
+    def test_d3_runtime_receives_image_paths_with_each_request(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data, images, manifest = image_dataset(root, models.D3)
+            runtime = root / "fixture-runtime"
+            runtime.write_text(
+                f"#!{sys.executable}\n"
+                + """import json, sys
+from pathlib import Path
+assert sys.argv[sys.argv.index('--base-revision')+1]
+rows=json.load(sys.stdin)
+assert all(set(r)=={'id','state','question','images'} for r in rows)
+for r in rows:
+    assert all(Path(p).is_absolute() and Path(p).read_bytes()[:8]==b'\\x89PNG\\r\\n\\x1a\\n' for p in r['images'])
+print(json.dumps({'runtime':{},'predictions':[
+  {'id':r['id'],'probabilities':{k:.5 for k in r['question']['criteria']},
+   'elapsed_ms':len(r['images'])} for r in rows]}))
+"""
+            )
+            runtime.chmod(0o700)
+            (root / "submissions.json").write_text(
+                json.dumps([core.submission(checkpoint(root / "candidate", models.D3), 1)])
+            )
+            args = SimpleNamespace(
+                cases=data / "test.jsonl",
+                submissions=root / "submissions.json",
+                base_revision=models.spec(models.D3)["base_revision"],
+                timeout=30,
+                report=root / "report.json",
+                device="cuda",
+                runner_python=sys.executable,
+                images=images,
+            )
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
+                patch.dict(os.environ, {"ZILS_D3_RUNTIME_PYTHON": str(runtime)}),
+            ):
+                core.evaluate(args)
+            frozen = benchmark.audit(data)
+            miner = json.loads(args.report.read_text())["miners"][0]
+            self.assertEqual(miner["status"], "evaluated", miner.get("error"))
+            self.assertEqual(
+                [p["elapsed_ms"] for p in miner["predictions"]], [1] * len(frozen["test"])
+            )
+            asset = manifest[frozen["test"][0]["image"]["asset_id"]]
+            cached = images / (asset["canonical_sha256"] + ".png")
+            cached.write_bytes(cached.read_bytes() + b"tampered")
+            with self.assertRaisesRegex(ValueError, "Frozen image bytes changed"):
+                core.evaluate(SimpleNamespace(**{**vars(args), "report": root / "tampered"}))
+            text = {
+                "base_revision": models.spec(models.H2O)["base_revision"],
+                "report": root / "h2o",
+            }
+            with self.assertRaisesRegex(ValueError, "Image data cannot use a text runtime"):
+                core.evaluate(SimpleNamespace(**{**vars(args), **text}))
+
+    def test_d3_image_jobs_freeze_the_text_policy_and_wide_choice_questions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            job, splits, assets = image_fixture(models.D3)
+            manifest = image_jobs.build(root / "d3", job, splits, assets, job["acceptance"])
+            self.assertEqual(manifest["model"], models.spec(models.D3))
+            self.assertEqual(manifest["outcome_order"], ["normal", "damaged"])
+            self.assertEqual(benchmark.audit(root / "d3"), splits)
+            frozen = {
+                **job,
+                "manifest": manifest,
+                "job_sha256": hashlib.sha256(image_jobs.manifest_bytes(manifest)).hexdigest(),
+            }
+            self.assertEqual(image_jobs.verify_binding(frozen), manifest)
+            self.assertEqual(
+                image_jobs.task_contract(manifest)["outcome_order"], ["normal", "damaged"]
+            )
+            exported = benchmark.read_jsonl(root / "d3/miner-training.jsonl")
+            self.assertEqual(set(exported[0]), {"state", "questions", "images"})
+            self.assertEqual(
+                image_jobs.export_path(exported[0]["images"][0]),
+                "images/" + exported[0]["images"][0]["sha256"] + ".png",
+            )
+            # d3 takes up to 255 declared outcomes where Imajev stops at 16; neither takes __unknown__.
+            wide = {"type": "choice", "criteria": {str(n): None for n in range(40)}}
+            image_jobs.validate_training_question(models.D3, wide)
+            for model, question in (
+                (models.IMAJEV, wide),
+                (models.D3, {"type": "noul"}),
+                (models.D3, {"type": "choice", "criteria": {"a": None, "__unknown__": None}}),
+            ):
+                with self.subTest(model=model), self.assertRaises(ValueError):
+                    image_jobs.validate_training_question(model, question)
+            # Image targets belong to Imajev jobs only; d3 image jobs use the text acceptance policy.
+            with self.assertRaisesRegex(ValueError, "min_accuracy"):
+                image_jobs.build(root / "targets", job, splits, assets, IMAGE_POLICY)
+            _, text_rows, _ = image_fixture(models.D3)
+            with self.assertRaisesRegex(ValueError, "image-capable"):
+                image_jobs.build(
+                    root / "h2o",
+                    {**job, "model_profile": models.spec(models.H2O)},
+                    text_rows,
+                    assets,
+                    job["acceptance"],
+                )
+
+    def test_queue_miner_caches_frozen_training_images_for_d3_exports(self):
+        import uuid
+
+        from miner import queue
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            data = png_bytes = Image.new("RGB", (8, 8), (1, 2, 3))
+            output = io.BytesIO()
+            png_bytes.save(output, format="PNG")
+            data = output.getvalue()
+            sha = hashlib.sha256(data).hexdigest()
+            aid = str(uuid.uuid4())
+            training = root / "miner-training.jsonl"
+            training.write_text(
+                json.dumps({"state": {}, "questions": {}})
+                + "\n"
+                + json.dumps(
+                    {"state": {}, "questions": {}, "images": [{"asset_id": aid, "sha256": sha}]}
+                )
+                + "\n"
+            )
+            calls = []
+
+            class Client:
+                def call(self, name, payload):
+                    calls.append((name, payload["asset_ids"]))
+                    return {
+                        "images": [
+                            {
+                                "id": aid,
+                                "sha256": sha,
+                                "bytes": len(data),
+                                "url": "https://storage.test/photo",
+                                "expires_at": "2099-01-01T00:00:00Z",
+                            }
+                        ]
+                    }
+
+            with patch("miner.queue.download", lambda url, path, limit: path.write_bytes(data)):
+                queue.download_images(Client(), {}, training, root / "images", models.D3)
+                queue.download_images(Client(), {}, training, root / "images", models.D3)
+            self.assertEqual(calls, [("image-downloads", [aid])])  # cached on the second pass
+            self.assertEqual((root / "images" / (sha + ".png")).read_bytes(), data)
+            with self.assertRaisesRegex(ValueError, "one frozen image"):
+                queue.download_images(Client(), {}, training, root / "images")
+
     def test_text_fleet_uses_frozen_profile_and_rejects_a_different_reference(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -243,14 +401,14 @@ else:
                 "text",
                 examples(),
                 POLICY,
-                model=models.JEVK5,
+                model=models.H2O,
                 allow_training_data_export=True,
             )
-            reference = checkpoint(root / "reference", models.JEVK5)
+            reference = checkpoint(root / "reference", models.H2O)
             out = fleet.initialize(root / "fleet", data, reference, "127.0.0.1", 8900, [8901])
             cfg = json.loads((out / "miner-1/config.json").read_text())
-            self.assertEqual(cfg["base_revision"], "c4f7fdb3aeab5582336406e78d3bef11bf98833d")
-            self.assertEqual(cfg["model"]["id"], "jevk5-4b-v0.3")
+            self.assertEqual(cfg["base_revision"], "acaf0d4ea251e54de928c75ef4352670d33192d3")
+            self.assertEqual(cfg["model"]["id"], "h2o-lightning-4b-v1.2.3")
             wrong = checkpoint(root / "wrong", models.IMAJEV)
             with self.assertRaisesRegex(ValueError, "profile"):
                 fleet.initialize(root / "bad", data, wrong, "127.0.0.1", 8900, [8901])
@@ -330,7 +488,7 @@ else:
             self.assertFalse((root / "fleet").exists())
 
     def test_transfer_uses_expected_profile_and_rejects_cross_profile_metadata(self):
-        for model in (models.JEVK5, models.IMAJEV):
+        for model in (models.H2O, models.D3, models.IMAJEV):
             with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 source = checkpoint(root / "source", model)
@@ -356,11 +514,100 @@ else:
                     self.assertEqual(set(requested), set(models.candidate_files(model)))
                     self.assertEqual(zils.checkpoint_hash(root / "download"), claim["sha256"])
                     # A signed base-only hash must not bypass the adapter-file contract.
-                    if model == models.JEVK5:
+                    if model == models.H2O:
                         models.write_metadata(source, model=model, kind="base")
                         claim["sha256"] = zils.checkpoint_hash(source)
                         with self.assertRaisesRegex(ValueError, "profile|adapter"):
                             protocol.fetch_checkpoint(claim, root / "bad", model=model)
+
+    def test_queue_job_carries_capacity_limits_for_pinned_profiles(self):
+        import uuid
+
+        from miner import queue
+
+        class Stop(Exception):
+            pass
+
+        for model in (models.H2O, models.D3):
+            with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                reference = checkpoint(root / "reference", model)
+                training = b"{}\n"
+                job_id = str(uuid.uuid4())
+                assignment = {
+                    "job_id": job_id,
+                    "lease_token": str(uuid.uuid4()),
+                    "uid": 1,
+                    "model": models.spec(model),
+                    "base_revision": models.spec(model)["base_revision"],
+                    "initial_sha256": zils.checkpoint_hash(reference),
+                    "training_sha256": hashlib.sha256(training).hexdigest(),
+                    "job_sha256": "c" * 64,
+                    "training": {"url": "https://example.test/training"},
+                    "min_free_mib": 14000,
+                    "max_seconds": 900,
+                }
+
+                class Client:
+                    url = "https://example.test"
+                    key = SimpleNamespace(ss58_address="hotkey")
+
+                    def call(self, name, payload=None):
+                        return {"assignment": assignment} if name == "claim" else {}
+
+                jobs_seen = []
+
+                def train(config, directory, job, runtime, device, **options):
+                    jobs_seen.append(job)
+                    raise Stop()
+
+                with (
+                    patch("miner.queue.gpu_ready", return_value=True),
+                    patch(
+                        "miner.queue.download", lambda url, path, limit: path.write_bytes(training)
+                    ),
+                    patch("miner.queue.train_candidate", train),
+                    patch("miner.queue.lease_heartbeat") as heartbeat,
+                    self.assertRaises(Stop),
+                ):
+                    heartbeat.return_value.__enter__.return_value = lambda: None
+                    queue.run_once(Client(), root / "state", reference, sys.executable, "cuda")
+                self.assertEqual(jobs_seen[0]["min_free_mib"], 14000)
+                self.assertEqual(jobs_seen[0]["max_seconds"], 900)
+
+    def test_queue_miner_refuses_to_start_with_a_reference_it_cannot_run(self):
+        from miner import queue
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "config.json"
+            seed = "0x" + "11" * 32
+            config.write_text(json.dumps({"coordinator": "https://example.test", "seed": seed}))
+            reference = checkpoint(root / "d3-reference", models.D3)
+            env = {
+                k: v
+                for k, v in os.environ.items()
+                if k not in ("ZILS_D3_RUNTIME_PYTHON", "FEZ_D3_RUNTIME_PYTHON")
+            }
+            cases = (
+                (reference, "ZILS_D3_RUNTIME_PYTHON"),
+                (root / "missing-reference", "missing-reference"),
+            )
+            for path, message in cases:
+                argv = ["queue", "--config", str(config), "--state", str(root / "state")]
+                argv += ["--reference", str(path), "--no-download", "--once"]
+                with (
+                    self.subTest(reference=path.name),
+                    patch.dict(os.environ, env, clear=True),
+                    patch.object(sys, "argv", argv),
+                    patch("miner.queue.run_once") as run_once,
+                    patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                    self.assertRaises(SystemExit) as stop,
+                ):
+                    queue.main()
+                self.assertEqual(stop.exception.code, 1)
+                self.assertIn(message, stderr.getvalue())
+                run_once.assert_not_called()
 
 
 if __name__ == "__main__":

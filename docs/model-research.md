@@ -135,6 +135,75 @@ compute was **$37.95**. This is a runtime estimate, not a provider invoice or a
 price for customer training. Research results do not promote an adapter or
 replace per-job acceptance tests.
 
+## d3-mini evidence (16 October 2026)
+
+These results come from one rented B300 on the research path, over the night of
+16–17 October 2026 (6.75 hours). Under the base tier's own rules, stock d3-mini
+is **not promotable today**. Stock d3-mini scored Brier 0.142 and accuracy 89.8%
+on the round-one sealed holdout through the validator's decision rule, against
+0.184 and 87.7% for the stock H2O incumbent, which made it eligible. The
+confirmation draw below did not reproduce that result. A d3 adapter trained with
+the frozen production recipe on the 4,096-example ABCD set tied the H2O adapter
+on the 500-case test cohort (83.4% vs 83.0%, interval includes zero) and beat it
+on the historical cohort (86.6% vs 83.6%, interval +0.6 to +5.4); this
+reproduced across two seeds. On the exam, d3's prompt had a median 568 input
+tokens against H2O's 528. A feature probe answered yes/no, score,
+multi-question, JSON state, one, two and four images and a short video
+correctly, and refused a 13,414-token state at the runtime's 8,192 limit.
+
+### Confirmation draw, 17 October 2026
+
+The confirmation draw is a second, disjoint, teacher-authored sealed set (291
+calibration and 1,156 test cases, the same six families), scored 12 hours after
+the first through the deployed validator path.
+
+| Draw | Stock d3-mini Brier / accuracy | Stock H2O Brier / accuracy | Result |
+| --- | --- | --- | --- |
+| First (round-one holdout) | 0.142 / 89.8% | 0.184 / 87.7% | d3 eligible; won all six families |
+| Confirmation | 0.1790 / 88.6% | 0.1794 / 88.5% | Improvement 0.0004, paired-bootstrap 95% interval [−0.022, +0.023]; the rule needs at least 0.01 with a positive lower bound, so no winner is confirmed |
+
+The first draw's result was reproduced exactly on the node through the validator
+path, so it is real for that set, but it did not carry over: by family d3 won all
+six on the first draw and split three and three, narrowly, on the second. H2O
+improved between draws (0.184 to 0.179) while d3 fell (0.142 to 0.179), so the
+second set is not simply harder.
+
+**Adapter regression suite: passed.** On the one reference job (ABCD), adapters
+trained on d3 scored calibrated Brier 0.2515 against 0.2801 for adapters trained
+on H2O (84.0% vs 81.6%). The suite has one reference job today where the rule
+asks for three or four.
+
+**Operational results.** The merged d3 code ran end to end on a GPU for the
+first time (qualification parity 5.3e-7). A d3 training job on the ABCD dataset
+was accepted (84.0% test accuracy, Brier 0.244, against stock d3's 48.0%), and
+its release answered a text call and a one-image call. An existing H2O task was
+upgraded to a d3 adapter with `base_change`: previous H2O release Brier 0.1805,
+d3 candidate 0.1667, improvement 0.0138 against a threshold of 0.01.
+
+**Consequences at the time (before the decision below).** `latest` was not set
+(no latest base was configured). `stable` and the default for new jobs were
+H2O Lightning 4B v1.2.3, H2O was the base-tier incumbent, and no round-two
+decision was frozen. d3-mini was a merged, available profile (qualified miners
+and validators could run it; its platform migrations were applied) but it was
+not the default and was not promoted.
+
+**Decision (17 October 2026, owner).** d3-mini becomes the Zils base regardless
+of the stock exam, by the owner's decision and recorded as an override of the
+promotion rule, not as a win under it. The grounds are capability: adapters
+trained on d3 beat adapters trained on H2O on the reference job and on ABCD, and
+d3 takes images and video, which H2O does not serve. The plan was for `latest` to move to d3
+once a permanent d3 fleet existed and for `stable` to follow after one real
+customer job. In the event both moved the same afternoon: since 17 October 2026
+`stable` and `latest` both name d3-mini, a d3 miner and serving host were
+qualified, and H2O serving was switched off (see the
+[roadmap](roadmap.md#d3-mini)). Existing H2O jobs and releases keep their frozen
+profile and move only through `base_change` upgrade jobs. Stock d3-mini is the
+base-tier incumbent that future candidates must beat under the unchanged rule.
+
+Caveats: one card and one night; nothing above 4,096 input tokens was tested;
+and the holdouts are teacher-authored, not customer data. These results do not
+replace per-job acceptance tests.
+
 ## Reports and reproducibility
 
 - [B300 study](https://zils.ai/model/b300-study)

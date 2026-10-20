@@ -8,7 +8,7 @@ import time
 from contextlib import redirect_stdout
 from pathlib import Path
 
-# Executing this file must not let zils/jevk5.py shadow the upstream jevk5 package.
+# Executing this file directly must import the zils package, not the zils/ directory itself.
 script_dir = Path(__file__).resolve().parent
 sys.path = [str(script_dir.parent), *[p for p in sys.path if Path(p).resolve() != script_dir]]
 
@@ -32,10 +32,16 @@ def main():
         load_ms = (time.perf_counter() - started) * 1000
         predictions = []
         for row in requests:
-            if set(row) != {"id", "state", "question"}:
-                raise ValueError("inference must receive only id, state and question")
+            if set(row) - {"images", "videos"} != {"id", "state", "question"}:
+                raise ValueError("inference must receive only id, state, question and media paths")
+            # Media travel as local paths; only profiles that declare inputs ever receive them.
+            media = {}
+            if "images" in row:
+                media["images"] = [Path(path).read_bytes() for path in row["images"]]
+            if "videos" in row:
+                media["videos"] = list(row["videos"])
             started = time.perf_counter()
-            probabilities = model.predict(row["state"], row["question"])
+            probabilities = model.predict(row["state"], row["question"], **media)
             predictions.append(
                 {
                     "id": row["id"],
@@ -49,11 +55,7 @@ def main():
             "dtype": "bfloat16",
             "device": args.device,
             "model_load_ms": load_ms,
-            **(
-                {"jevk5": importlib.metadata.version("jevk5")}
-                if model_id == models.JEVK5
-                else {"runtime_revision": spec["runtime_revision"]}
-            ),
+            "runtime_revision": spec["runtime_revision"],
             "torch": importlib.metadata.version("torch"),
             "transformers": importlib.metadata.version("transformers"),
         }
