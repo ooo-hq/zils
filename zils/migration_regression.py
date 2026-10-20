@@ -74,7 +74,9 @@ def compare(baseline, candidate, release, policy):
     baseline = {**baseline, "status": "evaluated"}
     return {
         "strict_upgrade": jobs.select(baseline, [row], policy)["status"] == "accepted",
-        "migration": jobs.select(baseline, [row], {**policy, "migration": True})["status"]
+        "migration": jobs.select(baseline, [row], {**policy, "migration": "no_regression"})[
+            "status"
+        ]
         == "accepted",
         "brier_improvement": baseline["brier"] - row["brier"],
     }

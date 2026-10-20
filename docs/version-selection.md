@@ -86,16 +86,21 @@ the default for new jobs on both the `stable` and `latest` channels. The owner
 elected it on capability grounds after the base tier's confirmation draw tied.
 H2O serving is off; frozen H2O jobs can still be evaluated.
 
-### Moving off a retiring base
+### Migrating an adapter to a newer base
 
-When Zils retires a base, the tasks still served on it move with a `base_change`
-upgrade that also sets `"migration": true`. Such a run asks for continuity, not
-a gain: the lowest-Brier candidate is accepted when its Brier is no more than
-0.005 above the frozen release's on the new test data, it meets `min_accuracy`,
-and it beats the uniform forecast. `min_brier_improvement` stays in the policy
-but this rule replaces it. `migration` is refused without `base_change`. A run
-that fails it leaves the task on its old release, and the retirement waits for
-that task's owner.
+An owner-confirmed migration sets `"base_change": true` and
+`"migration": "no_regression"`. The lowest-Brier candidate qualifies when its
+Brier score matches or improves on the frozen previous adapter, it meets the
+saved `min_accuracy`, and it beats the uniform forecast. Matching Brier is enough;
+any increase is rejected. `min_brier_improvement` stays in the frozen policy but
+does not apply to this migration. Ordinary upgrades, including base changes
+without a migration marker, still require a positive gain meeting that threshold
+(normally 0.01).
+
+`migration` requires `base_change` and a previous job. A failed migration leaves
+the current adapter active. Existing jobs with `"migration": true` retain their
+recorded legacy 0.005 Brier tolerance so previously accepted releases remain
+verifiable; new saved-data migrations use `"no_regression"`.
 
 ## Activation and API names
 

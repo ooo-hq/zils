@@ -326,7 +326,7 @@ def main():
             {
                 **migration_report,
                 "policy": policy,
-                "tolerance": customer_jobs.MIGRATION_TOLERANCE,
+                "tolerance": 0,
                 "references": {
                     name: {
                         "fingerprint": release["fingerprint"],
