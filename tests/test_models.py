@@ -13,6 +13,66 @@ from zils import benchmark, jobs, models
 
 
 class ModelTest(unittest.TestCase):
+    def test_job_history_reads_retired_profiles_without_enabling_them(self):
+        archived = {
+            "id": "jevk5-4b-v0.3",
+            "name": "JevK5 4B",
+            "base": "alibiserikbay/JevK5",
+            "base_revision": "c4f7fdb3aeab5582336406e78d3bef11bf98833d",
+        }
+        for job in (
+            {"model_profile": archived},
+            {"manifest": {"model": archived}},
+            {"model_profile": archived, "manifest": {"model": archived}},
+        ):
+            with self.subTest(job=job):
+                profile = models.job_history_profile(job)
+                self.assertEqual(profile, archived)
+                profile["name"] = "changed"
+                self.assertEqual(models.job_history_profile(job), archived)
+                with self.assertRaisesRegex(ValueError, "unsupported model identity"):
+                    models.job_model(job)
+        with self.assertRaisesRegex(ValueError, "unsupported model identity"):
+            models.validate_spec(archived)
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            models.text_runtime(archived["id"])
+
+    def test_job_history_rejects_changed_or_inconsistent_archived_profiles(self):
+        archived = {
+            "id": "jevk5-4b-v0.3",
+            "name": "JevK5 4B",
+            "base": "alibiserikbay/JevK5",
+            "base_revision": "c4f7fdb3aeab5582336406e78d3bef11bf98833d",
+        }
+        for profile in (
+            {**archived, "base_revision": "0" * 40},
+            {**archived, "name": "different"},
+            {**archived, "extra": "untrusted"},
+            {"id": archived["id"]},
+            {**archived, "id": "unknown-retired-model"},
+        ):
+            with self.subTest(profile=profile), self.assertRaises(ValueError):
+                models.job_history_profile({"model_profile": profile})
+        for profile, frozen in (
+            (archived, models.spec(models.D3)),
+            (models.spec(models.D3), archived),
+        ):
+            with self.subTest(profile=profile), self.assertRaises(ValueError):
+                models.job_history_profile(
+                    {"model_profile": profile, "manifest": {"model": frozen}}
+                )
+
+    def test_job_history_preserves_current_and_legacy_validation(self):
+        self.assertEqual(models.job_history_profile({}), models.spec(models.KEV))
+        for model in models.SPECS:
+            profile = models.spec(model)
+            job = {"model_profile": profile, "manifest": {"model": profile}}
+            with self.subTest(model=model):
+                self.assertEqual(models.job_history_profile(job), profile)
+                job["model_profile"] = {**profile, "base_revision": "0" * 40}
+                with self.assertRaises(ValueError):
+                    models.job_history_profile(job)
+
     def test_compact_adapter_roundtrip_and_invalid_tensors(self):
         import torch
         from peft import LoraConfig, get_peft_model, get_peft_model_state_dict

@@ -12,9 +12,16 @@ H2O = "h2o-lightning-4b-v1.2.3"
 D3 = "d3-mini-4.5b-v1"
 DEFAULT_TRAINING_MODEL = D3
 TEXT_ADAPTER_MODELS = (H2O, D3)
-# Retired text profiles: their frozen model.json stays readable for historical reports,
-# but nothing creates, trains, transfers or evaluates them.
-RETIRED_TEXT_MODELS = ("jevk5-4b-v0.3",)
+# Archived identities are readable in history, but never enter the active catalog.
+RETIRED_TEXT_SPECS = {
+    "jevk5-4b-v0.3": {
+        "id": "jevk5-4b-v0.3",
+        "name": "JevK5 4B",
+        "base": "alibiserikbay/JevK5",
+        "base_revision": "c4f7fdb3aeab5582336406e78d3bef11bf98833d",
+    },
+}
+RETIRED_TEXT_MODELS = tuple(RETIRED_TEXT_SPECS)
 TEXT_RUNTIME_MODULES = {H2O: ".h2o", D3: ".d3"}
 RUNTIME_PYTHON_ENV = {H2O: "ZILS_H2O_RUNTIME_PYTHON", D3: "ZILS_D3_RUNTIME_PYTHON"}
 CANDIDATE_BASE_ENV = {H2O: "ZILS_H2O_CANDIDATE_BASE", D3: "ZILS_D3_CANDIDATE_BASE"}
@@ -258,6 +265,21 @@ def job_model(job):
             raise ValueError("job profile differs from its frozen manifest")
         return model
     return validate_spec(value) if value is not None else KEV
+
+
+def job_history_profile(job):
+    """Read a pinned job profile without making retired models operational."""
+    frozen = (job.get("manifest") or {}).get("model")
+    profile = job.get("model_profile")
+    value = profile if profile is not None else frozen
+    if not isinstance(value, dict) or value.get("id") not in RETIRED_TEXT_SPECS:
+        return spec(job_model(job))
+    expected = RETIRED_TEXT_SPECS[value["id"]]
+    if value != expected:
+        raise ValueError("model specification differs from its pinned version")
+    if profile is not None and frozen is not None and frozen != profile:
+        raise ValueError("job profile differs from its frozen manifest")
+    return deepcopy(expected)
 
 
 def candidate_files(model, kind="adapter"):
