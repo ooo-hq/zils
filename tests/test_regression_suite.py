@@ -14,14 +14,17 @@ H2O_PYTHON, D3_PYTHON = "/fixture/h2o-python", "/fixture/d3-python"
 BRIER = {("incumbent", "a"): 0.30, ("candidate", "a"): 0.28}
 
 
-def run_suite(flags, **environ):
+def run_suite(flags, *, suite_jobs=None, **environ):
     """Run main() with fake training; return (calls, written result)."""
     calls = []
 
-    def fake(job, base_dir, label, out, runtime_python, env, device, module, base_revision):
+    def fake(
+        job, base_dir, label, out, runtime_python, env, device, module, base_revision, seed=553
+    ):
         calls.append(
             {
                 "job": job.name,
+                "seed": seed,
                 "label": label,
                 "reference": base_dir,
                 "reference_meta": models.metadata(base_dir),
@@ -31,7 +34,12 @@ def run_suite(flags, **environ):
                 "env": {k: v for k, v in env.items() if k.startswith("ZILS_")},
             }
         )
-        return {"brier": BRIER[(label, job.name)]}
+        return {
+            "brier": BRIER[(label, job.name)],
+            "accuracy": 0.9,
+            "skill": 0.4,
+            "adapter_sha256": "a" * 64,
+        }
 
     with tempfile.TemporaryDirectory() as tmp:
         out = Path(tmp) / "out"
@@ -40,7 +48,7 @@ def run_suite(flags, **environ):
         with (
             patch("sys.argv", ["regression_suite", *argv]),
             patch.dict(os.environ, scrubbed | environ, clear=True),
-            patch("zils.regression_suite.jobs", return_value=[Path("a")]),
+            patch("zils.regression_suite.jobs", return_value=suite_jobs or [Path("a")]),
             patch("zils.regression_suite.train_and_score", fake),
             patch("builtins.print"),
         ):
