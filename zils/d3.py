@@ -12,6 +12,7 @@ import math
 import os
 import sys
 from pathlib import Path
+from types import ModuleType
 
 from . import ROOT, models, options, settings
 from .jevk5 import asset_bytes, load_adapter_weights
@@ -89,8 +90,12 @@ def vendor(model=models.D3):
     # Promoted checkpoints provide weights, while code always comes from their root release.
     source = models.D3_POOL_MODELS[models.pool_id(model)]
     root = pinned_base_path(model=source)
-    sys.path.insert(0, str(root))
-    import d3_runtime
+    # A package per pinned root also isolates relative and late sibling imports.
+    namespace = "_zils_d3_" + hashlib.sha256(str(root).encode()).hexdigest()
+    package = ModuleType(namespace)
+    package.__path__ = [str(root)]
+    sys.modules.setdefault(namespace, package)
+    d3_runtime = importlib.import_module(namespace + ".d3_runtime")
 
     if Path(d3_runtime.__file__).parent != root:
         raise OSError("d3_runtime was imported from outside the pinned release")
@@ -508,6 +513,12 @@ class DecisionModel:
                 raise OSError("d3 language adapter target count changed")
             if self.meta["kind"] == "adapter":
                 validate_adapter_config(checkpoint, targets)
+            shapes = {}
+            for name in targets:
+                out_features, in_features = self.base.get_submodule(name).weight.shape
+                prefix = f"base_model.model.{name}.lora_"
+                shapes[prefix + "A.default.weight"] = (16, in_features)
+                shapes[prefix + "B.default.weight"] = (out_features, 16)
             self.peft = get_peft_model(
                 self.base,
                 LoraConfig(
@@ -522,8 +533,7 @@ class DecisionModel:
             self.peft.peft_config["default"].target_modules = set(targets)
             trainable = [(n, p) for n, p in self.peft.named_parameters() if p.requires_grad]
             if (
-                len(trainable) != 304
-                or sum(p.numel() for _, p in trainable) != 14_376_960
+                {n: tuple(p.shape) for n, p in trainable} != shapes
                 or not all(
                     "lora_" in n
                     and "language_model.layers." in n
@@ -561,7 +571,23 @@ class DecisionModel:
             inputs = {"input_ids": tokens, "attention_mask": torch.ones_like(tokens)}
         else:
             inputs = {name: value.to(self.device) for name, value in inputs.items()}
-        hidden = self.base(**inputs, use_cache=False).last_hidden_state[:, -1]
+        sdpa = getattr(
+            self.encoder.native, "sdpa_backends", lambda device: contextlib.nullcontext()
+        )
+        with sdpa(self.device):
+            if getattr(self.runtime, "encoder", None) is not None:
+                if "pixel_values_videos" in inputs:
+                    embeds, positions = self.video_embeddings(inputs)
+                elif "pixel_values" in inputs:
+                    embeds, positions = self.runtime.image_embeddings(inputs)
+                else:
+                    embeds, positions = self.base.get_input_embeddings()(inputs["input_ids"]), None
+                args = (embeds, inputs["attention_mask"])
+                hidden = self.runtime.encoder(*args, *(() if positions is None else (positions,)))[
+                    :, -1
+                ]
+            else:
+                hidden = self.base(**inputs, use_cache=False).last_hidden_state[:, -1]
         if hidden.dtype != torch.bfloat16:
             raise OSError("d3 backbone must return BF16 hidden states")
         # The published d3 readout is FP32 even during BF16 LoRA training.
@@ -572,6 +598,34 @@ class DecisionModel:
         if not torch.isfinite(values).all():
             raise RuntimeError("d3 produced nonfinite logits")
         return values
+
+    def video_embeddings(self, inputs):
+        """The pinned vendor's video_logits embedding path, retaining gradients for language LoRA."""
+        import torch
+
+        ids = inputs["input_ids"]
+        embeds = self.base.get_input_embeddings()(ids)
+        for kind, key, index in (("image", "pixel_values", 0), ("video", "pixel_values_videos", 1)):
+            if key not in inputs:
+                continue
+            features = getattr(self.base, f"get_{kind}_features")(
+                inputs[key], inputs[kind + "_grid_thw"], return_dict=True
+            ).pooler_output
+            values = torch.cat(features).to(embeds.device, embeds.dtype)
+            mask = self.base.get_placeholder_mask(
+                ids, inputs_embeds=embeds, **{kind + "_features": values}
+            )[index]
+            embeds = embeds.masked_scatter(mask, values)
+        positions = self.base.compute_3d_position_ids(
+            input_ids=ids,
+            image_grid_thw=inputs.get("image_grid_thw"),
+            video_grid_thw=inputs["video_grid_thw"],
+            inputs_embeds=embeds,
+            attention_mask=inputs["attention_mask"],
+            past_key_values=None,
+            mm_token_type_ids=inputs["mm_token_type_ids"],
+        )
+        return embeds, positions
 
     def probabilities(self, ids, keys, question, temperature):
         import torch

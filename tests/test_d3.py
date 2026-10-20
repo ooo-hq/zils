@@ -144,6 +144,8 @@ class D3ModuleTest(unittest.TestCase):
         model.device = "cpu"
         model.readout = torch.eye(255, dtype=torch.float32)
         model.base = FakeBackbone().eval()
+        model.runtime = None
+        model.encoder = SimpleNamespace(native=SimpleNamespace())
         self.assertEqual(model.logits([1, 2, 3], 3).dtype, torch.float32)
         probabilities = model.probabilities([1, 2, 3], ["a", "b", "c"], {"type": "choice"}, 1.0)
         self.assertAlmostEqual(sum(probabilities.values()), 1.0, places=6)
@@ -251,6 +253,7 @@ class D3ModuleTest(unittest.TestCase):
         model.readout = torch.eye(255, dtype=torch.float32)
         model.base = FakeBackbone().eval()
         model.meta = {"temperature": 1.0}
+        model.runtime = None
         model.encoder = media_encoder(FakeProcessor())
         probabilities = model.predict({}, QUESTION, images=[png()])
         self.assertEqual(max(probabilities, key=probabilities.get), "a")
