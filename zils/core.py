@@ -182,7 +182,7 @@ def blend_weights(weights_by_track, shares, *, burn_uid=None):
 def checkpoint_hash(path):
     path = Path(path)
     records, total = [], 0
-    budget = models.artifact_budget(models.artifact_kind(path))
+    budget = models.artifact_budget(models.artifact_kind(path), models.checkpoint_model(path))
     for name in models.artifact_files(path):
         artifact = path / name
         if artifact.is_symlink() or not artifact.is_file():

@@ -1,6 +1,7 @@
-"""Pinned d3-mini text adapter runtime: native d3 prompt, FP32 code readout, language LoRA."""
+"""Pinned d3-family adapter runtimes: native prompts, FP32 readout, language LoRA."""
 
 import argparse
+import contextlib
 import functools
 import hashlib
 import importlib.metadata
@@ -83,9 +84,11 @@ def pinned_base_path(download=False, model=models.D3):
 
 
 @functools.cache
-def vendor():
+def vendor(model=models.D3):
     """d3_runtime from the vendor's pinned release only; promoted bases and candidates supply weights, never code."""
-    root = pinned_base_path()
+    # Promoted checkpoints provide weights, while code always comes from their root release.
+    source = models.D3_POOL_MODELS[models.pool_id(model)]
+    root = pinned_base_path(model=source)
     sys.path.insert(0, str(root))
     import d3_runtime
 
@@ -94,9 +97,9 @@ def vendor():
     return d3_runtime
 
 
-def check_media(images=(), videos=()):
+def check_media(images=(), videos=(), model=models.D3):
     """Refuse media outside the d3 limits before any processor or GPU work; return RGB images."""
-    limits = models.spec(models.D3)["inputs"]
+    limits = models.spec(model)["inputs"]
     if len(images) > limits["images"]:
         raise ValueError(f"d3 accepts at most {limits['images']} images")
     if videos and not limits["video"]:
@@ -123,10 +126,11 @@ def check_media(images=(), videos=()):
 class Encoder:
     """The vendor's prompt and tokenizer without its weights, so CPU hosts can validate inputs."""
 
-    def __init__(self, root):
+    def __init__(self, root, model=models.D3):
         from transformers import AutoTokenizer
 
-        self.native = d3_runtime = vendor()
+        self.model = profile(model)
+        self.native = d3_runtime = vendor(model)
         self.root = root
         self.tokenizer = AutoTokenizer.from_pretrained(root, local_files_only=True)
         # D3.text renders with these codes; the vendor refuses to load when they differ from the config.
@@ -144,7 +148,7 @@ class Encoder:
 
     def inputs(self, state, question, images=(), videos=()):
         """(batch, names): token ids for text, or the processor batch for canonical PNGs and MP4 paths."""
-        pictures = check_media(images, videos)
+        pictures = check_media(images, videos, model=getattr(self, "model", models.D3))
         declared = options(question)
         self.native._json_value(state)
         normalized = self.native.normalize_question(question)
@@ -177,7 +181,8 @@ class Encoder:
                 )
             batch = self.processor(text=[text], return_tensors="pt", **media)
             ids = batch["input_ids"][0].tolist()
-        if not ids or len(ids) > MAX_TOKENS:
+        maximum = models.spec(getattr(self, "model", models.D3))["max_input_tokens"]
+        if not ids or len(ids) > maximum:
             raise ValueError("Decision exceeds the 4096-token d3 input limit; shorten the example")
         return batch, normalized.keys
 
@@ -189,7 +194,7 @@ class Encoder:
 def validate_inputs(splits, root=None, model=models.D3):
     from .miner_grading import workload_profile
 
-    encoder, lengths = Encoder(base_path(model=model)), []
+    encoder, lengths = Encoder(base_path(model=model), model=model), []
     for split, rows in splits.items():
         for row in rows:
             images = ()
@@ -203,16 +208,17 @@ def validate_inputs(splits, root=None, model=models.D3):
     return workload_profile(lengths, model=model)
 
 
-def verify_runtime():
-    if "%d.%d" % sys.version_info[:2] != PINS["python"]:
+def verify_runtime(model=models.D3):
+    required = pins(model)
+    if "%d.%d" % sys.version_info[:2] != required["python"]:
         raise OSError("d3 requires the pinned isolated Python 3.12 runtime")
-    for name, version in PINS["packages"].items():
+    for name, version in required["packages"].items():
         if importlib.metadata.version(name).split("+")[0] != version.split("+")[0]:
             raise OSError(f"d3 runtime requires {name}=={version}")
     import torch
     import transformers.models.qwen3_5.modeling_qwen3_5 as operations
 
-    if torch.version.cuda != PINS["cuda"]:
+    if torch.version.cuda != required["cuda"]:
         raise OSError("d3 requires the pinned CUDA 13.0 PyTorch build")
     for name, package in (
         ("causal_conv1d_fn", "causal_conv1d"),
@@ -265,10 +271,11 @@ def validate_candidate(checkpoint, model=None):
     ):
         raise ValueError("base candidate requires d3 candidate metadata")
     files = pins(meta["model"])["files"]
+    candidate_files = models.candidate_files(meta["model"], "candidate")
     for entry in checkpoint.iterdir():
-        if entry.name not in models.D3_CANDIDATE_FILES:
+        if entry.name not in candidate_files:
             raise ValueError(f"base candidate contains an unexpected entry: {entry.name}")
-    for name in models.D3_CANDIDATE_FILES:
+    for name in candidate_files:
         path = checkpoint / name
         if path.is_symlink() or not path.is_file():
             raise ValueError(f"base candidate requires a regular {name}")
@@ -276,30 +283,71 @@ def validate_candidate(checkpoint, model=None):
             with path.open("rb") as stream:
                 if hashlib.file_digest(stream, "sha256").hexdigest() != files[name]:
                     raise ValueError(f"base candidate {name} differs from the pinned parent")
-    # Weights must load exactly: the parent's tensor names, held in the two pinned shard files.
+    # Read tensor headers only: names, shapes and dtypes must match the pinned parent.
     from safetensors import SafetensorError, safe_open
 
-    index = "model.safetensors.index.json"
-    shards = ("model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors")
-    parent = json.loads((pinned_base_path(model=meta["model"]) / index).read_text())["weight_map"]
-    mapped = json.loads((checkpoint / index).read_text())
-    mapped = mapped.get("weight_map") if isinstance(mapped, dict) else None
-    if not isinstance(mapped, dict):
-        raise ValueError("base candidate index has no weight_map")
+    shards = [
+        n for n in candidate_files if n.endswith(".safetensors") and n != "readout.safetensors"
+    ]
+    parent_root = pinned_base_path(model=meta["model"])
+    parent = weight_map(parent_root)
+    mapped = weight_map(checkpoint)
     if extra := sorted(set(mapped) ^ set(parent)):
         raise ValueError(f"base candidate index keys differ from the pinned parent: {extra[0]}")
     for key, shard in mapped.items():
         if shard not in shards:
             raise ValueError(f"base candidate index maps {key} outside the pinned shards")
-    for shard in shards:
-        try:
-            with safe_open(checkpoint / shard, framework="pt") as stream:
-                held = set(stream.keys())
-        except SafetensorError as error:
-            raise ValueError(f"base candidate {shard} is not a safetensors file: {error}") from None
-        wrong = sorted(held ^ {key for key, value in mapped.items() if value == shard})
-        if wrong:
-            raise ValueError(f"base candidate {shard} tensors differ from its index: {wrong[0]}")
+    with contextlib.ExitStack() as stack:
+        references = {
+            name: stack.enter_context(safe_open(parent_root / name, framework="pt"))
+            for name in set(parent.values())
+        }
+        for shard in shards:
+            try:
+                with safe_open(checkpoint / shard, framework="pt") as stream:
+                    held = set(stream.keys())
+                    wrong = sorted(held ^ {key for key, value in mapped.items() if value == shard})
+                    if wrong:
+                        raise ValueError(
+                            f"base candidate {shard} tensors differ from its index: {wrong[0]}"
+                        )
+                    for key in held:
+                        actual = stream.get_slice(key)
+                        expected = references[parent[key]].get_slice(key)
+                        if (
+                            actual.get_shape() != expected.get_shape()
+                            or actual.get_dtype() != expected.get_dtype()
+                        ):
+                            raise ValueError(
+                                f"base candidate tensor schema differs from parent: {key}"
+                            )
+            except SafetensorError as error:
+                raise ValueError(
+                    f"base candidate {shard} is not a safetensors file: {error}"
+                ) from None
+
+
+def weight_map(root):
+    """Read the pinned layout without loading model tensors into memory."""
+    from safetensors import SafetensorError, safe_open
+
+    root = Path(root)
+    index = root / "model.safetensors.index.json"
+    if index.exists():
+        value = json.loads(index.read_text())
+        mapped = value.get("weight_map") if isinstance(value, dict) else None
+        if (
+            not isinstance(mapped, dict)
+            or not mapped
+            or any(not isinstance(k, str) or not isinstance(v, str) for k, v in mapped.items())
+        ):
+            raise ValueError("base candidate index has no valid weight_map")
+        return mapped
+    try:
+        with safe_open(root / "model.safetensors", framework="pt") as stream:
+            return {key: "model.safetensors" for key in stream.keys()}
+    except SafetensorError as error:
+        raise ValueError(f"base candidate is not a safetensors file: {error}") from None
 
 
 TARGET_MODULES = 152
@@ -308,7 +356,7 @@ TARGET_MODULES = 152
 def write_candidate(adapter, out):
     """Merge a pinned-recipe adapter into the parent backbone and write a d3 base candidate.
 
-    The candidate is the parent's two shards with ``W + (lora_alpha / r) * B @ A`` on every LoRA target
+    The candidate is the parent's weight files with ``W + (lora_alpha / r) * B @ A`` on every LoRA target
     (computed in FP32, stored BF16), the parent's index and contract files byte for byte, and candidate
     metadata; nothing else, so `validate_candidate` accepts it. Returns a provenance record for the caller
     to keep beside the artifact (the artifact itself may hold no extra file).
@@ -326,15 +374,15 @@ def write_candidate(adapter, out):
     parent = meta["model"]
     root = pinned_base_path(model=parent)
     index = "model.safetensors.index.json"
-    weight_map = json.loads((root / index).read_text())["weight_map"]
+    layout = weight_map(root)
     targets = {
         key[: -len(".weight")]
-        for key in weight_map
+        for key in layout
         if key.startswith("language_model.layers.")
         and key.endswith(".weight")
         and key.rsplit(".", 2)[-2] in TARGETS
     }
-    if len(targets) != TARGET_MODULES:
+    if len(targets) != pins(parent).get("target_modules", TARGET_MODULES):
         raise OSError("d3 language adapter target count changed")
     validate_adapter_config(adapter, targets)
     pairs = {}
@@ -354,7 +402,7 @@ def write_candidate(adapter, out):
     scaling = 32 / 16  # lora_alpha / r of the pinned recipe
     out.mkdir(parents=True, exist_ok=False)
     merged = 0
-    for shard in sorted(set(weight_map.values())):
+    for shard in sorted(set(layout.values())):
         tensors = {}
         with safe_open(str(root / shard), framework="pt") as stream:
             for key in stream.keys():
@@ -370,7 +418,7 @@ def write_candidate(adapter, out):
         save_file(tensors, str(out / shard), metadata={"format": "pt"})
     if merged != len(pairs):
         raise RuntimeError("adapter targets missing from the backbone shards")
-    for name in (index, *models.D3_CONTRACT_FILES):
+    for name in (*((index,) if (root / index).exists() else ()), *models.D3_CONTRACT_FILES):
         shutil.copyfile(root / name, out / name)
     models.write_metadata(out, kind="candidate", model=parent)
     validate_candidate(out, parent)
@@ -405,7 +453,9 @@ class DecisionModel:
             raise ValueError("adapters train on the pinned base, not on a base candidate")
         if device != "cuda" or not torch.cuda.is_available() or not torch.cuda.is_bf16_supported():
             raise OSError("d3 requires a BF16-capable CUDA GPU")
-        verify_runtime()
+        verify_runtime(self.meta["model"])
+        required = pins(self.meta["model"])
+        maximum = models.spec(self.meta["model"])["max_input_tokens"]
         self.device = device
         torch.set_num_threads(6)
         torch.backends.cuda.matmul.allow_tf32 = False
@@ -415,7 +465,7 @@ class DecisionModel:
         if candidate:
             validate_candidate(checkpoint, self.meta["model"])
             root = Path(checkpoint)
-        self.encoder = Encoder(root)
+        self.encoder = Encoder(root, model=self.meta["model"])
         self.tokenizer = self.encoder.tokenizer
         # verify="none": every pinned file was hashed above, and the vendor manifest also lists
         # README.md and assets/* that the pinned snapshot does not download.
@@ -423,7 +473,7 @@ class DecisionModel:
             root,
             device="cuda:0",
             batch_size=1,
-            max_length=MAX_TOKENS,
+            max_length=maximum,
             verify="none",
             local_files_only=True,
             permutation_average=False,
@@ -431,12 +481,12 @@ class DecisionModel:
         runtime = self.runtime
         if (
             runtime.fast is not None
-            or runtime.attention_mode != PINS["attention"]
-            or runtime.temperature != PINS["temperature"]
-            or runtime.readout_dtype != PINS["readout_dtype"]
+            or runtime.attention_mode != required["attention"]
+            or runtime.temperature != required["temperature"]
+            or runtime.readout_dtype != required["readout_dtype"]
             or runtime.prompt != "d3"
             or runtime.backbone_type != "qwen3_5"
-            or runtime.max_length != MAX_TOKENS
+            or runtime.max_length != maximum
         ):
             raise OSError("d3 runtime differs from the pinned configuration")
         self.base = runtime.backbone
@@ -454,7 +504,7 @@ class DecisionModel:
                 for name, _ in self.base.named_modules()
                 if name.startswith("language_model.layers.") and name.rsplit(".", 1)[-1] in TARGETS
             ]
-            if len(targets) != 152:
+            if len(targets) != required.get("target_modules", TARGET_MODULES):
                 raise OSError("d3 language adapter target count changed")
             if self.meta["kind"] == "adapter":
                 validate_adapter_config(checkpoint, targets)

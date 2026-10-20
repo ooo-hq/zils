@@ -112,7 +112,7 @@ def fetch(claim, destination, *, model, endpoint=None):
     """Download only the candidate files at the pinned revision under the candidate byte budget,
     then check the profile and the committed checkpoint hash."""
     files = models.candidate_files(model, "candidate")
-    budget = models.artifact_budget("candidate")
+    budget = models.artifact_budget("candidate", model)
     endpoint = endpoint or HF_ENDPOINT
     listed = revision_files(claim["repo"], claim["revision"], endpoint)
     if missing := [name for name in files if name not in listed]:

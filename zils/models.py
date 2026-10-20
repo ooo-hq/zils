@@ -90,6 +90,31 @@ TEXT_RUNTIME_MODULES[D3_ZILS_R5] = ".d3"
 RUNTIME_PYTHON_ENV[D3_ZILS_R5] = "ZILS_D3_RUNTIME_PYTHON"
 CANDIDATE_BASE_ENV[D3_ZILS_R5] = "ZILS_D3_ZILS_R5_CANDIDATE_BASE"
 PINS_FILES[D3_ZILS_R5] = "d3-mini-4.5b-zils-r5-pins.json"
+D3_POOL_MODELS = {
+    "d3-lite": "d3-lite-0.8b-v1",
+    "d3-nano": "d3-nano-2.2b-v1",
+    "d3-mini": D3,
+    "d3-flash": "d3-flash-8.4b-v1",
+    "d3": "d3-26b-v1",
+}
+for _pool, _model in D3_POOL_MODELS.items():
+    if _model == D3:
+        continue
+    _pins_file = "d3-full-pins.json" if _pool == "d3" else f"{_pool}-pins.json"
+    _pins = json.loads(Path(__file__).with_name(_pins_file).read_text())
+    SPECS[_model] = {
+        **SPECS[D3],
+        "id": _model,
+        "name": _pool,
+        "base": _pins["vendor"]["repo"],
+        "base_revision": _pins["revision"],
+        "runtime_revision": f"d3-vendor-runtime-{_pins['files']['d3_runtime.py'][:12]}/v1",
+    }
+    TEXT_ADAPTER_MODELS = (*TEXT_ADAPTER_MODELS, _model)
+    TEXT_RUNTIME_MODULES[_model] = ".d3"
+    RUNTIME_PYTHON_ENV[_model] = "ZILS_D3_RUNTIME_PYTHON"
+    CANDIDATE_BASE_ENV[_model] = "ZILS_" + _pool.upper().replace("-", "_") + "_CANDIDATE_BASE"
+    PINS_FILES[_model] = _pins_file
 KEV_FILES = ("adapter_config.json", "adapter_model.safetensors", "head.pt")
 TEXT_ADAPTER_FILES = ("adapter_config.json", "adapter_model.safetensors", "model.json")
 # A base candidate (Option 5) carries full H2O weights plus the parent's contract files unchanged.
@@ -146,6 +171,29 @@ VERSION = "zils-checkpoint/v1"
 def d3_family():
     """Profiles the d3 runtime serves: the vendor base and every Zils base promoted from it."""
     return tuple(m for m, module in TEXT_RUNTIME_MODULES.items() if module == ".d3")
+
+
+def pool_id(model):
+    """Resolve a released profile's lineage without changing its immutable identity."""
+    seen = set()
+    while model not in seen:
+        seen.add(model)
+        profile = spec(model)
+        for pool, root in D3_POOL_MODELS.items():
+            if model == root:
+                return pool
+        model = (profile.get("parent") or {}).get("id")
+        if model is None:
+            break
+    raise ValueError("profile has no supported model pool")
+
+
+def pool_catalog():
+    """Known lineages; membership is not a hardware or deployment certificate."""
+    return [
+        {"id": pool, "name": SPECS[model]["name"], "model": model, "qualified": False}
+        for pool, model in D3_POOL_MODELS.items()
+    ]
 
 
 def base_candidate_models():
@@ -217,7 +265,14 @@ def candidate_files(model, kind="adapter"):
     if kind == "candidate":
         if model not in base_candidate_models():
             raise ValueError("base candidates are supported for the H2O and d3 profiles only")
-        return CANDIDATE_FILES if model == H2O else D3_CANDIDATE_FILES
+        if model == H2O:
+            return CANDIDATE_FILES
+        files = pins(model)["files"]
+        weights = sorted(
+            n for n in files if n.endswith(".safetensors") and n != "readout.safetensors"
+        )
+        index = ("model.safetensors.index.json",) if "model.safetensors.index.json" in files else ()
+        return ("model.json", *weights, *index, *D3_CONTRACT_FILES)
     return {
         KEV: KEV_FILES,
         H2O: TEXT_ADAPTER_FILES,
@@ -226,7 +281,9 @@ def candidate_files(model, kind="adapter"):
     }[model]
 
 
-def artifact_budget(kind="adapter"):
+def artifact_budget(kind="adapter", model=None):
+    if kind == "candidate" and model in d3_family():
+        return pins(model).get("candidate_max_bytes", MAX_CANDIDATE_BYTES)
     return MAX_CANDIDATE_BYTES if kind == "candidate" else MAX_ADAPTER_BYTES
 
 
