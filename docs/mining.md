@@ -179,8 +179,8 @@ wallets and explicit publication; follow the [testnet guide](testnet.md).
 On a testnet fleet whose validator config carries a `base_tier` track, miners
 earn on two tracks, paid from one weight vector on the configured subnet:
 
-- **Base tier (primary, continuous).** Submit a full-weight candidate for the
-  pinned base, `d3-mini-4.5b-v1`, under the
+- **Base tier (primary, continuous).** Beat the pinned incumbent in your
+  [model tier](model-pools.md). Submit a full-weight candidate under the
   [base candidate contract](base-candidates.md). The validator's base-tier
   scorer calibrates it on the sealed calibration split and scores the sealed
   test split; you are eligible when your skill is positive, your accuracy is
@@ -227,7 +227,7 @@ sealed split is audited against its manifest before scoring, and payment goes
 only to registered roster UIDs. You receive aggregate metrics, never per-case
 outcomes; a round's cases are published after it closes and are not reused.
 
-What a base-tier miner needs: the 20–24 GB cards in today's fleet cannot
+For the mini tier specifically, the 20–24 GB cards in the measured fleet cannot
 full-fine-tune the 4.5B backbone, but a d3 LoRA trains in about 10.5 GB of
 GPU memory. Train a LoRA on d3 and merge it with `zils.d3 candidate`, which
 writes the two bf16 shards in the parent's layout plus the untouched contract
@@ -253,12 +253,31 @@ whoever operates them; find them on the metagraph
 Start with the installer on the mining host. It clones Zils into `~/.zils/zils`,
 builds the miner runtime and, on Linux x86_64 with an NVIDIA GPU, the d3 training
 runtime, links `zils` into `~/.local/bin` and starts `zils setup`, which asks for
-your wallet, candidate folder and Hugging Face repo, saves them to
+your wallet, base profile, candidate folder and Hugging Face repo, saves them to
 `~/.zils/miner.json` and runs the doctor. Rerun it to update.
 
 ```bash
 curl -fsSL https://zils.ai/install.sh | sh
 ```
+
+Every tier has a base to beat. `zils setup` lists the installed d3 profiles:
+lite, nano, mini, flash and d3, including registered promoted profiles. Choose
+the exact incumbent profile accepted by your validator. A listed profile does
+not mean that its competition is enabled or funded; see [model pools](model-pools.md).
+
+`--model` overrides the saved profile for one run. For example, if your validator
+accepts the stock lite profile:
+
+```bash
+zils setup --model d3-lite-0.8b-v1
+zils doctor --model d3-lite-0.8b-v1
+```
+
+The doctor prints a reference download command with that exact `--model` and
+separate working folders per profile. Training and merging follow the reference's
+metadata. Existing candidates supply their profile when no selection is saved;
+without a candidate or selection, the CLI asks you to choose instead of assuming
+mini. A candidate for a different tier or parent profile is rejected before upload.
 
 From then on `zils doctor` names the next step and prints its command; the steps are:
 
@@ -282,8 +301,10 @@ From then on `zils doctor` names the next step and prints its command; the steps
    zils commit-candidate
    ```
 
-   It reads the wallet, candidate and repo saved by `zils setup`; flags such as
-   `--candidate` or `--repo` override them for one run.
+   It reads the wallet, base profile, candidate and repo saved by `zils setup`;
+   flags such as `--model`, `--candidate` or `--repo` override them for one run.
+   Upload and remote verification use the selected candidate's pinned file list,
+   including the correct number of weight shards for its tier.
 
    Without `--yes` it is a dry run that prints the commitment; with `--yes` it
    uploads, checks the public repo at the new commit, writes the commitment and
