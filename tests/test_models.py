@@ -163,6 +163,34 @@ class ModelTest(unittest.TestCase):
         self.assertEqual(len(revisions), len(set(revisions)))
         self.assertIn(models.D3, models.TEXT_ADAPTER_MODELS)
 
+    def test_promoted_round_5_is_a_d3_family_profile(self):
+        """zils-ai/d3-mini-4.5b-zils-r5: the round-5 winner (checkpoint a472d0a4…), new weights on d3's runtime."""
+        r5, d3 = models.D3_ZILS_R5, models.D3
+        self.assertEqual(models.d3_family(), (d3, r5))
+        self.assertIn(r5, models.TEXT_ADAPTER_MODELS)
+        self.assertEqual(
+            models.DEFAULT_TRAINING_MODEL, d3
+        )  # channels move by configuration, not here
+        spec, parent = models.spec(r5), models.spec(d3)
+        self.assertEqual(spec["parent"], {"id": d3, "base_revision": parent["base_revision"]})
+        same = ("runtime_revision", "prompt", "max_input_tokens", "recipe", "calibration", "inputs")
+        self.assertEqual({k: spec[k] for k in same}, {k: parent[k] for k in same})
+        for model in models.d3_family():  # each profile pins its own published revision
+            self.assertEqual(models.spec(model)["base_revision"], models.pins(model)["revision"])
+        pins, base = models.pins(r5), models.pins(d3)
+        self.assertEqual(
+            {k: v for k, v in pins.items() if k not in ("files", "revision")},
+            {k: v for k, v in base.items() if k not in ("files", "revision")},
+        )
+        changed = sorted(k for k, v in pins["files"].items() if base["files"].get(k) != v)
+        self.assertEqual(
+            changed,
+            ["NOTICE", "model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"],
+        )
+        self.assertNotEqual(models.profile_identity(r5), models.profile_identity(d3))
+        self.assertEqual(models.runtime_python_env(r5), models.runtime_python_env(d3))
+        self.assertEqual(models.candidate_files(r5), models.TEXT_ADAPTER_FILES)
+
     def test_d3_identity_hashes_pins_file(self):
         pins = models.pins(models.D3)
         self.assertEqual(pins["python"], "3.12")
