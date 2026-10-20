@@ -1,0 +1,51 @@
+{
+  "attention": "noncausal_full_attention",
+  "backbone_dtype": "bfloat16",
+  "candidate_max_bytes": 4585969844,
+  "cuda": "13.0",
+  "fast_path": false,
+  "files": {
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "MODEL_MANIFEST.json": "db2139c5b5b7060f8f95150ec70ca2fe7e69e6bf4249e5766df5388bf35977f2",
+    "NOTICE": "300b6105c41a1843653e40be644c3d54e06288b25199373e04143530cc3db366",
+    "chat_template.jinja": "273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80",
+    "config.json": "9caa6ab8956c859c3852328dda6322893a18b30826d3916db91d938d6c74ac4f",
+    "d3_engine.py": "086238942762df45047a32cd9a8e2bedd9b63167eb40be260c776de567979f53",
+    "d3_fast.py": "68a1fb9a2c3bde9ac2763bf504decae592ca12722698fbde1b39a31262955535",
+    "d3_format.py": "3badfbc70561bb3f5b8ec16a11d2c455b96ddb32caace0a8a54ca102eae1f3fa",
+    "d3_kernels.py": "8f7534ca1e1846ebf7c4c73058002f3be4dbf0d5d426f0815150ae0cbe7677bd",
+    "d3_runtime.py": "adf7f7aa085674b5682e492d8b2e3cc4f11c67b0d153515c742e907e9b550917",
+    "d3_server.py": "766a20a69101e36ab0535a1ec683379db422380a83091f0eccd7e82edb6a02de",
+    "decision_config.json": "9175a0f42d5886def9c8429fdf8b0be58a3c97d106b94520e2ac38fe326302bf",
+    "merges.txt": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+    "model.safetensors": "7269b3260f1106f3443bfdb028a76143be2e679db3f29a31f4dfd1d595f03155",
+    "modeling_d3.py": "f8f8db23ff58f1a990ffa24977d744a50e1b4446d02a64c22070967705b6dbef",
+    "pipeline_d3.py": "4f9297c7c74e596e9b67df91a1e6823cfada48bf781336f141974ff6a2f1038e",
+    "preprocessor_config.json": "27225450ac9c6529872ee1924fcb0962ff5634834f817040f444118116f4e516",
+    "readout.safetensors": "662e8a26d8016b2d479f1ca66bf64944603316c2b5e074ab7ac3304b8ae045e9",
+    "requirements.txt": "de9defd71ae4e559a7f5bdcc935b23716f9788e8755f2ba6db1ab6862bcda12e",
+    "tokenizer.json": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+    "tokenizer_config.json": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+    "video_preprocessor_config.json": "7768af27c1fafa9cc9011c1dc20067e03f8915e03b63504550e11d5066986d13",
+    "vocab.json": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003"
+  },
+  "packages": {
+    "causal-conv1d": "1.7.0",
+    "flash-linear-attention": "0.5.2",
+    "opencv-python-headless": "5.0.0.93",
+    "peft": "0.21.0",
+    "pillow": "11.3.0",
+    "torch": "2.10.0+cu130",
+    "torchvision": "0.25.0+cu130",
+    "transformers": "5.17.0"
+  },
+  "python": "3.12",
+  "readout_dtype": "float32",
+  "revision": "462efc366229ea268cf4eed3738b3fc4415e4817",
+  "target_modules": 114,
+  "temperature": 1.0,
+  "vendor": {
+    "repo": "vllm-sr/d3-nano",
+    "revision": "462efc366229ea268cf4eed3738b3fc4415e4817"
+  }
+}

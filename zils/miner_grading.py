@@ -89,12 +89,36 @@ def bands(model):
 # Training memory of the shared trainer (MiB) at a job's longest example, for the miner's own fit
 # check. d3: 10,538 MiB measured at ~1.9k tokens (hosted trainer), 13,036 MiB reserved at 6,931
 # tokens (Claims run, RTX 4090). ponytail: linear fit over two points; refit when a probe at 8k runs.
-TRAINING_MIB = {".d3": (9500, 0.6)}
+TRAINING_MIB = {"d3-mini": (9500, 0.6)}
 
 
-def training_mib(model, max_tokens):
+def training_mib(model, max_tokens, qualification=None, *, modality="text"):
     """Estimated peak training memory, or None when the profile has no measured curve."""
-    fit = TRAINING_MIB.get(models.TEXT_RUNTIME_MODULES.get(model))
+    if qualification is not None:
+        q = qualification
+        if not isinstance(q, dict) or model not in models.d3_family():
+            return None
+        training = q.get("training", {})
+        if (
+            q.get("model") != model
+            or any(q.get(k) != v for k, v in models.profile_identity(model).items())
+            or q.get("trainer_sha256") != trainer_identity(model)
+            or any(
+                q.get(k) is not True
+                for k in ("capacity_ok", "runtime_verified", "reload_predict_ok")
+            )
+            or not isinstance(training, dict)
+            or modality not in training.get("modalities", ["text"])
+            or type(max_tokens) is not int
+            or type(training.get("max_prompt_tokens")) is not int
+            or not 0 < max_tokens <= training["max_prompt_tokens"]
+            or not finite(training.get("peak_gpu_mib"), minimum=1)
+        ):
+            return None
+        return math.ceil(training["peak_gpu_mib"] + max(1024, training["peak_gpu_mib"] * 0.15))
+    if modality != "text":
+        return None
+    fit = TRAINING_MIB.get(models.pool_id(model)) if model in models.d3_family() else None
     if fit is None or type(max_tokens) is not int or max_tokens < 1:
         return None
     return math.ceil(fit[0] + fit[1] * max_tokens)

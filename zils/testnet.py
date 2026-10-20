@@ -14,6 +14,8 @@ COMMITMENT_FIELD = 128  # bytes per Raw field of the Commitments pallet; the cha
 
 
 def check_config(config):
+    if "base_tier" in config and "base_pools" in config:
+        raise ValueError("configure base_tier or base_pools, never both")
     chain = config.get("chain")
     if (
         not isinstance(chain, dict)
@@ -157,7 +159,7 @@ def preflight(config, sub):
     last_update = last[validator_uid] if validator_uid < len(last) else 0
     rate = query("WeightsSetRateLimit", netuid)
     commitments = {}
-    if "base_tier" in config:
+    if "base_tier" in config or "base_pools" in config:
         # Base candidates are the members' commitments at this same block, frozen with the round.
         for uid, item in members.items():
             found = read_commitment(sub, netuid, item["hotkey"], block)
@@ -176,7 +178,7 @@ def preflight(config, sub):
         "required_version": query("WeightsVersionKey", netuid),
         "last_update": last_update,
         "retry_after_block": last_update + rate if last_update else block,
-        **({"commitments": commitments} if "base_tier" in config else {}),
+        **({"commitments": commitments} if "base_tier" in config or "base_pools" in config else {}),
     }
 
 
@@ -199,6 +201,18 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
     models.validate_spec(model)
     if report.get("model", models.spec(models.KEV)) != model:
         raise ValueError("Report differs from the testnet fleet model profile")
+    pools = config.get("base_pools")
+    pool_report = report.get("base_pools")
+    if pools is not None or pool_report is not None:
+        from . import model_pools
+
+        if (
+            pools is None
+            or not isinstance(pool_report, dict)
+            or set(pool_report) != {"config", "decisions"}
+            or pool_report["config"] != model_pools.validate(pools)
+        ):
+            raise ValueError("pool report differs from the configured base_pools config")
     for path in (receipt_path, attempt_path):
         if path.exists():
             saved = json.loads(path.read_text())
@@ -245,6 +259,24 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
         raise ValueError("report carries a base-tier decision but the fleet has no base-tier track")
     tracks = None
     weights = adapter
+    if pools is not None:
+        base, pool_record = model_pools.weights(pools, pool_report["decisions"], config["members"])
+        share, burn = pools["share"], pools["burn_uid"]
+        weights = zils.blend_weights(
+            {"base": base, "adapter": adapter},
+            {"base": share, "adapter": 1 - share},
+            burn_uid=burn,
+        )
+        burned = share * pool_record["burned"] + (0 if adapter else 1 - share)
+        if burned > 0 and burn != state["owner_uid"]:
+            raise ValueError("base_pools.burn_uid must be the subnet owner hotkey's uid")
+        tracks = {
+            **pool_record,
+            "base_share": share,
+            "burned": burned,
+            "base": {str(k): v for k, v in base.items()},
+            "adapter": {str(k): v for k, v in adapter.items()},
+        }
     if track is not None:
         from . import base_round
 

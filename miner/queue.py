@@ -88,6 +88,7 @@ def run_once(
     minimum_mib=0,
     terms_sha256=None,
     budget_mib=None,
+    qualifications=None,
 ):
     if not gpu_ready(device):
         return False
@@ -141,7 +142,14 @@ def run_once(
                 raise ValueError("job uses an unsupported base revision")
             if zils.checkpoint_hash(reference) != assignment["initial_sha256"]:
                 raise ValueError("job starting checkpoint differs from the installed reference")
-            if not fits(model, assignment.get("workload"), device, budget_mib):
+            if not fits(
+                model,
+                assignment.get("workload"),
+                device,
+                budget_mib,
+                qualification=(qualifications or {}).get(model),
+                modality=assignment.get("input_modality", "text"),
+            ):
                 client.call("refuse", auth)
                 print(
                     f"Refused job {job_id}: its longest example does not fit this GPU.", flush=True
@@ -223,11 +231,16 @@ def run_once(
     return True
 
 
-def fits(model, workload, device, budget_mib=None):
+def fits(model, workload, device, budget_mib=None, *, qualification=None, modality="text"):
     """The miner's own fit check: the job's longest example against this GPU's memory budget.
     A job too long for the whole budget is refused so another miner takes it; momentary
     shortage stays a capacity deferral."""
-    need = miner_grading.training_mib(model, (workload or {}).get("max_tokens"))
+    maximum = (workload or {}).get("max_tokens")
+    if modality == "images" and model in models.d3_family():
+        maximum = models.spec(model)["max_input_tokens"]
+    need = miner_grading.training_mib(model, maximum, qualification, modality=modality)
+    if need is None and model in models.d3_family() and models.pool_id(model) != "d3-mini":
+        return False
     if need is None or device != "cuda":
         return True
     budget = budget_mib if budget_mib is not None else gpu_total_mib()
@@ -323,6 +336,10 @@ def main():
         budget = config.get("gpu_budget_mib")
         if budget is not None and (type(budget) is not int or budget < 1):
             raise ValueError("gpu_budget_mib must be a positive integer")
+        qualifications = {
+            model: json.loads(Path(path).read_text())
+            for model, path in config.get("qualifications", {}).items()
+        }
         with (
             locked(state / "queue-worker.lock"),
             presence_loop(
@@ -342,6 +359,7 @@ def main():
                         minimum_mib=minimum,
                         terms_sha256=config.get("terms_sha256"),
                         budget_mib=budget,
+                        qualifications=qualifications,
                     )
                 except (
                     APIError,

@@ -191,7 +191,7 @@ def fetch_checkpoint(
     destination.mkdir()
     started, total = time.monotonic(), 0
     files = models.candidate_files(model, kind)
-    budget = models.artifact_budget(kind)
+    budget = models.artifact_budget(kind, model)
     deadline = 1800 if kind == "candidate" else 300 if model == models.IMAJEV else 30
     for name in files:
         with opener().open(claim["endpoint"] + prefix + name, timeout=5) as response:

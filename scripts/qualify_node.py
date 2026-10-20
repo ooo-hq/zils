@@ -53,7 +53,8 @@ SIZING_PROBE = """# sizing probe
 import json, sys
 from zils.d3 import Encoder, base_path
 ticket, questions = json.loads(sys.argv[1]), json.loads(sys.argv[2])
-encoder = Encoder(base_path())
+model = sys.argv[3]
+encoder = Encoder(base_path(model=model), model=model)
 def tokens(question, repeats):
     state = {"ticket": ticket, "history": "payment issue " * repeats}
     return len(encoder.encode(state, question)[0])
@@ -123,6 +124,7 @@ def qualify(
     free_mib=None,
     model=models.H2O,
     terms_sha256=None,
+    minimum_free_mib=None,
 ):
     out.mkdir(parents=True, exist_ok=True)
     (out / "qualification.json").unlink(missing_ok=True)  # never leave a stale passing report
@@ -155,11 +157,22 @@ def qualify(
         report["gpu"] = nvidia(run)
         free = free_memory_mib(run) if free_mib is None else free_mib
         report["gpu"]["free_mib_at_start"] = free
-        report["capacity_ok"] = free >= FLOOR_MIB and (
-            free_mib is not None or gpu_ready("cuda", model=model)
+        floor = (
+            minimum_free_mib
+            if minimum_free_mib is not None
+            else (
+                1
+                if model in models.d3_family() and models.pool_id(model) != "d3-mini"
+                else FLOOR_MIB
+            )
+        )
+        if type(floor) is not int or floor < 1:
+            raise ValueError("minimum_free_mib must be a positive integer")
+        report["capacity_ok"] = free >= floor and (
+            free_mib is not None or gpu_ready("cuda", model=model, minimum_mib=floor)
         )
         if not report["capacity_ok"]:
-            report["error"] = f"free GPU memory {free} MiB is below the {FLOOR_MIB} MiB floor"
+            report["error"] = f"free GPU memory {free} MiB is below the {floor} MiB floor"
             return finish(2)
         env_root = str(root)
         stage = "runtime check"
@@ -167,7 +180,9 @@ def qualify(
             [
                 runtime_python,
                 "-c",
-                f"from {module} import verify_runtime; verify_runtime(); print('ok')",
+                f"from {module} import verify_runtime; verify_runtime({model!r}); print('ok')"
+                if model in models.d3_family()
+                else f"from {module} import verify_runtime; verify_runtime(); print('ok')",
             ],
             capture_output=True,
             text=True,
@@ -183,7 +198,8 @@ def qualify(
         if not (reference / "model.json").exists():
             shutil.rmtree(reference, ignore_errors=True)  # half-written reference
             run(
-                [runtime_python, "-m", module, "reference", "--out", str(reference)],
+                [runtime_python, "-m", module, "reference", "--out", str(reference)]
+                + (["--model", model] if model in models.d3_family() else []),
                 check=True,
                 capture_output=True,
                 text=True,
@@ -194,7 +210,7 @@ def qualify(
             stage = "sizing"
             sized = run(
                 [runtime_python, "-c", SIZING_PROBE, json.dumps(STATE["ticket"])]
-                + [json.dumps(QUESTIONS)],
+                + [json.dumps(QUESTIONS), model],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -261,6 +277,7 @@ def qualify(
             else {"ok": False, "max_prompt_tokens": None}
         )
         report["training"] = {
+            "modalities": ["text"],
             "examples": examples,
             "optimizer_steps": metrics["optimizer_steps"],
             "seconds": metrics["training_seconds"],
@@ -309,6 +326,9 @@ def main(argv=None):
     )
     parser.add_argument("--out", required=True)
     parser.add_argument(
+        "--minimum-free-mib", type=int, help="operator memory gate for this qualification run"
+    )
+    parser.add_argument(
         "--terms-sha256",
         help="sha256 of docs/mining-terms.md you accept; recorded for chain admission",
     )
@@ -319,6 +339,7 @@ def main(argv=None):
         Path(args.out).resolve(),
         model=args.model,
         terms_sha256=args.terms_sha256,
+        minimum_free_mib=args.minimum_free_mib,
     )
     print(json.dumps(report, indent=2))
     return 0

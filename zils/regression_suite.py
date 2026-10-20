@@ -239,6 +239,8 @@ def main():
         "candidate": str(args.candidate),
         "incumbent_model": incumbent_model,
         "candidate_model": candidate_model,
+        "candidate_sha256": zils.checkpoint_hash(args.candidate),
+        "incumbent_sha256": zils.checkpoint_hash(args.incumbent),
     }
     (out / "suite-result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(decision, indent=2))

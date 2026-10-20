@@ -9,13 +9,14 @@ prepended to ``kings``) are applied in a reviewed pull request.
 import argparse
 import hashlib
 import json
+import math
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from zils import models  # noqa: E402
+from zils import base_round, models, regression_suite  # noqa: E402
 
 ORIGIN = {
     models.H2O: " by h2oai, Apache License 2.0",
@@ -23,7 +24,7 @@ ORIGIN = {
 }
 CANDIDATE_ID_PREFIX = {
     models.H2O: "h2o-lightning-4b",
-    **{m: "d3-mini-4.5b" for m in models.d3_family()},
+    **{m: models.D3_POOL_MODELS[models.pool_id(m)].removesuffix("-v1") for m in models.d3_family()},
 }
 
 NOTICE = """Zils base model, round {round}.
@@ -38,10 +39,45 @@ def sha(path):
         return hashlib.file_digest(f, "sha256").hexdigest()
 
 
+def verify_regression(report, candidate, incumbent, model):
+    if (
+        report.get("candidate_sha256") != candidate
+        or report.get("incumbent_sha256") != incumbent
+        or report.get("incumbent_model") != model
+        or report.get("candidate_model") != model
+    ):
+        raise ValueError("regression report differs from candidate, incumbent or pool profile")
+    jobs = report.get("jobs")
+    if not isinstance(jobs, dict) or not jobs:
+        raise ValueError("regression report requires scored jobs")
+    comparison = {}
+    for job, sides in jobs.items():
+        if not isinstance(sides, dict) or set(sides) != {"incumbent", "candidate"}:
+            raise ValueError("regression job requires incumbent and candidate")
+        values = {
+            side: scores.get("brier") if isinstance(scores, dict) else None
+            for side, scores in sides.items()
+        }
+        if any(
+            type(v) not in (int, float) or not math.isfinite(v) or not 0 <= v <= 2
+            for v in values.values()
+        ):
+            raise ValueError("regression Brier must be finite and in [0, 2]")
+        comparison[job] = values
+    if not regression_suite.verdict(comparison)["passed"]:
+        raise ValueError("candidate failed the adapter regression gate")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", required=True, help="confirmed candidate directory")
     parser.add_argument("--decision", required=True, help="decision.json with confirmed_winner")
+    parser.add_argument(
+        "--first-decision", required=True, help="first draw's timestamped decision.json"
+    )
+    parser.add_argument(
+        "--regression-report", required=True, help="bound suite-result.json from adapter regression"
+    )
     parser.add_argument("--round", type=int, required=True)
     parser.add_argument("--model", choices=list(CANDIDATE_ID_PREFIX), default=models.D3)
     parser.add_argument("--staging", required=True, help="new directory to stage the release")
@@ -74,7 +110,16 @@ def main():
         raise SystemExit("not a base candidate checkpoint")
     if models.metadata(candidate)["model"] != args.model:
         raise SystemExit(f"not a {args.model} base candidate checkpoint")
-    models.text_runtime(args.model).validate_candidate(candidate)
+    first = json.loads(Path(args.first_decision).read_text())
+    if base_round.confirm_promotion(first, decision) != winner:
+        raise SystemExit("confirmed winner differs from the two recorded draws")
+    if decision.get("model") is not None and decision["model"] != models.spec(args.model):
+        raise SystemExit("decision belongs to a different model profile")
+    runtime = models.text_runtime(args.model)
+    if args.model in models.d3_family():
+        runtime.validate_candidate(candidate, args.model)
+    else:
+        runtime.validate_candidate(candidate)
     import zils
 
     digest = zils.checkpoint_hash(candidate)
@@ -82,6 +127,8 @@ def main():
         raise SystemExit(
             f"candidate hash {digest} differs from the confirmed winner {winner['sha256']}"
         )
+    regression = json.loads(Path(args.regression_report).read_text())
+    verify_regression(regression, digest, decision["incumbent"]["sha256"], args.model)
     staging.mkdir(parents=True, exist_ok=False)
     for name in models.candidate_files(args.model, "candidate"):
         if name != "model.json":
@@ -143,6 +190,7 @@ def main():
             "kings": [args.king_hotkey, *filter(None, args.previous_kings.split(","))],
         },
         "crowned_uid": winner["uid"],
+        "pool_id": models.pool_id(args.model) if args.model in models.d3_family() else None,
         "uploaded": False,
     }
     if args.upload:

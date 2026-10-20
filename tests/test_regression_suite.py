@@ -78,7 +78,12 @@ class RegressionSuiteTest(unittest.TestCase):
                 weights = Path(tmp) / "candidate"
                 weights.mkdir()
                 models.write_metadata(weights, kind="candidate", model=model)
+                for name in models.candidate_files(model, "candidate"):
+                    if name != "model.json":
+                        (weights / name).write_bytes(b"fixture")
                 reference = Path(tmp) / "reference"
+                reference.mkdir()
+                models.write_metadata(reference, model=model, kind="base")
                 flags = [
                     "--model",
                     model,

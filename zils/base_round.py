@@ -10,9 +10,11 @@ disjoint draw. No training, downloading or chain interaction happens here.
 import argparse
 import hashlib
 import json
+import math
 import random
 import re
 import statistics
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -212,7 +214,7 @@ def draw(root):
     }
 
 
-def validate_track(track):
+def validate_track(track, *, allow_empty_draws=False):
     """A fleet config's base-tier track: share, incumbent, allowed draws and the decision policy."""
     if not isinstance(track, dict) or set(track) - {
         "share",
@@ -237,7 +239,7 @@ def validate_track(track):
     if type(burn) is not int or not 0 <= burn <= 65535:
         raise ValueError("base_tier.burn_uid must be a uid")
     draws = track.get("draws")
-    if not isinstance(draws, list) or not draws:
+    if not isinstance(draws, list) or (not draws and not allow_empty_draws):
         raise ValueError("base_tier.draws must list at least one sealed draw")
     for item in draws:
         if not isinstance(item, dict) or set(item) != {"manifest_sha256", "dataset_sha256"}:
@@ -310,6 +312,20 @@ def confirm(first, second):
     return pending if again else None
 
 
+def confirm_promotion(first, second):
+    """New promotions require recorded evaluation times and the same competition contract."""
+    times = [report.get("evaluated_at") for report in (first, second)]
+    if any(type(t) not in (int, float) or not math.isfinite(t) for t in times):
+        raise ValueError("promotion requires recorded evaluation times")
+    if times[1] - times[0] < 12 * 3600:
+        raise ValueError("confirmation must be evaluated at least 12 hours later")
+    if any(first.get(k) != second.get(k) for k in ("pool_id", "model", "policy")) or (
+        first["incumbent"]["sha256"] != second["incumbent"]["sha256"]
+    ):
+        raise ValueError("confirmation differs from the first competition contract")
+    return confirm(first, second)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--round", required=True, help="sealed round directory with manifest.json")
@@ -350,6 +366,7 @@ def main():
         {"min_brier_improvement": args.min_brier_improvement},
     )
     decision["manifest_sha256"] = benchmark.file_hash(Path(args.round) / "manifest.json")
+    decision["evaluated_at"] = time.time()
     if args.confirm:
         decision["confirmed_winner"] = confirm(json.loads(Path(args.confirm).read_text()), decision)
     with Path(args.out).open("x") as output:

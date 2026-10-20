@@ -134,6 +134,7 @@ class BaseCandidateTest(unittest.TestCase):
         for model, prefix, validator in (
             (models.H2O, "h2o-lightning-4b", "zils.h2o.validate_candidate"),
             (models.D3, "d3-mini-4.5b", "zils.d3.validate_candidate"),
+            ("d3-lite-0.8b-v1", "d3-lite-0.8b", "zils.d3.validate_candidate"),
         ):
             with self.subTest(model=model), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -144,7 +145,39 @@ class BaseCandidateTest(unittest.TestCase):
                 models.write_metadata(weights, kind="candidate", model=model)
                 digest = zils.checkpoint_hash(weights)
                 decision = root / "decision.json"
-                decision.write_text(json.dumps({"confirmed_winner": {"uid": 7, "sha256": digest}}))
+                winner = {"uid": 7, "sha256": digest}
+                first = {
+                    "pending_winner": winner,
+                    "dataset_sha256": "1" * 64,
+                    "evaluated_at": 1000,
+                    "model": models.spec(model),
+                    "incumbent": {"sha256": "b" * 64},
+                }
+                (root / "first.json").write_text(json.dumps(first))
+                decision.write_text(
+                    json.dumps(
+                        {
+                            **first,
+                            "confirmed_winner": winner,
+                            "dataset_sha256": "2" * 64,
+                            "evaluated_at": 44200,
+                            "candidates": [{**winner, "eligible": True}],
+                        }
+                    )
+                )
+                (root / "regression.json").write_text(
+                    json.dumps(
+                        {
+                            "incumbent_model": model,
+                            "candidate_model": model,
+                            "incumbent_sha256": "b" * 64,
+                            "candidate_sha256": digest,
+                            "jobs": {
+                                "task": {"incumbent": {"brier": 0.3}, "candidate": {"brier": 0.2}}
+                            },
+                        }
+                    )
+                )
                 argv = [
                     "promote_base.py",
                     "--model",
@@ -162,6 +195,12 @@ class BaseCandidateTest(unittest.TestCase):
                     "--previous-kings",
                     "hk-old,hk-older",
                 ]
+                argv += [
+                    "--first-decision",
+                    str(root / "first.json"),
+                    "--regression-report",
+                    str(root / "regression.json"),
+                ]
                 out = io.StringIO()
                 with (
                     patch.object(sys, "argv", argv),
@@ -172,7 +211,9 @@ class BaseCandidateTest(unittest.TestCase):
                         str(Path(__file__).parents[1] / "scripts/promote_base.py"),
                         run_name="__main__",
                     )
-                validate.assert_called_once_with(weights)
+                validate.assert_called_once_with(
+                    weights, *([model] if model in models.d3_family() else [])
+                )
                 result = json.loads(out.getvalue())
                 entry = result["proposed_spec_entry"]
                 self.assertEqual(entry["id"], f"{prefix}-zils-r3")
@@ -217,7 +258,14 @@ class BaseCandidateTest(unittest.TestCase):
             decision.write_text(json.dumps({"confirmed_winner": {"sha256": "x"}}))
             argv = ["promote_base.py", "--model", models.D3, "--candidate", str(weights)]
             argv += ["--decision", str(decision), "--round", "1", "--staging", str(root / "s")]
-            argv += ["--king-hotkey", "hk"]
+            argv += [
+                "--king-hotkey",
+                "hk",
+                "--first-decision",
+                str(decision),
+                "--regression-report",
+                str(decision),
+            ]
             with patch.object(sys, "argv", argv), self.assertRaisesRegex(SystemExit, "not a d3"):
                 runpy.run_path(
                     str(Path(__file__).parents[1] / "scripts/promote_base.py"), run_name="__main__"

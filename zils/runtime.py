@@ -73,7 +73,20 @@ def locked(path, wait=False):
 CAPACITY_ENV = {
     models.H2O: "ZILS_H2O_MIN_FREE_MIB",
     models.IMAJEV: "ZILS_IMAGE_MIN_FREE_MIB",
-    **{m: "ZILS_D3_MIN_FREE_MIB" for m in models.d3_family()},
+    **{
+        m: (
+            "ZILS_D3_MIN_FREE_MIB"
+            if models.pool_id(m) == "d3-mini"
+            else "ZILS_"
+            + (
+                "D3_FULL"
+                if models.pool_id(m) == "d3"
+                else models.pool_id(m).upper().replace("-", "_")
+            )
+            + "_MIN_FREE_MIB"
+        )
+        for m in models.d3_family()
+    },
 }
 
 
@@ -99,7 +112,10 @@ def gpu_ready(device, *, model=None, minimum_mib=0):
     if model in CAPACITY_ENV:
         if device != "cuda":
             return False
-        minimum = max(12288, int(settings.get(CAPACITY_ENV[model], "12288")))
+        floor = 0 if model in models.d3_family() and models.pool_id(model) != "d3-mini" else 12288
+        minimum = max(floor, int(settings.get(CAPACITY_ENV[model], str(floor))))
+        if minimum == 0 and minimum_mib == 0:
+            return False
     else:
         if device != "cuda" or (settings.get("ZILS_GPU_MIN_FREE_MIB") is None and minimum_mib == 0):
             return True

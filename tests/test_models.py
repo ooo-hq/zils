@@ -166,7 +166,9 @@ class ModelTest(unittest.TestCase):
     def test_promoted_round_5_is_a_d3_family_profile(self):
         """zils-ai/d3-mini-4.5b-zils-r5: the round-5 winner (checkpoint a472d0a4…), new weights on d3's runtime."""
         r5, d3 = models.D3_ZILS_R5, models.D3
-        self.assertEqual(models.d3_family(), (d3, r5))
+        self.assertEqual(
+            tuple(m for m in models.d3_family() if models.pool_id(m) == "d3-mini"), (d3, r5)
+        )
         self.assertIn(r5, models.TEXT_ADAPTER_MODELS)
         self.assertEqual(
             models.DEFAULT_TRAINING_MODEL, d3
