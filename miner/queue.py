@@ -148,6 +148,7 @@ def run_once(
                 device,
                 budget_mib,
                 qualification=(qualifications or {}).get(model),
+                modality=assignment.get("input_modality", "text"),
             ):
                 client.call("refuse", auth)
                 print(
@@ -230,11 +231,14 @@ def run_once(
     return True
 
 
-def fits(model, workload, device, budget_mib=None, *, qualification=None):
+def fits(model, workload, device, budget_mib=None, *, qualification=None, modality="text"):
     """The miner's own fit check: the job's longest example against this GPU's memory budget.
     A job too long for the whole budget is refused so another miner takes it; momentary
     shortage stays a capacity deferral."""
-    need = miner_grading.training_mib(model, (workload or {}).get("max_tokens"), qualification)
+    maximum = (workload or {}).get("max_tokens")
+    if modality == "images" and model in models.d3_family():
+        maximum = models.spec(model)["max_input_tokens"]
+    need = miner_grading.training_mib(model, maximum, qualification, modality=modality)
     if need is None and model in models.d3_family() and models.pool_id(model) != "d3-mini":
         return False
     if need is None or device != "cuda":

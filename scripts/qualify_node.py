@@ -277,6 +277,7 @@ def qualify(
             else {"ok": False, "max_prompt_tokens": None}
         )
         report["training"] = {
+            "modalities": ["text"],
             "examples": examples,
             "optimizer_steps": metrics["optimizer_steps"],
             "seconds": metrics["training_seconds"],

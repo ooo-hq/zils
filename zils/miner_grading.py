@@ -92,7 +92,7 @@ def bands(model):
 TRAINING_MIB = {"d3-mini": (9500, 0.6)}
 
 
-def training_mib(model, max_tokens, qualification=None):
+def training_mib(model, max_tokens, qualification=None, *, modality="text"):
     """Estimated peak training memory, or None when the profile has no measured curve."""
     if qualification is not None:
         q = qualification
@@ -108,6 +108,7 @@ def training_mib(model, max_tokens, qualification=None):
                 for k in ("capacity_ok", "runtime_verified", "reload_predict_ok")
             )
             or not isinstance(training, dict)
+            or modality not in training.get("modalities", ["text"])
             or type(max_tokens) is not int
             or type(training.get("max_prompt_tokens")) is not int
             or not 0 < max_tokens <= training["max_prompt_tokens"]
@@ -115,6 +116,8 @@ def training_mib(model, max_tokens, qualification=None):
         ):
             return None
         return math.ceil(training["peak_gpu_mib"] + max(1024, training["peak_gpu_mib"] * 0.15))
+    if modality != "text":
+        return None
     fit = TRAINING_MIB.get(models.pool_id(model)) if model in models.d3_family() else None
     if fit is None or type(max_tokens) is not int or max_tokens < 1:
         return None

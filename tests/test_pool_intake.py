@@ -249,6 +249,25 @@ class PoolIntakeTest(unittest.TestCase):
             )
         )
 
+    def test_image_fit_requires_its_own_measured_modality(self):
+        lite = "d3-lite-0.8b-v1"
+        certificate = {
+            "model": lite,
+            **models.profile_identity(lite),
+            "trainer_sha256": miner_grading.trainer_identity(lite),
+            "capacity_ok": True,
+            "runtime_verified": True,
+            "reload_predict_ok": True,
+            "training": {"max_prompt_tokens": 4096, "peak_gpu_mib": 4000, "modalities": ["text"]},
+        }
+        self.assertFalse(
+            fits(lite, None, "cuda", budget_mib=9000, qualification=certificate, modality="images")
+        )
+        certificate["training"]["modalities"].append("images")
+        self.assertTrue(
+            fits(lite, None, "cuda", budget_mib=9000, qualification=certificate, modality="images")
+        )
+
     def test_qualification_commands_pin_selected_model(self):
         calls = []
         lite = "d3-lite-0.8b-v1"
