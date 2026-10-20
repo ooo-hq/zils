@@ -40,6 +40,13 @@ results. A changed config cannot replay that pending round.
 
 ## Submit, evaluate and promote
 
+Run `zils setup` to select the exact base profile to beat in your tier, or pass
+`--model <profile-id>` to `setup`, `doctor` or `commit-candidate`. `doctor` prints
+the matching reference/training recipe. The CLI reads older candidates' profiles
+from their metadata and checks uploads against each profile's own file list.
+It does not discover or enable live competitions; verify the accepted incumbent
+and allocation with the validator before training.
+
 The existing `zils1` commitment format is unchanged: one active candidate per
 hotkey. The validator reads at most 16 KiB of metadata at the committed revision,
 resolves its exact parent, and refuses a stale or wrong-pool profile before weight

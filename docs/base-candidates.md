@@ -1,5 +1,11 @@
 # Base candidates
 
+Each [model tier](model-pools.md) competes against its own pinned incumbent.
+Use `zils setup` to choose that exact profile; `zils doctor` prints its reference
+and training commands. The concrete shard layouts, sizes and hardware figures
+below describe the mini recipe, not every tier. Other tiers use their own
+`models.candidate_files(profile, "candidate")` manifest and pinned parent.
+
 A base candidate is a full-weight replacement for the pinned text base,
 `d3-mini-4.5b-v1` (the base on both channels since 17 October 2026, adopted by
 owner decision after it tied the H2O incumbent on the confirmation draw; see
@@ -104,7 +110,7 @@ block, freezes it in that round's chain snapshot and pulls the revision itself.
 No validator URL, open port or long-running process is needed.
 
 Install with `scripts/install.sh` ([miner setup](mining.md)); `zils setup` saves
-the wallet, candidate and repo that the commands below default to.
+the wallet, base profile, candidate and repo that the commands below default to.
 `zils doctor` checks each prerequisite in order (requirements, d3 training
 runtime, hotkey file, registration, candidate, Hugging Face login and repo at the
 revision, the commitment on chain) and prints the first fix or, when all pass,
@@ -112,7 +118,7 @@ the block your commitment landed in. `zils commit-candidate` does the work:
 
 ```bash
 hf auth login   # once, with a write token for your account
-zils commit-candidate   # flags such as --candidate or --repo override the saved values
+zils commit-candidate   # --model, --candidate and --repo override the saved values
 ```
 
 From a checkout without the installer, `.venv-kev/bin/python -m zils.miner` takes
@@ -185,7 +191,7 @@ production adapter merged into the backbone:
 
 ```bash
 export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
-.venv-d3/bin/python -m zils.d3 reference --out models/d3-reference
+.venv-d3/bin/python -m zils.d3 reference --model d3-mini-4.5b-v1 --out models/d3-reference
 .venv-d3/bin/python -m zils.d3 train --data train.jsonl --reference models/d3-reference \
   --out candidate-adapter --seed 553 --device cuda
 .venv-d3/bin/python -m zils.d3 candidate --adapter candidate-adapter --out candidate > provenance.json

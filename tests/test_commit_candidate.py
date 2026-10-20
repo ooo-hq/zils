@@ -80,7 +80,9 @@ class CommitCandidateTest(unittest.TestCase):
         self.d3.touch()
         self.enterContext(patch("zils.miner.d3_python", lambda: self.d3))
         self.runtime = SimpleNamespace(returncode=0, stderr="")
-        self.enterContext(patch("zils.miner.subprocess.run", lambda *a, **k: self.runtime))
+        self.runtime_run = self.enterContext(
+            patch("zils.miner.subprocess.run", side_effect=lambda *a, **k: self.runtime)
+        )
         self.enterContext(patch("huggingface_hub.get_token", lambda: "hf_fixture"))
 
         @contextlib.contextmanager
@@ -178,7 +180,7 @@ class CommitCandidateTest(unittest.TestCase):
         self.assertIn("is not registered on testnet subnet 579", out)
 
     def test_doctor_stops_at_the_first_failing_step_with_its_fix(self):
-        code, out = self.run_miner("doctor")
+        code, out = self.run_miner("doctor", "--model", models.D3)
         self.assertEqual(code, 1)
         self.assertEqual(out.count("✓ "), 4)
         self.assertIn("✗ candidate\n  no --candidate", out)
@@ -248,7 +250,7 @@ class CommitCandidateTest(unittest.TestCase):
         self.assertIn("no wallet configured; run zils setup", out)
 
         repo = "alice/d3"
-        answers = iter([self.wallet["path"], "", "", str(self.candidate), repo])
+        answers = iter([self.wallet["path"], "", "", str(self.candidate), "", repo])
         with patch("builtins.input", lambda prompt: next(answers)):
             code, out = self.run_miner("setup", wallet=False)
         self.assertIn("wallets there: fixture", out)
@@ -258,6 +260,7 @@ class CommitCandidateTest(unittest.TestCase):
         self.assertEqual(saved["wallet_name"], "fixture")
         self.assertEqual(saved["wallet_hotkey"], "miner")
         self.assertEqual(saved["candidate"], str(self.candidate.resolve()))
+        self.assertEqual(saved["model"], models.D3)
 
         code, out = self.run_miner("commit-candidate", "--yes", wallet=False)
         self.assertEqual(code, 0, out)
@@ -269,11 +272,117 @@ class CommitCandidateTest(unittest.TestCase):
 
         # Retraining into a new folder drops the stale revision, so doctor asks for an upload.
         other = candidate(self.root / "retrained", 0.5)
-        answers = iter(["", "", "", str(other), ""])
+        answers = iter(["", "", "", str(other), "", ""])
         with patch("builtins.input", lambda prompt: next(answers)):
             code, out = self.run_miner("setup", wallet=False)
         self.assertNotIn("revision", json.loads(self.config.read_text()))
         self.assertIn("✗ hugging face\n  not uploaded yet", out)
+
+    def test_doctor_requires_a_profile_or_candidate_and_prints_each_tiers_recipe(self):
+        code, out = self.run_miner("doctor")
+        self.assertEqual(code, 1, out)
+        self.assertIn("choose a base profile", out)
+        self.assertEqual(self.connects, [])
+        for model in models.d3_family():
+            with self.subTest(model=model):
+                code, out = self.run_miner("doctor", "--model", model)
+                self.assertEqual(code, 1, out)
+                self.assertIn(f"reference --model {model} --out models/{model}-reference", out)
+                self.assertIn(f"--reference models/{model}-reference", out)
+                self.assertIn(f"--out {model}-candidate", out)
+                self.assertEqual(self.runtime_run.call_args.args[0][-1], model)
+                self.assertIn("Validators decide which tiers are open", out)
+
+    def test_uploads_and_checks_the_file_manifest_for_every_tier_and_promoted_base(self):
+        for model in models.d3_family():
+            with self.subTest(model=model):
+                path = self.root / model
+                path.mkdir()
+                files = models.candidate_files(model, "candidate")
+                for name in files:
+                    (path / name).write_bytes(name.encode())
+                models.write_metadata(path, model=model, kind="candidate")
+                repo = f"alice/{model}"
+                flags = ("--model", model, "--candidate", str(path), "--repo", repo)
+                code, out = self.run_miner("commit-candidate", *flags, "--yes")
+                self.assertEqual(code, 0, out)
+                self.assertIn(f"tier {models.pool_id(model)}; base profile {model}", out)
+                self.assertEqual(self.uploads[-1], (repo, sorted(files)))
+                saved = json.loads(self.config.read_text())
+                self.assertEqual(saved["model"], model)
+                code, out = self.run_miner("doctor", *flags)
+                self.assertEqual(code, 0, out)
+
+                remote = self.repos[repo][saved["revision"]]
+                weight = next(name for name in files if name.endswith(".safetensors"))
+                (remote / weight).unlink()
+                code, out = self.run_miner("doctor", *flags)
+                self.assertEqual(code, 1, out)
+                self.assertIn(f"has no {weight}", out)
+
+    def test_rejects_another_tier_or_parent_before_upload_or_chain_access(self):
+        for model in ("d3-lite-0.8b-v1", models.D3_ZILS_R5):
+            with self.subTest(model=model):
+                code, out = self.run_miner(
+                    "commit-candidate",
+                    "--model",
+                    model,
+                    "--candidate",
+                    str(self.candidate),
+                    "--repo",
+                    "alice/d3",
+                    "--yes",
+                )
+                self.assertEqual(code, 1, out)
+                self.assertIn(f"candidate is for {models.D3}, not the selected base {model}", out)
+                self.assertEqual((self.uploads, self.chain.calls, self.connects), ([], [], []))
+        miner.write_config({"model": "unknown-model"})
+        code, out = self.run_miner("doctor", "--candidate", str(self.candidate))
+        self.assertEqual(code, 1, out)
+        self.assertIn("choose a base profile", out)
+
+    def test_setup_saves_tier_before_training_and_overrides_do_not_change_it(self):
+        lite = "d3-lite-0.8b-v1"
+        answers = iter([self.wallet["path"], "", "", "", lite, "alice/lite"])
+        with patch("builtins.input", lambda prompt: next(answers)):
+            code, out = self.run_miner("setup", wallet=False)
+        self.assertEqual(code, 1, out)
+        self.assertEqual(json.loads(self.config.read_text())["model"], lite)
+        self.assertIn(f"reference --model {lite}", out)
+        code, out = self.run_miner("doctor", "--model", models.D3_ZILS_R5, wallet=False)
+        self.assertIn(f"reference --model {models.D3_ZILS_R5}", out)
+        self.assertEqual(json.loads(self.config.read_text())["model"], lite)
+
+        miner.write_config(miner.load_config() | {"revision": revision("old")})
+        answers = iter(["", "", "", "", models.D3_ZILS_R5, ""])
+        with patch("builtins.input", lambda prompt: next(answers)):
+            code, out = self.run_miner("setup", wallet=False)
+        saved = json.loads(self.config.read_text())
+        self.assertEqual(saved["model"], models.D3_ZILS_R5)
+        self.assertNotIn("revision", saved)
+
+    def test_existing_candidate_supplies_the_profile_without_a_new_config(self):
+        flags = ("--candidate", str(self.candidate), "--repo", "alice/d3")
+        code, out = self.run_miner("commit-candidate", *flags)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"base profile {models.D3}", out)
+        self.assertFalse(self.config.exists())
+
+    def test_legacy_setup_preserves_the_existing_uploaded_revision(self):
+        flags = ("--candidate", str(self.candidate), "--repo", "alice/d3")
+        code, out = self.run_miner("commit-candidate", *flags, "--yes")
+        self.assertEqual(code, 0, out)
+        saved = miner.load_config()
+        saved.pop("model")
+        saved |= {f"wallet_{key}": value for key, value in self.wallet.items()}
+        miner.write_config(saved)
+        answers = iter([""] * 6)
+        with patch("builtins.input", lambda prompt: next(answers)):
+            code, out = self.run_miner("setup", wallet=False)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(miner.load_config()["revision"], saved["revision"])
+        self.assertEqual(miner.load_config()["model"], models.D3)
+        self.assertEqual(len(self.chain.calls), 1)
 
 
 if __name__ == "__main__":
