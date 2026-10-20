@@ -298,11 +298,16 @@ def metadata(checkpoint):
         return None
     if path.is_symlink() or not path.is_file() or path.stat().st_size > 16384:
         raise ValueError("model metadata must be a regular file of at most 16 KiB")
-    value = json.loads(path.read_text())
+    return validate_metadata(json.loads(path.read_text()))
+
+
+def validate_metadata(value):
+    """Validate the same contract before a remote candidate's weights are downloaded."""
     if (
         not isinstance(value, dict)
         or set(value) - {"version", "model", "kind", "temperature", "calibration", "profile"}
         or value.get("version") != VERSION
+        or not isinstance(value.get("model"), str)
         or value.get("model") not in (*TEXT_ADAPTER_MODELS, *RETIRED_TEXT_MODELS, IMAJEV)
         or value.get("kind") not in ("base", "adapter", "candidate")
     ):

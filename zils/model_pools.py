@@ -30,10 +30,13 @@ def validate(config):
             {
                 **{k: v for k, v in entry.items() if k not in ("model", "enabled")},
                 "burn_uid": burn,
-            }
+            },
+            allow_empty_draws=not entry["enabled"],
         )
         if not math.isfinite(track["share"]):
             raise ValueError("pool share must be finite")
+        if any(not math.isfinite(v) for v in track["policy"].values()):
+            raise ValueError("pool policy values must be finite")
         track.pop("burn_uid")
         result[pool] = {"model": models.spec(model), "enabled": entry["enabled"], **track}
     if not math.isclose(sum(p["share"] for p in result.values()), 1.0, abs_tol=1e-9):
@@ -51,7 +54,11 @@ def weights(config, decisions, members):
         track = {k: v for k, v in entry.items() if k not in ("model", "enabled")}
         track["burn_uid"] = config["burn_uid"]
         decision = decisions.get(pool)
-        if decision is not None:
+        if not entry["enabled"]:
+            if decision is not None:
+                raise ValueError("disabled model pool cannot have a decision")
+            earned = {}
+        elif decision is not None:
             if (
                 not isinstance(decision, dict)
                 or decision.get("pool_id") != pool
@@ -61,8 +68,6 @@ def weights(config, decisions, members):
             earned = base_round.track_weights(track, decision, members)
         else:
             earned = base_round.king_weights(track, members)
-        if not entry["enabled"]:
-            earned = {}
         vectors[pool], shares[pool] = earned, entry["share"]
         if not earned:
             burned += entry["share"]

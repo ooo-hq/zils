@@ -289,6 +289,77 @@ def attach_base_tier(config, directory, work, report):
     return {**report, "base_tier": json.loads(frozen.read_text())}
 
 
+def attach_base_pools(config, directory, work, report):
+    if "base_pools" not in config:
+        return report
+    from . import model_pools
+
+    normalized = model_pools.validate(config["base_pools"])
+    frozen = work / "base-pools.json"
+    if not frozen.exists():
+        decisions = {}
+        for pool, entry in normalized["pools"].items():
+            current = directory / "base-pools" / pool / "base-tier" / "decision.json"
+            if entry["enabled"] and current.exists():
+                decisions[pool] = json.loads(current.read_text())
+        wire.write_json(frozen, {"config": normalized, "decisions": decisions})
+    saved = json.loads(frozen.read_text())
+    if saved["config"] != normalized:
+        raise ValueError("pending pool report differs from the installed configuration")
+    return {**report, "base_pools": saved}
+
+
+def pool_rounds(config, directory):
+    """Keep operator paths outside the public, frozen payout contract."""
+    if "base_pools" not in config:
+        return {}
+    from . import model_pools
+
+    normalized = model_pools.validate(config["base_pools"])
+    enabled = {p: e for p, e in normalized["pools"].items() if e["enabled"]}
+    paths = config.get("base_pool_rounds", {})
+    if not isinstance(paths, dict) or set(paths) != set(enabled):
+        raise ValueError("base_pool_rounds must name each enabled pool exactly once")
+    rounds = {}
+    for pool, entry in enabled.items():
+        if not isinstance(paths[pool], dict) or set(paths[pool]) != {
+            "base_round_dir",
+            "base_reference",
+        }:
+            raise ValueError("each pool requires base_round_dir and base_reference")
+        settings = {
+            **{k: v for k, v in config.items() if k not in ("base_pools", "base_pool_rounds")},
+            "model": entry["model"],
+            "base_tier": {k: v for k, v in entry.items() if k not in ("model", "enabled")},
+            **{k: str((Path(directory) / v).resolve()) for k, v in paths[pool].items()},
+            "pool_id": pool,
+        }
+        root = directory / "base-pools" / pool
+        rounds[pool] = (settings, root, base_draws(settings, root))
+    return rounds
+
+
+def base_pools_epoch(config, directory, work, snapshot, args, rounds):
+    from . import commitments
+
+    routed, rejected = commitments.route_pools(
+        commitments.candidates(snapshot, None), config["base_pools"]
+    )
+    errors = {}
+    for pool, (pool_config, root, draws) in rounds.items():
+        pool_work = work / pool
+        pool_work.mkdir(mode=0o700, exist_ok=True)
+        try:
+            base_tier_epoch(
+                pool_config, root, pool_work, routed[pool], args, draws, wait_for_capacity=True
+            )
+        except (ValueError, OSError, RuntimeError, http.client.HTTPException) as error:
+            (root / "base-tier" / "decision.json").unlink(missing_ok=True)
+            errors[pool] = str(error)[:400]
+    if not (work / "pool-intake.json").exists():
+        wire.write_json(work / "pool-intake.json", {"rejected": rejected, "errors": errors})
+
+
 def attach_adapter_evidence(config, work, report, now=None):
     """Embed the platform's signed queue evidence, frozen with the round the first time it is published.
 
@@ -390,6 +461,12 @@ def base_tier_epoch(
         entries[uid] = (claim["sha256"], target)
     decisions = []
     for item, path in draws:
+        if (
+            config.get("pool_id")
+            and decisions
+            and time.time() - decisions[0]["evaluated_at"] < 12 * 3600
+        ):
+            break
         _, cases = base_round.audit(path)
         key = item["manifest_sha256"]
 
@@ -423,7 +500,12 @@ def base_tier_epoch(
                 target = scores(entries[row["uid"]][0], split)
                 target.parent.mkdir(mode=0o700, exist_ok=True)
                 wire.write_json(
-                    target, {"dataset_sha256": report["dataset_sha256"], "miners": [row]}
+                    target,
+                    {
+                        "dataset_sha256": report["dataset_sha256"],
+                        "miners": [row],
+                        "evaluated_at": time.time(),
+                    },
                 )
         rows = {}
         for split in base_round.SPLITS:
@@ -442,9 +524,19 @@ def base_tier_epoch(
             round_id=work.name,
             rejected={str(uid): error for uid, error in sorted(rejected.items())},
         )
+        if config.get("pool_id"):
+            decision.update(
+                pool_id=config["pool_id"],
+                model=models.spec(model),
+                evaluated_at=max(
+                    json.loads(scores(sha, "test").read_text())["evaluated_at"]
+                    for sha, _ in entries.values()
+                ),
+            )
         decisions.append(decision)
     if len(decisions) > 1:
-        decisions[-1]["confirmed_winner"] = base_round.confirm(decisions[0], decisions[-1])
+        confirm = base_round.confirm_promotion if config.get("pool_id") else base_round.confirm
+        decisions[-1]["confirmed_winner"] = confirm(decisions[0], decisions[-1])
     for decision in decisions:
         wire.write_json(attempt / f"decision-{decision['manifest_sha256'][:12]}.json", decision)
     wire.write_json(attempt / "decision.json", decisions[-1])
@@ -522,6 +614,7 @@ def validator(config, directory, args):
     condition = threading.Condition()
     current, registry, acks = {}, {}, set()
     draws = base_draws(config, directory)
+    pools = pool_rounds(config, directory)
     recent = collections.defaultdict(collections.deque)
 
     def throttled(address):
@@ -652,7 +745,16 @@ def validator(config, directory, args):
                         "incumbent_sha256": config["base_tier"]["incumbent_sha256"],
                         "draws": [item for item, _ in draws],
                     }
+                if "base_pools" in config:
+                    from . import model_pools
+
+                    job["base_pools"] = model_pools.validate(config["base_pools"])
                 wire.write_json(work / "job.json", job)
+            if "base_pools" in config:
+                from . import model_pools
+
+                if job.get("base_pools") != model_pools.validate(config["base_pools"]):
+                    raise ValueError("pending round differs from installed pool configuration")
             for name in (
                 "base_revision",
                 "initial_sha256",
@@ -727,6 +829,16 @@ def validator(config, directory, args):
                     wait_for_capacity=True,
                 )
             report = attach_base_tier(settings_for_round, directory, work, report)
+            if pools and not (work / "base-pools.json").exists():
+                base_pools_epoch(
+                    settings_for_round,
+                    directory,
+                    work,
+                    json.loads((work / "chain-snapshot.json").read_text()),
+                    args,
+                    pools,
+                )
+            report = attach_base_pools(settings_for_round, directory, work, report)
             report = attach_adapter_evidence(settings_for_round, work, report)
             fields = (
                 "uid",
@@ -749,6 +861,8 @@ def validator(config, directory, args):
             if report.get("base_tier") is not None:
                 # Aggregate base-tier metrics for miners; per-case predictions never leave the store.
                 public["base_tier"] = report["base_tier"]
+            if "base_pools" in report:
+                public["base_pools"] = report["base_pools"]
             if chain_state is not None:
                 from bittensor.wallet import Wallet
 

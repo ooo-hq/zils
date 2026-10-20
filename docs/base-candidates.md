@@ -260,7 +260,9 @@ python -m zils.regression_suite --model d3-mini-4.5b-v1 --suite SUITE \
   --incumbent models/d3-reference --candidate CANDIDATE --out OUT
 
 python scripts/promote_base.py --model d3-mini-4.5b-v1 --candidate CANDIDATE \
-  --decision decision.json --round N --staging STAGING
+  --decision decision.json --first-decision first-decision.json \
+  --regression-report OUT/suite-result.json --king-hotkey WINNER_HOTKEY \
+  --round N --staging STAGING
 ```
 
 Each run uses that profile's trainer, interpreter (`ZILS_H2O_RUNTIME_PYTHON` or

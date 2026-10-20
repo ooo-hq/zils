@@ -9,6 +9,7 @@ the repo must be public for every validator to pull it, so sealing the pointer (
 commitments) would hide nothing a copier can't find on Hugging Face, and it would not stop a re-saved
 copy with a new hash either; see docs/base-candidates.md."""
 
+import http.client
 import json
 import re
 import time
@@ -143,3 +144,45 @@ def fetch(claim, destination, *, model, endpoint=None):
     if zils.checkpoint_hash(destination) != claim["sha256"]:
         raise ValueError("downloaded checkpoint hash differs from the commitment")
     return {"bytes": total, "download_ms": (time.monotonic() - started) * 1000}
+
+
+def parent_model(claim, endpoint=None):
+    """Read bounded metadata at the immutable revision; full fetch still checks its commitment."""
+    endpoint = endpoint or HF_ENDPOINT
+    listed = revision_files(claim["repo"], claim["revision"], endpoint)
+    size = listed.get("model.json", {}).get("size")
+    if type(size) is not int or not 0 < size <= 16384:
+        raise ValueError("candidate metadata must be at most 16 KiB")
+    url = f"{endpoint}/{claim['repo']}/resolve/{claim['revision']}/model.json"
+    with opener().open(url, timeout=30) as response:
+        raw = response.read(16385)
+    if len(raw) != size:
+        raise ValueError("candidate metadata size differs from the pinned revision")
+    meta = models.validate_metadata(json.loads(raw))
+    if meta["kind"] != "candidate":
+        raise ValueError("pool entry requires a base candidate")
+    return meta["model"]
+
+
+def route_pools(registry, config):
+    from . import model_pools
+
+    pools = model_pools.validate(config)["pools"]
+    routed, rejected = {pool: {} for pool in pools}, {}
+    for uid, claim in registry.items():
+        try:
+            if "error" in claim:
+                raise ValueError(claim["error"])
+            model = parent_model(claim)
+            pool = models.pool_id(model)
+            entry = pools.get(pool)
+            if not entry or not entry["enabled"]:
+                raise ValueError("model pool is not enabled")
+            if entry["model"] != models.spec(model):
+                raise ValueError("candidate parent differs from the pool incumbent profile")
+            if claim["sha256"] == entry["incumbent_sha256"]:
+                raise ValueError("the incumbent is not a candidate")
+            routed[pool][uid] = claim
+        except (ValueError, OSError, http.client.HTTPException) as error:
+            rejected[uid] = str(error)[:400]
+    return routed, rejected
