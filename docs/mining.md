@@ -259,7 +259,9 @@ Start with the installer on the mining host. It clones Zils into `~/.zils/zils`,
 builds the miner runtime and, on Linux x86_64 with an NVIDIA GPU, the d3 training
 runtime, links `zils` into `~/.local/bin` and starts `zils setup`, which asks for
 your wallet, base profile, candidate folder and Hugging Face repo, saves them to
-`~/.zils/miner.json` and runs the doctor. Rerun it to update.
+`~/.zils/miner.json` and runs the doctor. It installs the stable release, the
+commit named in [`release/stable`](../release/stable); `zils update` moves an
+install to a newer one, and the doctor warns when yours is behind.
 
 ```bash
 curl -fsSL https://zils.ai/install.sh | sh

@@ -1,13 +1,14 @@
 #!/bin/sh
 # Zils miner installer: clones zils, builds both runtimes, puts `zils` on PATH, runs `zils setup`.
 #   curl -fsSL https://zils.ai/install.sh | sh
-# Rerun it to update. ZILS_HOME (default ~/.zils), ZILS_REF (default main) and ZILS_REPO override;
-# NO_COLOR turns colors off.
+# `zils update` reruns it. It installs the commit named in release/stable on main; releasing is a
+# PR that changes that sha. ZILS_HOME (default ~/.zils), ZILS_REF (any branch or sha, e.g. main)
+# and ZILS_REPO override; ZILS_SKIP_SETUP skips `zils setup`; NO_COLOR turns colors off.
 set -eu
 
 home="${ZILS_HOME:-$HOME/.zils}"
-ref="${ZILS_REF:-main}"
 repo="${ZILS_REPO:-https://github.com/ooo-hq/zils.git}"
+stable_url="${ZILS_STABLE_URL:-https://raw.githubusercontent.com/ooo-hq/zils/main/release/stable}"
 dir="$home/zils"
 bin="$HOME/.local/bin"
 logs="$home/logs"
@@ -95,14 +96,20 @@ else
   run "installing uv" "uv installed" sh -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
 fi
 
-if [ -d "$dir/.git" ]; then
-  run "updating ~/${dir#"$HOME"/} to $ref" "zils updated to $ref" \
-    sh -c "git -C '$dir' fetch --progress '$repo' '$ref' && git -C '$dir' checkout --quiet --detach FETCH_HEAD"
+if [ -n "${ZILS_REF:-}" ]; then
+  ref=$ZILS_REF
 else
-  mkdir -p "$home"
-  run "cloning zils" "zils cloned into ~/${dir#"$HOME"/}" \
-    git clone --progress --branch "$ref" "$repo" "$dir"
+  ref=$(curl -fsSL "$stable_url") || fail "could not read the stable release from $stable_url"
+  case "$ref" in *[!0-9a-f]* | "") fail "$stable_url is not a commit sha" ;; esac
+  [ "${#ref}" -eq 40 ] || fail "$stable_url is not a full 40-hex commit sha"
 fi
+
+if [ ! -d "$dir/.git" ]; then
+  mkdir -p "$home"
+  run "cloning zils" "zils cloned into ~/${dir#"$HOME"/}" git clone --progress --no-checkout "$repo" "$dir"
+fi
+run "checking out $ref" "zils at $ref" \
+  sh -c "git -C '$dir' fetch --progress '$repo' '$ref' && git -C '$dir' checkout --quiet --detach FETCH_HEAD"
 cd "$dir"
 
 run "building the miner runtime (Python 3.13)" "miner runtime ready" sh -c \
@@ -127,9 +134,11 @@ ok "zils and btcli commands ready in ~/.local/bin"
 path_hint=""
 wire_path
 
-printf '\n%sZils miner installed.%s Next: %szils setup%s\n' "$green$bold" "$reset" "$bold" "$reset"
+next="zils setup"
+[ -z "${ZILS_SKIP_SETUP:-}" ] || next="zils doctor"
+printf '\n%sZils miner installed.%s Next: %s%s%s\n' "$green$bold" "$reset" "$bold" "$next" "$reset"
 [ -z "$path_hint" ] || printf '%sReload your shell first: %s%s\n' "$cyan" "$path_hint" "$reset"
-if [ -t 1 ] && [ -r /dev/tty ]; then
+if [ -z "${ZILS_SKIP_SETUP:-}" ] && [ -t 1 ] && [ -r /dev/tty ]; then
   printf '\n'
   "$bin/zils" setup </dev/tty || true
 fi

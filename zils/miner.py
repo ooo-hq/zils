@@ -5,7 +5,8 @@ reads the commitments and pulls that revision. No validator URL is needed.
 `setup` asks for the wallet, base profile, candidate and repo once and saves them; every flag then
 defaults to the saved value. `doctor` checks the setup step by step and prints the one command
 that fixes the first failing step. `commit-candidate` validates a candidate, uploads it (or takes
-an uploaded revision), prints the commitment and, with --yes, writes it with the hotkey."""
+an uploaded revision), prints the commitment and, with --yes, writes it with the hotkey. `update`
+reinstalls at the stable release, the commit release/stable on main names."""
 
 import argparse
 import hashlib
@@ -13,6 +14,7 @@ import importlib
 import json
 import os
 import subprocess
+import urllib.request
 from pathlib import Path
 
 import zils
@@ -25,6 +27,7 @@ PINNED_BITTENSOR = "11.1.0"
 WALLET_PATH = "~/.bittensor/wallets"
 SAVED = ("wallet_name", "wallet_hotkey", "wallet_path", "model", "candidate", "repo", "revision")
 INSTALL = "curl -fsSL https://zils.ai/install.sh | sh"
+STABLE_URL = "https://raw.githubusercontent.com/ooo-hq/zils/main/release/stable"
 
 
 def paint(code, text):
@@ -53,6 +56,45 @@ def d3_python():
     """The isolated d3 training interpreter: the exported variable, else install.sh's venv."""
     name = os.environ.get(models.runtime_python_env(models.D3))
     return Path(name) if name else zils.ROOT / ".venv-d3/bin/python"
+
+
+def stable_release():
+    with urllib.request.urlopen(STABLE_URL, timeout=10) as response:
+        return commitments.check_revision(response.read().decode().strip())
+
+
+def installed_release():
+    done = subprocess.run(
+        ["git", "-C", str(zils.ROOT), "rev-parse", "HEAD"], capture_output=True, text=True
+    )
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def behind_release():
+    """A warning when this checkout is not the stable release; None when it is or GitHub is down."""
+    try:
+        stable = stable_release()
+    except (OSError, ValueError):
+        return None
+    current = installed_release()
+    if current != stable:
+        return (
+            f"this install is at {(current or 'an unknown commit')[:12]}, the stable release is"
+            f" {stable[:12]}; run zils update"
+        )
+
+
+def update():
+    """Rerun the installer at the stable release, keeping the saved setup."""
+    stable = stable_release()
+    if installed_release() == stable:
+        print(f"{paint('32', '✓')} already on the stable release {stable[:12]}", flush=True)
+        return
+    if zils.ROOT.name != "zils":
+        raise ValueError(f"{zils.ROOT} is not an installer checkout (~/.zils/zils); update it with git")
+    env = {**os.environ, "ZILS_HOME": str(zils.ROOT.parent), "ZILS_REF": stable, "ZILS_SKIP_SETUP": "1"}
+    if subprocess.run(["sh", "-c", INSTALL], env=env).returncode:
+        raise RuntimeError("the installer failed; its log path is printed above")
 
 
 def chain_config(netuid):
@@ -319,6 +361,9 @@ def doctor(args):
     print(paint("1", "Zils doctor"), flush=True)
     print(f"Beat the base in your tier: {models.pool_id(args.model)} · {args.model}", flush=True)
     print("Validators decide which tiers are open and which base profile to beat.", flush=True)
+    warning = behind_release()
+    if warning:
+        print(f"{paint('1;33', '⚠')} {warning}", flush=True)
     for name, check in steps:
         fix = check()
         if fix:
@@ -400,6 +445,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     start = commands.add_parser("setup", help="choose a base profile, wallet, candidate and repo")
     check = commands.add_parser("doctor", help="check the setup and print the next command")
+    commands.add_parser("update", help="reinstall at the stable release")
     commit = commands.add_parser(
         "commit-candidate", help="upload a base candidate and commit it on chain"
     )
@@ -425,6 +471,9 @@ def main(argv=None):
         if args.command == "setup":
             if not setup(args):
                 parser.exit(1)
+            return
+        if args.command == "update":
+            update()
             return
         config = load_config()
         if args.command == "commit-candidate":
