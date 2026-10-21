@@ -16,6 +16,10 @@ COMMITMENT_FIELD = 128  # bytes per Raw field of the Commitments pallet; the cha
 def check_config(config):
     if "base_tier" in config and "base_pools" in config:
         raise ValueError("configure base_tier or base_pools, never both")
+    if "feature_tracks" in config:
+        from . import feature_tracks
+
+        feature_tracks.validate_budget(config)
     chain = config.get("chain")
     if (
         not isinstance(chain, dict)
@@ -213,6 +217,18 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
             or pool_report["config"] != model_pools.validate(pools)
         ):
             raise ValueError("pool report differs from the configured base_pools config")
+    features, feature_report = config.get("feature_tracks"), report.get("feature_tracks")
+    if features is not None or feature_report is not None:
+        from . import feature_tracks
+
+        if (
+            features is None
+            or not isinstance(feature_report, dict)
+            or set(feature_report) != {"config", "decisions"}
+            or feature_report["config"] != feature_tracks.validate(features)
+        ):
+            raise ValueError("feature report differs from the configured feature_tracks config")
+        feature_tracks.weights(features, feature_report["decisions"], config["members"])
     for path in (receipt_path, attempt_path):
         if path.exists():
             saved = json.loads(path.read_text())
@@ -229,6 +245,18 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
                 }
             )
     state = preflight(config, sub)
+    # Open admission discovers current registrations; scores belong to the frozen
+    # round identities. Additional members are safe only while all frozen ones match.
+    if any(state["members"].get(uid) != hotkey for uid, hotkey in identities.items()):
+        return {
+            **state,
+            "report_sha256": report_hash,
+            "requested_weights": {},
+            "chain_write": False,
+            "weights_verified": False,
+            "status": "registration_changed",
+            "detail": "nothing sent; evaluated registrations changed; start a fresh round",
+        }
     if wallet.hotkey.ss58_address != config["validator_hotkey"]:
         raise ValueError("wallet does not match the configured validator")
     rows = report["miners"]
@@ -262,12 +290,21 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
     if pools is not None:
         base, pool_record = model_pools.weights(pools, pool_report["decisions"], config["members"])
         share, burn = pools["share"], pools["burn_uid"]
+        feature_share, feature_vector, feature_record = 0.0, {}, None
+        if features is not None:
+            feature_share = features["share"]
+            feature_vector, feature_record = feature_tracks.weights(
+                features, feature_report["decisions"], config["members"]
+            )
+        adapter_share = 1 - share - feature_share
         weights = zils.blend_weights(
-            {"base": base, "adapter": adapter},
-            {"base": share, "adapter": 1 - share},
+            {"base": base, "features": feature_vector, "adapter": adapter},
+            {"base": share, "features": feature_share, "adapter": adapter_share},
             burn_uid=burn,
         )
-        burned = share * pool_record["burned"] + (0 if adapter else 1 - share)
+        burned = share * pool_record["burned"] + (0 if adapter else adapter_share)
+        if feature_record is not None:
+            burned += feature_share * feature_record["burned"]
         if burned > 0 and burn != state["owner_uid"]:
             raise ValueError("base_pools.burn_uid must be the subnet owner hotkey's uid")
         tracks = {
@@ -276,6 +313,15 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
             "burned": burned,
             "base": {str(k): v for k, v in base.items()},
             "adapter": {str(k): v for k, v in adapter.items()},
+            **(
+                {
+                    "feature_share": feature_share,
+                    "adapter_share": adapter_share,
+                    "features": feature_record,
+                }
+                if feature_record is not None
+                else {}
+            ),
         }
     if track is not None:
         from . import base_round
@@ -431,10 +477,12 @@ def main():
                     if args.action == "publish":
                         from bittensor.wallet import Wallet
 
+                        from .validator import publication_report
+
                         result = publish_round(
                             config,
                             work,
-                            json.loads((work / "report.json").read_text()),
+                            publication_report(config, Path(args.config).resolve().parent, work),
                             sub,
                             Wallet(**config["wallet"]),
                             publish=True,

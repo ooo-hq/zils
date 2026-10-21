@@ -269,7 +269,30 @@ def evaluate(args):
         }[model]
     )
     media = any("image" in c for c in cases) and "inputs" in models.spec(model)
-    if model == models.IMAJEV or media:
+    root = Path(args.cases).parent
+    manifest_path = root / "manifest.json"
+    box_draw = (
+        media
+        and manifest_path.is_file()
+        and json.loads(manifest_path.read_text()).get("version") == "zils-box-draw/v1"
+    )
+    if box_draw:
+        from . import box, feature_round
+
+        _, box_cases = feature_round.audit(root)
+        if (
+            model not in models.d3_family()
+            or Path(args.cases).name != "expanded.jsonl"
+            or cases != box.expand_cases(box_cases)
+            or not getattr(args, "images", None)
+            or Path(args.images).resolve() != (root / "images").resolve()
+        ):
+            raise ValueError(
+                "Box evaluation requires the frozen expansion and verified image assets"
+            )
+        for request, case in zip(requests, cases, strict=True):
+            request["images"] = [str((root / "images" / case["image"]).resolve())]
+    elif model == models.IMAJEV or media:
         from . import benchmark
 
         root = Path(args.cases).parent

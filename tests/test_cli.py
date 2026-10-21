@@ -21,6 +21,7 @@ class CLITest(unittest.TestCase):
         if importlib.util.find_spec("bittensor_wallet"):
             modules += [
                 "miner",
+                "zils.miner",
                 "zils.fleet",
                 "scripts.rehearsal",
                 "miner.queue",

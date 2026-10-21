@@ -108,6 +108,7 @@ class PoolRewardsTest(unittest.TestCase):
             "base_pools": {"config": model_pools.validate(cfg), "decisions": {}},
         }
         state = {
+            "members": report["identities"],
             "owner_uid": 0,
             "validator_uid": 0,
             "block": 10,

@@ -1,8 +1,8 @@
-"""An outside miner's base-tier commands. A candidate is a merged d3 checkpoint on the miner's own
+"""Beat the base in your tier. A candidate is a merged d3 checkpoint on the miner's own
 Hugging Face repo plus one chain commitment of repo, revision and checkpoint hash; every validator
 reads the commitments and pulls that revision. No validator URL is needed.
 
-`setup` asks for the wallet, candidate and repo once and saves them; every flag below then
+`setup` asks for the wallet, base profile, candidate and repo once and saves them; every flag then
 defaults to the saved value. `doctor` checks the setup step by step and prints the one command
 that fixes the first failing step. `commit-candidate` validates a candidate, uploads it (or takes
 an uploaded revision), prints the commitment and, with --yes, writes it with the hotkey."""
@@ -23,7 +23,7 @@ NETUID = 579
 REQUIRED_MODULES = ("bittensor", "bittensor_wallet", "huggingface_hub", "kev", "torch")
 PINNED_BITTENSOR = "11.1.0"
 WALLET_PATH = "~/.bittensor/wallets"
-SAVED = ("wallet_name", "wallet_hotkey", "wallet_path", "candidate", "repo", "revision")
+SAVED = ("wallet_name", "wallet_hotkey", "wallet_path", "model", "candidate", "repo", "revision")
 INSTALL = "curl -fsSL https://zils.ai/install.sh | sh"
 
 
@@ -66,18 +66,29 @@ def hotkey_state(netuid, hotkey):
         return testnet.hotkey_state(config, sub, hotkey)
 
 
-def local_candidate(path):
+def selected_model(model, candidate=None):
+    if model is None and candidate:
+        model = models.checkpoint_model(Path(candidate).expanduser())
+    if model not in models.d3_family():
+        raise ValueError("choose a base profile with zils setup or --model (see --help)")
+    return model
+
+
+def local_candidate(path, model):
     from . import d3
 
-    candidate = Path(path).resolve()
-    d3.validate_candidate(candidate)
+    candidate = Path(path).expanduser().resolve()
+    parent = models.checkpoint_model(candidate)
+    if parent != model:
+        raise ValueError(f"candidate is for {parent}, not the selected base {model}")
+    d3.validate_candidate(candidate, model=model)
     return candidate, zils.checkpoint_hash(candidate)
 
 
 def check_remote(repo, revision, candidate):
     """The public repo at this commit holds every candidate file with the local size and LFS digest."""
     listed = commitments.revision_files(repo, revision)
-    for name in models.D3_CANDIDATE_FILES:
+    for name in models.artifact_files(candidate):
         local, remote = candidate / name, listed.get(name)
         if remote is None:
             raise ValueError(f"{repo} at {revision[:12]} has no {name}")
@@ -99,7 +110,7 @@ def upload(candidate, repo, sha256):
         repo_id=repo,
         repo_type="model",
         folder_path=str(candidate),
-        allow_patterns=list(models.D3_CANDIDATE_FILES),
+        allow_patterns=list(models.artifact_files(candidate)),
         commit_message=f"Zils d3 base candidate {sha256[:12]}",
     )
     return commitments.check_revision(info.oid)
@@ -114,6 +125,7 @@ def wallet(args):
 def commit_command(args, revision=None):
     command = [
         "zils commit-candidate",
+        f"--model {args.model}",
         f"--wallet-name {args.wallet_name} --wallet-hotkey {args.wallet_hotkey}"
         f" --wallet-path {args.wallet_path}",
         f"--candidate {args.candidate} --repo {args.repo}"
@@ -125,7 +137,7 @@ def commit_command(args, revision=None):
 
 
 def commit_candidate(args):
-    candidate, sha256 = local_candidate(args.candidate)
+    candidate, sha256 = local_candidate(args.candidate, args.model)
     commitments.check_repo(args.repo)
     if args.revision is not None:
         commitments.check_revision(args.revision)
@@ -138,6 +150,7 @@ def commit_candidate(args):
     revision = args.revision
     print(
         f"miner {state['uid']}: candidate {sha256}\n"
+        f"  tier {models.pool_id(args.model)}; base profile {args.model}\n"
         f"  repo {args.repo} at {revision or '<the commit the upload creates>'}\n"
         f"  commitment {commitments.format_commitment(sha256, revision or '0' * 40, args.repo)}"
         + ("" if revision else " (revision filled in after the upload)")
@@ -168,7 +181,13 @@ def commit_candidate(args):
             "the chain does not show the new commitment; read it again before retrying"
         )
     write_config(
-        load_config() | {"candidate": str(candidate), "repo": args.repo, "revision": revision}
+        load_config()
+        | {
+            "model": args.model,
+            "candidate": str(candidate),
+            "repo": args.repo,
+            "revision": revision,
+        }
     )
     print(
         f"committed at block {after['block']}; validators pull it at their next round",
@@ -210,12 +229,12 @@ def doctor(args):
                 f" On that host rerun the installer\n  {INSTALL}"
             )
         check = (
-            "import torch; from zils import d3; d3.verify_runtime();"
+            "import sys, torch; from zils import d3; d3.verify_runtime(sys.argv[1]);"
             " assert torch.cuda.is_available() and torch.cuda.is_bf16_supported(),"
             " 'no BF16-capable CUDA GPU is visible'"
         )
         done = subprocess.run(
-            [str(python), "-c", check], cwd=zils.ROOT, capture_output=True, text=True
+            [str(python), "-c", check, args.model], cwd=zils.ROOT, capture_output=True, text=True
         )
         if done.returncode:
             reason = (done.stderr.strip().splitlines() or ["the check failed"])[-1]
@@ -243,17 +262,20 @@ def doctor(args):
     def candidate():
         d3 = f"{state['d3']} -m zils.d3"
         if args.candidate is None:
+            reference = f"models/{args.model}-reference"
+            adapter, merged = f"{args.model}-adapter", f"{args.model}-candidate"
             return (
                 "no --candidate; train and merge one with the reference recipe\n"
-                f"  {d3} reference --out models/d3-reference\n"
-                f"  {d3} train --data train.jsonl --reference models/d3-reference"
-                " --out candidate-adapter --seed 553 --device cuda\n"
-                f"  {d3} candidate --adapter candidate-adapter --out candidate"
-                " > provenance.json\n"
-                "then run zils setup again (or doctor with --candidate candidate)"
+                f"  {d3} reference --model {args.model} --out {reference}\n"
+                f"  {d3} train --data train.jsonl --reference {reference}"
+                f" --out {adapter} --seed 553 --device cuda\n"
+                f"  {d3} candidate --adapter {adapter} --out {merged}"
+                f" > {args.model}-provenance.json\n"
+                "then run zils setup again, or\n"
+                f"  zils doctor --model {args.model} --candidate {merged}"
             )
         try:
-            state["path"], state["sha256"] = local_candidate(args.candidate)
+            state["path"], state["sha256"] = local_candidate(args.candidate, args.model)
         except (ValueError, OSError) as error:
             return f"{error}; merge again with {d3} candidate"
 
@@ -295,6 +317,8 @@ def doctor(args):
         ("commitment", commitment),
     ]
     print(paint("1", "Zils doctor"), flush=True)
+    print(f"Beat the base in your tier: {models.pool_id(args.model)} · {args.model}", flush=True)
+    print("Validators decide which tiers are open and which base profile to beat.", flush=True)
     for name, check in steps:
         fix = check()
         if fix:
@@ -327,6 +351,7 @@ def setup(args):
     print(
         f"{paint('1;32', '◆ Zils miner setup')}  {paint('2', 'Enter keeps the value in brackets')}"
     )
+    print("Beat the base in your tier. Choose the base profile your validator accepts.")
     path = ask("Bittensor wallet folder", config.get("wallet_path", WALLET_PATH))
     wallets = Path(path).expanduser()
     found = sorted(p.name for p in wallets.iterdir() if p.is_dir()) if wallets.is_dir() else []
@@ -343,14 +368,26 @@ def setup(args):
         "Candidate folder from zils.d3 candidate (Enter if not trained yet)",
         config.get("candidate"),
     )
+    print("Base profiles (availability depends on the validator):")
+    for profile in models.d3_family():
+        print(f"  {models.pool_id(profile)}: {profile}")
+    model = selected_model(
+        args.model
+        or ask("Base profile (Enter to read it from the candidate)", config.get("model")),
+        candidate,
+    )
     repo = ask("Public Hugging Face repo for it, owner/name", config.get("repo"))
     if not name:
         raise ValueError("a wallet name is needed; create one with btcli wallet create")
     candidate = str(Path(candidate).expanduser().resolve()) if candidate else None
-    if candidate != config.get("candidate"):
-        config.pop("revision", None)  # a different candidate is not the uploaded one
+    if (
+        candidate != config.get("candidate")
+        or repo != config.get("repo")
+        or config.get("model") not in (None, model)
+    ):
+        config.pop("revision", None)  # a changed target must not reuse the uploaded revision
     config |= {"wallet_path": path, "wallet_name": name, "wallet_hotkey": hotkey}
-    config |= {"candidate": candidate, "repo": repo}
+    config |= {"model": model, "candidate": candidate, "repo": repo}
     write_config(config)
     print(f"{paint('32', '✓')} saved to {config_path()}\n", flush=True)
     for key in SAVED:
@@ -361,13 +398,18 @@ def setup(args):
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="zils", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    start = commands.add_parser("setup", help="ask for the wallet, candidate and repo; save them")
+    start = commands.add_parser("setup", help="choose a base profile, wallet, candidate and repo")
     check = commands.add_parser("doctor", help="check the setup and print the next command")
     commit = commands.add_parser(
         "commit-candidate", help="upload a base candidate and commit it on chain"
     )
     for command in (start, check, commit):
         command.add_argument("--netuid", type=int, default=NETUID)
+        command.add_argument(
+            "--model",
+            choices=models.d3_family(),
+            help="base profile to beat in your tier; saved by setup or read from the candidate",
+        )
     for command in (check, commit):
         command.add_argument("--wallet-name")
         command.add_argument("--wallet-hotkey", help="hotkey name; the coldkey is never read")
@@ -393,6 +435,7 @@ def main(argv=None):
         args.wallet_path = args.wallet_path or WALLET_PATH
         if args.wallet_name is None or args.wallet_hotkey is None:
             raise ValueError("no wallet configured; run zils setup (or pass --wallet-name)")
+        args.model = selected_model(args.model, args.candidate)
         if args.command == "doctor":
             if not doctor(args):
                 parser.exit(1)
