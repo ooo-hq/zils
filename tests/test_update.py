@@ -24,7 +24,9 @@ class UpdateTest(unittest.TestCase):
 
     def test_behind_release_warns_only_when_behind(self):
         with response(STABLE + "\n"), patch("zils.miner.installed_release", return_value=OLD):
-            self.assertIn("bbbbbbbbbbbb, the stable release is aaaaaaaaaaaa", miner.behind_release())
+            self.assertIn(
+                "bbbbbbbbbbbb, the stable release is aaaaaaaaaaaa", miner.behind_release()
+            )
         with response(STABLE), patch("zils.miner.installed_release", return_value=STABLE):
             self.assertIsNone(miner.behind_release())
         with patch("zils.miner.urllib.request.urlopen", side_effect=OSError("offline")):
@@ -32,7 +34,11 @@ class UpdateTest(unittest.TestCase):
 
     def test_update_runs_the_installer_at_the_stable_sha(self):
         runs = []
-        fake_run = lambda cmd, env: runs.append(env) or SimpleNamespace(returncode=0)
+
+        def fake_run(cmd, env):
+            runs.append(env)
+            return SimpleNamespace(returncode=0)
+
         with (
             response(STABLE),
             patch("zils.miner.installed_release", return_value=OLD),

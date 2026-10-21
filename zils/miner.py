@@ -91,8 +91,15 @@ def update():
         print(f"{paint('32', '✓')} already on the stable release {stable[:12]}", flush=True)
         return
     if zils.ROOT.name != "zils":
-        raise ValueError(f"{zils.ROOT} is not an installer checkout (~/.zils/zils); update it with git")
-    env = {**os.environ, "ZILS_HOME": str(zils.ROOT.parent), "ZILS_REF": stable, "ZILS_SKIP_SETUP": "1"}
+        raise ValueError(
+            f"{zils.ROOT} is not an installer checkout (~/.zils/zils); update it with git"
+        )
+    env = {
+        **os.environ,
+        "ZILS_HOME": str(zils.ROOT.parent),
+        "ZILS_REF": stable,
+        "ZILS_SKIP_SETUP": "1",
+    }
     if subprocess.run(["sh", "-c", INSTALL], env=env).returncode:
         raise RuntimeError("the installer failed; its log path is printed above")
 
