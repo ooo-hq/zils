@@ -642,18 +642,26 @@ class DecisionModel:
         inputs, keys = self.encoder.inputs(state, question, images, videos)
         return self.probabilities(inputs, keys, question, self.meta["temperature"])
 
-    def predict_shared(self, rows, image):
+    def predict_shared(self, rows, image, temperature=None):
         """predict() for several (state, question) rows about one image, in one left-padded pass.
 
         The image is encoded once and its vision metadata stays on the CPU, so the GPU is not
         synchronised per tensor. Batching moves BF16 numerics slightly (at most 0.015 probability
-        on the 23-photo box benchmark). Vendor-encoder runtimes keep the serial path.
+        on the 23-photo box benchmark). Vendor-encoder runtimes keep the serial path. `temperature`
+        defaults to the checkpoint's; hosted adapters pass their release temperature.
         """
         import torch
         from transformers.vision_utils import get_vision_cu_seqlens
 
+        if temperature is None:
+            temperature = self.meta["temperature"]
         if len(rows) < 2 or getattr(self.runtime, "encoder", None) is not None:
-            return [self.predict(state, question, images=[image]) for state, question in rows]
+            return [
+                self.probabilities(
+                    *self.encoder.inputs(state, question, [image]), question, temperature
+                )
+                for state, question in rows
+            ]
         if self.base.training or torch.is_autocast_enabled("cuda"):
             raise OSError("d3 inference requires eval mode without autocast")
         encoded = [self.encoder.inputs(state, question, [image]) for state, question in rows]
@@ -730,9 +738,7 @@ class DecisionModel:
                     torch.arange(max(counts), device=self.device)[None, :]
                     >= torch.tensor(counts, device=self.device)[:, None]
                 )
-                values = (values.double() / self.meta["temperature"]).masked_fill(
-                    unused, -torch.inf
-                )
+                values = (values.double() / temperature).masked_fill(unused, -torch.inf)
                 probabilities = values.softmax(-1).cpu().tolist()
         finally:
             self.base.get_image_features = original
