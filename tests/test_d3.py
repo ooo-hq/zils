@@ -90,6 +90,54 @@ def weights(root, weight_map, tensors=None):
         save_file({key: torch.zeros(1) for key in keys}, str(root / shard))
 
 
+class SharedImageProcessor:
+    """A processor batch whose length follows the rendered state, so rows need padding."""
+
+    def apply_chat_template(self, messages, tokenize, add_generation_prompt, enable_thinking):
+        return messages
+
+    def __call__(self, text, return_tensors, images):
+        ids = torch.ones(1, len(text[0]), dtype=torch.long)
+        return {
+            "input_ids": ids,
+            "attention_mask": torch.ones_like(ids),
+            "mm_token_type_ids": torch.zeros_like(ids),
+            "pixel_values": torch.full((4, 3), 0.25),
+            "image_grid_thw": torch.tensor([[1, 2, 2]]),
+        }
+
+
+class SharedImageBackbone(torch.nn.Module):
+    """Answers from each row's real length and its image feature; counts vision passes."""
+
+    vision_calls = 0
+
+    def get_image_features(self, pixel_values, image_grid_thw, **kwargs):
+        self.vision_calls += 1
+        return SimpleNamespace(pooler_output=(pixel_values.sum().reshape(1),))
+
+    def compute_3d_position_ids(self, input_ids, attention_mask, **kwargs):
+        return attention_mask.cumsum(-1)
+
+    def forward(
+        self,
+        input_ids,
+        attention_mask,
+        use_cache,
+        pixel_values,
+        image_grid_thw,
+        mm_token_type_ids,
+        position_ids=None,
+    ):
+        features = torch.cat(self.get_image_features(pixel_values, image_grid_thw).pooler_output)
+        if len(features) != len(input_ids):
+            raise AssertionError("one image feature per row")
+        hidden = torch.zeros(*input_ids.shape, 255, dtype=torch.bfloat16)
+        for row, length in enumerate(attention_mask.sum(-1).tolist()):
+            hidden[row, -1, length % 3] = 1 + features[row]
+        return SimpleNamespace(last_hidden_state=hidden)
+
+
 class D3ModuleTest(unittest.TestCase):
     def test_pins_and_constants(self):
         self.assertEqual(d3.MAX_TOKENS, 4096)
@@ -496,6 +544,49 @@ class D3ModuleTest(unittest.TestCase):
             rows["train"][0]["images"] = ["../a.png"]
             with self.assertRaisesRegex(ValueError, "inside"):
                 d3.validate_inputs(rows, root=tmp)
+
+    def test_predict_shared_matches_serial_predict_with_one_vision_pass(self):
+        model = d3.DecisionModel.__new__(d3.DecisionModel)
+        model.device = "cpu"
+        model.readout = torch.eye(255, dtype=torch.float32)
+        model.base = SharedImageBackbone().eval()
+        model.meta = {"temperature": 2.0}
+        model.runtime = None
+        model.tokenizer = SimpleNamespace(pad_token_id=0)
+        model.encoder = media_encoder(SharedImageProcessor())
+        three = {"type": "choice", "criteria": {"a": "a", "b": "b", "c": "c"}}
+        rows = [({"t": "x" * n}, q) for n, q in ((0, three), (1, QUESTION), (5, three))]
+        serial = [model.predict(state, question, images=[png()]) for state, question in rows]
+        model.base.vision_calls = 0
+        shared = model.predict_shared(rows, png())
+        self.assertEqual(model.base.vision_calls, 1)
+        self.assertEqual([list(p) for p in shared], [list(p) for p in serial])
+        for ours, reference in zip(shared, serial, strict=True):
+            for key in reference:
+                self.assertAlmostEqual(ours[key], reference[key], places=12)
+        self.assertEqual(
+            model.base.get_image_features.__func__, SharedImageBackbone.get_image_features
+        )
+        # A vendor-encoder runtime keeps the serial path.
+        model.runtime = SimpleNamespace(encoder=object())
+        with patch.object(model, "predict", return_value={"a": 1.0}) as predict:
+            self.assertEqual(model.predict_shared(rows, png()), [{"a": 1.0}] * 3)
+        self.assertEqual(predict.call_count, 3)
+
+    def test_runner_groups_consecutive_rows_on_one_image(self):
+        from zils.jevk5_runner import shared_image_groups
+
+        def row(name, **media):
+            return {"id": name, "state": {}, "question": QUESTION, **media}
+
+        rows = [row(f"e{i}", images=["a.png"]) for i in range(6)]
+        rows += [row("b", images=["b.png"]), row("two", images=["a.png", "b.png"]), row("text")]
+        groups = shared_image_groups(rows, True)
+        self.assertEqual(
+            [[r["id"] for r in g] for g in groups],
+            [["e0", "e1", "e2", "e3", "e4"], ["e5"], ["b"], ["two"], ["text"]],
+        )
+        self.assertEqual(len(shared_image_groups(rows, False)), len(rows))
 
     def test_runner_reads_image_bytes_and_passes_media_only_when_present(self):
         from zils import jevk5_runner
