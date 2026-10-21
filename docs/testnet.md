@@ -127,8 +127,13 @@ Publish the completed round, substituting its directory for `ROUND`:
 
 For subsequent rounds, add `--publish-weights` to the validator startup command.
 The SDK enforces chain constraints and chooses plain weights or timelocked
-commit-reveal. Zils uses mechanism 0 and weights version 1. An increased required
-version blocks this client rather than pretending to implement a newer rubric.
+commit-reveal. Zils uses mechanism 0 and sends `WEIGHTS_VERSION` from
+`zils/testnet.py` (currently 1) as the version key. A release that changes scoring
+bumps it. The chain keeps accepting the older version until the subnet's
+`weights_version` hyperparameter is raised to match, which is the grace period for
+validators to run `zils update`. After that the chain rejects weights from older
+releases, and this client refuses to submit with "run zils update" rather than
+pretending to implement a newer rubric.
 
 ## Read the outcome
 

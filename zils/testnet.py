@@ -10,6 +10,10 @@ from pathlib import Path
 import zils
 
 ENDPOINT = "wss://test.finney.opentensor.ai:443"
+# Sent as every weight write's version_key. A release that changes scoring bumps it; once validators
+# have had time to `zils update`, the owner raises the subnet's weights_version to match, and the
+# chain then rejects weights from older validators. Until then both versions count.
+WEIGHTS_VERSION = 1
 COMMITMENT_FIELD = 128  # bytes per Raw field of the Commitments pallet; the chain allows MaxFields
 
 
@@ -367,10 +371,13 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
             "status": "no_weights",
             "detail": "nothing sent; previous chain weights remain",
         }
-    if state["required_version"] > 1:
-        raise ValueError("subnet requires a newer Zils weights version")
+    if state["required_version"] > WEIGHTS_VERSION:
+        raise ValueError(
+            f"subnet requires weights version {state['required_version']}, this validator sends"
+            f" {WEIGHTS_VERSION}; run zils update"
+        )
     # Let the pinned SDK clip/quantize and enforce minimum count, stake and chain dispatch errors.
-    intent = bt.SetWeights(netuid=netuid, weights=weights, version_key=1)
+    intent = bt.SetWeights(netuid=netuid, weights=weights, version_key=WEIGHTS_VERSION)
     if state["block"] < state["retry_after_block"]:
         return {
             **record,
