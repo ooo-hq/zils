@@ -13,6 +13,31 @@ script_dir = Path(__file__).resolve().parent
 sys.path = [str(script_dir.parent), *[p for p in sys.path if Path(p).resolve() != script_dir]]
 
 
+SHARED_BATCH = 5  # one box: four edges and presence
+
+
+def shared_image_groups(requests, shared):
+    """Consecutive rows asking about the same single image, at most SHARED_BATCH per group."""
+    groups = []
+    for row in requests:
+        if set(row) - {"images", "videos"} != {"id", "state", "question"}:
+            raise ValueError("inference must receive only id, state, question and media paths")
+        last = groups[-1] if groups else None
+        if (
+            shared
+            and last
+            and len(last) < SHARED_BATCH
+            and "videos" not in row
+            and len(row.get("images", ())) == 1
+            and set(last[0]) == set(row)
+            and last[0]["images"] == row["images"]
+        ):
+            last.append(row)
+        else:
+            groups.append([row])
+    return groups
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("checkpoint", "base", "base-revision", "device"):
@@ -31,9 +56,8 @@ def main():
         model = engine.DecisionModel(args.checkpoint, args.device)
         load_ms = (time.perf_counter() - started) * 1000
         predictions = []
-        for row in requests:
-            if set(row) - {"images", "videos"} != {"id", "state", "question"}:
-                raise ValueError("inference must receive only id, state, question and media paths")
+        for group in shared_image_groups(requests, hasattr(model, "predict_shared")):
+            row = group[0]
             # Media travel as local paths; only profiles that declare inputs ever receive them.
             media = {}
             if "images" in row:
@@ -41,14 +65,17 @@ def main():
             if "videos" in row:
                 media["videos"] = list(row["videos"])
             started = time.perf_counter()
-            probabilities = model.predict(row["state"], row["question"], **media)
-            predictions.append(
-                {
-                    "id": row["id"],
-                    "probabilities": probabilities,
-                    "elapsed_ms": (time.perf_counter() - started) * 1000,
-                }
-            )
+            if len(group) > 1:
+                results = model.predict_shared(
+                    [(r["state"], r["question"]) for r in group], media["images"][0]
+                )
+            else:
+                results = [model.predict(row["state"], row["question"], **media)]
+            elapsed = (time.perf_counter() - started) * 1000 / len(group)
+            predictions += [
+                {"id": r["id"], "probabilities": p, "elapsed_ms": elapsed}
+                for r, p in zip(group, results, strict=True)
+            ]
         runtime = {
             "model": spec,
             "temperature": model.meta["temperature"],

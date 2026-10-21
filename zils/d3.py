@@ -642,6 +642,108 @@ class DecisionModel:
         inputs, keys = self.encoder.inputs(state, question, images, videos)
         return self.probabilities(inputs, keys, question, self.meta["temperature"])
 
+    def predict_shared(self, rows, image):
+        """predict() for several (state, question) rows about one image, in one left-padded pass.
+
+        The image is encoded once and its vision metadata stays on the CPU, so the GPU is not
+        synchronised per tensor. Batching moves BF16 numerics slightly (at most 0.015 probability
+        on the 23-photo box benchmark). Vendor-encoder runtimes keep the serial path.
+        """
+        import torch
+        from transformers.vision_utils import get_vision_cu_seqlens
+
+        if len(rows) < 2 or getattr(self.runtime, "encoder", None) is not None:
+            return [self.predict(state, question, images=[image]) for state, question in rows]
+        if self.base.training or torch.is_autocast_enabled("cuda"):
+            raise OSError("d3 inference requires eval mode without autocast")
+        encoded = [self.encoder.inputs(state, question, [image]) for state, question in rows]
+        first = encoded[0][0]
+        grid = first["image_grid_thw"]
+        padded_keys = {"input_ids", "attention_mask", "mm_token_type_ids"}
+        if any(
+            set(batch) != padded_keys | {"pixel_values", "image_grid_thw"}
+            or not torch.equal(batch["pixel_values"], first["pixel_values"])
+            or not torch.equal(batch["image_grid_thw"], grid)
+            for batch, _ in encoded
+        ):
+            raise OSError("d3 processor batches differ for one image")
+        if grid.device.type != "cpu" or grid.shape != (1, 3):
+            raise OSError("d3 image grid must be one CPU row")
+        if self.tokenizer.pad_token_id is None:
+            raise OSError("d3 tokenizer has no pad token")
+
+        def left_padded(key, fill):
+            values = [batch[key][0].flip(0) for batch, _ in encoded]
+            return torch.nn.utils.rnn.pad_sequence(
+                values, batch_first=True, padding_value=fill
+            ).flip(1)
+
+        inputs = {
+            "input_ids": left_padded("input_ids", self.tokenizer.pad_token_id),
+            "attention_mask": left_padded("attention_mask", 0),
+            "mm_token_type_ids": left_padded("mm_token_type_ids", 0),
+            "pixel_values": first["pixel_values"],
+            "image_grid_thw": grid.repeat(len(rows), 1),
+        }
+        inputs["position_ids"] = self.base.compute_3d_position_ids(
+            input_ids=inputs["input_ids"],
+            inputs_embeds=None,
+            image_grid_thw=inputs["image_grid_thw"],
+            attention_mask=inputs["attention_mask"],
+            past_key_values=None,
+            mm_token_type_ids=inputs["mm_token_type_ids"],
+        )
+        inputs = {k: v.to(self.device, non_blocking=True) for k, v in inputs.items()}
+        counts = [len(keys) for _, keys in encoded]
+        original = self.base.get_image_features
+
+        def shared_features(pixel_values, image_grid_thw, **kwargs):
+            value = original(
+                pixel_values,
+                grid.to(self.device, non_blocking=True),
+                cu_seqlens=get_vision_cu_seqlens(grid),
+                **kwargs,
+            )
+            if not isinstance(value.pooler_output, (tuple, list)) or len(value.pooler_output) != 1:
+                raise OSError("d3 image features must be one tensor per image")
+            value.pooler_output = tuple(value.pooler_output) * len(rows)
+            return value
+
+        sdpa = getattr(
+            self.encoder.native, "sdpa_backends", lambda device: contextlib.nullcontext()
+        )
+        # ponytail: patches the instance for one forward pass; not safe if one model is shared
+        # across threads (workers today are one process per model).
+        self.base.get_image_features = shared_features
+        try:
+            with torch.inference_mode(), sdpa(self.device):
+                hidden = self.base(**inputs, use_cache=False).last_hidden_state[:, -1]
+                if hidden.dtype != torch.bfloat16:
+                    raise OSError("d3 backbone must return BF16 hidden states")
+                with torch.autocast(self.device, enabled=False):
+                    values = hidden.float() @ self.readout[: max(counts)].T
+                if values.dtype != torch.float32:
+                    raise OSError("d3 readout must produce FP32 logits")
+                if not torch.isfinite(values).all():
+                    raise RuntimeError("d3 produced nonfinite logits")
+                unused = (
+                    torch.arange(max(counts), device=self.device)[None, :]
+                    >= torch.tensor(counts, device=self.device)[:, None]
+                )
+                values = (values.double() / self.meta["temperature"]).masked_fill(
+                    unused, -torch.inf
+                )
+                probabilities = values.softmax(-1).cpu().tolist()
+        finally:
+            self.base.get_image_features = original
+        results = []
+        for (_, keys), row in zip(encoded, probabilities, strict=True):
+            row = row[: len(keys)]
+            if not all(math.isfinite(v) for v in row) or abs(sum(row) - 1) >= 1e-6:
+                raise RuntimeError("d3 produced an invalid distribution")
+            results.append(dict(zip(keys, row, strict=True)))
+        return results
+
 
 def parity(model, cases):
     """Our readout against the vendor's own D3.probabilities on the same token ids."""
