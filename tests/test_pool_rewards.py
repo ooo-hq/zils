@@ -115,13 +115,17 @@ class PoolRewardsTest(unittest.TestCase):
             "required_version": 1,
             "retry_after_block": 10,
         }
-        chain = SimpleNamespace(plan=lambda intent, wallet: SimpleNamespace(to_dict=lambda: {}))
+        intents = []
+        chain = SimpleNamespace(
+            plan=lambda intent, wallet: intents.append(intent) or SimpleNamespace(to_dict=dict)
+        )
         wallet = SimpleNamespace(hotkey=SimpleNamespace(ss58_address="validator"))
         with (
             tempfile.TemporaryDirectory() as tmp,
             patch("zils.testnet.preflight", return_value=state),
         ):
             result = testnet.publish_round(config, tmp, report, chain, wallet)
+            self.assertEqual(intents[-1].version_key, testnet.WEIGHTS_VERSION)
             self.assertAlmostEqual(result["requested_weights"]["1"], 0.925)
             self.assertAlmostEqual(result["requested_weights"]["2"], 0.075)
             changed = copy.deepcopy(config)
@@ -130,6 +134,10 @@ class PoolRewardsTest(unittest.TestCase):
                 testnet.publish_round(changed, tmp, report, chain, wallet)
             with self.assertRaisesRegex(ValueError, "base_tier|both"):
                 testnet.publish_round({**config, "base_tier": {}}, tmp, report, chain, wallet)
+            # Raised on chain after the grace window: this release can no longer write weights.
+            state["required_version"] = testnet.WEIGHTS_VERSION + 1
+            with self.assertRaisesRegex(ValueError, "requires weights version 2.*zils update"):
+                testnet.publish_round(config, tmp, report, chain, wallet)
 
 
 if __name__ == "__main__":
