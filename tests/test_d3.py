@@ -567,11 +567,19 @@ class D3ModuleTest(unittest.TestCase):
         self.assertEqual(
             model.base.get_image_features.__func__, SharedImageBackbone.get_image_features
         )
+        # Hosted adapters pass their release temperature instead of the checkpoint's.
+        cold = model.predict_shared(rows, png(), temperature=0.5)
+        for ours, (state, question) in zip(cold, rows, strict=True):
+            reference = model.probabilities(
+                *model.encoder.inputs(state, question, [png()]), question, 0.5
+            )
+            for key in reference:
+                self.assertAlmostEqual(ours[key], reference[key], places=12)
         # A vendor-encoder runtime keeps the serial path.
         model.runtime = SimpleNamespace(encoder=object())
-        with patch.object(model, "predict", return_value={"a": 1.0}) as predict:
-            self.assertEqual(model.predict_shared(rows, png()), [{"a": 1.0}] * 3)
-        self.assertEqual(predict.call_count, 3)
+        with patch.object(model, "probabilities", return_value={"a": 1.0}) as serial_call:
+            self.assertEqual(model.predict_shared(rows, png(), temperature=0.5), [{"a": 1.0}] * 3)
+        self.assertEqual([c.args[-1] for c in serial_call.call_args_list], [0.5] * 3)
 
     def test_runner_groups_consecutive_rows_on_one_image(self):
         from zils.jevk5_runner import shared_image_groups
