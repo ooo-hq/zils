@@ -114,7 +114,52 @@ class JobTest(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 jobs.validate_policy(bad)
 
-    def test_forced_migration_accepts_no_worse_within_tolerance(self):
+    def test_migration_accepts_parity_but_upgrades_still_require_improvement(self):
+        baseline = {"status": "evaluated", "brier": 0.25}
+        candidate = {
+            "uid": 1,
+            "sha256": "a" * 64,
+            "status": "evaluated",
+            "accuracy": 0.9,
+            "skill": 0.5,
+        }
+        upgrade = {
+            **POLICY,
+            "previous_job_id": "00000000-0000-4000-8000-000000000000",
+            "base_change": True,
+        }
+        migration = {**upgrade, "migration": "no_regression"}
+        for brier, migration_status, upgrade_status in (
+            (0.25, "accepted", "no_qualifying_model"),
+            (0.2474, "accepted", "no_qualifying_model"),
+            (0.24, "accepted", "accepted"),
+            (0.25000001, "no_qualifying_model", "no_qualifying_model"),
+        ):
+            with self.subTest(brier=brier):
+                row = {**candidate, "brier": brier}
+                self.assertEqual(
+                    jobs.select(baseline, [row], migration)["status"], migration_status
+                )
+                self.assertEqual(jobs.select(baseline, [row], upgrade)["status"], upgrade_status)
+                self.assertEqual(jobs.select(baseline, [row], POLICY)["status"], upgrade_status)
+        for changes in ({"accuracy": 0.79}, {"skill": 0}, {"status": "rejected"}):
+            with self.subTest(changes=changes):
+                self.assertEqual(
+                    jobs.select(baseline, [{**candidate, "brier": 0.25, **changes}], migration)[
+                        "status"
+                    ],
+                    "no_qualifying_model",
+                )
+        for changes in (
+            {"migration": "unknown"},
+            {"migration": 1},
+            {"base_change": False},
+            {"previous_job_id": None},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                jobs.validate_policy({**migration, **changes})
+
+    def test_frozen_legacy_migration_retains_its_tolerance(self):
         """Moving a task off a retiring base needs continuity, not a gain (spec §18)."""
         baseline = {"status": "evaluated", "brier": 0.3}
         candidate = {"uid": 1, "sha256": "a" * 64, "status": "evaluated", "accuracy": 0.9}

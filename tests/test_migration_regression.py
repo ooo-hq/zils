@@ -23,11 +23,11 @@ RELEASE = {
 class MigrationRegressionTest(unittest.TestCase):
     def test_production_gates_distinguish_improvement_and_continuity(self):
         baseline = {"brier": 0.2, "accuracy": 0.9, "skill": 0.6}
-        row = {**baseline, "brier": 0.203, "adapter_sha256": "a" * 64}
+        row = {**baseline, "adapter_sha256": "a" * 64}
         result = migration.compare(baseline, row, RELEASE, POLICY)
         self.assertFalse(result["strict_upgrade"])
         self.assertTrue(result["migration"])
-        for changes in ({"brier": 0.206}, {"accuracy": 0.79}, {"skill": 0}):
+        for changes in ({"brier": 0.200001}, {"accuracy": 0.79}, {"skill": 0}):
             self.assertFalse(
                 migration.compare(baseline, row | changes, RELEASE, POLICY)["migration"]
             )

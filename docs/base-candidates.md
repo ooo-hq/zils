@@ -348,7 +348,7 @@ incumbent profile/interpreter and stored serving temperature. It is never
 retrained or recalibrated. Candidate adapters use the production training recipe
 and are calibrated on the current calibration split. Both strict upgrade and
 migration outcomes use `zils.jobs.select`, including the accuracy and positive
-skill requirements. Migration permits Brier up to 0.005 worse than the frozen
+skill requirements. Migration requires Brier to match or improve on the frozen
 release; `--tolerance` controls only the separate retraining regression gate.
 
 Without migration references, the historical default remains seed 553. With

@@ -12,8 +12,7 @@ import zils
 from . import benchmark, models
 
 VERSION = "fez-customer-job/v1"
-# A forced move off a retiring base passes when the new adapter is no worse than the frozen
-# release by more than this Brier margin (spec §18); ordinary upgrades must beat it.
+# Preserve the policy of frozen legacy releases; new migrations use "no_regression".
 MIGRATION_TOLERANCE = 0.005
 
 
@@ -34,9 +33,12 @@ def validate_policy(policy):
     ):
         raise ValueError("base_change is only true, with a previous_job_id")
     if "migration" in policy and (
-        policy["migration"] is not True or policy.get("base_change") is not True
+        (policy["migration"] is not True and policy["migration"] != "no_regression")
+        or policy.get("base_change") is not True
     ):
-        raise ValueError("migration is only true, on a base_change upgrade")
+        raise ValueError(
+            "migration requires no_regression (or legacy true), on a base_change upgrade"
+        )
     for name, maximum in (("min_accuracy", 1), ("min_brier_improvement", 2)):
         value = policy[name]
         if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= maximum:
@@ -198,7 +200,9 @@ def select(baseline, rows, policy, *, model=None):
         and row["skill"] > 0
         and row["accuracy"] >= policy["min_accuracy"]
         and (
-            baseline["brier"] - row["brier"] >= -MIGRATION_TOLERANCE
+            row["brier"] <= baseline["brier"]
+            if policy.get("migration") == "no_regression"
+            else baseline["brier"] - row["brier"] >= -MIGRATION_TOLERANCE
             if policy.get("migration")
             else baseline["brier"] - row["brier"] > 0
             and baseline["brier"] - row["brier"] >= policy["min_brier_improvement"]
