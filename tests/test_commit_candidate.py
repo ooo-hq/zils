@@ -79,6 +79,7 @@ class CommitCandidateTest(unittest.TestCase):
         self.d3.parent.mkdir()
         self.d3.touch()
         self.enterContext(patch("zils.miner.d3_python", lambda: self.d3))
+        self.enterContext(patch("zils.miner.behind_release", lambda: None))
         self.runtime = SimpleNamespace(returncode=0, stderr="")
         self.runtime_run = self.enterContext(
             patch("zils.miner.subprocess.run", side_effect=lambda *a, **k: self.runtime)
