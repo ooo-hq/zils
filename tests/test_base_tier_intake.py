@@ -139,6 +139,7 @@ class BaseTierIntakeTest(unittest.TestCase):
             (vdir / "draws").mkdir(parents=True)
             sealed(vdir / "draws/first", "first")
             sealed(vdir / "draws/second", "second")
+            (vdir / "pilot.json").write_text(json.dumps({"fixture": True}))
             (vdir / "history.json").write_text(json.dumps(inputs()[2]))
             draws = [base_round.draw(vdir / "draws/first"), base_round.draw(vdir / "draws/second")]
             (vdir / "reference").mkdir()
@@ -219,6 +220,7 @@ class BaseTierIntakeTest(unittest.TestCase):
                 },
                 "pool_id": "d3-mini",
                 "family_history": "history.json",
+                "pilot_report": "pilot.json",
                 "base_round_dir": "draws",
                 "base_reference": "reference",
             }
@@ -228,6 +230,7 @@ class BaseTierIntakeTest(unittest.TestCase):
                     os.environ,
                     {"ZILS_D3_RUNTIME_PYTHON": str(runner), "ZILS_TEST_RUNNER_LOG": str(log)},
                 ),
+                patch("zils.base_pilot.verify_qualification"),
                 patch("zils.d3.validate_candidate", validate),
                 patch("zils.commitments.HF_ENDPOINT", hub),
             ):
@@ -284,7 +287,8 @@ class BaseTierIntakeTest(unittest.TestCase):
                 self.assertEqual(decision["confirmed_winner"]["uid"], 1)
                 self.assertEqual(decision["incumbent"]["uid"], validator.INCUMBENT_UID)
                 self.assertEqual(
-                    {c["uid"]: c["eligible"] for c in decision["candidates"]}, {1: True, 2: False}
+                    {c["uid"]: c["eligible"] for c in decision["candidates"]},
+                    {1: True, 2: False, 4: False, 5: False, 7: False},
                 )
                 self.assertEqual(set(decision["rejected"]), {"3", "4", "5", "6", "7", "8"})
                 self.assertIn("HTTP Error 404", decision["rejected"]["4"])
@@ -326,7 +330,7 @@ class BaseTierIntakeTest(unittest.TestCase):
                 self.assertEqual([r["accuracy"] for r in runs[12:]], [0.5] * 4)
                 self.assertEqual(decision["round_id"], "b" * 32)
                 self.assertEqual(decision["pending_winner"]["uid"], 1)
-                self.assertEqual({c["uid"] for c in decision["candidates"]}, {1, 2})
+                self.assertEqual({c["uid"] for c in decision["candidates"]}, {1, 2, 4, 5, 7})
                 self.assertIn("3", decision["rejected"])
 
                 # A third identical round costs nothing at all.

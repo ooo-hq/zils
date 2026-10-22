@@ -38,7 +38,9 @@ class PoolIntakeTest(unittest.TestCase):
             {"jobs": {"task": {"incumbent": {"brier": 0.3}, "candidate": {"brier": 0.31}}}},
         ):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
-                promote_base.archival_verify_regression({**report, **changes}, "a" * 64, "b" * 64, models.D3)
+                promote_base.archival_verify_regression(
+                    {**report, **changes}, "a" * 64, "b" * 64, models.D3
+                )
 
     def test_staging_preserves_mini_incumbent_history_and_outer_budget(self):
         track = {
@@ -90,6 +92,7 @@ class PoolIntakeTest(unittest.TestCase):
             models.write_metadata(root / "reference", kind="base", model=models.D3)
             sealed(root / "first", "first")
             sealed(root / "second", "second")
+            (root / "pilot.json").write_text(json.dumps({"fixture": True}))
             (root / "history.json").write_text(json.dumps(inputs()[2]))
             draws = [(base_round.draw(root / name), root / name) for name in ("first", "second")]
             config = {
@@ -97,6 +100,7 @@ class PoolIntakeTest(unittest.TestCase):
                 "model": models.spec(models.D3),
                 "base_reference": "reference",
                 "family_history": "history.json",
+                "pilot_report": "pilot.json",
                 "base_tier": {
                     "share": 1,
                     "incumbent_sha256": zils.checkpoint_hash(root / "reference"),
@@ -109,9 +113,12 @@ class PoolIntakeTest(unittest.TestCase):
             runner.chmod(0o700)
             log = root / "calls"
             args = SimpleNamespace(device="cpu", runtime_python=sys.executable, poll=0.1)
-            with patch.dict(
-                os.environ,
-                {"ZILS_D3_RUNTIME_PYTHON": str(runner), "ZILS_TEST_RUNNER_LOG": str(log)},
+            with (
+                patch("zils.base_pilot.verify_qualification"),
+                patch.dict(
+                    os.environ,
+                    {"ZILS_D3_RUNTIME_PYTHON": str(runner), "ZILS_TEST_RUNNER_LOG": str(log)},
+                ),
             ):
                 for name, now, count in (
                     ("round-1", 1000, 2),

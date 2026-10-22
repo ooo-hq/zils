@@ -65,7 +65,7 @@ def persist(path, value):
 
 
 def active_context(config, pool_id, *, directory):
-    from . import validator
+    from . import base_pilot, validator
 
     pools = model_pools.validate(config["base_pools"])
     entry = pools["pools"].get(pool_id)
@@ -95,6 +95,7 @@ def active_context(config, pool_id, *, directory):
         raise ValueError("all pool draws must use the frozen blueprint")
     suite = read(resolved["suite_manifest"])
     regression_suite.validate_suite(suite)
+    base_pilot.admit(settings, directory, draws)
     root = Path(directory) / "base-pools" / pool_id
     return {
         **track,

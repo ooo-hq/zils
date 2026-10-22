@@ -359,7 +359,11 @@ def pool_rounds(config, directory):
             "pool_id": pool,
         }
         root = directory / "base-pools" / pool
-        rounds[pool] = (settings, root, base_draws(settings, root))
+        audited = base_draws(settings, root)
+        from . import base_pilot
+
+        base_pilot.admit(settings, root, audited)
+        rounds[pool] = (settings, root, audited)
     return rounds
 
 
@@ -485,6 +489,9 @@ def base_tier_epoch(config, directory, work, registry, args, draws, *, wait_for_
         raise ValueError(
             "new base elections require pool configuration and family_history; migrate the legacy config"
         )
+    from . import base_pilot
+
+    base_pilot.admit(config, directory, draws)
     track = base_round.validate_track(config["base_tier"])
     model = models.validate_spec(config["model"])
     history = json.loads((Path(directory) / config["family_history"]).read_text())
