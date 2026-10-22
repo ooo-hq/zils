@@ -10,14 +10,16 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from tests.promoted_profile import PROMOTED, promoted_profile
 from tests.test_base_tier_intake import fake_hub, revision
 from tests.test_commit_candidate import Chain
 from tests.test_feature_commitments import adapter
-from zils import feature_commitments as features, feature_miner, models, protocol, testnet
+from zils import feature_commitments as features, feature_miner, protocol, testnet
 
 
 class FeatureMinerTest(unittest.TestCase):
     def setUp(self):
+        self.enterContext(promoted_profile())
         from bittensor.wallet import Wallet
 
         self.tmp = tempfile.TemporaryDirectory()
@@ -174,7 +176,7 @@ class FeatureMinerTest(unittest.TestCase):
                     "box/d3-mini",
                 ]
             )
-        self.assertEqual(features.validate_bundle(target)["model"]["id"], models.D3_ZILS_R5)
+        self.assertEqual(features.validate_bundle(target)["model"]["id"], PROMOTED)
 
 
 if __name__ == "__main__":

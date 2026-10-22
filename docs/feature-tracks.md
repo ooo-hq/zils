@@ -38,12 +38,12 @@ Box parents for the pilot are:
 
 | Track | Exact parent profile | Pinned parent revision |
 | --- | --- | --- |
-| `box/d3-mini` | `d3-mini-4.5b-zils-r5` | `e03e3a380a7cced24a00092a7eb0e1dd2290aade` |
+| `box/d3-mini` | `d3-mini-4.5b-v1` | `b54402a963373cc44713f18c9596c580e31cc68b` |
 | `box/d3-lite` | `d3-lite-0.8b-v1` | `03560c26f5199c3c04129a2ccb38960c913635e0` |
 
-The validator's frozen configuration selects the accepted parent. A stock-mini
-adapter does not become an r5 adapter by changing its metadata. Train separately
-for each parent and repeat qualification when the accepted parent changes.
+The validator's frozen configuration selects the accepted parent. An
+adapter trained on one parent does not move to another by changing its metadata.
+Train separately for each parent and repeat qualification when the accepted parent changes.
 
 ## Install from a fresh clone
 
@@ -139,7 +139,7 @@ one epoch of the native language-only rank-16 LoRA recipe:
   --checkpoint box-lite-adapter --out box-lite-bundle --track box/d3-lite
 ```
 
-For mini, use `--model d3-mini-4.5b-zils-r5` when creating a separate reference,
+For mini, use `--model d3-mini-4.5b-v1` when creating a separate reference,
 train against that reference into a new adapter directory, and pack with
 `--track box/d3-mini`. The training command reads its parent from the reference;
 it has no separate `--model` flag.

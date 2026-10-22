@@ -77,26 +77,6 @@ SPECS[D3] = {
     "calibration": "native-then-heldout-temperature/v1",
     "inputs": {"images": 4, "video": True},
 }
-# Base-tier winners promoted from d3 (scripts/promote_base.py): same graph and runtime, new weights.
-D3_ZILS_R5 = "d3-mini-4.5b-zils-r5"
-SPECS[D3_ZILS_R5] = {
-    "id": D3_ZILS_R5,
-    "name": "Zils Base r5 (d3-mini 4.5B)",
-    "base": "zils-ai/d3-mini-4.5b-zils-r5",
-    "base_revision": "e03e3a380a7cced24a00092a7eb0e1dd2290aade",
-    "runtime_revision": "d3-vendor-runtime-a475367/v1",
-    "prompt": "d3-native-v1",
-    "max_input_tokens": 4096,
-    "recipe": "d3-language-lora16-adamw/v1",
-    "calibration": "native-then-heldout-temperature/v1",
-    "inputs": {"images": 4, "video": True},
-    "parent": {"id": D3, "base_revision": "b54402a963373cc44713f18c9596c580e31cc68b"},
-}
-TEXT_ADAPTER_MODELS = (*TEXT_ADAPTER_MODELS, D3_ZILS_R5)
-TEXT_RUNTIME_MODULES[D3_ZILS_R5] = ".d3"
-RUNTIME_PYTHON_ENV[D3_ZILS_R5] = "ZILS_D3_RUNTIME_PYTHON"
-CANDIDATE_BASE_ENV[D3_ZILS_R5] = "ZILS_D3_ZILS_R5_CANDIDATE_BASE"
-PINS_FILES[D3_ZILS_R5] = "d3-mini-4.5b-zils-r5-pins.json"
 D3_POOL_MODELS = {
     "d3-lite": "d3-lite-0.8b-v1",
     "d3-nano": "d3-nano-2.2b-v1",

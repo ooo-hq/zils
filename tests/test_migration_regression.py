@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from tests.promoted_profile import PROMOTED, promoted_profile
 from tests.test_jobs import POLICY, examples
 from tests.test_regression_suite import run_suite
 from zils import base_round, benchmark, migration_regression as migration, models
@@ -21,6 +22,9 @@ RELEASE = {
 
 
 class MigrationRegressionTest(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(promoted_profile())
+
     def test_production_gates_distinguish_improvement_and_continuity(self):
         baseline = {"brier": 0.2, "accuracy": 0.9, "skill": 0.6}
         row = {**baseline, "adapter_sha256": "a" * 64}
@@ -102,7 +106,7 @@ class MigrationRegressionTest(unittest.TestCase):
             models.write_metadata(ref, kind="base", model=models.D3)
             candidate = root / "candidate"
             candidate.mkdir()
-            models.write_metadata(candidate, kind="base", model=models.D3_ZILS_R5)
+            models.write_metadata(candidate, kind="base", model=PROMOTED)
             predictions = [
                 {"id": r["id"], "probabilities": {"true": 0.6, "false": 0.4}, "elapsed_ms": 1.0}
                 for r in cases
@@ -129,7 +133,7 @@ class MigrationRegressionTest(unittest.TestCase):
                         "--incumbent-model",
                         models.D3,
                         "--candidate-model",
-                        models.D3_ZILS_R5,
+                        PROMOTED,
                         "--incumbent",
                         str(ref),
                         "--candidate",

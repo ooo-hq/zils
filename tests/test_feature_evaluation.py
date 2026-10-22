@@ -11,24 +11,28 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from scripts.box_dataset import generate
+from tests.promoted_profile import PROMOTED, promoted_profile
 from zils import core, models
 
 
 class FeatureEvaluationTest(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(promoted_profile())
+
     def test_box_inference_receives_only_context_questions_and_verified_images(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             generate(root / "draw", 4, 42)
             checkpoint = root / "base"
             checkpoint.mkdir()
-            models.write_metadata(checkpoint, model=models.D3_ZILS_R5, kind="base")
+            models.write_metadata(checkpoint, model=PROMOTED, kind="base")
             submissions = root / "submissions.json"
             submissions.write_text(json.dumps([core.submission(checkpoint, 1)]))
             args = SimpleNamespace(
                 cases=root / "draw/expanded.jsonl",
                 images=root / "draw/images",
                 submissions=submissions,
-                base_revision=models.spec(models.D3_ZILS_R5)["base_revision"],
+                base_revision=models.spec(PROMOTED)["base_revision"],
                 timeout=10,
                 report=root / "report.json",
                 device="cpu",
