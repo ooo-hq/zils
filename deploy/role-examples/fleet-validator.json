@@ -1,7 +1,7 @@
 {
   "role": "fleet-validator",
   "hotkey": "REPLACE_WITH_PUBLIC_SS58",
-  "wallet": {"name": "fez-testnet", "hotkey": "validator", "path": "/etc/zils-node/wallets"},
+  "wallet": {"name": "zils-node", "hotkey": "validator", "path": "/etc/zils-node/wallets"},
   "fleet_config": "/etc/zils-node/fleet/validator/config.json",
   "device": "cuda"
 }
