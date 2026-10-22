@@ -8,6 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from tests.promoted_profile import PROMOTED, promoted_profile
 from zils import box, feature_tracks, models, testnet
 
 MEMBERS = {str(i): {"hotkey": f"miner-{i}"} for i in range(1, 7)}
@@ -32,7 +33,7 @@ def feature_config():
                 "policy": {},
             }
             for pool, model, share, uid in (
-                ("d3-mini", models.D3_ZILS_R5, 0.8, 3),
+                ("d3-mini", PROMOTED, 0.8, 3),
                 ("d3-lite", "d3-lite-0.8b-v1", 0.2, 4),
             )
         },
@@ -53,7 +54,7 @@ def fixture():
                 "kings": [f"miner-{uid}"],
             }
             for pool, model, share, uid in (
-                ("d3-mini", models.D3_ZILS_R5, 0.8, 1),
+                ("d3-mini", PROMOTED, 0.8, 1),
                 ("d3-lite", "d3-lite-0.8b-v1", 0.2, 2),
             )
         },
@@ -108,6 +109,9 @@ def publish(config, report):
 
 
 class FeatureRewardsTest(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(promoted_profile())
+
     def test_manual_publisher_requires_and_reuses_all_frozen_tracks(self):
         from zils.validator import publication_report
 

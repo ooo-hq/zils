@@ -12,6 +12,7 @@ from urllib.error import HTTPError
 
 import zils
 from scripts.box_dataset import generate
+from tests.promoted_profile import PROMOTED, promoted_profile
 from tests.test_feature_commitments import adapter
 from zils import base_round, feature_commitments, feature_round, models
 
@@ -28,7 +29,7 @@ def fixture(root):
             "burn_uid": 0,
             "tracks": {
                 "box/d3-mini": {
-                    "model": models.spec(models.D3_ZILS_R5),
+                    "model": models.spec(PROMOTED),
                     "enabled": True,
                     "share": 1,
                     "incumbent_sha256": feature_commitments.bundle_hash(reference),
@@ -46,6 +47,7 @@ def fixture(root):
 
 class FeatureRoundTest(unittest.TestCase):
     def setUp(self):
+        self.enterContext(promoted_profile())
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
@@ -112,7 +114,7 @@ class FeatureRoundTest(unittest.TestCase):
             if fail:
                 raise RuntimeError(fail)
             rows = [json.loads(line) for line in Path(cases).read_text().splitlines()]
-            self.assertEqual(kwargs["model"], models.D3_ZILS_R5)
+            self.assertEqual(kwargs["model"], PROMOTED)
             self.assertEqual(kwargs["images"], Path(cases).parent / "images")
             result = []
             for entry in submissions:
@@ -144,7 +146,7 @@ class FeatureRoundTest(unittest.TestCase):
                         "uid": entry["uid"],
                         "sha256": entry["sha256"],
                         "status": "evaluated",
-                        "runtime": {"model": models.spec(models.D3_ZILS_R5)},
+                        "runtime": {"model": models.spec(PROMOTED)},
                         "predictions": predictions,
                     }
                 )

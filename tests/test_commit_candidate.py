@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import zils
+from tests.promoted_profile import PROMOTED, promoted_profile
 from tests.test_base_tier_intake import candidate, fake_hub, revision
 from zils import commitments, miner, models, protocol as wire, testnet
 
@@ -53,6 +54,7 @@ class Chain:
 )
 class CommitCandidateTest(unittest.TestCase):
     def setUp(self):
+        self.enterContext(promoted_profile())
         from bittensor.wallet import Wallet
 
         self.tmp = tempfile.TemporaryDirectory()
@@ -322,7 +324,7 @@ class CommitCandidateTest(unittest.TestCase):
                 self.assertIn(f"has no {weight}", out)
 
     def test_rejects_another_tier_or_parent_before_upload_or_chain_access(self):
-        for model in ("d3-lite-0.8b-v1", models.D3_ZILS_R5):
+        for model in ("d3-lite-0.8b-v1", PROMOTED):
             with self.subTest(model=model):
                 code, out = self.run_miner(
                     "commit-candidate",
@@ -350,16 +352,16 @@ class CommitCandidateTest(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertEqual(json.loads(self.config.read_text())["model"], lite)
         self.assertIn(f"reference --model {lite}", out)
-        code, out = self.run_miner("doctor", "--model", models.D3_ZILS_R5, wallet=False)
-        self.assertIn(f"reference --model {models.D3_ZILS_R5}", out)
+        code, out = self.run_miner("doctor", "--model", PROMOTED, wallet=False)
+        self.assertIn(f"reference --model {PROMOTED}", out)
         self.assertEqual(json.loads(self.config.read_text())["model"], lite)
 
         miner.write_config(miner.load_config() | {"revision": revision("old")})
-        answers = iter(["", "", "", "", models.D3_ZILS_R5, ""])
+        answers = iter(["", "", "", "", PROMOTED, ""])
         with patch("builtins.input", lambda prompt: next(answers)):
             code, out = self.run_miner("setup", wallet=False)
         saved = json.loads(self.config.read_text())
-        self.assertEqual(saved["model"], models.D3_ZILS_R5)
+        self.assertEqual(saved["model"], PROMOTED)
         self.assertNotIn("revision", saved)
 
     def test_existing_candidate_supplies_the_profile_without_a_new_config(self):

@@ -6,6 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from tests.promoted_profile import PROMOTED, promoted_profile
 from zils import base_round, models, testnet
 
 MEMBERS = {"1": {"hotkey": "a"}, "2": {"hotkey": "b"}}
@@ -18,13 +19,16 @@ def pools():
         "share": 0.7,
         "burn_uid": 0,
         "pools": {
-            "d3-mini": {**track, "model": models.D3_ZILS_R5, "share": 0.75, "kings": ["b"]},
+            "d3-mini": {**track, "model": PROMOTED, "share": 0.75, "kings": ["b"]},
             "d3-lite": {**track, "model": "d3-lite-0.8b-v1", "share": 0.25, "kings": ["a"]},
         },
     }
 
 
 class PoolRewardsTest(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(promoted_profile())
+
     def test_independent_allocations_and_shared_king(self):
         from zils import model_pools
 
@@ -68,7 +72,7 @@ class PoolRewardsTest(unittest.TestCase):
         decision = {
             **DRAW,
             "pool_id": "d3-mini",
-            "model": models.spec(models.D3_ZILS_R5),
+            "model": models.spec(PROMOTED),
             "policy": dict(base_round.DEFAULT_POLICY),
             "incumbent": {"uid": 65535, "sha256": "c" * 64},
             "candidates": [],
