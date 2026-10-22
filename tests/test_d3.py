@@ -347,6 +347,20 @@ class D3ModuleTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "d3_runtime.py differs"):
                 d3.validate_candidate(tmp)
 
+    def test_candidate_base_override_validates_and_does_not_recurse(self):
+        with tempfile.TemporaryDirectory() as root:
+            good, _ = self.candidate(Path(root))
+            with patch(
+                "zils.d3.settings.get",
+                side_effect=lambda name, default=None: (
+                    str(good) if name == "ZILS_D3_CANDIDATE_BASE" else default
+                ),
+            ):
+                self.assertEqual(d3.base_path(), good.resolve())
+                (good / "serve_config.json").write_text("{}")
+                with self.assertRaisesRegex(ValueError, "unexpected entry"):
+                    d3.base_path()
+
     def test_candidate_weights_must_load_exactly(self):
         with tempfile.TemporaryDirectory() as root:
             candidate, parent = self.candidate(Path(root))
@@ -665,15 +679,13 @@ class TrainingRowsTest(unittest.TestCase):
             out=str(root / "o"),
         )
 
-    def test_text_profiles_refuse_image_rows_before_loading(self):
-        with tempfile.TemporaryDirectory() as tmp, patch("zils.h2o.DecisionModel") as loaded:
+    def test_retired_profiles_refuse_training_before_loading(self):
+        with tempfile.TemporaryDirectory() as tmp, patch("zils.d3.DecisionModel") as loaded:
             from zils.jevk5 import train
 
-            args = self.write(Path(tmp), ["a.png"])
-            with self.assertRaisesRegex(
-                ValueError, "h2o-lightning-4b-v1.2.3 does not accept images"
-            ):
-                train(args, model_id=models.H2O)
+            for model in models.RETIRED_MODELS:
+                with self.subTest(model=model), self.assertRaisesRegex(ValueError, "unsupported"):
+                    train(self.write(Path(tmp), []), model_id=model)
             loaded.assert_not_called()
 
     def test_image_paths_must_stay_inside_the_training_directory(self):

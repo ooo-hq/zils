@@ -9,7 +9,7 @@ Registration serves two paths:
   [compete from outside](mining.md#compete-in-the-base-tier-from-outside) by
   committing a d3-mini candidate on chain. No operator approval is needed.
 - **Closed, model-pinned fleets.** The operator selects a d3-mini 4.5B text job
-  (or a legacy H2O, ImaJev or Kev job) and qualifies the participating hardware.
+  (or a Kev job) and qualifies the participating hardware.
   To receive work there, the operator must also add your UID and hotkey to the
   validator's roster. Confirm the subnet ID with that operator.
 

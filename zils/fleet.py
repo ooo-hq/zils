@@ -29,10 +29,6 @@ def initialize(
     port,
     miner_ports,
     identities=None,
-    *,
-    images=None,
-    min_free_mib=0,
-    max_seconds=3600,
 ):
     from . import benchmark
 
@@ -69,26 +65,6 @@ def initialize(
         raise ValueError("Reference differs from the frozen job model profile")
     if manifest.get("selection", {}).get("previous"):
         raise ValueError("Fleet bundles cannot resolve hosted predecessor models")
-    image_sources = {}
-    if model == models.IMAJEV:
-        from .imajev import image_path, verify_starting_checkpoint
-
-        verify_starting_checkpoint(checkpoint)
-        if (
-            images is None
-            or type(min_free_mib) is not int
-            or min_free_mib < 12288
-            or type(max_seconds) is not int
-            or not 1 <= max_seconds <= 3600
-        ):
-            raise ValueError("Image fleets require verified images and measured memory/time limits")
-        for aid, asset in manifest["assets"].items():
-            source = image_path(images, {"sha256": asset["canonical_sha256"]})
-            if source.stat().st_size != asset["canonical_bytes"]:
-                raise ValueError("Frozen image size changed")
-            image_sources[aid] = source
-    elif images is not None or min_free_mib or max_seconds != 3600:
-        raise ValueError("Image options require an image model profile")
     entry = zils.submission(checkpoint, 0)
     out = Path(out)
     out.mkdir(mode=0o700, parents=True, exist_ok=False)
@@ -114,24 +90,7 @@ def initialize(
     }
     if model != models.KEV:
         shared["model"] = models.spec(model)
-    if model == models.IMAJEV:
-        shared.update(min_free_mib=min_free_mib, max_seconds=max_seconds)
 
-    def copy_images(destination, *, training):
-        if not image_sources:
-            return
-        destination.mkdir(mode=0o700)
-        for aid, source in image_sources.items():
-            asset = manifest["assets"][aid]
-            if (asset["split"] == "train") != training:
-                continue
-            target = destination / source.name
-            shutil.copyfile(source, target)
-            target.chmod(0o600)
-            if digest(target) != asset["canonical_sha256"]:
-                raise ValueError("Frozen image changed during export")
-
-    copy_images(validator_dir / "images", training=False)
     if "job_id" in manifest:
         shared.update(job_id=manifest["job_id"], job_sha256=digest(data / "manifest.json"))
         zils.stage(entry, validator_dir / "reference")
@@ -153,7 +112,6 @@ def initialize(
             {**shared, "uid": uid, **secret, "hotkey": hotkey, "port": miner_port},
         )
         shutil.copyfile(data / "miner-training.jsonl", directory / "miner-training.jsonl")
-        copy_images(directory / "images", training=True)
         zils.stage(entry, directory / "reference")
         for name in ("zils", "miner", "requirements"):
             shutil.copytree(
@@ -162,10 +120,6 @@ def initialize(
         (directory / "docs").mkdir()
         for name in ("mining.md", "testnet.md"):
             shutil.copyfile(ROOT / "docs" / name, directory / "docs" / name)
-        if model == models.IMAJEV:
-            (directory / "scripts").mkdir()
-            for name in ("__init__.py", "download_imajev.py"):
-                shutil.copyfile(ROOT / "scripts" / name, directory / "scripts" / name)
         (directory / "README.md").write_text(
             "# Zils miner\n\nSee [setup and operation](docs/mining.md). "
             "After setup, run `./start-miner`.\n"
@@ -201,19 +155,6 @@ def main(argv=None):
     create.add_argument("--out", required=True)
     create.add_argument("--benchmark", default=".private/benchmarks/fez-v1-002")
     create.add_argument("--checkpoint", default="models/reference")
-    create.add_argument("--images", help="Verified image cache containing <sha256>.png files")
-    create.add_argument(
-        "--min-free-mib",
-        type=int,
-        default=0,
-        help="Image fleet admission from operator qualification (at least 12288)",
-    )
-    create.add_argument(
-        "--max-seconds",
-        type=int,
-        default=3600,
-        help="Qualified image training deadline, at most 3600 seconds",
-    )
     create.add_argument("--host", default="127.0.0.1")
     create.add_argument("--port", type=int, default=8900)
     create.add_argument("--miner-ports", type=int, nargs="+", default=[8901, 8902, 8903])
@@ -263,9 +204,6 @@ def main(argv=None):
                 args.port,
                 args.miner_ports,
                 identities,
-                images=args.images,
-                min_free_mib=args.min_free_mib,
-                max_seconds=args.max_seconds,
             )
             print(
                 f"Created validator config and {len(args.miner_ports)} separate miner bundles in {out}"

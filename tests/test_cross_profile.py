@@ -33,6 +33,9 @@ print(json.dumps({"runtime": {"temperature": temp}, "predictions": [
 """
 
 
+LITE = models.D3_POOL_MODELS["d3-lite"]
+
+
 def revision(model):
     return models.spec(model)["base_revision"]
 
@@ -48,7 +51,6 @@ class CrossProfileTest(unittest.TestCase):
         runtime.chmod(0o700)
         self.env = {
             **os.environ,
-            "ZILS_H2O_RUNTIME_PYTHON": str(runtime),
             "ZILS_D3_RUNTIME_PYTHON": str(runtime),
         }
 
@@ -109,24 +111,24 @@ class CrossProfileTest(unittest.TestCase):
         return [c[c.index("--base-revision") + 1] for c in calls]
 
     def test_previous_release_on_another_base_is_scored_on_its_own_base(self):
-        manifest, report = self.round(models.H2O, base_change=True)
+        manifest, report = self.round(LITE, base_change=True)
         self.assertEqual(report["delivery"]["status"], "accepted", report)
-        self.assertEqual(report["baseline_model"], models.H2O)
+        self.assertEqual(report["baseline_model"], LITE)
         self.assertEqual(report["model"]["id"], models.D3)
         revisions = self.revisions()
-        self.assertEqual(revisions[0], revision(models.H2O))
+        self.assertEqual(revisions[0], revision(LITE))
         self.assertEqual(set(revisions[1:]), {revision(models.D3)})
 
     def test_missing_previous_interpreter_accepts_nothing_and_names_the_variable(self):
-        env = {k: v for k, v in self.env.items() if k not in ("ZILS_H2O_RUNTIME_PYTHON",)}
-        env.pop("FEZ_H2O_RUNTIME_PYTHON", None)
-        with self.assertRaisesRegex(RuntimeError, "ZILS_H2O_RUNTIME_PYTHON"):
-            self.round(models.H2O, env=env, base_change=True)
+        env = {k: v for k, v in self.env.items() if k not in ("ZILS_D3_RUNTIME_PYTHON",)}
+        env.pop("FEZ_D3_RUNTIME_PYTHON", None)
+        with self.assertRaisesRegex(RuntimeError, "ZILS_D3_RUNTIME_PYTHON"):
+            self.round(LITE, env=env, base_change=True)
         self.assertFalse(self.record.exists())
 
     def test_cross_profile_upgrade_without_base_change_is_refused_before_evaluation(self):
         with self.assertRaisesRegex(ValueError, "requires base_change"):
-            self.round(models.H2O)
+            self.round(LITE)
         self.assertFalse(self.record.exists())
 
     def test_same_profile_upgrade_records_the_job_model(self):
@@ -148,7 +150,7 @@ class CrossProfileTest(unittest.TestCase):
             "id": previous_id,
             "owners": ["owner"],
             "aliases": [alias],
-            "profile": models.spec(models.H2O),
+            "profile": models.spec(LITE),
         }
         entry = {
             "id": entry_id,
@@ -162,7 +164,7 @@ class CrossProfileTest(unittest.TestCase):
         check_promotion(current, entry, {**selection, "base_change": True})
         legacy = {key: value for key, value in incumbent.items() if key != "profile"}
         check_promotion({"models": [legacy]}, entry, selection)
-        image = {**entry, "profile": models.spec(models.IMAJEV)}
+        image = {**entry, "profile": models.RETIRED_SPECS["imajev-4b-v1"]}
         with self.assertRaisesRegex(ValueError, "cannot move between model profiles"):
             check_promotion({"models": [legacy]}, image, selection)
 

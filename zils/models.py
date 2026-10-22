@@ -8,34 +8,21 @@ from copy import deepcopy
 from pathlib import Path
 
 KEV = "kev-0.8b-v1"
+# Retired; kept because the hashed d3 trainer (zils/jevk5.py) still compares against it.
 H2O = "h2o-lightning-4b-v1.2.3"
 D3 = "d3-mini-4.5b-v1"
 DEFAULT_TRAINING_MODEL = D3
-TEXT_ADAPTER_MODELS = (H2O, D3)
+TEXT_ADAPTER_MODELS = (D3,)
 # Archived identities are readable in history, but never enter the active catalog.
-RETIRED_TEXT_SPECS = {
+RETIRED_SPECS = {
     "jevk5-4b-v0.3": {
         "id": "jevk5-4b-v0.3",
         "name": "JevK5 4B",
         "base": "alibiserikbay/JevK5",
         "base_revision": "c4f7fdb3aeab5582336406e78d3bef11bf98833d",
     },
-}
-RETIRED_TEXT_MODELS = tuple(RETIRED_TEXT_SPECS)
-TEXT_RUNTIME_MODULES = {H2O: ".h2o", D3: ".d3"}
-RUNTIME_PYTHON_ENV = {H2O: "ZILS_H2O_RUNTIME_PYTHON", D3: "ZILS_D3_RUNTIME_PYTHON"}
-CANDIDATE_BASE_ENV = {H2O: "ZILS_H2O_CANDIDATE_BASE", D3: "ZILS_D3_CANDIDATE_BASE"}
-PINS_FILES = {H2O: "h2o-pins.json", D3: "d3-pins.json"}
-IMAJEV = "imajev-4b-v1"
-SPECS = {
-    KEV: {
-        "id": KEV,
-        "name": "Kev 0.8B",
-        "base": "Qwen/Qwen3.5-0.8B-Base",
-        "base_revision": "dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68",
-    },
-    H2O: {
-        "id": H2O,
+    "h2o-lightning-4b-v1.2.3": {
+        "id": "h2o-lightning-4b-v1.2.3",
         "name": "H2O Lightning 4B",
         "base": "h2oai/h2o-lightning-4b",
         "base_revision": "acaf0d4ea251e54de928c75ef4352670d33192d3",
@@ -45,8 +32,8 @@ SPECS = {
         "recipe": "h2o-language-lora16-adamw/v1",
         "calibration": "native-then-heldout-temperature/v1",
     },
-    IMAJEV: {
-        "id": IMAJEV,
+    "imajev-4b-v1": {
+        "id": "imajev-4b-v1",
         "name": "Imajev 4B",
         "base": "Qwen/Qwen3.5-4B",
         "base_revision": "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a",
@@ -63,6 +50,19 @@ SPECS = {
         "max_input_tokens": 4096,
         "recipe": "imajev-lora64-readout-adamw/v1",
         "calibration": "full-native-temperature/v1",
+    },
+}
+RETIRED_MODELS = tuple(RETIRED_SPECS)
+TEXT_RUNTIME_MODULES = {D3: ".d3"}
+RUNTIME_PYTHON_ENV = {D3: "ZILS_D3_RUNTIME_PYTHON"}
+CANDIDATE_BASE_ENV = {D3: "ZILS_D3_CANDIDATE_BASE"}
+PINS_FILES = {D3: "d3-pins.json"}
+SPECS = {
+    KEV: {
+        "id": KEV,
+        "name": "Kev 0.8B",
+        "base": "Qwen/Qwen3.5-0.8B-Base",
+        "base_revision": "dc7cdfe2ee4154fa7e30f5b51ca41bfa40174e68",
     },
 }
 SPECS[D3] = {
@@ -104,17 +104,6 @@ for _pool, _model in D3_POOL_MODELS.items():
     PINS_FILES[_model] = _pins_file
 KEV_FILES = ("adapter_config.json", "adapter_model.safetensors", "head.pt")
 TEXT_ADAPTER_FILES = ("adapter_config.json", "adapter_model.safetensors", "model.json")
-# A base candidate (Option 5) carries full H2O weights plus the parent's contract files unchanged.
-H2O_CONTRACT_FILES = (
-    "tokenizer.json",
-    "tokenizer_config.json",
-    "chat_template.jinja",
-    "serve_config.json",
-    "h2o_lightning_shim.py",
-    "generation_config.json",
-    "LICENSE",
-)
-CANDIDATE_FILES = ("model.json", "config.json", "model.safetensors", *H2O_CONTRACT_FILES)
 D3_CONTRACT_FILES = (
     "config.json",
     "decision_config.json",
@@ -145,13 +134,6 @@ D3_CANDIDATE_FILES = (
 )
 MAX_ADAPTER_BYTES = 512 * 1024 * 1024
 MAX_CANDIDATE_BYTES = 10 * 1024**3
-IMAJEV_FILES = (
-    "adapter_config.json",
-    "adapter_model.safetensors",
-    "decision_readout.json",
-    "decision_readout.safetensors",
-    "model.json",
-)
 VERSION = "zils-checkpoint/v1"
 
 
@@ -184,7 +166,7 @@ def pool_catalog():
 
 
 def base_candidate_models():
-    return (H2O, *d3_family())
+    return d3_family()
 
 
 def spec(model):
@@ -215,16 +197,6 @@ def profile_identity(model):
 
     profile = spec(model)
     runtime = {"base_revision": profile["base_revision"]}
-    if model == IMAJEV:
-        runtime = {
-            "files": json.loads(Path(__file__).with_name("imajev-pins.json").read_text())[
-                "runtime"
-            ],
-            "requirements": (
-                Path(__file__).resolve().parents[1] / "requirements/imajev.txt"
-            ).read_text(),
-            "recipe": profile["recipe"],
-        }
     if model in PINS_FILES:
         runtime = pins(model)
     return {"profile_sha256": digest(profile), "runtime_sha256": digest(runtime)}
@@ -252,9 +224,9 @@ def job_history_profile(job):
     frozen = (job.get("manifest") or {}).get("model")
     profile = job.get("model_profile")
     value = profile if profile is not None else frozen
-    if not isinstance(value, dict) or value.get("id") not in RETIRED_TEXT_SPECS:
+    if not isinstance(value, dict) or value.get("id") not in RETIRED_SPECS:
         return spec(job_model(job))
-    expected = RETIRED_TEXT_SPECS[value["id"]]
+    expected = RETIRED_SPECS[value["id"]]
     if value != expected:
         raise ValueError("model specification differs from its pinned version")
     if profile is not None and frozen is not None and frozen != profile:
@@ -266,9 +238,7 @@ def candidate_files(model, kind="adapter"):
     spec(model)
     if kind == "candidate":
         if model not in base_candidate_models():
-            raise ValueError("base candidates are supported for the H2O and d3 profiles only")
-        if model == H2O:
-            return CANDIDATE_FILES
+            raise ValueError("base candidates are supported for the d3 profiles only")
         files = pins(model)["files"]
         weights = sorted(
             n for n in files if n.endswith(".safetensors") and n != "readout.safetensors"
@@ -277,9 +247,7 @@ def candidate_files(model, kind="adapter"):
         return ("model.json", *weights, *index, *D3_CONTRACT_FILES)
     return {
         KEV: KEV_FILES,
-        H2O: TEXT_ADAPTER_FILES,
         **{m: TEXT_ADAPTER_FILES for m in d3_family()},
-        IMAJEV: IMAJEV_FILES,
     }[model]
 
 
@@ -310,20 +278,17 @@ def validate_metadata(value):
         or set(value) - {"version", "model", "kind", "temperature", "calibration", "profile"}
         or value.get("version") != VERSION
         or not isinstance(value.get("model"), str)
-        or value.get("model") not in (*TEXT_ADAPTER_MODELS, *RETIRED_TEXT_MODELS, IMAJEV)
+        or value.get("model") not in (*TEXT_ADAPTER_MODELS, *RETIRED_MODELS)
         or value.get("kind") not in ("base", "adapter", "candidate")
     ):
         raise ValueError("invalid model metadata")
     if value["kind"] == "candidate" and value["model"] not in base_candidate_models():
-        raise ValueError("base candidates are supported for the H2O and d3 profiles only")
-    if value["model"] == IMAJEV:
-        if value.get("profile") != spec(IMAJEV) or value["kind"] != "adapter":
-            raise ValueError("image metadata differs from the pinned profile")
-    elif value["model"] in PINS_FILES:
+        raise ValueError("base candidates are supported for the d3 profiles only")
+    if value["model"] in PINS_FILES:
         if value.get("profile") != spec(value["model"]):
             raise ValueError("profile metadata differs from the pinned profile")
-    elif "profile" in value:
-        raise ValueError("legacy metadata cannot contain an image profile")
+    elif "profile" in value and value["profile"] != RETIRED_SPECS.get(value["model"]):
+        raise ValueError("profile metadata differs from the pinned profile")
     temperature = value.get("temperature")
     if type(temperature) not in (int, float) or not math.isfinite(temperature) or temperature <= 0:
         raise ValueError("checkpoint temperature must be positive and finite")
@@ -338,14 +303,8 @@ def checkpoint_model(checkpoint):
 def artifact_files(checkpoint):
     value = metadata(checkpoint)
     if value is None:
-        if any((Path(checkpoint) / name).exists() for name in IMAJEV_FILES[2:4]):
-            raise ValueError("checkpoint mixes model formats")
         return KEV_FILES
     if (Path(checkpoint) / "head.pt").exists():
-        raise ValueError("checkpoint mixes model formats")
-    if value["model"] in TEXT_ADAPTER_MODELS and any(
-        (Path(checkpoint) / name).exists() for name in IMAJEV_FILES[2:4]
-    ):
         raise ValueError("checkpoint mixes model formats")
     if value["kind"] == "candidate":
         if (Path(checkpoint) / "adapter_model.safetensors").exists():
@@ -357,7 +316,7 @@ def artifact_files(checkpoint):
 def write_metadata(checkpoint, *, model, kind="adapter", temperature=1.0, calibration=None):
     spec(model)  # retired profiles stay readable but are never written
     value = {"version": VERSION, "model": model, "kind": kind, "temperature": temperature}
-    if model in (*PINS_FILES, IMAJEV):
+    if model in PINS_FILES:
         value["profile"] = spec(model)
     if calibration is not None:
         value["calibration"] = calibration

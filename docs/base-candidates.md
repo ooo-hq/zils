@@ -65,11 +65,6 @@ The validator refuses a candidate whose contract files differ from the parent
 hashes, that contains any file outside the list below, or whose weights do not
 load exactly.
 
-(H2O, retired: seven contract files `tokenizer.json`, `tokenizer_config.json`,
-`chat_template.jinja`, `serve_config.json`, `h2o_lightning_shim.py`,
-`generation_config.json`, `LICENSE`; one `model.safetensors`; 2,048 tokens;
-`zils/h2o-pins.json`.)
-
 ## Artifact
 
 A directory containing exactly these files (`models.D3_CANDIDATE_FILES`):

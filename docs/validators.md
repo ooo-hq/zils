@@ -16,10 +16,7 @@ Only approved operators should receive its service credentials. Miners need no
 platform installation or database credential.
 
 d3-mini serves both text and image jobs, so one d3 reference covers both. The
-Imajev image profile is retired; a processor that still evaluates frozen Imajev
-jobs keeps its isolated runtime, [image qualification](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md#worker-and-service-setup)
-and `--additional-reference models/imajev-starting-checkpoint`, which selects the
-matching model for each frozen job without changing the primary reference.
+retired H2O and Imajev profiles are no longer evaluated.
 
 ## Open admission (base tier)
 

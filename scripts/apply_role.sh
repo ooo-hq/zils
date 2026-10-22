@@ -9,7 +9,7 @@ if [ "${#WANTED[@]}" -eq 0 ]; then echo "role check selected no units" >&2; exit
 import json, os, pathlib, shutil
 role = json.loads(pathlib.Path("/etc/zils-node/role.json").read_text())
 if role["role"] == "miner":
-    # Presence lets graded routing see the node; the floor matches the H2O profile row.
+    # Presence lets graded routing see the node; the floor matches the d3-mini profile row.
     cfg = {
         "coordinator": role["coordinator"],
         "hotkey": role["hotkey"],

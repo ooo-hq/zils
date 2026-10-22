@@ -98,8 +98,7 @@ ZILS_PYTHON="$PWD/.venv-kev/bin/python" HF_HOME="$PWD/.cache/huggingface" \
 
 Repeat for `miner-2` and `miner-3`. Each bundle contains the job's training data;
 distribute it only to approved operators. The job freezes the selected model;
-the fleet rejects a mismatched reference. Image fleets use an audited `zils.image_jobs` manifest
-and the [image fleet setup](mining.md#image-fleets). Legacy Kev jobs retain their
+the fleet rejects a mismatched reference. Legacy Kev jobs retain their
 original reference and recipe. No automatic model
 download, training, or chain transaction is triggered by building the job manifest.
 Fleet initialization requires the downloaded reference. Testnet fleets still

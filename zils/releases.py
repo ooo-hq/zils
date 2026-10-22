@@ -64,23 +64,11 @@ def _accepted(job):
     if job["status"] != "completed" or job["result"]["delivery"]["status"] != "accepted":
         raise ValueError("Only a completed accepted job can become a release")
     model = models.job_model(job)
-    if model not in (*models.TEXT_ADAPTER_MODELS, models.IMAJEV):
+    if model not in models.TEXT_ADAPTER_MODELS:
         raise ValueError("This profile cannot publish a customer API release")
     spec = models.spec(model)
     if job["manifest"].get("model") != spec or job["result"].get("model") != spec:
         raise ValueError("Evaluated model differs from its frozen job")
-    if model == models.IMAJEV:
-        from .image_jobs import task_contract, verify_binding
-
-        if job.get("model_profile") != spec:
-            raise ValueError("An image release requires its frozen job profile")
-        verify_binding(job)
-        task_contract(job["manifest"])
-        if any(
-            asset["owner_id"] != job["owner_id"] or asset["job_id"] != job["id"]
-            for asset in job["manifest"]["assets"].values()
-        ):
-            raise ValueError("Image release owner or job binding changed")
     if job["manifest"]["acceptance"] != job["acceptance"]:
         raise ValueError("Job acceptance changed")
     selection = job["manifest"].get("selection")
@@ -121,7 +109,7 @@ def _accepted(job):
         {**r, "sha256": delivery["sha256"] if r["uid"] == delivery["uid"] else "0" * 64}
         for r in result["miners"]
     ]
-    if jobs.select(result["baseline"], candidates, job["acceptance"], model=model) != delivery:
+    if jobs.select(result["baseline"], candidates, job["acceptance"]) != delivery:
         raise ValueError("Recorded candidate does not satisfy the frozen acceptance policy")
     return delivery
 
@@ -167,33 +155,6 @@ def _manifest(root):
     if date.tzinfo is None:
         raise ValueError("Completion timestamp requires a timezone")
     files = (*models.candidate_files(model), "release.json", "manifest.json", "source.json")
-    extra = {}
-    if model == models.IMAJEV:
-        from .image_jobs import task_contract
-        from .image_metrics import public_metrics
-        from .imajev import validate_checkpoint
-
-        validate_checkpoint(root)
-        calibrated = meta.get("calibration") or {}
-        if (
-            calibrated.get("raw_checkpoint_sha256") != report["submitted_sha256"]
-            or calibrated.get("benchmark_manifest_sha256") != job["job_sha256"]
-            or calibrated.get("fit_split") != "calibration"
-            or calibrated.get("fit_cases") != manifest["counts"]["calibration"]
-        ):
-            raise ValueError("Image calibration provenance changed")
-        winner = next(row for row in job["result"]["miners"] if row["uid"] == delivery["uid"])
-        metrics = {
-            "baseline": public_metrics(job["result"]["baseline"]),
-            "candidate": public_metrics(winner),
-        }
-        if report.get("image_metrics") != metrics:
-            raise ValueError("Image release quality evidence changed")
-        extra = {
-            "task": task_contract(manifest),
-            "calibration": calibrated,
-            "image_metrics": metrics,
-        }
     for name in files:
         path = root / name
         if path.is_symlink() or not path.is_file():
@@ -211,7 +172,6 @@ def _manifest(root):
         "prompt_version": spec["prompt"],
         "release_date": date.date().isoformat(),
         "files": {n: _hash(root / n) for n in files},
-        **extra,
     }
     if "selection" in manifest:
         value["selection"] = manifest["selection"]

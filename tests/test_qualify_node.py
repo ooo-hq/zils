@@ -1,4 +1,4 @@
-"""Qualification records pinned identities, capacity and a 2,048-token training step."""
+"""Qualification records pinned identities, capacity and a near-cap d3 training step."""
 
 import json
 import subprocess
@@ -24,7 +24,7 @@ class QualifyNodeTest(unittest.TestCase):
                 )
             if "verify_runtime" in text:
                 return SimpleNamespace(returncode=0, stdout="ok\n", stderr="")
-            if " train " in text or "zils.h2o train" in text:
+            if " train " in text:
                 out = Path(command[command.index("--out") + 1])
                 out.mkdir(parents=True)
                 (out / "training_metrics.json").write_text(
@@ -65,9 +65,9 @@ class QualifyNodeTest(unittest.TestCase):
             report = qualify_node.qualify(
                 root, "python3.12", Path(tmp) / "q", run=self.fake_run(calls), free_mib=19500
             )
-        self.assertEqual(report["model"], models.H2O)
+        self.assertEqual(report["model"], models.D3)
         self.assertEqual(
-            report["profile_sha256"], models.profile_identity(models.H2O)["profile_sha256"]
+            report["profile_sha256"], models.profile_identity(models.D3)["profile_sha256"]
         )
         self.assertTrue(
             report["capacity_ok"] and report["runtime_verified"] and report["reload_predict_ok"]
@@ -170,17 +170,6 @@ class QualifyNodeTest(unittest.TestCase):
         self.assertEqual(qualify_node.repeats_for(100, 300, 2), 0)
         with self.assertRaises(ValueError):
             qualify_node.repeats_for(1000, 100, 0)
-
-    def test_h2o_report_has_no_parity_and_keeps_2048_rows(self):
-        calls = []
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(__file__).resolve().parents[1]
-            report = qualify_node.qualify(
-                root, "python3.12", Path(tmp) / "q", run=self.fake_run(calls), free_mib=19500
-            )
-        self.assertNotIn("parity", report)
-        self.assertEqual(qualify_node.STATE["history"], "payment issue " * 950)
-        self.assertFalse(any("parity" in " ".join(map(str, c)) for c in calls))
 
     def test_below_floor_stops_before_training(self):
         calls = []

@@ -27,7 +27,8 @@ class NodeUnitsTest(unittest.TestCase):
                     self.assertIn("ProtectSystem=strict", text)
                     self.assertIn("User=zilsminer", text)
                     self.assertIn("SupplementaryGroups=zils-compute", text)
-                    self.assertIn("--runtime-python /opt/zils/.venv-h2o/bin/python", text)
+                    self.assertIn("--runtime-python /opt/zils/.venv-d3/bin/python", text)
+                    self.assertNotIn("h2o", text)
                     self.assertIn("--device cuda", text)
                     self.assertNotIn("SUPABASE", text)
                     paths = re.search(r"^ReadWritePaths=(.*)$", text, re.MULTILINE)
@@ -35,14 +36,14 @@ class NodeUnitsTest(unittest.TestCase):
                     self.assertIn("/var/lib/zils-node", paths.group(1).split())
                     self.assertIn(LOCK_DIR, paths.group(1).split())
 
-    def test_queue_miner_passes_a_reference_for_each_profile(self):
+    def test_queue_miner_passes_the_d3_reference_only(self):
         text = (ROOT / "deploy/units/zils-queue-miner.service").read_text()
-        self.assertIn("--reference /opt/zils/models/h2o-reference", text)
+        self.assertEqual(text.count("--reference "), 1)
         self.assertIn("--reference /opt/zils/models/d3-reference", text)
 
-    def test_env_example_names_both_runtimes(self):
+    def test_env_example_names_the_d3_runtime(self):
         text = (ROOT / "deploy/units/zils-node.env.example").read_text()
-        self.assertIn("ZILS_H2O_RUNTIME_PYTHON=/opt/zils/.venv-h2o/bin/python\n", text)
+        self.assertNotIn("H2O", text)
         self.assertIn("ZILS_D3_RUNTIME_PYTHON=/opt/zils/.venv-d3/bin/python\n", text)
 
     def test_every_role_unit_has_an_expected_module(self):

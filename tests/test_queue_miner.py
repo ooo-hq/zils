@@ -82,6 +82,6 @@ class FitCheckTest(unittest.TestCase):
                 fits(models.D3, long, "cuda")
             )  # unreadable: training's own gate decides
         # No curve, no workload or no GPU: nothing to check here.
-        self.assertTrue(fits(models.H2O, long, "cuda", budget_mib=1))
+        self.assertTrue(fits(models.KEV, long, "cuda", budget_mib=1))
         self.assertTrue(fits(models.D3, None, "cuda", budget_mib=1))
         self.assertTrue(fits(models.D3, long, "cpu", budget_mib=1))

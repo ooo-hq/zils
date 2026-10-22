@@ -16,8 +16,7 @@ transfers, serves or evaluates JevK5 checkpoints any more.
   `f26426d16f59e8bbe1470e5b162cc89329e29b29`; the shared release was
   `zils-jevk5-v0.3-r1`.
 - `zils/jevk5.py` keeps its name because job and trainer hashes reference it. It
-  now holds only the attention-only LoRA trainer shared by the
-  [H2O](h2o-queue.md) and d3 profiles.
+  now holds only the attention-only LoRA trainer used by the d3 profiles.
 
 ## What was removed
 
@@ -36,5 +35,5 @@ LoRA, alpha 32, dropout 0.05, learning rate 0.00002, batch size one and
 accumulation of four examples. The same recipe continues for the current profiles
 through the shared trainer. For current miner setup read
 [queued miners](queue-miners.md); the current base is d3-mini
-(`d3-mini-4.5b-v1`, pins in `zils/d3-pins.json`); the retired
-[H2O model contract](h2o-queue.md) covers frozen H2O jobs only.
+(`d3-mini-4.5b-v1`, pins in `zils/d3-pins.json`). H2O and Imajev were retired from
+the code the same way on 22 October 2026.

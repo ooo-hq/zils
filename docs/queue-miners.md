@@ -6,9 +6,8 @@ coordinator over outbound HTTPS. It needs an approved hotkey and model hardware;
 it does not need Supabase credentials or an inbound public server.
 
 The setup below is for **d3-mini 4.5B** (`d3-mini-4.5b-v1`), the base on both
-channels since 17 October 2026; it trains text and image jobs. H2O Lightning 4B
-is retired (keep its runtime only if the operator still routes legacy H2O jobs to
-you) and the ImaJev image profile is retired: image jobs run on d3. For a
+channels since 17 October 2026; it trains text and image jobs. The H2O Lightning 4B
+and ImaJev image profiles are retired and take no jobs. For a
 **Bittensor testnet fleet**, use
 [registration](bittensor-registration.md) and
 [bundle setup](mining.md). Queue assignments publish no Bittensor weights by
@@ -36,7 +35,7 @@ Use Linux or WSL 2 with Git, Python 3.13, `uv`, a BF16-capable NVIDIA GPU and it
 CUDA driver. Allow at least 25 GB of free disk for models and dependencies,
 plus space for assigned data and candidates. The runtime was checked on an
 RTX 4090 (d3 training peaks about 10.5 GB; the worker needs 12,288 MiB free).
-d3 and H2O use isolated CUDA runtimes below. CPU and Apple MPS training are
+d3 uses the isolated CUDA runtime below. CPU and Apple MPS training are
 unsupported; the retired JevK5 Mac path no longer exists.
 
 The operator assigns a local queue UID. It is not your subnet UID. On-chain
@@ -66,11 +65,6 @@ uv venv --python 3.12 .venv-d3
 uv pip install --python .venv-d3/bin/python --torch-backend=cu130 -r requirements/d3.txt
 export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
 .venv-d3/bin/python -m zils.d3 reference --out models/d3-reference
-# Only if the operator still routes legacy H2O jobs to you:
-uv venv --python 3.12 .venv-h2o
-uv pip install --python .venv-h2o/bin/python --torch-backend=cu130 -r requirements/h2o.txt
-export ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"
-.venv-h2o/bin/python -m zils.h2o reference --out models/h2o-reference
 ```
 
 The Bittensor SDK is installed here to read the wallet hotkey; these commands
@@ -138,10 +132,8 @@ export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
   --reference models/d3-reference --device cuda
 ```
 
-Add `--reference models/h2o-reference` and export
-`ZILS_H2O_RUNTIME_PYTHON="$PWD/.venv-h2o/bin/python"` only if you provisioned the
-legacy H2O runtime in step 2. The miner refuses to start when a `--reference`
-directory is missing or its runtime interpreter variable is unset.
+The miner refuses to start when a `--reference` directory is missing, belongs to a
+retired profile, or its runtime interpreter variable is unset.
 
 The worker checks for assigned work every ten seconds. It can remain quiet when
 no assignment is available or a configured capacity gate is waiting for GPU
@@ -164,15 +156,14 @@ hold a given state directory. Use a service supervisor for continuous operation.
 `--once` performs one claim attempt and exits; it is not a readiness check or a
 wait for the next available job.
 
-If a job references a different base model, stop and resolve the operator's
-configuration using the [model transition guide](h2o-queue.md#existing-jobs).
-Do not change model identifiers or hashes to make an incompatible reference pass.
+If a job references a different base model, stop and ask the operator to resolve
+the configuration. Do not change model identifiers or hashes to make an incompatible reference pass.
 
 ## Image jobs
 
 Since 17 October 2026 image jobs are d3 jobs with a frozen image intake: the same
 d3 reference, runtime and qualification cover them, and no separate image runtime
-is installed (the ImaJev profile is retired; see the platform's
+is installed (see the platform's
 [image training](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md)
 guide for the intake and asset flow). Image workers receive only training photos;
 validation photos and labels remain on the processor. Retain a Kev reference only

@@ -67,7 +67,7 @@ entry for each machine:
 `777` is an example only; use the operator-confirmed subnet ID. Each miner UID
 must be the value returned by the chain for that hotkey, not a local queue ID.
 
-Create a frozen d3 text job (or reuse a legacy H2O, ImaJev or Kev job) and its
+Create a frozen d3 text job (or reuse a legacy Kev job) and its
 matching reference using the [miner guide](mining.md#prepare-bundles-on-the-validator). Legacy Kev benchmarks
 remain supported. A fleet and its round scores always belong to one model profile.
 Replace `VALIDATOR_PRIVATE_IPV4` with the validator's numeric private address.
@@ -90,8 +90,6 @@ networking and startup command. A changed or deregistered UID stops the chain
 path; regenerate the roster with current registrations. Scores are never
 silently reassigned to a replacement hotkey.
 
-For a legacy ImaJev image fleet, use the image job/reference and add the verified
-image cache and measured capacity arguments from [image fleet setup](mining.md#image-fleets).
 The same registered identities can be used in a later vertical-specific rehearsal,
 but only one process may publish weights for the validator hotkey/subnet. There
 is no cross-vertical reward aggregation. With `base_tier` and, optionally,

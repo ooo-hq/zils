@@ -1,9 +1,9 @@
 """Qualify this host for a pinned text profile and write qualification.json.
 
-Runs from .venv-kev; drives the isolated .venv-h2o or .venv-d3 runtime through
-subprocesses so the pinned runtime check, a training step at the profile's input
-cap (2,048 tokens for H2O, 4,096 for d3) and an adapter reload happen in the
-real environment. d3 also checks its readout against the vendor's. Mirrors the
+Runs from .venv-kev; drives the isolated .venv-d3 runtime through subprocesses
+so the pinned runtime check, a training step at the profile's input cap and an
+adapter reload happen in the real environment, then checks the readout against
+the vendor's. Mirrors the
 10 October 2026 RTX 4090 check.
 """
 
@@ -22,7 +22,6 @@ from zils.runtime import gpu_ready
 
 FLOOR_MIB = 12288
 STATE = {"ticket": "Please help with payment.", "history": "payment issue " * 950}
-H2O_CAP = 2048
 PHRASE = "payment issue "
 HEADROOM_TOKENS = 200  # d3 rows target the cap minus this; the encoder refuses anything over
 QUESTIONS = [
@@ -122,7 +121,7 @@ def qualify(
     out,
     run=subprocess.run,
     free_mib=None,
-    model=models.H2O,
+    model=models.D3,
     terms_sha256=None,
     minimum_free_mib=None,
 ):
@@ -160,11 +159,7 @@ def qualify(
         floor = (
             minimum_free_mib
             if minimum_free_mib is not None
-            else (
-                1
-                if model in models.d3_family() and models.pool_id(model) != "d3-mini"
-                else FLOOR_MIB
-            )
+            else (1 if models.pool_id(model) != "d3-mini" else FLOOR_MIB)
         )
         if type(floor) is not int or floor < 1:
             raise ValueError("minimum_free_mib must be a positive integer")
@@ -180,9 +175,7 @@ def qualify(
             [
                 runtime_python,
                 "-c",
-                f"from {module} import verify_runtime; verify_runtime({model!r}); print('ok')"
-                if model in models.d3_family()
-                else f"from {module} import verify_runtime; verify_runtime(); print('ok')",
+                f"from {module} import verify_runtime; verify_runtime({model!r}); print('ok')",
             ],
             capture_output=True,
             text=True,
@@ -199,33 +192,29 @@ def qualify(
             shutil.rmtree(reference, ignore_errors=True)  # half-written reference
             run(
                 [runtime_python, "-m", module, "reference", "--out", str(reference)]
-                + (["--model", model] if model in models.d3_family() else []),
+                + ["--model", model],
                 check=True,
                 capture_output=True,
                 text=True,
                 timeout=3600,
                 cwd=env_root,
             )
-        if model in models.d3_family():
-            stage = "sizing"
-            sized = run(
-                [runtime_python, "-c", SIZING_PROBE, json.dumps(STATE["ticket"])]
-                + [json.dumps(QUESTIONS), model],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=600,
-                cwd=env_root,
-            )
-            report["sizing"] = json.loads(sized.stdout)
+        stage = "sizing"
+        sized = run(
+            [runtime_python, "-c", SIZING_PROBE, json.dumps(STATE["ticket"])]
+            + [json.dumps(QUESTIONS), model],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            cwd=env_root,
+        )
+        report["sizing"] = json.loads(sized.stdout)
 
-            def history(target):
-                return PHRASE * repeats_for(target, **report["sizing"])
+        def history(target):
+            return PHRASE * repeats_for(target, **report["sizing"])
 
-            state = dict(STATE, history=history(cap - HEADROOM_TOKENS))
-        else:
-            # H2O's 950 repeats fill its 2,048-token cap.
-            state = dict(STATE, history=STATE["history"] * (cap // H2O_CAP))
+        state = dict(STATE, history=history(cap - HEADROOM_TOKENS))
         stage = "train"
         data = out / "train.jsonl"
         rows = synthetic_rows(data, state)
@@ -285,7 +274,7 @@ def qualify(
             "max_prompt_tokens": reload["max_prompt_tokens"],
         }
         report["reload_predict_ok"] = bool(reload["ok"])
-        if model in models.d3_family() and report["reload_predict_ok"]:
+        if report["reload_predict_ok"]:
             stage = "parity"
             cases = out / "parity.jsonl"
             targets = (1000, 2000, cap - HEADROOM_TOKENS)
@@ -320,10 +309,8 @@ def main(argv=None):
     parser.add_argument(
         "--root", default=".", help="zils checkout (runtime imports zils from here)"
     )
-    parser.add_argument("--model", choices=(models.H2O, *models.d3_family()), default=models.D3)
-    parser.add_argument(
-        "--runtime-python", required=True, help=".venv-h2o/bin/python or .venv-d3/bin/python"
-    )
+    parser.add_argument("--model", choices=models.d3_family(), default=models.D3)
+    parser.add_argument("--runtime-python", required=True, help=".venv-d3/bin/python")
     parser.add_argument("--out", required=True)
     parser.add_argument(
         "--minimum-free-mib", type=int, help="operator memory gate for this qualification run"

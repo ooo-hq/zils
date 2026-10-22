@@ -71,8 +71,6 @@ def locked(path, wait=False):
 
 # Profiles that must hold GPU capacity, and the setting that raises their free-memory floor.
 CAPACITY_ENV = {
-    models.H2O: "ZILS_H2O_MIN_FREE_MIB",
-    models.IMAJEV: "ZILS_IMAGE_MIN_FREE_MIB",
     **{
         m: (
             "ZILS_D3_MIN_FREE_MIB"
@@ -96,7 +94,7 @@ def gpu_ready(device, *, model=None, minimum_mib=0):
         return False
     if minimum_mib > 0 and device not in ("cuda", "mps"):
         return False
-    if device == "mps" and minimum_mib > 0 and model != models.IMAJEV:
+    if device == "mps" and minimum_mib > 0:
         try:
             output = subprocess.run(
                 ["/usr/bin/vm_stat"], capture_output=True, text=True, timeout=10, check=True
@@ -162,35 +160,6 @@ def gpu_total_mib():
 
 
 def run_child(command, log, device, timeout=3600, *, model=None, minimum_mib=0, check_lease=None):
-    image_environment = {
-        "PATH",
-        "HOME",
-        "LANG",
-        "LC_ALL",
-        "LC_CTYPE",
-        "TMPDIR",
-        "TMP",
-        "TEMP",
-        "CUDA_VISIBLE_DEVICES",
-        "CUDA_HOME",
-        "LD_LIBRARY_PATH",
-        "PYTHONPATH",
-        "HF_HOME",
-        "HF_HUB_CACHE",
-        "HUGGINGFACE_HUB_CACHE",
-        "XDG_CACHE_HOME",
-        "TRITON_CACHE_DIR",
-        "TORCH_HOME",
-        "OMP_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "PYTORCH_CUDA_ALLOC_CONF",
-        "PYTORCH_ALLOC_CONF",
-        "ZILS_IMAGE_REFERENCE",
-        "ZILS_IMAGE_GPU_MEMORY_FRACTION",
-        "ZILS_COMPUTE_LOCK",
-        "ZILS_NVIDIA_SMI",
-    }
     environment = {
         **{
             k: v
@@ -206,7 +175,6 @@ def run_child(command, log, device, timeout=3600, *, model=None, minimum_mib=0, 
                 "AWS_CONFIG_FILE",
             }
             and not k.startswith(("ZILS_SPACES_", "FEZ_SPACES_"))
-            and (model != models.IMAJEV or k in image_environment)
         },
         "HF_HOME": os.environ.get("HF_HOME", str(ROOT / ".cache/huggingface")),
         "HF_HUB_OFFLINE": "1",
@@ -311,11 +279,6 @@ def request(config, path, message=None):
 
 
 def prepare_base(model=models.KEV):
-    if model == models.IMAJEV:
-        from .imajev import resolve_reference
-
-        base, _ = resolve_reference(Path(settings.required("ZILS_IMAGE_REFERENCE")))
-        return base
     if model in models.d3_family():
         return models.text_runtime(model).base_path(download=True, model=model)
     if model in models.TEXT_ADAPTER_MODELS:

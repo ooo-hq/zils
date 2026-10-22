@@ -18,7 +18,7 @@ from zils import core, models
 
 
 class LocalSubnetTest(unittest.TestCase):
-    def test_image_cases_pick_the_scorer_from_the_prediction_contract(self):
+    def test_image_cases_score_like_text_cases(self):
         question = {"type": "choice", "criteria": {"normal": None, "damaged": None}}
         cases = [
             {"id": "a", "family": "f", "state": {}, "question": question, "label": "normal"},
@@ -31,12 +31,6 @@ class LocalSubnetTest(unittest.TestCase):
         ]
         # d3 answers only the declared outcomes: image cases score exactly like text cases.
         self.assertEqual(core.score(images, plain), core.score(cases, plain))
-        unknown = [
-            {**row, "probabilities": {**row["probabilities"], "__unknown__": 0.0}} for row in plain
-        ]
-        with patch("zils.image_metrics.score", return_value={"imajev": True}) as imajev:
-            self.assertEqual(core.score(images, unknown), {"imajev": True})
-        imajev.assert_called_once_with(images, unknown)
         with self.assertRaisesRegex(ValueError, "Mixed image and text"):
             core.score([images[0], cases[1]], plain)
 
@@ -290,17 +284,14 @@ class LocalSubnetTest(unittest.TestCase):
             core.blend_weights({"base": {"x": 1.0}, "adapter": {}}, shares)
 
     def test_profile_interpreter_is_required_for_evaluation(self):
-        for model, variable in (
-            (models.D3, "ZILS_D3_RUNTIME_PYTHON"),
-            (models.H2O, "ZILS_H2O_RUNTIME_PYTHON"),
-        ):
-            with self.subTest(model=model):
-                row = self.evaluate_one(model, model, unset=(variable,))
-                self.assertEqual(row["status"], "rejected")
-                self.assertIn(variable, row["error"])
+        variable = "ZILS_D3_RUNTIME_PYTHON"
+        row = self.evaluate_one(models.D3, models.D3, unset=(variable,))
+        self.assertEqual(row["status"], "rejected")
+        self.assertIn(variable, row["error"])
 
     def test_checkpoint_under_another_profile_revision_is_rejected(self):
-        for model, base_model in ((models.D3, models.H2O), (models.H2O, models.D3)):
+        lite = models.D3_POOL_MODELS["d3-lite"]
+        for model, base_model in ((models.D3, lite), (lite, models.D3)):
             with self.subTest(checkpoint=model, revision=base_model):
                 row = self.evaluate_one(model, base_model)
                 self.assertEqual(row["status"], "rejected")

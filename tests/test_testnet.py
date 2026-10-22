@@ -186,7 +186,8 @@ class TestnetTest(unittest.TestCase):
         wallet = SimpleNamespace(hotkey=SimpleNamespace(ss58_address="validator"))
         from zils import models
 
-        for model in (models.H2O, models.D3, models.IMAJEV):
+        lite = models.D3_POOL_MODELS["d3-lite"]
+        for model in (models.D3, lite):
             profiled = {**config, "model": models.spec(model)}
             with tempfile.TemporaryDirectory() as tmp:
                 with self.assertRaisesRegex(ValueError, "profile"):
@@ -200,7 +201,7 @@ class TestnetTest(unittest.TestCase):
                     )
                 with self.assertRaisesRegex(ValueError, "profile"):
                     t.publish_round(profiled, tmp, report, sub, wallet, publish=True)
-                wrong = models.H2O if model == models.IMAJEV else models.IMAJEV
+                wrong = models.D3 if model == lite else lite
                 with self.assertRaisesRegex(ValueError, "profile"):
                     t.publish_round(
                         profiled,

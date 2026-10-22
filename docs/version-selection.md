@@ -84,7 +84,7 @@ acceptance, the task alias follows the new release as it does for any other
 version; earlier immutable IDs remain callable. Since 17 October 2026 d3-mini is
 the default for new jobs on both the `stable` and `latest` channels. The owner
 elected it on capability grounds after the base tier's confirmation draw tied.
-H2O serving is off; frozen H2O jobs can still be evaluated.
+H2O is retired: its serving is off and its frozen jobs are no longer evaluated.
 
 ### Migrating an adapter to a newer base
 

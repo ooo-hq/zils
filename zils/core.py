@@ -76,21 +76,9 @@ def validate_cases(cases):
 
 def score(cases, predictions):
     validate_cases(cases)
-    if any("image" in c for c in cases):
-        if not all("image" in c for c in cases):
-            raise ValueError("Mixed image and text evaluation is unsupported")
-        from .image_contract import UNKNOWN
-
-        # Imajev answers with an unknown outcome; d3 answers only the declared ones, scored as text.
-        if isinstance(predictions, list) and any(
-            isinstance(row, dict)
-            and isinstance(row.get("probabilities"), dict)
-            and UNKNOWN in row["probabilities"]
-            for row in predictions
-        ):
-            from .image_metrics import score as image_score
-
-            return image_score(cases, predictions)
+    # Image cases are scored as text: d3 answers only the declared outcomes.
+    if any("image" in c for c in cases) and not all("image" in c for c in cases):
+        raise ValueError("Mixed image and text evaluation is unsupported")
     if not isinstance(predictions, list) or len(predictions) != len(cases):
         raise ValueError("exactly one prediction per case is required")
     by_id = {}
@@ -262,9 +250,7 @@ def evaluate(args):
     base = models.spec(model)["base"]
     runner = Path(__file__).with_name(
         {
-            models.H2O: "jevk5_runner.py",
             **{m: "jevk5_runner.py" for m in models.d3_family()},
-            models.IMAJEV: "imajev_runner.py",
             models.KEV: "kev_runner.py",
         }[model]
     )
@@ -292,8 +278,9 @@ def evaluate(args):
             )
         for request, case in zip(requests, cases, strict=True):
             request["images"] = [str((root / "images" / case["image"]).resolve())]
-    elif model == models.IMAJEV or media:
+    elif media:
         from . import benchmark
+        from .image_jobs import image_path
 
         root = Path(args.cases).parent
         frozen = benchmark.audit(root)
@@ -307,13 +294,8 @@ def evaluate(args):
             raise ValueError("Image evaluation requires verified local image assets")
         for request, case in zip(requests, cases, strict=True):
             asset = manifest["assets"][case["image"]["asset_id"]]
-            if model == models.IMAJEV:
-                request["image"] = {"asset_id": asset["id"], "sha256": asset["canonical_sha256"]}
-            else:
-                from .imajev import image_path
-
-                path = image_path(args.images, {"sha256": asset["canonical_sha256"]})
-                request["images"] = [str(path.resolve())]
+            path = image_path(args.images, {"sha256": asset["canonical_sha256"]})
+            request["images"] = [str(path.resolve())]
     elif any("image" in c for c in cases):
         raise ValueError("Image data cannot use a text runtime")
     environment = {
@@ -352,12 +334,7 @@ def evaluate(args):
                     "--device",
                     args.device,
                 ]
-                if model == models.IMAJEV:
-                    inputs = Path(tmp) / "requests.json"
-                    inputs.write_text(json.dumps(requests, allow_nan=False))
-                    command.extend(["--cases", str(inputs), "--images", str(args.images)])
-                else:
-                    command.extend(["--base", base, "--base-revision", args.base_revision])
+                command.extend(["--base", base, "--base-revision", args.base_revision])
                 try:
                     result = subprocess.run(
                         sandbox.wrap(command),
@@ -376,15 +353,6 @@ def evaluate(args):
                 if result.returncode:
                     raise ValueError(f"model runner failed: {result.stderr[-1000:]}")
                 output = json.loads(result.stdout)
-                if model == models.IMAJEV and (
-                    output["runtime"].get("model") != models.spec(model)
-                    or output["runtime"].get("temperature") != models.temperature(checkpoint)
-                    or any(
-                        output["runtime"].get(k) != v
-                        for k, v in models.profile_identity(model).items()
-                    )
-                ):
-                    raise ValueError("Image inference runtime identity changed")
                 row.update(score(cases, output["predictions"]))
                 row.update(
                     status="evaluated", runtime=output["runtime"], predictions=output["predictions"]

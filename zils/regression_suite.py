@@ -3,8 +3,8 @@
 A candidate that wins the sealed exam is promoted only if adapters trained on it are no worse than adapters
 trained on the incumbent on every job (within `tolerance` Brier) and better on at least one. Jobs are public or
 Zils-owned case files under ``<suite>/jobs/<name>/{train,calibration,test}.jsonl``; customer data never enters.
-Training and inference use the production recipe through the profile's trainer (``zils.h2o train`` or
-``zils.d3 train``) and ``zils evaluate``. ``--model`` runs both sides on one pinned profile; with
+Training and inference use the production recipe through the profile's trainer (``zils.d3 train``) and
+``zils evaluate``. ``--model`` runs both sides on one pinned profile; with
 ``--incumbent-model`` and ``--candidate-model`` each side trains on its own profile, base revision and interpreter.
 """
 
