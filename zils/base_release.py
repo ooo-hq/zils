@@ -137,7 +137,7 @@ def ownership(candidate, snapshot, incumbent):
     if (
         claim.get("sha256") != candidate["sha256"]
         or claim.get("block") != candidate["commitment_block"]
-        or snapshot.get("members", {}).get(str(uid), {}).get("hotkey") != candidate["hotkey"]
+        or snapshot.get("members", {}).get(str(uid)) != candidate["hotkey"]
     ):
         raise ValueError("candidate ownership differs from frozen chain snapshot")
     return claim
@@ -476,7 +476,7 @@ def main():
         candidates = {r["candidate"]["sha256"] for r in frozen["ready"]}
         registry = commitments.candidates(snapshot, active["incumbent_sha256"])
         registry = {
-            u: {**c, "hotkey": snapshot["members"][str(u)]["hotkey"]}
+            u: {**c, "hotkey": snapshot["members"][str(u)]}
             for u, c in registry.items()
             if c.get("sha256") in candidates
         }

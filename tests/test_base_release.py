@@ -70,7 +70,7 @@ def decision(root, name, at, *, hashes=None, owners=None, regressed=False):
     )
     result.update(pool_id="d3-mini", model=models.spec(models.D3))
     snapshot = {
-        "members": {str(u): {"hotkey": owners[u]} for u in owners},
+        "members": {str(u): owners[u] for u in owners},
         "commitments": {
             str(u): {
                 "block": c["block"],
@@ -277,3 +277,199 @@ class BaseReleaseTest(unittest.TestCase):
         self.assertEqual(
             result["proposed_base_tier"], {"incumbent_sha256": "a" * 64, "kings": ["old"]}
         )
+
+    def test_two_miners_through_real_intake_and_release_with_failing_other_pool(self):
+        import os
+        import sys
+        from types import SimpleNamespace
+
+        import zils
+        from tests.test_base_tier_intake import RUNNER, candidate, fake_hub, revision
+        from zils import protocol, validator
+
+        root = self.root / "fleet"
+        root.mkdir()
+        reference = root / "reference"
+        reference.mkdir()
+        models.write_metadata(reference, kind="base", model=models.D3)
+        incumbent = zils.checkpoint_hash(reference)
+        first = candidate(root / "candidate-one", 0.90)
+        second = candidate(root / "candidate-two", 0.99)
+        hashes = {1: zils.checkpoint_hash(first), 2: zils.checkpoint_hash(second)}
+        repos = {
+            "miner/one": {revision("one"): first},
+            "miner/two": {revision("two"): second},
+            "miner/copy": {revision("copy"): candidate(root / "candidate-copy", 0.0)},
+        }
+        snapshot = {
+            "members": {"1": "miner-one", "2": "miner-two", "3": "copy", "4": "old"},
+            "commitments": {
+                str(u): {
+                    "block": 20 + u,
+                    "data": commitments.format_commitment(sha, revision(name), "miner/" + name),
+                }
+                for u, sha, name in (
+                    (1, hashes[1], "one"),
+                    (2, hashes[2], "two"),
+                    (3, incumbent, "copy"),
+                )
+            },
+        }
+        for name in ("first", "second", "closing"):
+            sealed(root / name, name)
+        draws = [(base_round.draw(root / n), root / n) for n in ("first", "second")]
+        save(root / "history.json", inputs()[2])
+        save(root / "pilot.json", {"fixture": True})
+        track = {
+            "share": 1.0,
+            "incumbent_sha256": incumbent,
+            "kings": ["old"],
+            "draws": [i for i, _ in draws],
+            "policy": base_round.DEFAULT_POLICY,
+        }
+        settings = {
+            "pool_id": "d3-mini",
+            "model": models.spec(models.D3),
+            "base_tier": track,
+            "base_reference": str(reference),
+            "family_history": str(root / "history.json"),
+            "pilot_report": str(root / "pilot.json"),
+        }
+        config = {
+            "base_pools": {
+                "share": 0.7,
+                "burn_uid": 0,
+                "pools": {
+                    "d3-mini": {
+                        **track,
+                        "share": 0.5,
+                        "enabled": True,
+                        "model": models.spec(models.D3),
+                    },
+                    "d3-lite": {
+                        **track,
+                        "share": 0.5,
+                        "enabled": True,
+                        "model": models.spec("d3-lite-0.8b-v1"),
+                    },
+                },
+            }
+        }
+        rounds = {
+            "d3-mini": (settings, root / "base-pools/d3-mini", draws),
+            "d3-lite": (
+                {**settings, "pool_id": "d3-lite", "model": models.spec("d3-lite-0.8b-v1")},
+                root / "base-pools/d3-lite",
+                draws,
+            ),
+        }
+        runner = root / "runner"
+        runner.write_text(f"#!{sys.executable}\n{RUNNER}")
+        runner.chmod(0o700)
+        args = SimpleNamespace(device="cpu", runtime_python=sys.executable, poll=0.01)
+        requested = []
+        with (
+            protocol.local_server(fake_hub(repos, requested)) as hub,
+            patch.dict(
+                os.environ,
+                {
+                    "ZILS_D3_RUNTIME_PYTHON": str(runner),
+                    "ZILS_TEST_RUNNER_LOG": str(root / "calls"),
+                },
+            ),
+            patch("zils.commitments.HF_ENDPOINT", hub),
+            patch("zils.d3.validate_candidate"),
+            patch("zils.base_pilot.verify_qualification"),
+        ):
+            for name, at in (("epoch-first", 1000), ("epoch-second", 44202)):
+                work = root / name
+                work.mkdir()
+                with patch("zils.validator.time.time", return_value=at):
+                    validator.base_pools_epoch(config, root, work, snapshot, args, rounds)
+            intake = json.loads((work / "pool-intake.json").read_text())
+            errors = intake["errors"]
+            self.assertIn("incumbent", intake["rejected"]["3"])
+            self.assertIn("d3-lite", errors)
+            self.assertNotIn("d3-mini", errors)
+            attempt = next(work.joinpath("d3-mini").glob("base-tier-*"))
+            decisions = {
+                json.loads(p.read_text())["manifest_sha256"]: (
+                    json.loads(p.read_text()),
+                    base_release.bound(p),
+                )
+                for p in attempt.glob("decision-*.json")
+            }
+            d1, e1 = decisions[draws[0][0]["manifest_sha256"]]
+            d2, e2 = decisions[draws[1][0]["manifest_sha256"]]
+            self.assertNotIn(3, {row["uid"] for row in d2["candidates"]})
+            suite, _ = election_fixture()
+            active = {
+                **self.active,
+                **track,
+                "incumbent_sha256": incumbent,
+                "draw_roots": {i["manifest_sha256"]: str(p) for i, p in draws},
+                "ready_dir": str(root / "ready"),
+                "windows_dir": str(root / "windows"),
+            }
+            snap = save(root / "snapshot.json", snapshot)
+            ready = []
+            for uid in (1, 2):
+                _, report = election_fixture(candidate=hashes[uid], incumbent=incumbent)
+                evidence = {
+                    "first": e1,
+                    "second": e2,
+                    "snapshot_first": snap,
+                    "snapshot_second": snap,
+                    "suite": save(root / f"suite-{uid}.json", report),
+                }
+                receipt = base_release.qualify(
+                    d1,
+                    d2,
+                    report,
+                    candidate_sha256=hashes[uid],
+                    active=active,
+                    expected_suite=suite,
+                    evidence=evidence,
+                )
+                save(root / "ready" / (receipt["sha256"] + ".json"), receipt)
+                ready.append(receipt)
+            self.assertEqual({r["candidate"]["hotkey"] for r in ready}, {"miner-one", "miner-two"})
+            frozen = base_release.freeze(
+                ready,
+                active=active,
+                schedule=self.schedule,
+                window_id="d3-mini:1",
+                frozen_at=self.at,
+            )
+            claims = {
+                u: {**c, "hotkey": snapshot["members"][str(u)]}
+                for u, c in commitments.candidates(snapshot, incumbent).items()
+                if "error" not in c
+            }
+            work = root / "closing-work"
+            work.mkdir()
+            identity = base_round.draw(root / "closing")
+            with patch("zils.validator.time.time", return_value=self.at + 10):
+                closing = validator.base_tier_epoch(
+                    settings,
+                    rounds["d3-mini"][1],
+                    work,
+                    claims,
+                    args,
+                    [(identity, root / "closing")],
+                )
+            result = base_release.close(
+                frozen,
+                {"decision": closing, "draw_root": str(root / "closing"), "snapshot": snap},
+                active=active,
+                members=snapshot["members"],
+                now=self.at + 100,
+            )
+            self.assertEqual(result["winner"]["sha256"], hashes[2])
+            self.assertFalse(result["uploaded"])
+            self.assertEqual(
+                base_round.king_weights(
+                    track, {u: {"hotkey": h} for u, h in snapshot["members"].items()}
+                ),
+                {4: 1.0},
+            )

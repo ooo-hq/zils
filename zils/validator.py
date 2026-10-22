@@ -390,10 +390,7 @@ def base_pools_epoch(config, directory, work, snapshot, args, rounds):
                 pool_config,
                 root,
                 pool_work,
-                {
-                    u: {**c, "hotkey": snapshot["members"][str(u)]["hotkey"]}
-                    for u, c in routed[pool].items()
-                },
+                {u: {**c, "hotkey": snapshot["members"][str(u)]} for u, c in routed[pool].items()},
                 args,
                 draws,
                 wait_for_capacity=True,

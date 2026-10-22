@@ -295,3 +295,24 @@ class PoolIntakeTest(unittest.TestCase):
         sizing = next(c for c in calls if any("sizing probe" in str(v) for v in c))
         self.assertIn(lite, sizing)
         self.assertEqual(promote_base.CANDIDATE_ID_PREFIX[lite], "d3-lite-0.8b")
+
+    def test_migration_stages_legacy_policy_disabled_until_qualified(self):
+        cfg = {
+            "model": models.spec(models.D3),
+            "base_tier": {
+                "share": 0.7,
+                "incumbent_sha256": "a" * 64,
+                "draws": [{"manifest_sha256": "b" * 64, "dataset_sha256": "c" * 64}],
+                "kings": ["old"],
+                "policy": {"min_brier_improvement": 0.01},
+            },
+            "base_reference": "reference",
+            "base_round_dir": "draws",
+        }
+        result = migrate(cfg, "/operator")
+        self.assertTrue(all(not e["enabled"] for e in result["base_pools"]["pools"].values()))
+        self.assertEqual(
+            result["base_pools"]["pools"]["d3-mini"]["policy"], base_round.DEFAULT_POLICY
+        )
+        self.assertEqual(result["base_pool_rounds"], {})
+        self.assertEqual(cfg["base_tier"]["policy"], {"min_brier_improvement": 0.01})

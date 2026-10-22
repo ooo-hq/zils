@@ -635,7 +635,7 @@ def main():
     snapshot = json.loads(Path(args.chain_snapshot).read_text())
     claims = commitments.candidates(snapshot, active["incumbent_sha256"])
     claims = {
-        u: {**c, "hotkey": snapshot["members"][str(u)]["hotkey"]}
+        u: {**c, "hotkey": snapshot["members"][str(u)]}
         for u, c in claims.items()
         if "error" not in c
     }

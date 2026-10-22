@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 import zils
-from zils import model_pools, models
+from zils import base_round, model_pools, models
 
 
 def migrate(config, directory):
@@ -26,7 +26,9 @@ def migrate(config, directory):
             **{k: v for k, v in track.items() if k != "burn_uid"},
             "model": models.spec(model),
             "share": 1.0,
-            "enabled": True,
+            "enabled": False,
+            "draws": [],
+            "policy": dict(base_round.DEFAULT_POLICY),
         }
     }
     for pool, root in models.D3_POOL_MODELS.items():
@@ -46,12 +48,7 @@ def migrate(config, directory):
     result["base_pools"] = model_pools.validate(
         {"share": track["share"], "burn_uid": track.get("burn_uid", 0), "pools": pools}
     )
-    result["base_pool_rounds"] = {
-        "d3-mini": {
-            key: str((Path(directory) / config[key]).resolve())
-            for key in ("base_round_dir", "base_reference")
-        }
-    }
+    result["base_pool_rounds"] = {}
     return result
 
 
