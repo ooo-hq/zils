@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from zils import base_round, models, regression_suite  # noqa: E402
+from zils import base_release, models, regression_suite  # noqa: E402
 
 ORIGIN = {
     models.H2O: " by h2oai, Apache License 2.0",
@@ -39,7 +39,7 @@ def sha(path):
         return hashlib.file_digest(f, "sha256").hexdigest()
 
 
-def verify_regression(report, candidate, incumbent, model):
+def archival_verify_regression(report, candidate, incumbent, model):
     if (
         report.get("candidate_sha256") != candidate
         or report.get("incumbent_sha256") != incumbent
@@ -68,18 +68,25 @@ def verify_regression(report, candidate, incumbent, model):
         raise ValueError("candidate failed the adapter regression gate")
 
 
+def verify_regression(report, candidate, incumbent, model, *, expected_suite):
+    return regression_suite.verify_election(
+        report, candidate, incumbent, model, expected_suite=expected_suite
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", required=True, help="confirmed candidate directory")
-    parser.add_argument("--decision", required=True, help="decision.json with confirmed_winner")
+    parser.add_argument("--decision", help="decision.json with confirmed_winner")
+    parser.add_argument("--first-decision", help="first draw's timestamped decision.json")
     parser.add_argument(
-        "--first-decision", required=True, help="first draw's timestamped decision.json"
-    )
-    parser.add_argument(
-        "--regression-report", required=True, help="bound suite-result.json from adapter regression"
+        "--regression-report", help="bound suite-result.json from adapter regression"
     )
     parser.add_argument("--round", type=int, required=True)
-    parser.add_argument("--model", choices=list(CANDIDATE_ID_PREFIX), default=models.D3)
+    parser.add_argument("--model", choices=list(CANDIDATE_ID_PREFIX))
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--pool", required=True)
+    parser.add_argument("--window-report", required=True)
     parser.add_argument("--staging", required=True, help="new directory to stage the release")
     parser.add_argument(
         "--repo",
@@ -88,33 +95,44 @@ def main():
     )
     parser.add_argument(
         "--king-hotkey",
-        required=True,
         help="hotkey of the confirmed winner's uid, as in the round's chain-snapshot.json",
     )
     parser.add_argument(
         "--previous-kings",
-        default="",
         help="the track's current base_tier.kings, comma-separated, newest first",
     )
     parser.add_argument("--upload", action="store_true")
     parser.add_argument("--hf", default=str(Path.home() / ".local/bin/hf"))
     args = parser.parse_args()
     candidate, staging = Path(args.candidate), Path(args.staging)
-    candidate_id = f"{CANDIDATE_ID_PREFIX[args.model]}-zils-r{args.round}"
-    repo = args.repo or f"zils-ai/{candidate_id}"
-    decision = json.loads(Path(args.decision).read_text())
-    winner = decision.get("confirmed_winner")
-    if not winner:
-        raise SystemExit("decision has no confirmed winner; promotion requires two eligible draws")
-    if models.metadata(candidate)["kind"] != "candidate":
+    if (models.metadata(candidate) or {}).get("kind") != "candidate":
         raise SystemExit("not a base candidate checkpoint")
-    if models.metadata(candidate)["model"] != args.model:
+    if args.model and models.metadata(candidate)["model"] != args.model:
         raise SystemExit(f"not a {args.model} base candidate checkpoint")
-    first = json.loads(Path(args.first_decision).read_text())
-    if base_round.confirm_promotion(first, decision) != winner:
-        raise SystemExit("confirmed winner differs from the two recorded draws")
-    if decision.get("model") is not None and decision["model"] != models.spec(args.model):
-        raise SystemExit("decision belongs to a different model profile")
+    config = Path(args.config).resolve()
+    active = base_release.active_context(
+        base_release.read(config), args.pool, directory=config.parent
+    )
+    model = active["model"]["id"]
+    if args.model and args.model != model or models.metadata(candidate)["model"] != model:
+        raise ValueError("candidate/model flag differs from active pool")
+    args.model = model
+    window = base_release.verify_window(base_release.read(args.window_report), active)
+    winner = window["winner"]
+    if window["status"] != "qualified" or winner is None:
+        raise ValueError("release window has no qualified winner")
+    if args.king_hotkey is not None and args.king_hotkey != winner["hotkey"]:
+        raise ValueError("king-hotkey differs from verified snapshot")
+    if (
+        args.previous_kings is not None
+        and list(filter(None, args.previous_kings.split(","))) != active["kings"]
+    ):
+        raise ValueError("previous-kings differs from installed configuration")
+    args.king_hotkey = winner["hotkey"]
+    args.previous_kings = ",".join(active["kings"])
+    candidate_id = f"{CANDIDATE_ID_PREFIX[model]}-zils-r{args.round}"
+    repo = args.repo or f"zils-ai/{candidate_id}"
+    decision = window["closing"]["decision"]
     runtime = models.text_runtime(args.model)
     if args.model in models.d3_family():
         runtime.validate_candidate(candidate, args.model)
@@ -127,8 +145,6 @@ def main():
         raise SystemExit(
             f"candidate hash {digest} differs from the confirmed winner {winner['sha256']}"
         )
-    regression = json.loads(Path(args.regression_report).read_text())
-    verify_regression(regression, digest, decision["incumbent"]["sha256"], args.model)
     staging.mkdir(parents=True, exist_ok=False)
     for name in models.candidate_files(args.model, "candidate"):
         if name != "model.json":

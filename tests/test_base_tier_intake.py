@@ -15,7 +15,7 @@ from unittest.mock import Mock, patch
 from urllib.parse import unquote, urlsplit
 
 import zils
-from tests.test_base_round import make_cases, sealed
+from tests.test_base_exam import inputs, sealed
 from zils import base_round, commitments, models, protocol as wire, testnet, validator
 
 RUNNER = """import json, random, sys, os
@@ -28,10 +28,13 @@ requests = json.load(sys.stdin)
 rng = random.Random(f"{meta['kind']}-{accuracy}-{len(requests)}")
 predictions = []
 for row in requests:
-    keys = sorted(row["question"]["criteria"])
-    label = keys[int(row["state"]["text"].split()[-1]) % 4]
+    kind = row["question"]["type"]
+    criteria = row["question"]["criteria"]
+    keys = sorted(criteria) if kind == "choice" else (["false", "true"] if kind == "noul" else [str(i) for i in range(len(criteria))])
+    index = int(row["state"]["text"].split("-")[-1])
+    label = ({"choice": ["a", "b"], "noul": ["false", "true"], "score": ["0", "1", "3", "4"]}[kind])[index % (4 if kind == "score" else 2)]
     chosen = label if rng.random() < accuracy else rng.choice([k for k in keys if k != label])
-    p = {k: 0.1 for k in keys}
+    p = {k: 0.3 / (len(keys)-1) for k in keys}
     p[chosen] = 0.7
     predictions.append({"id": row["id"], "elapsed_ms": 1.0, "probabilities": p})
 with open(os.environ["ZILS_TEST_RUNNER_LOG"], "a") as log:
@@ -134,16 +137,17 @@ class BaseTierIntakeTest(unittest.TestCase):
             root = Path(tmp)
             vdir = root / "validator"
             (vdir / "draws").mkdir(parents=True)
-            calibration = make_cases("cal", 60)
-            sealed(vdir / "draws/first", calibration, make_cases("first", 60))
-            sealed(vdir / "draws/second", calibration, make_cases("second", 60))
+            sealed(vdir / "draws/first", "first")
+            sealed(vdir / "draws/second", "second")
+            (vdir / "pilot.json").write_text(json.dumps({"fixture": True}))
+            (vdir / "history.json").write_text(json.dumps(inputs()[2]))
             draws = [base_round.draw(vdir / "draws/first"), base_round.draw(vdir / "draws/second")]
             (vdir / "reference").mkdir()
             models.write_metadata(vdir / "reference", kind="base", model=models.D3)
             incumbent = zils.checkpoint_hash(vdir / "reference")
             strong = candidate(root / "strong", 0.85)
             weak = candidate(root / "weak", 0.40)
-            later = candidate(root / "later", 0.50)
+            later = candidate(root / "later", 0.99)
             big = candidate(root / "big", 0.90)
             adapter = root / "adapter"
             adapter.mkdir()
@@ -212,8 +216,11 @@ class BaseTierIntakeTest(unittest.TestCase):
                     "share": 0.7,
                     "incumbent_sha256": incumbent,
                     "draws": draws,
-                    "policy": {"bootstrap_resamples": 200},
+                    "policy": dict(base_round.DEFAULT_POLICY),
                 },
+                "pool_id": "d3-mini",
+                "family_history": "history.json",
+                "pilot_report": "pilot.json",
                 "base_round_dir": "draws",
                 "base_reference": "reference",
             }
@@ -223,6 +230,7 @@ class BaseTierIntakeTest(unittest.TestCase):
                     os.environ,
                     {"ZILS_D3_RUNTIME_PYTHON": str(runner), "ZILS_TEST_RUNNER_LOG": str(log)},
                 ),
+                patch("zils.base_pilot.verify_qualification"),
                 patch("zils.d3.validate_candidate", validate),
                 patch("zils.commitments.HF_ENDPOINT", hub),
             ):
@@ -243,6 +251,8 @@ class BaseTierIntakeTest(unittest.TestCase):
                     )
                 self.assertIsNone(validator.base_draws({"members": {}}, vdir))
 
+                clock = [1000]
+
                 def epoch(rid):
                     snapshot = testnet.preflight(config, fake_chain(state))
                     work = vdir / "state/rounds" / rid
@@ -251,9 +261,14 @@ class BaseTierIntakeTest(unittest.TestCase):
                     registry = commitments.candidates(
                         json.loads((work / "chain-snapshot.json").read_text()), incumbent
                     )
-                    return registry, validator.base_tier_epoch(
-                        config, vdir, work, registry, args, audited
-                    )
+                    owned = {u: {**c, "hotkey": hotkeys[u]} for u, c in registry.items()}
+                    for _ in range(2):
+                        with patch("zils.validator.time.time", return_value=clock[0]):
+                            decision = validator.base_tier_epoch(
+                                config, vdir, work, owned, args, audited
+                            )
+                        clock[0] += 43200
+                    return registry, decision
 
                 registry, decision = epoch("a" * 32)
                 self.assertEqual(
@@ -272,7 +287,8 @@ class BaseTierIntakeTest(unittest.TestCase):
                 self.assertEqual(decision["confirmed_winner"]["uid"], 1)
                 self.assertEqual(decision["incumbent"]["uid"], validator.INCUMBENT_UID)
                 self.assertEqual(
-                    {c["uid"]: c["eligible"] for c in decision["candidates"]}, {1: True, 2: False}
+                    {c["uid"]: c["eligible"] for c in decision["candidates"]},
+                    {1: True, 2: False, 4: False, 5: False, 7: False},
                 )
                 self.assertEqual(set(decision["rejected"]), {"3", "4", "5", "6", "7", "8"})
                 self.assertIn("HTTP Error 404", decision["rejected"]["4"])
@@ -300,28 +316,35 @@ class BaseTierIntakeTest(unittest.TestCase):
                 sidecar = json.loads((vdir / "base-tier/decision.json").read_text())
                 self.assertEqual(sidecar["round_id"], "a" * 32)
 
+                original_incumbent_reports = {
+                    evidence["path"]: Path(evidence["path"]).read_bytes()
+                    for evidence in decision["incumbent"]["evaluation"].values()
+                }
                 # Next round: uid 1 unchanged (no download, no scoring), uid 2 commits a new
                 # revision, and uid 3's copy is still refused.
                 records[hotkeys[2]] = raw_record(450, commit(later, "alice/d3", revision("later")))
                 before = len(requested)
                 registry, decision = epoch("b" * 32)
+                self.assertIn(2, {c["uid"] for c in decision["confirmed_candidates"]})
+                for path, contents in original_incumbent_reports.items():
+                    self.assertEqual(Path(path).read_bytes(), contents)
                 self.assertEqual(
                     requested[before:], [("alice/d3", n) for n in models.D3_CANDIDATE_FILES]
                 )
                 self.assertEqual(validate.call_count, 3)
                 runs = [json.loads(line) for line in log.read_text().splitlines()]
-                self.assertEqual(len(runs), 16)
-                self.assertEqual([r["accuracy"] for r in runs[12:]], [0.5] * 4)
+                self.assertEqual(len(runs), 18)
+                self.assertEqual(sorted(r["accuracy"] for r in runs[12:]), [0.55] * 2 + [0.99] * 4)
                 self.assertEqual(decision["round_id"], "b" * 32)
-                self.assertEqual(decision["pending_winner"]["uid"], 1)
-                self.assertEqual({c["uid"] for c in decision["candidates"]}, {1, 2})
+                self.assertEqual(decision["pending_winner"]["uid"], 2)
+                self.assertEqual({c["uid"] for c in decision["candidates"]}, {1, 2, 4, 5, 7})
                 self.assertIn("3", decision["rejected"])
 
                 # A third identical round costs nothing at all.
                 before = len(requested)
                 epoch("c" * 32)
                 self.assertEqual(len(requested), before)
-                self.assertEqual(len(log.read_text().splitlines()), 16)
+                self.assertEqual(len(log.read_text().splitlines()), 18)
 
     def test_commitment_format_and_the_earliest_block_rule(self):
         sha, rev = "a" * 64, "b" * 40

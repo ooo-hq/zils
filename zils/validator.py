@@ -344,8 +344,13 @@ def pool_rounds(config, directory):
         if not isinstance(paths[pool], dict) or set(paths[pool]) != {
             "base_round_dir",
             "base_reference",
+            "family_history",
+            "suite_manifest",
+            "pilot_report",
         }:
-            raise ValueError("each pool requires base_round_dir and base_reference")
+            raise ValueError(
+                "each pool requires base_round_dir, base_reference, family_history, suite_manifest and pilot_report"
+            )
         settings = {
             **{k: v for k, v in config.items() if k not in ("base_pools", "base_pool_rounds")},
             "model": entry["model"],
@@ -354,7 +359,11 @@ def pool_rounds(config, directory):
             "pool_id": pool,
         }
         root = directory / "base-pools" / pool
-        rounds[pool] = (settings, root, base_draws(settings, root))
+        audited = base_draws(settings, root)
+        from . import base_pilot
+
+        base_pilot.admit(settings, root, audited)
+        rounds[pool] = (settings, root, audited)
     return rounds
 
 
@@ -378,7 +387,13 @@ def base_pools_epoch(config, directory, work, snapshot, args, rounds):
         pool_work.mkdir(mode=0o700, exist_ok=True)
         try:
             base_tier_epoch(
-                pool_config, root, pool_work, routed[pool], args, draws, wait_for_capacity=True
+                pool_config,
+                root,
+                pool_work,
+                {u: {**c, "hotkey": snapshot["members"][str(u)]} for u, c in routed[pool].items()},
+                args,
+                draws,
+                wait_for_capacity=True,
             )
         except (ValueError, OSError, RuntimeError, http.client.HTTPException) as error:
             (root / "base-tier" / "decision.json").unlink(missing_ok=True)
@@ -434,6 +449,10 @@ def base_draws(config, directory):
         raise ValueError("base_round_dir requires a base_tier track and base_reference")
     if "chain" not in config:
         raise ValueError("the base-tier intake reads candidates from chain commitments; add chain")
+    if not config.get("pool_id") or not config.get("family_history"):
+        raise ValueError(
+            "new base elections require pool configuration and family_history; migrate legacy config"
+        )
     track = base_round.validate_track(config["base_tier"])
     model = models.validate_spec(config["model"]) if "model" in config else models.KEV
     if model not in models.d3_family():
@@ -453,45 +472,64 @@ def base_draws(config, directory):
         or zils.checkpoint_hash(reference) != track["incumbent_sha256"]
     ):
         raise ValueError("base_reference is not the track's incumbent checkpoint")
+    from . import base_exam
+
+    base_exam.disjoint([base_exam.audit(path) for _, path in draws])
     return draws
 
 
-def base_tier_epoch(
-    config,
-    directory,
-    work,
-    registry,
-    args,
-    draws,
-    *,
-    wait_for_capacity=False,
-):
-    """Score this round's base candidates on the sealed draws and write the decision sidecar.
+def base_tier_epoch(config, directory, work, registry, args, draws, *, wait_for_capacity=False):
+    """Evaluate immutable checkpoints; preserve original timing and private evidence on reuse."""
+    from . import base_exam, base_round, benchmark, commitments
 
-    `registry` is `commitments.candidates` of the round's chain snapshot. Every distinct checkpoint
-    hash is downloaded once from its Hugging Face revision into a content-addressed store and scored
-    once per draw and split; a hash committed again in a later round costs no download and no GPU time
-    (the cross-round cap). The decision covers the candidates committed at this round's preflight
-    block. The old sidecar is removed first, so an epoch that fails pays nobody. Per-case predictions
-    stay in the store."""
-    from . import base_round, commitments
+    if not config.get("pool_id") or not config.get("family_history"):
+        raise ValueError(
+            "new base elections require pool configuration and family_history; migrate the legacy config"
+        )
+    from . import base_pilot
 
+    base_pilot.admit(config, directory, draws)
     track = base_round.validate_track(config["base_tier"])
     model = models.validate_spec(config["model"])
+    history = json.loads((Path(directory) / config["family_history"]).read_text())
+    active = {
+        "pool_id": config["pool_id"],
+        "model": models.spec(model),
+        **track,
+        "draw_roots": {item["manifest_sha256"]: str(path) for item, path in draws},
+        "history": history,
+    }
+    audited = [base_exam.audit(path) for _, path in draws]
+    base_exam.disjoint(audited)
+    if any(m["pool_id"] != config["pool_id"] for m, _ in audited):
+        raise ValueError("exam belongs to another pool")
     validate_candidate = models.text_runtime(model).validate_candidate
     store = Path(directory) / "base-tier" / "store"
-    sidecar = Path(directory) / "base-tier" / "decision.json"
+    sidecar = store.parent / "decision.json"
     sidecar.unlink(missing_ok=True)
     store.mkdir(mode=0o700, parents=True, exist_ok=True)
     attempt = work / ("base-tier-" + uuid.uuid4().hex)
     attempt.mkdir(mode=0o700)
     reference = (Path(directory) / config["base_reference"]).resolve()
+    if (
+        zils.checkpoint_hash(reference) != track["incumbent_sha256"]
+        or models.checkpoint_model(reference) != model
+    ):
+        raise ValueError("base_reference is not the active incumbent")
     entries = {INCUMBENT_UID: (track["incumbent_sha256"], reference)}
-    rejected = {}
-    for uid, claim in sorted(registry.items()):
+    rejected, claims = {}, {}
+    for uid, original in sorted(registry.items()):
+        claim = dict(original)
         if "error" in claim:
             rejected[uid] = claim["error"][:400]
             continue
+        if claim["sha256"] == track["incumbent_sha256"]:
+            rejected[uid] = "candidate is the incumbent"
+            continue
+        if not claim.get("hotkey"):
+            rejected[uid] = "commitment has no frozen hotkey"
+            continue
+        claims[uid] = claim
         target = store / claim["sha256"] / "checkpoint"
         if not target.exists():
             fetched = target.with_name("fetch-" + uuid.uuid4().hex)
@@ -504,88 +542,184 @@ def base_tier_epoch(
                 shutil.rmtree(fetched, ignore_errors=True)
                 rejected[uid] = str(error)[:400]
                 continue
+        if zils.checkpoint_hash(target) != claim["sha256"]:
+            raise ValueError("cached checkpoint changed")
         entries[uid] = (claim["sha256"], target)
+        claims[uid] = claim
     decisions = []
     for item, path in draws:
-        if (
-            config.get("pool_id")
-            and decisions
-            and time.time() - decisions[0]["evaluated_at"] < 12 * 3600
-        ):
-            break
-        _, cases = base_round.audit(path)
+        _, cases = base_exam.audit(path)
         key = item["manifest_sha256"]
+        if base_round.draw(path) != item:
+            raise ValueError("draw identity changed")
+        selected = dict(entries)
+        confirmation_after = None
+        if decisions:
+            first = decisions[0]
+            inc_end = max(v["completed_at"] for v in first["incumbent"]["evaluation"].values())
+            candidates = {c["sha256"]: c for c in first["candidates"] if "evaluation" in c}
+            selected = {
+                u: pair
+                for u, pair in entries.items()
+                if u == INCUMBENT_UID
+                or pair[0] in candidates
+                and time.time()
+                >= max(
+                    inc_end,
+                    *(v["completed_at"] for v in candidates[pair[0]]["evaluation"].values()),
+                )
+                + 12 * 3600
+            }
+            if time.time() < inc_end + 12 * 3600 or len(selected) == 1 and len(entries) > 1:
+                break
+            confirmation_after = (
+                max(
+                    [inc_end]
+                    + [
+                        v["completed_at"]
+                        for uid, (sha, _) in selected.items()
+                        if uid != INCUMBENT_UID
+                        for v in candidates[sha]["evaluation"].values()
+                    ]
+                )
+                + 12 * 3600
+            )
 
         def scores(sha256, split):
-            return store / sha256 / f"{key}-{split}.json"
+            cache_key = key
+            if sha256 == track["incumbent_sha256"] and confirmation_after is not None:
+                # Keep earlier reports immutable while later entrants get timely comparisons.
+                cache_key += "-after-" + base_round.dataset_hash(confirmation_after)
+            return store / sha256 / f"{cache_key}-{split}.json"
 
+        rows = {s: {} for s in base_round.SPLITS}
         for split in base_round.SPLITS:
             pending = [
-                {"uid": uid, "checkpoint": str(checkpoint), "sha256": sha256}
-                for uid, (sha256, checkpoint) in sorted(entries.items())
-                if not scores(sha256, split).exists()
+                {"uid": uid, "checkpoint": str(checkpoint), "sha256": sha}
+                for uid, (sha, checkpoint) in sorted(selected.items())
+                if not scores(sha, split).exists()
             ]
-            if not pending:
-                continue
-            report = run_evaluate(
-                args,
-                attempt,
-                f"{key[:12]}-{split}",
-                pending,
-                path / f"{split}.jsonl",
-                base_revision=models.spec(model)["base_revision"],
-                model=model,
-                wait_for_capacity=wait_for_capacity,
-            )
-            for row in report["miners"]:
-                if row["uid"] == INCUMBENT_UID and row["status"] != "evaluated":
-                    raise RuntimeError(
-                        "incumbent evaluation failed; no base candidate can be scored: "
-                        + row.get("error", "no error recorded")
-                    )
-                target = scores(entries[row["uid"]][0], split)
-                target.parent.mkdir(mode=0o700, exist_ok=True)
-                wire.write_json(
-                    target,
-                    {
-                        "dataset_sha256": report["dataset_sha256"],
-                        "miners": [row],
-                        "evaluated_at": time.time(),
-                    },
+            if pending:
+                base_exam.audit(path, history=history, as_of=time.time())
+                started = time.time()
+                report = run_evaluate(
+                    args,
+                    attempt,
+                    f"{key[:12]}-{split}",
+                    pending,
+                    path / f"{split}.jsonl",
+                    base_revision=models.spec(model)["base_revision"],
+                    model=model,
+                    wait_for_capacity=wait_for_capacity,
                 )
-        rows = {}
-        for split in base_round.SPLITS:
-            rows[split] = {}
-            for uid, (sha256, _) in entries.items():
-                stored = json.loads(scores(sha256, split).read_text())
-                for row in base_round.rows_for(stored, cases[split]).values():
-                    rows[split][uid] = {**row, "uid": uid}
-                if uid not in rows[split]:
-                    rejected[uid] = stored["miners"][0].get("error", "evaluation failed")[:400]
+                completed = time.time()
+                # Re-read the current history in case publication happened during inference.
+                history = json.loads((Path(directory) / config["family_history"]).read_text())
+                active["history"] = history
+                base_exam.audit(path, history=history, as_of=completed)
+                returned = {row["uid"]: row for row in report["miners"]}
+                for submission in pending:
+                    uid, sha = submission["uid"], submission["sha256"]
+                    row = returned.get(uid)
+                    try:
+                        if (
+                            not row
+                            or row["status"] != "evaluated"
+                            or row["sha256"] != sha
+                            or report["dataset_sha256"] != base_round.dataset_hash(cases[split])
+                        ):
+                            raise ValueError("missing or invalid evaluation")
+                        zils.score(cases[split], row["predictions"])
+                    except (ValueError, KeyError, TypeError) as error:
+                        if uid == INCUMBENT_UID:
+                            raise RuntimeError("incumbent evaluation failed") from error
+                        rejected[uid] = "invalid candidate evaluation"
+                        continue
+                    target = scores(sha, split)
+                    target.parent.mkdir(mode=0o700, exist_ok=True)
+                    wire.write_json(
+                        target,
+                        {
+                            "dataset_sha256": report["dataset_sha256"],
+                            "miners": [row],
+                            "manifest_sha256": key,
+                            "checkpoint_sha256": sha,
+                            "split": split,
+                            "started_at": started,
+                            "completed_at": completed,
+                        },
+                    )
+            for uid, (sha, _) in selected.items():
+                target = scores(sha, split)
+                if not target.exists():
+                    continue
+                stored = json.loads(target.read_text())
+                for field, expected in (
+                    ("manifest_sha256", key),
+                    ("checkpoint_sha256", sha),
+                    ("split", split),
+                ):
+                    if stored.get(field) != expected:
+                        raise ValueError(
+                            "cached evaluation binding changed; old caches cannot qualify"
+                        )
+                start, end = (
+                    base_exam._time(stored.get(k)) for k in ("started_at", "completed_at")
+                )
+                if start > end:
+                    raise ValueError("cached evaluation time reversed")
+                base_exam.audit(path, history=history, as_of=end)
+                found = base_round.rows_for(stored, cases[split])
+                if len(found) != 1:
+                    raise ValueError("cached evaluation must contain one checkpoint")
+                row = next(iter(found.values()))
+                if row["sha256"] != sha:
+                    raise ValueError("cached evaluation checkpoint changed")
+                rows[split][uid] = {
+                    **row,
+                    "uid": uid,
+                    "evaluation": {
+                        "path": str(target.resolve()),
+                        "sha256": benchmark.file_hash(target),
+                        "started_at": start,
+                        "completed_at": end,
+                    },
+                }
         decision = base_round.decide(
-            cases, INCUMBENT_UID, rows["calibration"], rows["test"], track["policy"]
+            cases,
+            INCUMBENT_UID,
+            rows["calibration"],
+            rows["test"],
+            track["policy"],
+            draw_identity=item,
+            commitments={u: c for u, c in claims.items() if u in selected or u not in entries},
         )
         decision.update(
-            manifest_sha256=key,
+            pool_id=config["pool_id"],
+            model=models.spec(model),
             round_id=work.name,
-            rejected={str(uid): error for uid, error in sorted(rejected.items())},
+            rejected={str(u): e for u, e in rejected.items()},
+            evaluated_at=max(
+                v["completed_at"]
+                for r in rows.values()
+                for row in r.values()
+                for v in [row["evaluation"]]
+            ),
         )
-        if config.get("pool_id"):
-            decision.update(
-                pool_id=config["pool_id"],
-                model=models.spec(model),
-                evaluated_at=max(
-                    json.loads(scores(sha, "test").read_text())["evaluated_at"]
-                    for sha, _ in entries.values()
-                ),
-            )
         decisions.append(decision)
     if len(decisions) > 1:
-        confirm = base_round.confirm_promotion if config.get("pool_id") else base_round.confirm
-        decisions[-1]["confirmed_winner"] = confirm(decisions[0], decisions[-1])
+        ready = base_round.confirm_candidates(decisions[0], decisions[-1], active=active)
+        decisions[-1]["confirmed_candidates"] = ready
+        decisions[-1]["confirmed_winner"] = (
+            {k: ready[0][k] for k in ("uid", "sha256")} if ready else None
+        )
     for decision in decisions:
         wire.write_json(attempt / f"decision-{decision['manifest_sha256'][:12]}.json", decision)
-    wire.write_json(attempt / "decision.json", decisions[-1])
+        record = store.parent / "decisions" / (base_round.dataset_hash(decision) + ".json")
+        record.parent.mkdir(mode=0o700, exist_ok=True)
+        if not record.exists():
+            wire.write_json(record, decision)
+    wire.write_json(attempt / "decision.json", base_round.public_decision(decisions[-1]))
     os.replace(attempt / "decision.json", sidecar)
     return decisions[-1]
 

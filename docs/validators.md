@@ -48,7 +48,7 @@ runs **adapter rounds**: one frozen customer job per fleet, whose training split
 is shipped to every admitted miner. Opening it therefore hands customer training
 data to anyone who pays the registration burn. The base tier needs no customer
 data (candidates come in, the sealed holdout never leaves the validator), and a
-validator configured with `base_round_dir` collects and scores base candidates
+qualified validator configured with `base_pools` collects and scores base candidates
 itself (section 6 below). So, in order:
 
 1. **Policy (owner, decided 18 October 2026).** Outside miners may train customer
@@ -56,80 +56,40 @@ itself (section 6 below). So, in order:
    (published 18 October 2026; their hash travels in every signed queue claim).
    The hosted queue's chain-derived admission is built but off, so a public
    validator carries a Zils-authored job (public data), not a customer's.
-2. **Base-tier intake (merged; chain commitments since the 18 October owner
-   decision).** With `base_round_dir` set, every round also reads each member's
-   candidate commitment at the preflight block, pulls new hashes from Hugging Face
-   (9.5 GiB each, downloaded once per distinct hash and kept across epochs so an
-   unchanged commitment costs nothing), scores them with
-   `base_round` on the configured draws inside the sandbox, and writes the decision
-   sidecar itself. The per-hash store is the cross-round submission cap.
-3. **Runbook below.**
+2. **Qualified pool intake.** Configure `base_pools` plus the private paths for
+   each qualified pool in `base_pool_rounds`. Every round freezes chain
+   commitments, routes each candidate by its pinned parent, rejects incumbent
+   copies and evaluates eligible candidates in the isolated runner. Per-pool
+   stores retain checkpoint bytes and actual evaluation times across epochs.
+3. **Preparation and rollout.** Follow the [base-election runbook](base-election.md).
+   New intake requires v2 private exams, public family history, a pinned adapter
+   suite and a passing independent pilot. The old single-base Brier configuration
+   is archival and cannot start new-policy intake.
 
-### Runbook: a public validator for the base tier
+### Network and operator setup
 
-Host: a GPU node of node-1's class (RTX 4000 Ada 20 GB; scoring needs about
-10 GB; about $0.76/h on DigitalOcean), provisioned with
-`scripts/provision_node.sh` and the `fleet-validator` role, plus 10 GiB of disk
-per distinct candidate hash ever accepted (the store under
-`validator/base-tier/store/` keeps them across epochs; prune by hand). Keep the
-validator hotkey on the host, never a coldkey.
+Provision the `fleet-validator` role with `scripts/provision_node.sh` on hardware
+qualified for the selected pool and exam. Keep the validator hotkey on the host,
+never a coldkey. Reserve disk space for each distinct accepted checkpoint; the
+per-pool store keeps downloaded weights across epochs.
 
-Network: base candidates need no inbound port at all. The validator reads the
-commitments from the chain and downloads outbound over HTTPS from
-`huggingface.co` (allow its CDN redirects). The announcement port (8900 by
-default) serves only the adapter track and the signed round results; adapter
-artifacts are fetched *outbound* from each miner's announced endpoint, pinned to
-the announcing connection's source address. Plaintext HTTP is accepted there
-because claims are signed and artifacts hash-verified; put a TLS terminator in
-front when the operator wants transport privacy.
+Base candidates require outbound HTTPS to Hugging Face and its allowed CDN
+redirects. The announcement port serves adapter rounds and signed results.
+Adapter artifacts are fetched from each miner's announced endpoint, pinned to
+the announcing connection's source address. Claims are signed and artifacts
+hash-verified; a TLS terminator provides transport privacy.
 
-Config (`/etc/zils-node/fleet/validator/config.json`; the fields the closed
-testnet fleet already uses, plus admission and the base tier):
+Run `python -m zils.testnet preflight --config CONFIG` before starting the unit.
+Inspect the frozen `chain-snapshot.json` member/commitment maps and each pool's
+intake and decision reports. Miners use
+[`zils commit-candidate`](base-candidates.md#commit); they need neither the
+validator's URL nor its hotkey. One commitment per hotkey remains the submission
+contract. A registration change cannot inherit another hotkey's evidence.
 
-```json
-{
-  "validator": "http://VALIDATOR_PUBLIC_IPV4:8900",
-  "chain": {"network": "test", "netuid": 579},
-  "validator_hotkey": "VALIDATOR_SS58",
-  "admission": "chain",
-  "public_endpoints": true,
-  "base_tier": {
-    "share": 0.7,
-    "incumbent_sha256": "CHECKPOINT_HASH_OF_THE_REFERENCE",
-    "kings": [],
-    "burn_uid": 0,
-    "draws": [{"manifest_sha256": "…", "dataset_sha256": "…"}],
-    "policy": {"min_brier_improvement": 0.01}
-  },
-  "base_round_dir": "draws",
-  "base_reference": "reference"
-}
-```
-
-`validator` is the validator's own public IPv4 and announcement port; with
-`public_endpoints` the fleet accepts a global address here (and in a miner's
-config that announces to it) instead of the private pin.
-`kings` starts empty (stock d3 has no owner, so the base share burns) and
-`burn_uid` must be the subnet owner hotkey's uid; see §6.
-`members` is omitted: preflight derives it from the chain and freezes it per
-round. `model` is the pinned d3 profile as `zils.fleet init` writes it (the
-intake scores d3-family candidates only). `base_round_dir` holds one sealed draw per subdirectory (copy each
-sealed round directory there) and `base_reference` is the incumbent reference
-(`zils.d3 reference --out validator/reference`), both relative to the config.
-Run `python -m zils.testnet preflight --config …` and check that the
-member list is what the metagraph shows minus the validator. Start the unit; it
-refuses to start when a listed draw has no directory or the reference hash is
-not `incumbent_sha256`; it also refuses a base tier without a `chain` section,
-since candidates are chain commitments. Then watch
-`state/rounds/<round>/chain-snapshot.json` (its `commitments` map, uid to block
-and `zils1:<hash>:<revision>:<repo>`) and `submissions/` fill. Miners commit with
-`zils.miner commit-candidate` ([base candidates: commit](base-candidates.md#commit));
-they need neither the validator's URL nor its hotkey.
-
-Limits that stay: HTTPS for the adapter track, one adapter announcement per
-miner per round, one candidate commitment per hotkey. Rollback: set `"admission": "members"` and remove
-`public_endpoints`; the next round uses the static roster again. Removing
-`base_round_dir` returns to operator-scored decisions.
+Settle or explicitly handle pending rounds before changing configuration. Use
+`admission: "members"` with a static roster and remove `public_endpoints` to
+close public admission. Disabling pool intake does not authorize returning to
+old-policy crowns; preserve the reviewed incumbent and existing customer pins.
 
 ## Bittensor testnet validator
 
@@ -221,112 +181,36 @@ See [testnet outcomes](testnet.md#read-the-outcome) for restart behavior.
 
 ### 6. Pay the base tier from the same vector
 
-A testnet validator config may carry a `base_tier` track. Each publication then
-blends base-tier skill with the round's adapter skill into the one weight vector
-sent to the subnet; see [the miner view](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)
-for the payment rule. Add the track to `validator/config.json` by hand:
+New text-base elections use `base_pools` and the
+[decision-quality runbook](base-election.md). Stage old configurations using
+`migrate_model_pools`; every pool remains disabled until its own exam pilot,
+private paths and v2 draws are installed. The previous single-base Brier policy
+and untimed caches cannot qualify new candidates. Settle pending old-publication
+attempts with the old release before cutover; retain uncertain chain receipts.
 
-```json
-"base_tier": {
-  "share": 0.7,
-  "incumbent_sha256": "CHECKPOINT_HASH_OF_THE_PINNED_BASE_REFERENCE",
-  "kings": ["HOTKEY_OF_THE_CURRENT_KING", "HOTKEY_OF_THE_PREVIOUS_KING"],
-  "burn_uid": 0,
-  "draws": [{"manifest_sha256": "…", "dataset_sha256": "…"}],
-  "policy": {"min_brier_improvement": 0.01}
-}
-```
+The existing base budget is split by pool allocation. Within a pool, the last
+five distinct registered king hotkeys split its share. Exam winners and ready
+candidates earn nothing until an approved promotion changes the incumbent and
+king history. Disabled/unowned allocations burn under the existing subnet-owner
+rule; failures in one pool do not transfer its allocation to another.
 
-`share` is the base tier's fraction of the vector and must be explicit.
-`incumbent_sha256` is the `zils submit` checkpoint hash of the incumbent
-reference the scorer compares against. `kings`, optional, is the king history:
-hotkeys, newest first, the first being the miner whose promoted candidate is
-the incumbent. King of the hill (Teutonic's rule): the base share of every
-publication is split equally over the first five distinct hotkeys of the
-history that are registered at the round's preflight block, wherever their uid
-is now, with or without a decision file; a deregistered king's slice goes to
-the rest, and exam and confirmed winners are paid nothing. Leave it empty
-while the incumbent is the vendor base, which nobody owns. `burn_uid`
-(default 0) receives the share of a track with no recipient: no registered
-king, or no adapter earner; with both empty it receives the whole vector, so
-the validator keeps setting weights. Publication refuses a burn slice unless
-`burn_uid` is the uid of the subnet owner hotkey (subtensor burns the owner
-hotkey's incentive and keeps only the owner's self-weight; another
-validator's weight on itself is masked by Yuma). Crowning is a config change in
-the owner's promotion PR: set `incumbent_sha256` to the promoted candidate's
-hash and prepend its miner's hotkey to `kings` (`scripts/promote_base.py
---king-hotkey HOTKEY --previous-kings CURRENT,KINGS` prints both as
-`proposed_base_tier`), point `base_reference` at the promoted checkpoint, and
-restart the validator. `incumbent_uid` is gone; remove it from older configs.
-`draws` lists every sealed draw whose
-decision may pay in this epoch; print an entry with
-`python -m zils.base_round --round SEALED_DIR --describe-draw`, which audits the
-directory first. Remove a draw to rotate the holdout. `policy` may only override
-the `zils.base_round` defaults and is optional. The fleet refuses to start with
-a track on a non-testnet config or with an invalid track.
+Each pool's private `base_pool_rounds` entry names `base_reference`,
+`base_round_dir`, `family_history`, `suite_manifest` and `pilot_report`. The
+validator audits current history, score policy, pool pilot and draw independence
+before inference. Candidate and incumbent cache files retain their actual start
+and completion times. A second draw cannot begin for a candidate until its own
+first evidence and the incumbent's evidence are at least 12 hours old.
 
-The validator collects and scores base candidates itself when the config also
-names `base_round_dir` (a directory with one sealed draw per subdirectory; each
-listed draw must be present, extra directories are ignored) and
-`base_reference` (the incumbent reference whose checkpoint hash is
-`incumbent_sha256`). Both paths are relative to the config; the fleet refuses to
-start if either check fails, the profile is not a d3-family base, or the config
-has no `chain` section. Candidates are chain commitments, not announcements:
-preflight reads every member's `Commitments.CommitmentOf` at the round's
-preflight block and freezes them in `chain-snapshot.json` under `commitments`.
-After the adapter evaluation the round:
+Private evidence is retained under `base-pools/<pool>/base-tier/decisions` and
+`store`. The public decision sidecar contains aggregate scores and evidence hashes.
+Each pending round freezes pool configuration and public results before a publish
+attempt. Changing configuration cannot rewrite that already-frozen result.
 
-1. turns the snapshot into candidates with `zils.commitments.candidates`:
-   a commitment that is not `zils1:<sha256>:<40-hex revision>:<owner/repo>`, that
-   names the incumbent's hash, or that carries a hash another hotkey committed at
-   an earlier block (or in the same earliest block) is recorded under `rejected`;
-2. downloads each distinct new checkpoint hash once from
-   `https://huggingface.co/<repo>/resolve/<revision>/<file>` into
-   `validator/base-tier/store/<sha256>/checkpoint/`: only
-   `models.D3_CANDIDATE_FILES`, after the repo listing at that exact commit shows
-   them within the 9.5 GiB budget, which is enforced again on every byte; then the
-   checkpoint hash and `validate_candidate`. A hash seen in an earlier round is
-   neither fetched nor rescored, which is the cross-round cap;
-3. runs `zils evaluate` in the sandbox for the incumbent (uid 65535) and every
-   candidate without a stored score, on the calibration and test split of each
-   listed draw, and keeps each row under the hash
-   (`<manifest_sha256>-<split>.json`); a failed evaluation is kept too, so a
-   checkpoint that crashes the runner is not retried (delete its entry to force
-   a rescore);
-4. calls `base_round.decide` per draw over this round's committed candidates,
-   records refused commitments and failed downloads under `rejected`, and, with
-   two or more draws,
-   adds `confirmed_winner` from `base_round.confirm(first, last)`;
-5. writes the last draw's decision to `validator/base-tier/decision.json` and a
-   copy of every draw's decision into the round directory. The sidecar is
-   removed at the start of the epoch, so a failed epoch records no challenger
-   (the kings, if any, are still paid).
-
-List the confirmation draw only once the required interval since the decision
-draw has passed; the validator scores every listed draw in the same epoch.
-Miners receive aggregate metrics only (`base_tier` in the signed result);
-per-case predictions stay in the store. Without `base_round_dir` the validator
-still accepts no candidates and the operator scores them with
-`python -m zils.base_round … --out validator/base-tier/decision.json`
-(re-score when a new candidate arrives; the confirmation draw's decision
-replaces the first draw's; the incumbent row must use a UID outside the roster,
-such as 65535). Either way, each round freezes the current decision into its
-directory as `base-tier.json` before the first publish attempt and embeds it in
-the report, so the report hash binds it and a restart republishes the same
-weights. A missing decision file means nothing was scored this epoch: the
-kings, if any, are still paid their share.
-
-The publisher refuses a decision for a draw not in the track, scored with a
-different policy or against a different incumbent, paying a UID outside the
-roster, with duplicate or incumbent hashes among the eligible candidates, or
-whose pending winner is not an eligible candidate; it also refuses a report
-carrying a decision when the config has no track. An accepted decision pays
-nobody by itself: the base track is always the kings (`kings`) or empty.
-A decision written before 19 October may still carry `weights`; they are
-ignored. The attempt and
-receipt record `tracks` (`base_share`, `burn_uid`, the `burned` fraction,
-per-track normalized weights) next to
-`requested_weights`, so the on-chain proportions can be traced to each track.
+At scheduled 14–28 day windows, `base_release` verifies every ready receipt,
+freezes the complete roster and evaluates a common fresh draw. `promote_base`
+rechecks the window against the active configuration and proposes the king/profile
+change. Upload, live config installation and chain publication remain separate
+operator actions. Stable migration cannot be inferred from an election result.
 
 ### 7. Pay the adapter track from hosted-queue work
 

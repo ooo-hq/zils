@@ -14,7 +14,6 @@ import math
 import random
 import re
 import statistics
-import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -26,10 +25,18 @@ VERSION = "zils-base-holdout/v1"
 SPLITS = ("calibration", "test")
 # Kings paid from the base share, newest first (Teutonic's MAIN_SHARES with no specialists).
 KINGS_PAID = 5
-DEFAULT_POLICY = {
+LEGACY_POLICY = {
     "min_brier_improvement": 0.01,
     "bootstrap_resamples": 2000,
     "max_accuracy_drop": 0.0,
+}
+
+
+DEFAULT_POLICY = {
+    "score_version": 1,
+    "min_score_improvement": 3.0,
+    "max_brier_increase": 0.005,
+    "bootstrap_resamples": 2000,
 }
 
 
@@ -37,6 +44,10 @@ def audit(root):
     """Verify the sealed round files against the public manifest; return cases per split."""
     root = Path(root)
     manifest = json.loads((root / "manifest.json").read_text())
+    if manifest.get("version") == "zils-base-holdout/v2":
+        from . import base_exam
+
+        return base_exam.audit(root)
     if manifest.get("version") != VERSION or set(manifest["files"]) != {
         f"{s}.jsonl" for s in SPLITS
     }:
@@ -144,9 +155,9 @@ def paired_improvement(cases, incumbent, candidate, *, resamples, seed=0):
     }
 
 
-def decide(cases, incumbent_uid, calibration_rows, test_rows, policy=None):
+def archival_decide(cases, incumbent_uid, calibration_rows, test_rows, policy=None):
     """One draw: calibrate every model on calibration, compare each candidate with the incumbent on test."""
-    policy = {**DEFAULT_POLICY, **(policy or {})}
+    policy = {**LEGACY_POLICY, **(policy or {})}
     if incumbent_uid not in calibration_rows or incumbent_uid not in test_rows:
         raise ValueError("incumbent must be evaluated on both splits")
 
@@ -205,6 +216,269 @@ def decide(cases, incumbent_uid, calibration_rows, test_rows, policy=None):
     }
 
 
+def validate_policy(policy=None):
+    if not isinstance(policy or {}, dict):
+        raise ValueError("base policy must be an object")
+    result = {**DEFAULT_POLICY, **(policy or {})}
+    if (
+        set(result) != set(DEFAULT_POLICY)
+        or any(type(v) not in (int, float) or not math.isfinite(v) for v in result.values())
+        or type(result["score_version"]) is not int
+        or type(result["bootstrap_resamples"]) is not int
+        or result != DEFAULT_POLICY
+    ):
+        raise ValueError("base policy must equal the fixed score-version-1 production policy")
+    return result
+
+
+def decide(
+    cases, incumbent_uid, calibration_rows, test_rows, policy=None, *, draw_identity, commitments
+):
+    """Calibrate on calibration only; elect on fixed decision quality with a Brier guard."""
+    from . import base_exam, base_metrics
+
+    policy = validate_policy(policy)
+    if set(draw_identity) != {"manifest_sha256", "dataset_sha256"} or draw_identity[
+        "dataset_sha256"
+    ] != dataset_hash(cases["test"]):
+        raise ValueError("decision draw differs from its cases")
+    seed = int(base_exam._hash(draw_identity["manifest_sha256"]), 16)
+    for rows in cases.values():
+        base_metrics.baselines(rows)
+
+    def calibrated(uid):
+        cal, test = calibration_rows[uid], test_rows[uid]
+        if cal["sha256"] != test["sha256"]:
+            raise ValueError("split checkpoint hashes differ")
+        zils.score(cases["calibration"], cal["predictions"])
+        zils.score(cases["test"], test["predictions"])
+        temperature = fit_temperature(cases["calibration"], cal["predictions"])
+        predictions = apply_temperature(cases["test"], test["predictions"], temperature)
+        shared = zils.score(cases["test"], predictions)
+        return predictions, {
+            "uid": uid,
+            "sha256": test["sha256"],
+            "temperature": temperature,
+            **{k: shared[k] for k in ("brier", "accuracy", "skill", "confident_errors")},
+            **base_metrics.score(cases["test"], predictions),
+            "evaluation": {
+                s: r.get("evaluation") for s, r in (("calibration", cal), ("test", test))
+            },
+        }
+
+    if incumbent_uid not in calibration_rows or incumbent_uid not in test_rows:
+        raise ValueError("incumbent must be evaluated on both splits")
+    incumbent_predictions, incumbent = calibrated(incumbent_uid)
+    candidates = []
+    for uid in sorted(set(calibration_rows) | set(test_rows) | set(commitments)):
+        if uid == incumbent_uid:
+            continue
+        claim = commitments.get(uid, {})
+        candidate = {
+            "uid": uid,
+            "sha256": claim.get("sha256"),
+            "hotkey": claim.get("hotkey"),
+            "commitment_block": claim.get("block"),
+            "eligible": False,
+        }
+        try:
+            base_exam._hash(claim.get("sha256"))
+            if (
+                type(claim.get("block")) is not int
+                or claim["block"] < 0
+                or not isinstance(claim.get("hotkey"), str)
+                or not claim["hotkey"]
+            ):
+                raise ValueError("missing immutable commitment ownership")
+            predictions, values = calibrated(uid)
+            if values["sha256"] != claim["sha256"] or values["sha256"] == incumbent["sha256"]:
+                raise ValueError("candidate must match commitment and differ from incumbent")
+            paired = base_metrics.paired_improvement(
+                cases["test"],
+                incumbent_predictions,
+                predictions,
+                resamples=policy["bootstrap_resamples"],
+                seed=seed,
+            )
+            candidate.update(values, **paired)
+            candidate["eligible"] = (
+                paired["improvement"] >= policy["min_score_improvement"]
+                and paired["lower_95"] > 0
+                and values["brier"] <= incumbent["brier"] + policy["max_brier_increase"] + 1e-12
+            )
+        except (ValueError, KeyError, TypeError) as error:
+            candidate["error"] = type(error).__name__ + ": invalid candidate evidence"
+        candidates.append(candidate)
+    eligible = [c for c in candidates if c["eligible"]]
+    winner = (
+        min(eligible, key=lambda c: (-c["score"], c["commitment_block"], c["sha256"]))
+        if eligible
+        else None
+    )
+    return {
+        **draw_identity,
+        "metric_version": base_metrics.VERSION,
+        "policy": policy,
+        "incumbent": incumbent,
+        "candidates": candidates,
+        "pending_winner": {k: winner[k] for k in ("uid", "sha256")} if winner else None,
+    }
+
+
+def public_decision(decision):
+    """Only aggregates and evidence digests leave the private validator store."""
+    scalar = {
+        k: decision[k]
+        for k in (
+            "metric_version",
+            "manifest_sha256",
+            "dataset_sha256",
+            "pool_id",
+            "model",
+            "policy",
+            "pending_winner",
+            "confirmed_winner",
+            "round_id",
+            "evaluated_at",
+        )
+        if k in decision
+    }
+    for field in ("incumbent", "candidates"):
+        rows = [decision[field]] if field == "incumbent" else decision[field]
+        public = [
+            {
+                k: r[k]
+                for k in (
+                    "uid",
+                    "sha256",
+                    "hotkey",
+                    "commitment_block",
+                    "eligible",
+                    "score",
+                    "brier",
+                    "accuracy",
+                    "skill",
+                    "temperature",
+                    "improvement",
+                    "lower_95",
+                    "upper_95",
+                )
+                if k in r
+            }
+            for r in rows
+        ]
+        scalar[field] = public[0] if field == "incumbent" else public
+    scalar["evidence_sha256"] = dataset_hash(decision)
+    return scalar
+
+
+def verify_decision(decision, *, active):
+    """Reopen private raw reports; never authorize a crown from claimed aggregates."""
+    from . import base_exam, base_metrics
+
+    if (
+        decision.get("metric_version") != base_metrics.VERSION
+        or any(decision.get(k) != active[k] for k in ("pool_id", "model", "policy"))
+        or decision["incumbent"]["sha256"] != active["incumbent_sha256"]
+    ):
+        raise ValueError("decision differs from active competition")
+    identity = {k: decision[k] for k in ("manifest_sha256", "dataset_sha256")}
+    if identity not in active["draws"]:
+        raise ValueError("decision draw is outside active competition")
+    root = Path(active["draw_roots"][identity["manifest_sha256"]])
+    if draw(root) != identity:
+        raise ValueError("active draw identity changed")
+    history = active.get("history")
+    cases = base_exam.audit(root)[1]
+    rows = {s: {} for s in SPLITS}
+    claims = {}
+    for candidate in [decision["incumbent"], *decision["candidates"]]:
+        if candidate is not decision["incumbent"]:
+            claims[candidate["uid"]] = {
+                "sha256": candidate["sha256"],
+                "hotkey": candidate["hotkey"],
+                "block": candidate["commitment_block"],
+            }
+        if "evaluation" not in candidate:
+            continue
+        for split in SPLITS:
+            evidence = candidate["evaluation"][split]
+            if not isinstance(evidence, dict):
+                raise ValueError("missing recorded evaluation timing")
+            start, end = (base_exam._time(evidence[k]) for k in ("started_at", "completed_at"))
+            if start > end:
+                raise ValueError("evaluation timing is reversed")
+            base_exam.audit(root, history=history, as_of=end)
+            path = Path(evidence["path"])
+            if benchmark.file_hash(base_exam._regular(path)) != evidence["sha256"]:
+                raise ValueError("evaluation report hash changed")
+            stored = json.loads(path.read_text())
+            binding = {
+                "manifest_sha256": identity["manifest_sha256"],
+                "checkpoint_sha256": candidate["sha256"],
+                "split": split,
+                "started_at": start,
+                "completed_at": end,
+            }
+            if (
+                any(stored.get(k) != v for k, v in binding.items())
+                or len(stored.get("miners", [])) != 1
+            ):
+                raise ValueError("evaluation report binding changed")
+            row = next(iter(rows_for(stored, cases[split]).values()), None)
+            if row is None or row["sha256"] != candidate["sha256"]:
+                raise ValueError("evaluation report has no matching checkpoint")
+            rows[split][candidate["uid"]] = {**row, "uid": candidate["uid"], "evaluation": evidence}
+    actual = decide(
+        cases,
+        decision["incumbent"]["uid"],
+        rows["calibration"],
+        rows["test"],
+        active["policy"],
+        draw_identity=identity,
+        commitments=claims,
+    )
+    for key in ("incumbent", "candidates", "pending_winner"):
+        if actual[key] != decision[key]:
+            raise ValueError("decision aggregates differ from raw evidence")
+    return base_exam.audit(root), actual
+
+
+def confirm_candidates(first, second, *, active):
+    from . import base_exam
+
+    audits = [verify_decision(d, active=active)[0] for d in (first, second)]
+    base_exam.disjoint(audits)
+    result = []
+    for candidate in first["candidates"]:
+        if not candidate["eligible"]:
+            continue
+        again = next(
+            (
+                c
+                for c in second["candidates"]
+                if c["sha256"] == candidate["sha256"]
+                and c["hotkey"] == candidate["hotkey"]
+                and c["commitment_block"] == candidate["commitment_block"]
+                and c["eligible"]
+            ),
+            None,
+        )
+        if again is None:
+            continue
+        first_end = max(
+            r["evaluation"][s]["completed_at"]
+            for r in (first["incumbent"], candidate)
+            for s in SPLITS
+        )
+        second_start = min(
+            r["evaluation"][s]["started_at"] for r in (second["incumbent"], again) for s in SPLITS
+        )
+        if second_start >= first_end + 12 * 3600:
+            result.append(again)
+    return result
+
+
 def draw(root):
     """The identity of one sealed draw: its manifest hash and the test split's dataset hash."""
     _, cases = audit(root)
@@ -246,11 +520,7 @@ def validate_track(track, *, allow_empty_draws=False):
             raise ValueError("each draw needs manifest_sha256 and dataset_sha256")
         if any(not re.fullmatch("[a-f0-9]{64}", str(v)) for v in item.values()):
             raise ValueError("draw hashes must be sha256 hex")
-    policy = {**DEFAULT_POLICY, **track.get("policy", {})}
-    if set(policy) != set(DEFAULT_POLICY) or any(
-        type(v) not in (int, float) or v < 0 for v in policy.values()
-    ):
-        raise ValueError("base_tier.policy may only override the base_round policy keys")
+    policy = validate_policy(track.get("policy"))
     return {**track, "kings": kings, "burn_uid": burn, "policy": policy}
 
 
@@ -337,9 +607,9 @@ def main():
     parser.add_argument("--calibration-report")
     parser.add_argument("--test-report")
     parser.add_argument("--incumbent-uid", type=int)
-    parser.add_argument(
-        "--min-brier-improvement", type=float, default=DEFAULT_POLICY["min_brier_improvement"]
-    )
+    parser.add_argument("--config")
+    parser.add_argument("--pool")
+    parser.add_argument("--chain-snapshot")
     parser.add_argument(
         "--confirm", help="an earlier decision.json; print the confirmed winner instead"
     )
@@ -353,22 +623,44 @@ def main():
         or args.incumbent_uid is None
     ):
         parser.error("--calibration-report, --test-report, --incumbent-uid and --out are required")
-    manifest, cases = audit(args.round)
-    calibration = rows_for(
-        json.loads(Path(args.calibration_report).read_text()), cases["calibration"]
+    if not (args.config and args.pool and args.chain_snapshot):
+        parser.error("--config, --pool and --chain-snapshot are required")
+    from . import base_release, commitments
+
+    config_path = Path(args.config)
+    active = base_release.active_context(
+        json.loads(config_path.read_text()), args.pool, directory=config_path.parent
     )
-    test = rows_for(json.loads(Path(args.test_report).read_text()), cases["test"])
+    cases = audit(args.round)[1]
+    snapshot = json.loads(Path(args.chain_snapshot).read_text())
+    claims = commitments.candidates(snapshot, active["incumbent_sha256"])
+    claims = {
+        u: {**c, "hotkey": snapshot["members"][str(u)]}
+        for u, c in claims.items()
+        if "error" not in c
+    }
+    reports = {
+        s: rows_for(json.loads(Path(p).read_text()), cases[s])
+        for s, p in (("calibration", args.calibration_report), ("test", args.test_report))
+    }
     decision = decide(
         cases,
         args.incumbent_uid,
-        calibration,
-        test,
-        {"min_brier_improvement": args.min_brier_improvement},
+        reports["calibration"],
+        reports["test"],
+        active["policy"],
+        draw_identity=draw(args.round),
+        commitments=claims,
     )
-    decision["manifest_sha256"] = benchmark.file_hash(Path(args.round) / "manifest.json")
-    decision["evaluated_at"] = time.time()
+    decision.update(pool_id=args.pool, model=active["model"])
+    verify_decision(decision, active=active)
     if args.confirm:
-        decision["confirmed_winner"] = confirm(json.loads(Path(args.confirm).read_text()), decision)
+        ready = confirm_candidates(
+            json.loads(Path(args.confirm).read_text()), decision, active=active
+        )
+        decision["confirmed_winner"] = (
+            {k: ready[0][k] for k in ("uid", "sha256")} if ready else None
+        )
     with Path(args.out).open("x") as output:
         json.dump(decision, output, indent=2, allow_nan=False)
         output.write("\n")

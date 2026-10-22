@@ -201,8 +201,26 @@ class BaseCandidateTest(unittest.TestCase):
                     "--regression-report",
                     str(root / "regression.json"),
                 ]
+                argv += [
+                    "--config",
+                    str(root / "first.json"),
+                    "--pool",
+                    "d3-mini",
+                    "--window-report",
+                    str(decision),
+                ]
+                verified = {
+                    "status": "qualified",
+                    "winner": {**winner, "hotkey": "hk-new"},
+                    "closing": {"decision": json.loads(decision.read_text())},
+                }
                 out = io.StringIO()
                 with (
+                    patch(
+                        "zils.base_release.active_context",
+                        return_value={"model": models.spec(model), "kings": ["hk-old", "hk-older"]},
+                    ),
+                    patch("zils.base_release.verify_window", return_value=verified),
                     patch.object(sys, "argv", argv),
                     patch(validator) as validate,
                     contextlib.redirect_stdout(out),
@@ -264,6 +282,14 @@ class BaseCandidateTest(unittest.TestCase):
                 "--first-decision",
                 str(decision),
                 "--regression-report",
+                str(decision),
+            ]
+            argv += [
+                "--config",
+                str(decision),
+                "--pool",
+                "d3-mini",
+                "--window-report",
                 str(decision),
             ]
             with patch.object(sys, "argv", argv), self.assertRaisesRegex(SystemExit, "not a d3"):

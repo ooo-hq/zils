@@ -17,11 +17,11 @@ python -m scripts.migrate_model_pools --config validator/config.json \
   --out validator/pools-staged.json
 ```
 
-This preserves mini's exact incumbent, king list, draw policy and the outer
-base/adapter budget. Mini receives all of the existing base allocation. The four
-other profiles have no king, no draws, zero allocation and disabled intake.
+This preserves mini's exact incumbent, king list and the outer
+base/adapter budget. Mini receives all of the existing base allocation. Every pool starts disabled with the fixed decision-quality policy and no active
+draws. The four other profiles have no king and zero allocation.
 The command does not install configuration, restart a service or publish weights.
-Old single-base configs and receipts remain readable. Never specify both
+Old receipts remain archival; new single-base intake requires this migration. Never specify both
 `base_tier` and `base_pools`.
 
 `base_pools` contains `share` (the outer base budget), `burn_uid`, and `pools`.
@@ -31,8 +31,8 @@ sum to one. Disabled or unowned pools burn their fraction; another pool cannot
 inherit it. Last-five-distinct registered kings split each earned allocation.
 Burn publication checks that `burn_uid` is the subnet owner's uid.
 
-`base_pool_rounds` maps each enabled pool to its `base_reference` and
-`base_round_dir`. Set these to separately audited, pool-specific inputs before
+`base_pool_rounds` maps each enabled pool to `base_reference`, `base_round_dir`,
+`family_history`, `suite_manifest` and `pilot_report`. Set these to separately audited, pool-specific inputs before
 enabling a new competition. Never reuse a disclosed test set as another pool's
 sealed draw. Runtime state goes under `base-pools/<pool>/base-tier`; prior legacy
 state is preserved. Each pending validator round freezes the pool config and
@@ -55,21 +55,17 @@ tensor contract. Work uses the existing shared GPU lock and separate pool stores
 A pool failure is recorded in the local round's `pool-intake.json`; another pool's
 result and king history remain intact. Exam challengers earn nothing until crowned.
 
-The first draw records evaluation time. A second draw is not evaluated until at
-least 12 hours later. The decision and cached predictions retain those timestamps
-across restarts. Promotion requires the two recorded decisions, disjoint test
-hashes and the same incumbent/profile/policy. Existing historical decisions are
-not rewritten or assigned invented timestamps. New promotion attempts need timed
-evidence. Minimum Brier gain remains 0.01 with positive paired 95% lower bound,
-positive skill and no accuracy loss.
+The [decision-quality election runbook](base-election.md) defines the fixed score,
+independent exam qualification, candidate-specific 12-hour confirmation delay,
+three-seed adapter gate and common closing draw. Every eligible candidate can
+qualify. Each pool needs its own passing pilot receipt; a mini receipt cannot
+enable lite, nano, flash or d3. A weight-only release preserves the execution
+contract, while changed runtime, blueprint or score semantics require requalification.
 
-Run the existing adapter regression suite for the selected profile and candidate.
-`promote_base.py` now requires `--first-decision` and `--regression-report` as well
-as the confirming `--decision`. Its regression gate binds both checkpoint hashes
-and the exact profile, recomputes the verdict, and requires no job worse by more
-than 0.005 Brier and at least one improvement. It only proposes a release and king
-update for the selected pool; applying that update remains a reviewed promotion.
-See [base candidates](base-candidates.md) for the training and staging commands.
+Promotion uses `promote_base.py --config ... --pool ... --window-report ...`.
+It rechecks the closed window against installed state and produces a reviewable
+profile/king update. Stable/latest movement remains separate from election and
+existing adapters' exact model pins.
 
 ## Qualify each profile and role
 

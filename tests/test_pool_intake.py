@@ -15,7 +15,7 @@ from scripts import promote_base, qualify_node
 from scripts.migrate_model_pools import migrate
 from tests import test_qualify_node
 from tests.promoted_profile import PROMOTED, promoted_profile
-from tests.test_base_round import make_cases, sealed
+from tests.test_base_exam import inputs, sealed
 from tests.test_base_tier_intake import RUNNER, candidate, fake_hub, revision
 from tests.test_pool_rewards import pools
 from zils import base_round, commitments, miner_grading, models, protocol, validator
@@ -33,7 +33,7 @@ class PoolIntakeTest(unittest.TestCase):
             "candidate_model": models.D3,
             "jobs": {"task": {"incumbent": {"brier": 0.3}, "candidate": {"brier": 0.2}}},
         }
-        promote_base.verify_regression(report, "a" * 64, "b" * 64, models.D3)
+        promote_base.archival_verify_regression(report, "a" * 64, "b" * 64, models.D3)
         for changes in (
             {"candidate_sha256": "c" * 64},
             {"candidate_model": "d3-lite-0.8b-v1"},
@@ -42,7 +42,9 @@ class PoolIntakeTest(unittest.TestCase):
             {"jobs": {"task": {"incumbent": {"brier": 0.3}, "candidate": {"brier": 0.31}}}},
         ):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
-                promote_base.verify_regression({**report, **changes}, "a" * 64, "b" * 64, models.D3)
+                promote_base.archival_verify_regression(
+                    {**report, **changes}, "a" * 64, "b" * 64, models.D3
+                )
 
     def test_staging_preserves_mini_incumbent_history_and_outer_budget(self):
         track = {
@@ -92,19 +94,22 @@ class PoolIntakeTest(unittest.TestCase):
             root = Path(tmp)
             (root / "reference").mkdir()
             models.write_metadata(root / "reference", kind="base", model=models.D3)
-            calibration = make_cases("cal", 60)
-            sealed(root / "first", calibration, make_cases("first", 60))
-            sealed(root / "second", calibration, make_cases("second", 60))
+            sealed(root / "first", "first")
+            sealed(root / "second", "second")
+            (root / "pilot.json").write_text(json.dumps({"fixture": True}))
+            (root / "history.json").write_text(json.dumps(inputs()[2]))
             draws = [(base_round.draw(root / name), root / name) for name in ("first", "second")]
             config = {
                 "pool_id": "d3-mini",
                 "model": models.spec(models.D3),
                 "base_reference": "reference",
+                "family_history": "history.json",
+                "pilot_report": "pilot.json",
                 "base_tier": {
                     "share": 1,
                     "incumbent_sha256": zils.checkpoint_hash(root / "reference"),
                     "draws": [item for item, _ in draws],
-                    "policy": {"bootstrap_resamples": 100},
+                    "policy": dict(base_round.DEFAULT_POLICY),
                 },
             }
             runner = root / "runner"
@@ -112,9 +117,12 @@ class PoolIntakeTest(unittest.TestCase):
             runner.chmod(0o700)
             log = root / "calls"
             args = SimpleNamespace(device="cpu", runtime_python=sys.executable, poll=0.1)
-            with patch.dict(
-                os.environ,
-                {"ZILS_D3_RUNTIME_PYTHON": str(runner), "ZILS_TEST_RUNNER_LOG": str(log)},
+            with (
+                patch("zils.base_pilot.verify_qualification"),
+                patch.dict(
+                    os.environ,
+                    {"ZILS_D3_RUNTIME_PYTHON": str(runner), "ZILS_TEST_RUNNER_LOG": str(log)},
+                ),
             ):
                 for name, now, count in (
                     ("round-1", 1000, 2),
@@ -291,3 +299,24 @@ class PoolIntakeTest(unittest.TestCase):
         sizing = next(c for c in calls if any("sizing probe" in str(v) for v in c))
         self.assertIn(lite, sizing)
         self.assertEqual(promote_base.CANDIDATE_ID_PREFIX[lite], "d3-lite-0.8b")
+
+    def test_migration_stages_legacy_policy_disabled_until_qualified(self):
+        cfg = {
+            "model": models.spec(models.D3),
+            "base_tier": {
+                "share": 0.7,
+                "incumbent_sha256": "a" * 64,
+                "draws": [{"manifest_sha256": "b" * 64, "dataset_sha256": "c" * 64}],
+                "kings": ["old"],
+                "policy": {"min_brier_improvement": 0.01},
+            },
+            "base_reference": "reference",
+            "base_round_dir": "draws",
+        }
+        result = migrate(cfg, "/operator")
+        self.assertTrue(all(not e["enabled"] for e in result["base_pools"]["pools"].values()))
+        self.assertEqual(
+            result["base_pools"]["pools"]["d3-mini"]["policy"], base_round.DEFAULT_POLICY
+        )
+        self.assertEqual(result["base_pool_rounds"], {})
+        self.assertEqual(cfg["base_tier"]["policy"], {"min_brier_improvement": 0.01})
