@@ -37,6 +37,10 @@ def audit(root):
     """Verify the sealed round files against the public manifest; return cases per split."""
     root = Path(root)
     manifest = json.loads((root / "manifest.json").read_text())
+    if manifest.get("version") == "zils-base-holdout/v2":
+        from . import base_exam
+
+        return base_exam.audit(root)
     if manifest.get("version") != VERSION or set(manifest["files"]) != {
         f"{s}.jsonl" for s in SPLITS
     }:
