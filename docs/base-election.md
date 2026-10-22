@@ -253,9 +253,8 @@ Run paired release-versus-previous S1MB `english-v1` under identical runtime and
 hardware; publish aggregates, uncertainty and unfavorable outcomes. Prepare
 Decision Index/JevBench submissions for owner approval. They are external transfer
 checks, not per-crown approval gates. Maintain the exam/S1MB transfer ledger; after
-three releases apply the [design's transfer review](superpowers/specs/2026-10-21-base-election-design.md)
-and pause future election if its transfer rule fails, without choosing a different
-past winner.
+three releases, if exam gains have not come with S1MB gains in the same direction,
+pause future election and revise the exam, without choosing a different past winner.
 
 `make lint` and `make test` cover software contracts and CPU fixtures. Real exam
 qualification, both real miner submissions, live cutover, external placement,

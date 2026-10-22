@@ -2,6 +2,6 @@
   "role": "miner",
   "coordinator": "https://training.zils.ai",
   "hotkey": "REPLACE_WITH_PUBLIC_SS58",
-  "wallet": {"name": "fez-testnet", "hotkey": "node-1", "path": "/etc/zils-node/wallets"},
+  "wallet": {"name": "zils-node", "hotkey": "miner", "path": "/etc/zils-node/wallets"},
   "device": "cuda"
 }

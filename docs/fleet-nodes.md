@@ -126,7 +126,7 @@ entries route H2O releases to the serving node's tunnel port.
 
 ## Networking
 
-- Tailscale on every node (already used for the 4090 and `ken-server`);
+- Tailscale on every node;
   fleet ports 8900 and 8901–8903 are allowed only from fleet peers' Tailscale
   addresses, matching the private-network assumption in `mining.md`.
 - Gateway tunnels keep the existing `ssh -N` unit pattern; one unit per
