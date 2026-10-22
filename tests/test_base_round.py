@@ -113,7 +113,9 @@ class BaseRoundTest(unittest.TestCase):
         test_rows = base_round.rows_for(
             report(test, {u: predict(test, m, 200 + u) for u, m in masses.items()}), test
         )
-        decision = base_round.decide(cases, 0, cal_rows, test_rows, {"bootstrap_resamples": 300})
+        decision = base_round.archival_decide(
+            cases, 0, cal_rows, test_rows, {"bootstrap_resamples": 300}
+        )
         by_uid = {c["uid"]: c for c in decision["candidates"]}
         self.assertTrue(by_uid[1]["eligible"])
         self.assertFalse(by_uid[2]["eligible"], by_uid[2])
@@ -129,7 +131,7 @@ class BaseRoundTest(unittest.TestCase):
             report(second_test, {u: predict(second_test, m, 300 + u) for u, m in masses.items()}),
             second_test,
         )
-        second = base_round.decide(
+        second = base_round.archival_decide(
             {"calibration": calibration, "test": second_test},
             0,
             cal_rows,
@@ -143,7 +145,7 @@ class BaseRoundTest(unittest.TestCase):
             ),
             second_test,
         )
-        failed = base_round.decide(
+        failed = base_round.archival_decide(
             {"calibration": calibration, "test": second_test},
             0,
             cal_rows,
@@ -304,3 +306,164 @@ class BaseRoundTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DecisionElectionTest(unittest.TestCase):
+    def rows(self, cases, uid, value):
+        from tests.test_base_metrics import predictions
+
+        return {
+            "uid": uid,
+            "sha256": f"{uid:064x}",
+            "predictions": predictions(cases, confidence=value),
+        }
+
+    def test_fixed_production_policy_and_boundary_gates(self):
+        from unittest.mock import patch
+
+        from tests.test_base_exam import inputs
+        from zils import base_metrics
+
+        cases = inputs()[0]
+        rows = {s: {u: self.rows(cases[s], u, 0.8) for u in (0, 1, 2)} for s in cases}
+        claims = {
+            u: {"sha256": f"{u:064x}", "block": 100 - u, "hotkey": f"miner-{u}"} for u in (1, 2)
+        }
+        draw = {
+            "manifest_sha256": "a" * 64,
+            "dataset_sha256": base_round.dataset_hash(cases["test"]),
+        }
+        with (
+            patch.object(base_round, "fit_temperature", return_value=1),
+            patch.object(
+                base_metrics, "score", return_value={"score": 51, "families": {}, "categories": {}}
+            ),
+            patch.object(
+                base_metrics,
+                "paired_improvement",
+                return_value={"improvement": 1.0, "lower_95": 0.01, "upper_95": 2.0},
+            ) as paired,
+        ):
+            decision = base_round.decide(
+                cases, 0, rows["calibration"], rows["test"], draw_identity=draw, commitments=claims
+            )
+            self.assertTrue(all(c["eligible"] for c in decision["candidates"]))
+            self.assertEqual(decision["pending_winner"]["uid"], 2)
+            self.assertEqual(len({call.kwargs["seed"] for call in paired.call_args_list}), 1)
+            paired.return_value["lower_95"] = 0
+            decision = base_round.decide(
+                cases, 0, rows["calibration"], rows["test"], draw_identity=draw, commitments=claims
+            )
+            self.assertIsNone(decision["pending_winner"])
+        for policy in (
+            {"min_brier_improvement": 0.01},
+            {"score_version": 2},
+            {"score_version": True},
+            {"bootstrap_resamples": 1},
+            {"bootstrap_resamples": 0},
+            {"bootstrap_resamples": 2000.0},
+            {"max_brier_increase": float("nan")},
+            {"min_score_improvement": 0.1},
+        ):
+            with self.subTest(policy=policy), self.assertRaises(ValueError):
+                base_round.validate_track(
+                    {"share": 1, "incumbent_sha256": "0" * 64, "draws": [draw], "policy": policy}
+                )
+
+    def test_bad_candidate_is_isolated_and_public_fields_are_aggregates(self):
+        from unittest.mock import patch
+
+        from tests.test_base_exam import inputs
+        from zils import base_metrics
+
+        cases = inputs()[0]
+        rows = {s: {u: self.rows(cases[s], u, 0.8) for u in (0, 1, 2)} for s in cases}
+        rows["test"][1]["predictions"] = []
+        claims = {u: {"sha256": f"{u:064x}", "block": u, "hotkey": f"miner-{u}"} for u in (1, 2)}
+        draw = {
+            "manifest_sha256": "a" * 64,
+            "dataset_sha256": base_round.dataset_hash(cases["test"]),
+        }
+        with (
+            patch.object(base_round, "fit_temperature", return_value=1),
+            patch.object(
+                base_metrics,
+                "paired_improvement",
+                return_value={"improvement": 2.0, "lower_95": 1.0, "upper_95": 3.0},
+            ),
+        ):
+            decision = base_round.decide(
+                cases, 0, rows["calibration"], rows["test"], draw_identity=draw, commitments=claims
+            )
+            self.assertFalse(decision["candidates"][0]["eligible"])
+            self.assertTrue(decision["candidates"][1]["eligible"])
+            decision["incumbent"]["evaluation"] = {"path": "/private/sealed"}
+            public = json.dumps(base_round.public_decision(decision))
+            for private in (
+                "reasoning-known",
+                "/private/sealed",
+                "predictions",
+                cases["test"][0]["id"],
+            ):
+                self.assertNotIn(private, public)
+            rows["test"][0]["predictions"] = []
+            with self.assertRaises(ValueError):
+                base_round.decide(
+                    cases,
+                    0,
+                    rows["calibration"],
+                    rows["test"],
+                    draw_identity=draw,
+                    commitments=claims,
+                )
+
+    def test_confirmation_uses_each_candidates_time_and_hotkey(self):
+        import copy
+        from unittest.mock import patch
+
+        from tests.test_base_exam import inputs
+        from zils import base_metrics
+
+        def row(uid, sha, start, end, hotkey="miner"):
+            return {
+                "uid": uid,
+                "sha256": sha,
+                "eligible": True,
+                "hotkey": hotkey,
+                "commitment_block": 20,
+                "evaluation": {
+                    s: {"started_at": start, "completed_at": end} for s in base_round.SPLITS
+                },
+            }
+
+        active = {
+            "pool_id": "d3-mini",
+            "model": {},
+            "policy": base_round.DEFAULT_POLICY,
+            "incumbent_sha256": "a" * 64,
+        }
+        first = {
+            **active,
+            "metric_version": base_metrics.VERSION,
+            "incumbent": row(0, "a" * 64, 90, 100),
+            "candidates": [row(1, "b" * 64, 190, 200), row(2, "c" * 64, 290, 300)],
+        }
+        second = copy.deepcopy(first)
+        second["incumbent"] = row(0, "a" * 64, 43400, 43401)
+        second["candidates"] = [row(9, "b" * 64, 43400, 43401), row(2, "c" * 64, 43400, 43401)]
+        audits = [({}, inputs(p)[0]) for p in ("first", "second")]
+        with patch.object(
+            base_round, "verify_decision", side_effect=[(audits[0], first), (audits[1], second)]
+        ):
+            self.assertEqual(
+                [c["uid"] for c in base_round.confirm_candidates(first, second, active=active)], [9]
+            )
+        second["candidates"][0]["hotkey"] = "different-miner"
+        with patch.object(
+            base_round, "verify_decision", side_effect=[(audits[0], first), (audits[1], second)]
+        ):
+            self.assertEqual(base_round.confirm_candidates(first, second, active=active), [])
+        with self.assertRaisesRegex(ValueError, "active"):
+            base_round.confirm_candidates(
+                first, second, active={**active, "incumbent_sha256": "d" * 64}
+            )

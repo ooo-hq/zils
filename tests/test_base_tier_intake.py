@@ -15,7 +15,7 @@ from unittest.mock import Mock, patch
 from urllib.parse import unquote, urlsplit
 
 import zils
-from tests.test_base_round import make_cases, sealed
+from tests.test_base_exam import inputs, sealed
 from zils import base_round, commitments, models, protocol as wire, testnet, validator
 
 RUNNER = """import json, random, sys, os
@@ -28,10 +28,13 @@ requests = json.load(sys.stdin)
 rng = random.Random(f"{meta['kind']}-{accuracy}-{len(requests)}")
 predictions = []
 for row in requests:
-    keys = sorted(row["question"]["criteria"])
-    label = keys[int(row["state"]["text"].split()[-1]) % 4]
+    kind = row["question"]["type"]
+    criteria = row["question"]["criteria"]
+    keys = sorted(criteria) if kind == "choice" else (["false", "true"] if kind == "noul" else [str(i) for i in range(len(criteria))])
+    index = int(row["state"]["text"].split("-")[-1])
+    label = ({"choice": ["a", "b"], "noul": ["false", "true"], "score": ["0", "1", "3", "4"]}[kind])[index % (4 if kind == "score" else 2)]
     chosen = label if rng.random() < accuracy else rng.choice([k for k in keys if k != label])
-    p = {k: 0.1 for k in keys}
+    p = {k: 0.3 / (len(keys)-1) for k in keys}
     p[chosen] = 0.7
     predictions.append({"id": row["id"], "elapsed_ms": 1.0, "probabilities": p})
 with open(os.environ["ZILS_TEST_RUNNER_LOG"], "a") as log:
@@ -134,9 +137,9 @@ class BaseTierIntakeTest(unittest.TestCase):
             root = Path(tmp)
             vdir = root / "validator"
             (vdir / "draws").mkdir(parents=True)
-            calibration = make_cases("cal", 60)
-            sealed(vdir / "draws/first", calibration, make_cases("first", 60))
-            sealed(vdir / "draws/second", calibration, make_cases("second", 60))
+            sealed(vdir / "draws/first", "first")
+            sealed(vdir / "draws/second", "second")
+            (vdir / "history.json").write_text(json.dumps(inputs()[2]))
             draws = [base_round.draw(vdir / "draws/first"), base_round.draw(vdir / "draws/second")]
             (vdir / "reference").mkdir()
             models.write_metadata(vdir / "reference", kind="base", model=models.D3)
@@ -212,8 +215,10 @@ class BaseTierIntakeTest(unittest.TestCase):
                     "share": 0.7,
                     "incumbent_sha256": incumbent,
                     "draws": draws,
-                    "policy": {"bootstrap_resamples": 200},
+                    "policy": dict(base_round.DEFAULT_POLICY),
                 },
+                "pool_id": "d3-mini",
+                "family_history": "history.json",
                 "base_round_dir": "draws",
                 "base_reference": "reference",
             }
@@ -243,6 +248,8 @@ class BaseTierIntakeTest(unittest.TestCase):
                     )
                 self.assertIsNone(validator.base_draws({"members": {}}, vdir))
 
+                clock = [1000]
+
                 def epoch(rid):
                     snapshot = testnet.preflight(config, fake_chain(state))
                     work = vdir / "state/rounds" / rid
@@ -251,9 +258,14 @@ class BaseTierIntakeTest(unittest.TestCase):
                     registry = commitments.candidates(
                         json.loads((work / "chain-snapshot.json").read_text()), incumbent
                     )
-                    return registry, validator.base_tier_epoch(
-                        config, vdir, work, registry, args, audited
-                    )
+                    owned = {u: {**c, "hotkey": hotkeys[u]} for u, c in registry.items()}
+                    for _ in range(2):
+                        with patch("zils.validator.time.time", return_value=clock[0]):
+                            decision = validator.base_tier_epoch(
+                                config, vdir, work, owned, args, audited
+                            )
+                        clock[0] += 43200
+                    return registry, decision
 
                 registry, decision = epoch("a" * 32)
                 self.assertEqual(

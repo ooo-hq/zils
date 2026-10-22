@@ -14,7 +14,7 @@ from miner.queue import fits
 from scripts import promote_base, qualify_node
 from scripts.migrate_model_pools import migrate
 from tests import test_qualify_node
-from tests.test_base_round import make_cases, sealed
+from tests.test_base_exam import inputs, sealed
 from tests.test_base_tier_intake import RUNNER, candidate, fake_hub, revision
 from tests.test_pool_rewards import pools
 from zils import base_round, commitments, miner_grading, models, protocol, validator
@@ -88,19 +88,20 @@ class PoolIntakeTest(unittest.TestCase):
             root = Path(tmp)
             (root / "reference").mkdir()
             models.write_metadata(root / "reference", kind="base", model=models.D3)
-            calibration = make_cases("cal", 60)
-            sealed(root / "first", calibration, make_cases("first", 60))
-            sealed(root / "second", calibration, make_cases("second", 60))
+            sealed(root / "first", "first")
+            sealed(root / "second", "second")
+            (root / "history.json").write_text(json.dumps(inputs()[2]))
             draws = [(base_round.draw(root / name), root / name) for name in ("first", "second")]
             config = {
                 "pool_id": "d3-mini",
                 "model": models.spec(models.D3),
                 "base_reference": "reference",
+                "family_history": "history.json",
                 "base_tier": {
                     "share": 1,
                     "incumbent_sha256": zils.checkpoint_hash(root / "reference"),
                     "draws": [item for item, _ in draws],
-                    "policy": {"bootstrap_resamples": 100},
+                    "policy": dict(base_round.DEFAULT_POLICY),
                 },
             }
             runner = root / "runner"
