@@ -20,6 +20,21 @@ from .runtime import CapacityUnavailable, digest, locked, run_child, signed, sig
 
 # The incumbent base is scored as a row outside every roster; the publisher refuses a roster uid there.
 INCUMBENT_UID = 65535
+# Per-submission evaluation budget: long inputs measured ~1 s/case (p95 2 s) on a 4090, so 3 s/case
+# leaves headroom; never below the old fixed 600 s.
+EVAL_SECONDS_PER_CASE = 3
+EVAL_MIN_SECONDS = 600
+
+
+def evaluation_timeout(cases):
+    """Seconds one submission may take on `cases` (a JSONL file, or a JSON list for image requests)."""
+    text = Path(cases).read_text()
+    count = (
+        len(json.loads(text))
+        if text.lstrip().startswith("[")
+        else sum(1 for line in text.splitlines() if line.strip())
+    )
+    return max(EVAL_MIN_SECONDS, EVAL_SECONDS_PER_CASE * count)
 
 
 def run_evaluate(
@@ -39,6 +54,7 @@ def run_evaluate(
     manifest = attempt / f"{name}-submissions.json"
     wire.write_json(manifest, submissions)
     report = attempt / f"{name}.json"
+    per_submission = evaluation_timeout(cases)
     command = [
         sys.executable,
         "-m",
@@ -56,6 +72,8 @@ def run_evaluate(
         else args.runtime_python,
         "--device",
         args.device,
+        "--timeout",
+        str(per_submission),
         "--report",
         str(report),
     ]
@@ -68,7 +86,8 @@ def run_evaluate(
                 command,
                 attempt / f"{name}.log",
                 args.device,
-                timeout=120 + 600 * len(submissions),
+                # Checkpoint staging also counts against the child, so each submission gets 120 s extra.
+                timeout=120 + (per_submission + 120) * len(submissions),
                 **({"model": model, "minimum_mib": minimum_mib} if model == models.IMAJEV else {}),
             )
             break
