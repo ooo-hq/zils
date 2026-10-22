@@ -345,8 +345,12 @@ def pool_rounds(config, directory):
             "base_round_dir",
             "base_reference",
             "family_history",
+            "suite_manifest",
+            "pilot_report",
         }:
-            raise ValueError("each pool requires base_round_dir, base_reference and family_history")
+            raise ValueError(
+                "each pool requires base_round_dir, base_reference, family_history, suite_manifest and pilot_report"
+            )
         settings = {
             **{k: v for k, v in config.items() if k not in ("base_pools", "base_pool_rounds")},
             "model": entry["model"],
@@ -521,6 +525,7 @@ def base_tier_epoch(config, directory, work, registry, args, draws, *, wait_for_
         if not claim.get("hotkey"):
             rejected[uid] = "commitment has no frozen hotkey"
             continue
+        claims[uid] = claim
         target = store / claim["sha256"] / "checkpoint"
         if not target.exists():
             fetched = target.with_name("fetch-" + uuid.uuid4().hex)
@@ -666,7 +671,7 @@ def base_tier_epoch(config, directory, work, registry, args, draws, *, wait_for_
             rows["test"],
             track["policy"],
             draw_identity=item,
-            commitments={u: claims[u] for u in selected if u in claims},
+            commitments={u: c for u, c in claims.items() if u in selected or u not in entries},
         )
         decision.update(
             pool_id=config["pool_id"],
