@@ -143,6 +143,10 @@ python -m zils.base_pilot --bundle pilot-bundle.json --out pilot-report.json
 
 The verifier recomputes ranking and every pairwise interval from the exports.
 Both phases require Spearman >=0.9 and no inversion for an external gap >=5.
+The external ranking scores Choice and yes/no families only: Decision Index references do not
+answer Score questions, and on 22 Oct 2026 Score families alone moved the five-model Spearman
+from 1.0 to 0.7 by favouring the d3 runtime. Score families stay in every election, where all
+candidates share the pool's runtime, and in the within-pool precision comparisons.
 Every nondegenerate predeclared interval must be within 0.5 point of the estimate
 on each side. Identical or clipping-degenerate pairs provide no sizing evidence;
 the required within-pool pair must have nonzero paired variance. Failed validation

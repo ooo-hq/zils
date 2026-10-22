@@ -51,6 +51,17 @@ def ranking(external, measured):
     }
 
 
+# Decision Index references only answer Choice and yes/no; Score stays in elections between pool candidates.
+EXTERNAL_TYPES = ("choice", "noul")
+
+
+def external_score(cases, predictions):
+    """Decision score over the question types the external references support."""
+    kept = [c for c in cases if c["question"]["type"] in EXTERNAL_TYPES]
+    ids = {c["id"] for c in kept}
+    return base_metrics.score(kept, [p for p in predictions if p["id"] in ids])["score"]
+
+
 def runtime_contract(model):
     if model not in models.d3_family():
         raise ValueError("base pilot requires a text pool runtime")
@@ -266,7 +277,7 @@ def check(bundle, *, root):
                 predictions[name] = base_round.apply_temperature(
                     cases["test"], exported["test"], temperature
                 )
-                scores[name] = base_metrics.score(cases["test"], predictions[name])["score"]
+                scores[name] = external_score(cases["test"], predictions[name])
             rank = ranking(external, [scores[n] for n in refs])
             if not rank["passed"]:
                 reasons.append(phase + ": external ranking/span requirement failed")
