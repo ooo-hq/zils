@@ -159,6 +159,20 @@ class BasePilotTest(unittest.TestCase):
         path.write_text("{}")
         self.assertFalse(base_pilot.check(self.bundle, root=self.root)["passed"])
 
+    def test_external_ranking_ignores_score_families(self):
+        from tests.test_base_metrics import exam
+
+        cases = exam("choice") + exam("noul") + exam("score")
+        # Perfect on Score only: the external view must not credit Score families.
+        wrong = {
+            "choice": lambda c: "b" if c["label"] == "a" else "a",
+            "noul": lambda c: "true" if c["label"] == "false" else "false",
+            "score": lambda c: c["label"],
+        }
+        rows = predictions(cases, lambda c, i: wrong[c["question"]["type"]](c))
+        self.assertGreater(base_metrics.score(cases, rows)["score"], 0)
+        self.assertEqual(base_pilot.external_score(cases, rows), 0)
+
     def test_tied_ranks_and_exact_five_point_inversion(self):
         self.assertEqual(base_pilot.ranks([1, 1, 3]), [1.5, 1.5, 3.0])
         self.assertEqual(base_pilot.spearman([1, 2, 3], [1, 2, 3]), 1.0)
