@@ -10,12 +10,14 @@ import torch
 from safetensors.torch import save_file
 
 import zils
+from tests.promoted_profile import promoted_profile
 from zils import d3, models
 
 
 class PoolProfilesTest(unittest.TestCase):
     def test_promoted_mini_keeps_its_pool_and_legacy_identity(self):
-        self.assertEqual(models.pool_id(models.D3_ZILS_R5), "d3-mini")
+        with promoted_profile() as promoted:
+            self.assertEqual(models.pool_id(promoted), "d3-mini")
         self.assertEqual(
             models.spec(models.D3)["base_revision"], "b54402a963373cc44713f18c9596c580e31cc68b"
         )

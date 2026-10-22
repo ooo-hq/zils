@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from scripts import crown_feature
 from tests import test_feature_round
+from tests.promoted_profile import promoted_profile
 from tests.test_feature_commitments import adapter
 from tests.test_feature_rewards import fixture as reward_fixture
 from zils import feature_commitments as bundles, models
@@ -16,6 +17,7 @@ from zils import feature_commitments as bundles, models
 
 class FeatureCrownTest(unittest.TestCase):
     def setUp(self):
+        self.enterContext(promoted_profile())
         self.runner = test_feature_round.FeatureRoundTest()
         self.runner.setUp()
         self.addCleanup(self.runner.doCleanups)

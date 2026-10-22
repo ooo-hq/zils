@@ -14,6 +14,7 @@ from miner.queue import fits
 from scripts import promote_base, qualify_node
 from scripts.migrate_model_pools import migrate
 from tests import test_qualify_node
+from tests.promoted_profile import PROMOTED, promoted_profile
 from tests.test_base_exam import inputs, sealed
 from tests.test_base_tier_intake import RUNNER, candidate, fake_hub, revision
 from tests.test_pool_rewards import pools
@@ -21,6 +22,9 @@ from zils import base_round, commitments, miner_grading, models, protocol, valid
 
 
 class PoolIntakeTest(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(promoted_profile())
+
     def test_promotion_regression_must_bind_weights_and_pass_every_job(self):
         report = {
             "candidate_sha256": "a" * 64,
@@ -47,7 +51,7 @@ class PoolIntakeTest(unittest.TestCase):
             k: v for k, v in pools()["pools"]["d3-mini"].items() if k not in ("model", "enabled")
         }
         cfg = {
-            "model": models.spec(models.D3_ZILS_R5),
+            "model": models.spec(PROMOTED),
             "base_tier": {**track, "share": 0.7},
             "base_reference": "reference",
             "base_round_dir": "draws",
@@ -171,7 +175,7 @@ class PoolIntakeTest(unittest.TestCase):
         registry = {1: {"sha256": "1" * 64}, 2: {"sha256": "2" * 64}, 3: {"sha256": "3" * 64}}
         with patch(
             "zils.commitments.parent_model",
-            side_effect=["d3-lite-0.8b-v1", models.D3, models.D3_ZILS_R5],
+            side_effect=["d3-lite-0.8b-v1", models.D3, PROMOTED],
         ):
             routed, rejected = commitments.route_pools(registry, cfg)
         self.assertEqual(set(routed["d3-lite"]), {1})

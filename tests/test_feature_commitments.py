@@ -7,11 +7,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 import zils
+from tests.promoted_profile import PROMOTED, promoted_profile
 from tests.test_base_tier_intake import fake_hub, revision
 from zils import commitments, feature_commitments as features, models, protocol
 
 
-def adapter(root, model=models.D3_ZILS_R5, kind="adapter"):
+def adapter(root, model=PROMOTED, kind="adapter"):
     root.mkdir()
     models.write_metadata(root, model=model, kind=kind)
     if kind == "adapter":
@@ -37,6 +38,7 @@ def adapter(root, model=models.D3_ZILS_R5, kind="adapter"):
 
 class FeatureCommitmentsTest(unittest.TestCase):
     def setUp(self):
+        self.enterContext(promoted_profile())
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
@@ -55,7 +57,7 @@ class FeatureCommitmentsTest(unittest.TestCase):
             {
                 "version": "zils-feature-adapter/v1",
                 "track_id": "box/d3-mini",
-                "model": models.spec(models.D3_ZILS_R5),
+                "model": models.spec(PROMOTED),
                 "decoder": "box-edges-101-presence/v1",
                 "checkpoint_sha256": zils.checkpoint_hash(self.source),
             },
@@ -109,7 +111,7 @@ class FeatureCommitmentsTest(unittest.TestCase):
             features.validate_bundle(output)
         with self.assertRaisesRegex(ValueError, "symlink"):
             features.pack(output, self.root / "bad", "box/d3-mini")
-        models.write_metadata(self.source, model=models.D3_ZILS_R5, temperature=0.2)
+        models.write_metadata(self.source, model=PROMOTED, temperature=0.2)
         with self.assertRaisesRegex(ValueError, "temperature"):
             features.pack(self.source, self.root / "calibrated", "box/d3-mini")
 
@@ -119,9 +121,7 @@ class FeatureCommitmentsTest(unittest.TestCase):
             features.pack(source, self.root / "not-allowed", "box/d3-mini")
         output = self.root / "reference"
         features.pack(source, output, "box/d3-mini", allow_base=True)
-        self.assertEqual(
-            features.validate_bundle(output, allow_base=True)["model"]["id"], models.D3_ZILS_R5
-        )
+        self.assertEqual(features.validate_bundle(output, allow_base=True)["model"]["id"], PROMOTED)
         self.assertEqual(len(features.bundle_hash(output)), 64)
         with self.assertRaisesRegex(ValueError, "adapter"):
             features.validate_bundle(output)
@@ -181,7 +181,7 @@ class FeatureCommitmentsTest(unittest.TestCase):
         with protocol.local_server(fake_hub(repos, requested)) as endpoint:
             self.assertEqual(features.parent(claim, endpoint=endpoint), manifest)
             self.assertEqual(requested, [("owner/box", "feature.json")])
-            for track, model in (("box/d3-lite", models.D3_ZILS_R5), ("box/d3-mini", models.D3)):
+            for track, model in (("box/d3-lite", PROMOTED), ("box/d3-mini", models.D3)):
                 with self.assertRaises(ValueError):
                     features.fetch(
                         claim,
@@ -193,7 +193,7 @@ class FeatureCommitmentsTest(unittest.TestCase):
             self.assertFalse((self.root / "rejected").exists())
             target = self.root / "download"
             receipt = features.fetch(
-                claim, target, track_id="box/d3-mini", model=models.D3_ZILS_R5, endpoint=endpoint
+                claim, target, track_id="box/d3-mini", model=PROMOTED, endpoint=endpoint
             )
             self.assertEqual(receipt["manifest"], manifest)
             self.assertEqual(features.bundle_hash(target), claim["sha256"])
@@ -202,7 +202,7 @@ class FeatureCommitmentsTest(unittest.TestCase):
                     claim | {"sha256": "f" * 64},
                     self.root / "copy",
                     track_id="box/d3-mini",
-                    model=models.D3_ZILS_R5,
+                    model=PROMOTED,
                     endpoint=endpoint,
                 )
 
@@ -221,7 +221,7 @@ class FeatureCommitmentsTest(unittest.TestCase):
                         claim,
                         self.root / "too-big",
                         track_id="box/d3-mini",
-                        model=models.D3_ZILS_R5,
+                        model=PROMOTED,
                         endpoint=endpoint,
                     )
             (output / "feature.json").write_bytes(b" " * 16385)
@@ -252,7 +252,7 @@ class FeatureCommitmentsTest(unittest.TestCase):
                         claim,
                         self.root / "expired",
                         track_id="box/d3-mini",
-                        model=models.D3_ZILS_R5,
+                        model=PROMOTED,
                         endpoint=endpoint,
                     )
             (output / "adapter_config.json").write_bytes(b" " * 16385)
@@ -262,7 +262,7 @@ class FeatureCommitmentsTest(unittest.TestCase):
                     claim,
                     self.root / "metadata",
                     track_id="box/d3-mini",
-                    model=models.D3_ZILS_R5,
+                    model=PROMOTED,
                     endpoint=endpoint,
                 )
             self.assertEqual(requested, [("owner/box", "feature.json")])
