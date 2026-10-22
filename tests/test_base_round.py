@@ -341,7 +341,7 @@ class DecisionElectionTest(unittest.TestCase):
             patch.object(
                 base_metrics,
                 "paired_improvement",
-                return_value={"improvement": 1.0, "lower_95": 0.01, "upper_95": 2.0},
+                return_value={"improvement": 3.0, "lower_95": 0.01, "upper_95": 4.0},
             ) as paired,
         ):
             decision = base_round.decide(
@@ -389,7 +389,7 @@ class DecisionElectionTest(unittest.TestCase):
             patch.object(
                 base_metrics,
                 "paired_improvement",
-                return_value={"improvement": 2.0, "lower_95": 1.0, "upper_95": 3.0},
+                return_value={"improvement": 4.0, "lower_95": 1.0, "upper_95": 5.0},
             ),
         ):
             decision = base_round.decide(

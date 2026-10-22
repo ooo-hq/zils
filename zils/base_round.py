@@ -34,7 +34,7 @@ LEGACY_POLICY = {
 
 DEFAULT_POLICY = {
     "score_version": 1,
-    "min_score_improvement": 1.0,
+    "min_score_improvement": 3.0,
     "max_brier_increase": 0.005,
     "bootstrap_resamples": 2000,
 }

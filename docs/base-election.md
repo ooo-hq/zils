@@ -30,11 +30,11 @@ baselines, soft labels and incomplete coverage are rejected before inference.
 The fixed production policy is:
 
 ```json
-{"score_version": 1, "min_score_improvement": 1.0,
+{"score_version": 1, "min_score_improvement": 3.0,
  "max_brier_increase": 0.005, "bootstrap_resamples": 2000}
 ```
 
-Each candidate needs at least +1 point, a strictly positive paired bootstrap
+Each candidate needs at least +3 points, a strictly positive paired bootstrap
 lower 95% bound, and calibrated full-vector Brier no more than 0.005 worse.
 Temperature is fitted only on calibration. Resampling is paired within families,
 stratified by class for yes/no, with original baselines held fixed. All candidates
