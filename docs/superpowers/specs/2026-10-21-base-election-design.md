@@ -5,6 +5,9 @@ Status: design, 21 October 2026. Owner conversation; not implemented. Builds on
 Scoring/readiness revision: 21 October 2026. Core main rechecked at `0b56003`;
 its base-round implementation is unchanged from that baseline. Choices explicitly
 marked below are builder proposals, not claims of implemented or measured behavior.
+The owner continued to implementation planning after reviewing the metric proposal
+and confirming its scope across all text-base pools. The numeric choices below
+retain their builder provenance; approval does not make them measured results.
 
 ## Intent
 
@@ -39,6 +42,12 @@ crown a base that is not better in the ways the owner means.
 
 Owner clarification, 21 October 2026:
 
+- The same election framework covers all five text-base pools: **d3-lite,
+  d3-nano, d3-mini, d3-flash and d3**. Each competes against its own incumbent,
+  retains its own king history, sealed cases, adapter evidence and release
+  channels, and must qualify the exam for its own pool before activation.
+  The first bootstrap/pilot is mini; a mini pass does not qualify another pool.
+  Published cases from any pool must never become another pool's sealed test.
 - The two bootstrap miner hosts both use **d3-mini** and must exercise the
   base-improvement competition: train candidate bases, commit them, and have
   validators evaluate them. Running only a customer-adapter queue worker does
@@ -286,14 +295,15 @@ Same sealing and publication rules as today; content widens.
   verbatim, because miners can train on any public split. Never seed from the
   S1MB, Decision Index or JevBench test sets.
 - **Size:** use a development pilot with predeclared, distinct model pairs that
-  actually disagree, including at least one within-d3-mini pair. For each pair
+  actually disagree, including at least one within-pool pair (d3-mini for the
+  first bootstrap). For each pair
   compute the paired 95% score interval; require both distances from the point
   estimate to its endpoints to be at most 0.5 points. Grow the sealed case count
   and repeat sizing on development data until all predeclared nondegenerate pairs
   meet that target. A pair with identical per-case outcomes provides no sizing
   evidence; report it as such. Likewise, differing predictions whose paired score
   distribution has zero variance after clipping provide no sizing evidence.
-  Require at least one within-d3-mini pair with nonzero paired score variance;
+  Require at least one within-pool pair with nonzero paired score variance;
   if none is available, obtain a distinct development checkpoint before sizing
   can pass. Freeze the resulting family mix and case counts
   before the independent validation draw. This is a precision criterion, not a
@@ -316,10 +326,10 @@ Development sets family coverage and case counts. Freeze the scoring policy and
 model roster before validation. Validation passes with Spearman rank correlation
 at least 0.9 and no inverted model pair separated by at least five external Full
 points. Publish all pairwise scores and uncertainty, not only the correlation.
-Also report the predeclared within-d3-mini pair; good ranking of unrelated models
+Also report the predeclared within-pool pair; good ranking of unrelated models
 does not establish sensitivity to improvements within one lineage. The validation
 draw must also satisfy the frozen precision criterion and include a score-informative
-within-d3-mini comparison; saturation at the clipping floor cannot certify it.
+within-pool comparison; saturation at the clipping floor cannot certify it.
 
 If validation fails, revise the exam on development data and use a new, untouched
 validation draw. Do not tune repeatedly on a held-out draw and still call it
@@ -397,7 +407,7 @@ revise the exam.
   above.
 - Exact models for the ranking test, as long as at least five have Decision Index
   scores spread over at least 20 points and their native runtime/memory needs are
-  verified before execution. Include the separate within-d3-mini sizing comparison.
+  verified before execution. Include the separate within-pool sizing comparison.
 
 ## Evidence and limits
 
