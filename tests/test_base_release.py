@@ -148,6 +148,7 @@ class BaseReleaseTest(unittest.TestCase):
             "interval_days": 14,
         }
         self.at = 14 * 86400
+        self.channels = {"stable": "old", "latest": "prior"}
 
     def freeze(self):
         return base_release.freeze(
@@ -156,6 +157,7 @@ class BaseReleaseTest(unittest.TestCase):
             schedule=self.schedule,
             window_id="d3-mini:1",
             frozen_at=self.at,
+            opening_channels=self.channels,
         )
 
     def closing(self):
@@ -186,6 +188,7 @@ class BaseReleaseTest(unittest.TestCase):
                 schedule=self.schedule,
                 window_id="d3-mini:1",
                 frozen_at=self.at,
+                opening_channels=self.channels,
             )
 
     def test_stale_bindings_mutated_evidence_and_missing_roster_fail(self):
@@ -196,6 +199,7 @@ class BaseReleaseTest(unittest.TestCase):
                 schedule=self.schedule,
                 window_id="d3-mini:1",
                 frozen_at=self.at,
+                opening_channels=self.channels,
             )
         frozen = self.freeze()
         closing = self.closing()
@@ -216,13 +220,192 @@ class BaseReleaseTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.freeze()
 
-    def test_channel_proposal_advances_only_opening_latest(self):
-        channels = {"stable": "old", "latest": "prior"}
+    def test_window_retries_keep_recorded_times_and_reject_conflicting_inputs(self):
+        frozen = self.freeze()
         self.assertEqual(
-            base_release.channel_proposal(
-                channels, new_profile_id="new", migration=None, release_review=None
+            frozen,
+            base_release.freeze(
+                self.ready,
+                active=self.active,
+                schedule=self.schedule,
+                window_id="d3-mini:1",
+                frozen_at=self.at + 1,
+                opening_channels=self.channels,
             ),
-            {"stable": "old", "latest": "new"},
+        )
+        closing = self.closing()
+        members = base_release.evidence_read(closing["snapshot"])["members"]
+        closed = base_release.close(
+            frozen,
+            closing,
+            active=self.active,
+            members=members,
+            now=self.at + 100,
+        )
+        self.assertEqual(
+            closed,
+            base_release.close(
+                frozen,
+                closing,
+                active=self.active,
+                members=members,
+                now=self.at + 101,
+            ),
+        )
+        changed = copy.deepcopy(closing)
+        changed["decision"]["round_id"] = "conflicting-attempt"
+        with self.assertRaises(ValueError):
+            base_release.close(
+                frozen,
+                changed,
+                active=self.active,
+                members=members,
+                now=self.at + 102,
+            )
+
+    def test_cli_recovers_after_internal_receipt_before_output(self):
+        import sys
+
+        active = {**self.active, "settings": {"base_tier": {}}}
+        config = self.root / "config.json"
+        config.write_text("{}")
+        schedule = self.root / "schedule.json"
+        save(schedule, self.schedule)
+        channels = self.root / "channels.json"
+        save(channels, self.channels)
+        frozen_file = self.root / "windows/d3-mini-1-frozen.json"
+        closing = self.closing()
+        original_persist = base_release.persist
+        for command, at, extra, internal in (
+            (
+                "freeze",
+                self.at,
+                [
+                    "--ready-dir",
+                    self.active["ready_dir"],
+                    "--schedule",
+                    str(schedule),
+                    "--channels",
+                    str(channels),
+                ],
+                frozen_file,
+            ),
+            (
+                "close",
+                self.at + 100,
+                [
+                    "--frozen",
+                    str(frozen_file),
+                    "--closing-round",
+                    closing["draw_root"],
+                    "--chain-snapshot",
+                    closing["snapshot"]["path"],
+                ],
+                self.root / "windows/d3-mini-1-closed.json",
+            ),
+        ):
+            out = self.root / f"{command}-out.json"
+            argv = [
+                "base_release",
+                command,
+                "--config",
+                str(config),
+                "--pool",
+                "d3-mini",
+                "--out",
+                str(out),
+                *extra,
+            ]
+
+            def interrupted(path, value):
+                result = original_persist(path, value)
+                if Path(path) == internal:
+                    raise RuntimeError("interrupted before output")
+                return result
+
+            with (
+                patch.object(base_release, "active_context", return_value=active),
+                patch(
+                    "zils.validator.base_tier_epoch", return_value=closing["decision"]
+                ) as evaluate,
+                patch.object(sys, "argv", argv),
+            ):
+                with (
+                    patch("zils.base_release.time.time", return_value=at),
+                    patch.object(base_release, "persist", side_effect=interrupted),
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "interrupted"):
+                        base_release.main()
+                self.assertFalse(out.exists())
+                with patch("zils.base_release.time.time", return_value=at + 1):
+                    base_release.main()
+                self.assertEqual(base_release.read(out), base_release.read(internal))
+                self.assertEqual(evaluate.call_count, 0 if command == "freeze" else 1)
+
+    def test_requalification_and_uid_movement_keep_one_ready_checkpoint(self):
+        original = self.ready[1]
+        evidence = copy.deepcopy(original["evidence"])
+        evidence["snapshot_second"] = save(
+            self.root / "snapshot-copy.json",
+            base_release.evidence_read(evidence["snapshot_second"]),
+        )
+        suite = base_release.evidence_read(evidence["suite"])
+        duplicate = base_release.qualify(
+            self.first,
+            self.second,
+            suite,
+            candidate_sha256="c" * 64,
+            active=self.active,
+            expected_suite=self.suite,
+            evidence=evidence,
+        )
+        save(self.root / "ready" / (duplicate["sha256"] + ".json"), duplicate)
+        moved = copy.deepcopy(self.second)
+        next(c for c in moved["candidates"] if c["uid"] == 2)["uid"] = 22
+        moved["pending_winner"]["uid"] = 22
+        snapshot = base_release.evidence_read(evidence["snapshot_second"])
+        snapshot["members"]["22"] = snapshot["members"].pop("2")
+        snapshot["commitments"]["22"] = snapshot["commitments"].pop("2")
+        evidence["snapshot_second"] = save(self.root / "moved-snapshot.json", snapshot)
+        evidence["second"] = save(self.root / "moved-decision.json", moved)
+        receipt = base_release.qualify(
+            self.first,
+            moved,
+            suite,
+            candidate_sha256="c" * 64,
+            active=self.active,
+            expected_suite=self.suite,
+            evidence=evidence,
+        )
+        save(self.root / "ready" / (receipt["sha256"] + ".json"), receipt)
+        current = base_release.inventory(self.active)
+        self.assertEqual(len(current), 2)
+        frozen = base_release.freeze(
+            current,
+            active=self.active,
+            schedule=self.schedule,
+            window_id="d3-mini:1",
+            frozen_at=self.at,
+            opening_channels=self.channels,
+        )
+        self.assertEqual(len(frozen["ready"]), 2)
+        self.assertEqual(len(list((self.root / "ready").iterdir())), 4)
+
+    def test_channel_proposal_requires_a_persisted_window(self):
+        with self.assertRaisesRegex(ValueError, "window"):
+            base_release.channel_proposal(
+                {"stable": "old", "latest": "new"},
+                new_profile_id=None,
+                migration=None,
+                release_review=None,
+            )
+
+    def test_channel_proposal_advances_only_opening_latest(self):
+        frozen = self.freeze()
+        closing = self.closing()
+        members = base_release.evidence_read(closing["snapshot"])["members"]
+        closed = base_release.close(
+            frozen, closing, active=self.active, members=members, now=self.at + 100
         )
         migration = {
             "profile_id": "prior",
@@ -239,19 +422,79 @@ class BaseReleaseTest(unittest.TestCase):
             "unresolved_problems": [],
             "migration_sha256": base_round.dataset_hash(migration),
         }
-        self.assertEqual(
-            base_release.channel_proposal(
-                channels, new_profile_id="new", migration=migration, release_review=review
-            ),
-            {"stable": "prior", "latest": "new"},
+        proposal = base_release.channel_proposal(
+            closed,
+            active=self.active,
+            new_profile_id="new",
+            migration=migration,
+            release_review=review,
         )
-        review["unresolved_problems"] = ["regression"]
+        self.assertEqual(proposal["channels"], {"stable": "prior", "latest": "new"})
         self.assertEqual(
+            proposal,
             base_release.channel_proposal(
-                channels, new_profile_id=None, migration=migration, release_review=review
+                closed,
+                active=self.active,
+                new_profile_id="new",
+                migration=migration,
+                release_review=review,
             ),
-            channels,
         )
+        changed = copy.deepcopy(closed)
+        changed["frozen"]["opening_channels"] = proposal["channels"]
+        with self.assertRaises(ValueError):
+            base_release.channel_proposal(
+                changed,
+                active=self.active,
+                new_profile_id=None,
+                migration=None,
+                release_review=None,
+            )
+        with self.assertRaises(ValueError):
+            base_release.channel_proposal(
+                closed,
+                active=self.active,
+                new_profile_id="other",
+                migration=migration,
+                release_review=review,
+            )
+        same_window_migration = {**migration, "profile_id": "new"}
+        same_window_review = {
+            **review,
+            "profile_id": "new",
+            "migration_sha256": base_round.dataset_hash(same_window_migration),
+        }
+        with self.assertRaisesRegex(ValueError, "opening latest"):
+            base_release.channel_proposal(
+                closed,
+                active=self.active,
+                new_profile_id=None,
+                migration=same_window_migration,
+                release_review=same_window_review,
+            )
+        # Stable eligibility still rejects an incomplete or troubled prior release.
+        for label in ("missing", "failed", "problem"):
+            with self.subTest(label=label):
+                active = {**self.active, "windows_dir": str(self.root / label)}
+                base_release.persist(
+                    base_release.window_path(active, "d3-mini:1", "frozen"), frozen
+                )
+                gate, approval = copy.deepcopy(migration), copy.deepcopy(review)
+                if label == "missing":
+                    gate, approval = None, None
+                elif label == "failed":
+                    gate["outcomes"]["job"]["553"]["migration"] = False
+                    approval["migration_sha256"] = base_round.dataset_hash(gate)
+                else:
+                    approval["unresolved_problems"] = ["regression"]
+                result = base_release.channel_proposal(
+                    closed,
+                    active=active,
+                    new_profile_id="new",
+                    migration=gate,
+                    release_review=approval,
+                )
+                self.assertEqual(result["channels"], {"stable": "old", "latest": "new"})
 
     def test_no_survivor_skips_and_early_closing_fails(self):
         frozen = self.freeze()
@@ -277,6 +520,30 @@ class BaseReleaseTest(unittest.TestCase):
         self.assertEqual(
             result["proposed_base_tier"], {"incumbent_sha256": "a" * 64, "kings": ["old"]}
         )
+        migration = {
+            "profile_id": "prior",
+            "legacy_regression": {"job": {"incumbent": 0.3, "candidate": 0.29}},
+            "outcomes": {
+                "job": {
+                    str(seed): {"migration": True, "strict_upgrade": True}
+                    for seed in (553, 771, 991)
+                }
+            },
+        }
+        review = {
+            "profile_id": "prior",
+            "approved": True,
+            "unresolved_problems": [],
+            "migration_sha256": base_round.dataset_hash(migration),
+        }
+        proposal = base_release.channel_proposal(
+            result,
+            active=self.active,
+            new_profile_id=None,
+            migration=migration,
+            release_review=review,
+        )
+        self.assertEqual(proposal["channels"], {"stable": "prior", "latest": "prior"})
 
     def test_two_miners_through_real_intake_and_release_with_failing_other_pool(self):
         import os
@@ -440,6 +707,7 @@ class BaseReleaseTest(unittest.TestCase):
                 schedule=self.schedule,
                 window_id="d3-mini:1",
                 frozen_at=self.at,
+                opening_channels=self.channels,
             )
             claims = {
                 u: {**c, "hotkey": snapshot["members"][str(u)]}

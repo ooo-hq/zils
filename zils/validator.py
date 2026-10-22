@@ -553,6 +553,7 @@ def base_tier_epoch(config, directory, work, registry, args, draws, *, wait_for_
         if base_round.draw(path) != item:
             raise ValueError("draw identity changed")
         selected = dict(entries)
+        confirmation_after = None
         if decisions:
             first = decisions[0]
             inc_end = max(v["completed_at"] for v in first["incumbent"]["evaluation"].values())
@@ -571,9 +572,25 @@ def base_tier_epoch(config, directory, work, registry, args, draws, *, wait_for_
             }
             if time.time() < inc_end + 12 * 3600 or len(selected) == 1 and len(entries) > 1:
                 break
+            confirmation_after = (
+                max(
+                    [inc_end]
+                    + [
+                        v["completed_at"]
+                        for uid, (sha, _) in selected.items()
+                        if uid != INCUMBENT_UID
+                        for v in candidates[sha]["evaluation"].values()
+                    ]
+                )
+                + 12 * 3600
+            )
 
         def scores(sha256, split):
-            return store / sha256 / f"{key}-{split}.json"
+            cache_key = key
+            if sha256 == track["incumbent_sha256"] and confirmation_after is not None:
+                # Keep earlier reports immutable while later entrants get timely comparisons.
+                cache_key += "-after-" + base_round.dataset_hash(confirmation_after)
+            return store / sha256 / f"{cache_key}-{split}.json"
 
         rows = {s: {} for s in base_round.SPLITS}
         for split in base_round.SPLITS:

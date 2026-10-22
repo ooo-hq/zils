@@ -199,15 +199,41 @@ def inventory(active):
     root = Path(active["ready_dir"])
     if not root.exists():
         return []
-    result = []
+    result = {}
     for path in sorted(root.iterdir()):
         receipt = read(path)
         verify_address(receipt)
         if path.name != receipt["sha256"] + ".json":
             raise ValueError("ready inventory filename differs from receipt")
         if receipt["active"] == binding(active):
-            result.append(receipt)
-    return result
+            verify_ready(receipt, active)
+            candidate = receipt["candidate"]
+            sha = candidate["sha256"]
+            previous = result.get(sha)
+            if previous and any(
+                previous["candidate"][k] != candidate[k] for k in ("hotkey", "commitment_block")
+            ):
+                raise ValueError("ready checkpoint has conflicting ownership")
+            if previous is None or (receipt["completed_at"], receipt["sha256"]) < (
+                previous["completed_at"],
+                previous["sha256"],
+            ):
+                result[sha] = receipt
+    return [result[sha] for sha in sorted(result)]
+
+
+def window_path(active, window_id, kind):
+    return Path(active["windows_dir"]) / (window_id.replace(":", "-") + f"-{kind}.json")
+
+
+def validate_channels(channels):
+    if (
+        not isinstance(channels, dict)
+        or set(channels) != {"stable", "latest"}
+        or any(not isinstance(v, str) or not v for v in channels.values())
+    ):
+        raise ValueError("window requires an opening stable/latest snapshot")
+    return dict(channels)
 
 
 def window(schedule, pool_id, at):
@@ -233,13 +259,28 @@ def window(schedule, pool_id, at):
     )
 
 
-def freeze(ready, *, active, schedule, window_id, frozen_at):
+def freeze(ready, *, active, schedule, window_id, frozen_at, opening_channels):
     derived, opening, deadline = window(schedule, active["pool_id"], frozen_at)
     if window_id != derived:
         raise ValueError("window ID differs from configured schedule")
     current = inventory(active)
     if sorted(r["sha256"] for r in ready) != sorted(r["sha256"] for r in current):
         raise ValueError("freeze must include the complete active receipt inventory")
+    opening_channels = validate_channels(opening_channels)
+    target = window_path(active, window_id, "frozen")
+    if target.exists():
+        saved = read(target)
+        verify_address(saved)
+        if (
+            saved.get("version") != "zils-base-frozen/v1"
+            or saved["active"] != binding(active)
+            or saved["schedule"] != schedule
+            or saved["opening_channels"] != opening_channels
+        ):
+            raise ValueError("conflicting reuse of frozen window inputs")
+        for receipt in saved["ready"]:
+            verify_ready(receipt, active)
+        return saved
     for receipt in ready:
         verify_ready(receipt, active)
         if receipt["completed_at"] > frozen_at:
@@ -251,6 +292,7 @@ def freeze(ready, *, active, schedule, window_id, frozen_at):
             "version": "zils-base-frozen/v1",
             "window_id": window_id,
             "active": binding(active),
+            "opening_channels": opening_channels,
             "schedule": schedule,
             "frozen_at": frozen_at,
             "opens_at": opening,
@@ -259,18 +301,27 @@ def freeze(ready, *, active, schedule, window_id, frozen_at):
             "ready": sorted(ready, key=lambda r: r["candidate"]["sha256"]),
         }
     )
-    return persist(
-        Path(active["windows_dir"]) / (window_id.replace(":", "-") + "-frozen.json"), payload
-    )
+    return persist(target, payload)
 
 
 def close(frozen, closing, *, active, members, now):
     verify_address(frozen)
     if frozen["version"] != "zils-base-frozen/v1" or frozen["active"] != binding(active):
         raise ValueError("frozen roster differs from active competition")
-    path = Path(active["windows_dir"]) / (frozen["window_id"].replace(":", "-") + "-frozen.json")
+    path = window_path(active, frozen["window_id"], "frozen")
     if read(path) != frozen:
         raise ValueError("frozen roster differs from persisted window")
+    validate_channels(frozen["opening_channels"])
+    target = window_path(active, frozen["window_id"], "closed")
+    if target.exists():
+        saved = read(target)
+        verify_address(saved)
+        if any(
+            saved[k] != v
+            for k, v in {"frozen": frozen, "closing": closing, "members": members}.items()
+        ):
+            raise ValueError("conflicting reuse of closed window inputs")
+        now = saved["closed_at"]
     if not frozen["opens_at"] <= now < frozen["deadline"]:
         raise ValueError("closing is outside the configured window")
     snapshot = evidence_read(closing["snapshot"])
@@ -347,10 +398,7 @@ def close(frozen, closing, *, active, members, now):
             "closed_at": now,
         }
     )
-    return persist(
-        Path(active["windows_dir"]) / (frozen["window_id"].replace(":", "-") + "-closed.json"),
-        result,
-    )
+    return persist(target, result)
 
 
 def verify_window(report, active):
@@ -369,11 +417,17 @@ def verify_window(report, active):
     return report
 
 
-def channel_proposal(opening_channels, *, new_profile_id, migration, release_review):
-    if set(opening_channels) != {"stable", "latest"} or any(
-        not isinstance(v, str) or not v for v in opening_channels.values()
+def channel_proposal(window_report, *, new_profile_id, migration, release_review, active=None):
+    if active is None:
+        raise ValueError("channel proposal requires a verified closed window")
+    verify_window(window_report, active)
+    opening_channels = window_report["frozen"]["opening_channels"]
+    if new_profile_id is not None and (
+        not isinstance(new_profile_id, str)
+        or not new_profile_id
+        or window_report["status"] != "qualified"
     ):
-        raise ValueError("channel proposal requires a frozen stable/latest snapshot")
+        raise ValueError("a new latest profile requires a qualified window winner")
     result = {**opening_channels, "latest": new_profile_id or opening_channels["latest"]}
     if migration is not None and release_review is not None:
         prior = opening_channels["latest"]
@@ -393,7 +447,18 @@ def channel_proposal(opening_channels, *, new_profile_id, migration, release_rev
             and release_review.get("unresolved_problems") == []
         ):
             result["stable"] = prior
-    return result
+    proposal = addressed(
+        {
+            "version": "zils-base-channels/v1",
+            "window_sha256": window_report["sha256"],
+            "opening_channels": opening_channels,
+            "new_profile_id": new_profile_id,
+            "migration": migration,
+            "release_review": release_review,
+            "channels": result,
+        }
+    )
+    return persist(window_path(active, window_report["frozen"]["window_id"], "channels"), proposal)
 
 
 def main():
@@ -413,6 +478,7 @@ def main():
         "frozen",
         "closing-round",
         "chain-snapshot",
+        "channels",
     ):
         parser.add_argument("--" + name)
     parser.add_argument("--device", default="cuda")
@@ -445,9 +511,10 @@ def main():
         if (
             not args.ready_dir
             or not args.schedule
+            or not args.channels
             or Path(args.ready_dir).resolve() != Path(active["ready_dir"]).resolve()
         ):
-            parser.error("freeze requires the installed ready-dir and schedule")
+            parser.error("freeze requires the installed ready-dir, schedule and opening channels")
         now = time.time()
         schedule = read(args.schedule)
         receipt = freeze(
@@ -456,6 +523,7 @@ def main():
             schedule=schedule,
             window_id=window(schedule, args.pool, now)[0],
             frozen_at=now,
+            opening_channels=read(args.channels),
         )
     else:
         if not (args.frozen and args.closing_round and args.chain_snapshot):
@@ -469,45 +537,55 @@ def main():
         )
         if frozen["active"] != binding(active) or read(frozen_file) != frozen:
             raise ValueError("closing requires the persisted active frozen roster")
-        base_exam.disjoint(
-            [base_exam.audit(p) for p in active["draw_roots"].values()]
-            + [base_exam.audit(args.closing_round, history=active["history"])]
-        )
-        candidates = {r["candidate"]["sha256"] for r in frozen["ready"]}
-        registry = commitments.candidates(snapshot, active["incumbent_sha256"])
-        registry = {
-            u: {**c, "hotkey": snapshot["members"][str(u)]}
-            for u, c in registry.items()
-            if c.get("sha256") in candidates
-        }
-        if {c["sha256"] for c in registry.values()} != candidates:
-            raise ValueError("frozen candidates are missing from the closing snapshot")
-        identity = base_round.draw(args.closing_round)
-        settings = {
-            **active["settings"],
-            "base_tier": {**active["settings"]["base_tier"], "draws": [identity]},
-        }
-        work = Path(args.out).resolve().parent / ("closing-" + frozen["sha256"])
-        work.mkdir(mode=0o700, exist_ok=True)
-        result = validator.base_tier_epoch(
-            settings,
-            Path(active["ready_dir"]).parent,
-            work,
-            registry,
-            SimpleNamespace(device=args.device, runtime_python=args.runtime_python, poll=1),
-            [(identity, Path(args.closing_round))],
-        )
-        receipt = close(
-            frozen,
-            {
-                "decision": result,
-                "draw_root": str(Path(args.closing_round).resolve()),
-                "snapshot": bound(args.chain_snapshot),
-            },
-            active=active,
-            members=snapshot["members"],
-            now=time.time(),
-        )
+        target = window_path(active, frozen["window_id"], "closed")
+        if target.exists():
+            receipt = verify_window(read(target), active)
+            if (
+                receipt["frozen"] != frozen
+                or receipt["closing"]["draw_root"] != str(Path(args.closing_round).resolve())
+                or receipt["closing"]["snapshot"] != bound(args.chain_snapshot)
+            ):
+                raise ValueError("conflicting reuse of closed window inputs")
+        else:
+            base_exam.disjoint(
+                [base_exam.audit(p) for p in active["draw_roots"].values()]
+                + [base_exam.audit(args.closing_round, history=active["history"])]
+            )
+            candidates = {r["candidate"]["sha256"] for r in frozen["ready"]}
+            registry = commitments.candidates(snapshot, active["incumbent_sha256"])
+            registry = {
+                u: {**c, "hotkey": snapshot["members"][str(u)]}
+                for u, c in registry.items()
+                if c.get("sha256") in candidates
+            }
+            if {c["sha256"] for c in registry.values()} != candidates:
+                raise ValueError("frozen candidates are missing from the closing snapshot")
+            identity = base_round.draw(args.closing_round)
+            settings = {
+                **active["settings"],
+                "base_tier": {**active["settings"]["base_tier"], "draws": [identity]},
+            }
+            work = Path(args.out).resolve().parent / ("closing-" + frozen["sha256"])
+            work.mkdir(mode=0o700, exist_ok=True)
+            result = validator.base_tier_epoch(
+                settings,
+                Path(active["ready_dir"]).parent,
+                work,
+                registry,
+                SimpleNamespace(device=args.device, runtime_python=args.runtime_python, poll=1),
+                [(identity, Path(args.closing_round))],
+            )
+            receipt = close(
+                frozen,
+                {
+                    "decision": result,
+                    "draw_root": str(Path(args.closing_round).resolve()),
+                    "snapshot": bound(args.chain_snapshot),
+                },
+                active=active,
+                members=snapshot["members"],
+                now=time.time(),
+            )
     persist(args.out, receipt)
     print(json.dumps({k: receipt[k] for k in ("version", "sha256")}))
 

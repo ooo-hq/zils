@@ -45,7 +45,9 @@ are unchanged.
 Every eligible candidate can qualify, including a first-draw runner-up. A second
 independent draw must start at least 12 hours after both that candidate's and the
 incumbent's first-draw evidence finished. Cached evidence retains its actual times.
-A new UID cannot inherit another hotkey's result. Public results contain aggregate
+Late entrants get a fresh incumbent confirmation comparison when the earlier
+cache is too old; earlier report files remain immutable. A new UID cannot inherit
+another hotkey's result. Public results contain aggregate
 metrics and evidence hashes; private files retain predictions and family details.
 Winning an exam pays nothing. Only the existing crowned kings receive the existing
 base allocation until an approved promotion changes the incumbent/history.
@@ -200,11 +202,15 @@ Author a schedule `{ "version": "zils-base-windows/v1", "anchor_utc":
 "ACTUAL_UTC_ANCHOR", "interval_days": 14 }` with a 14–28 day interval. At a
 scheduled window, freeze the entire active ready directory before any closing
 inference. Window IDs derive from the schedule; existing receipts are immutable.
+Save the actual opening profile IDs in `opening-channels.json` as
+`{"stable": "EXACT_STABLE_PROFILE", "latest": "EXACT_LATEST_PROFILE"}`. The freeze
+pins this snapshot. Requalification retains all attestations while choosing one
+verified receipt per checkpoint/owner; UID changes do not create another entrant.
 
 ```sh
 python -m zils.base_release freeze --config validator/config.json --pool d3-mini \
   --ready-dir validator/base-pools/d3-mini/ready --schedule schedule.json \
-  --out frozen-window.json
+  --channels opening-channels.json --out frozen-window.json
 python -m zils.base_release close --config validator/config.json --pool d3-mini \
   --frozen frozen-window.json --closing-round FRESH_SEALED_DRAW \
   --chain-snapshot CLOSING_SNAPSHOT --device cuda --out closed-window.json
@@ -220,16 +226,21 @@ future window. Staging recomputes the evidence and derives kings from installed
 configuration and verified snapshots. Upload remains opt-in (`--upload`). None
 of these commands installs live config, publishes chain weights or changes a
 hosted channel. Local receipts are bootstrap-validator attestations, not
-multi-validator consensus.
+multi-validator consensus. If a process stops after saving its internal receipt
+but before creating `--out`, rerun with the same inputs: it recovers the recorded
+times/result. A closing retry does not run inference again. Conflicting inputs
+are rejected; a frozen roster never admits later entrants.
 
 After exact-profile registration and platform training/serving qualification,
-propose the new profile as `latest`. `channel_proposal` accepts a frozen opening
-stable/latest snapshot and an explicit release review bound to migration evidence
-for that opening latest. Stable requires the existing legacy regression test and
+propose the new profile as `latest`. `channel_proposal` requires the verified closed-window report and active context;
+it uses the opening channels saved by `freeze`. Its explicit release review must
+bind migration evidence for that opening latest. Stable requires the existing legacy regression test and
 every-job/every-seed migration success, with no unresolved recorded problems.
 The just-elected latest never becomes stable in the same window. A skipped crown
-can still advance the prior latest. Persist/review the window and channel proposal
-before installing it. Existing adapters retain their exact base until their own
+can still advance the prior latest. The helper persists one content-addressed proposal per pool/window, containing
+its input evidence and output `channels`. Generate it once when review inputs
+are final; identical retries recover it and conflicting proposals fail. Review
+the saved window and channel proposal before installing it. Existing adapters retain their exact base until their own
 migration is accepted.
 
 ## Evidence after releases

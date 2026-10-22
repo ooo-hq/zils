@@ -147,7 +147,7 @@ class BaseTierIntakeTest(unittest.TestCase):
             incumbent = zils.checkpoint_hash(vdir / "reference")
             strong = candidate(root / "strong", 0.85)
             weak = candidate(root / "weak", 0.40)
-            later = candidate(root / "later", 0.50)
+            later = candidate(root / "later", 0.99)
             big = candidate(root / "big", 0.90)
             adapter = root / "adapter"
             adapter.mkdir()
@@ -316,20 +316,27 @@ class BaseTierIntakeTest(unittest.TestCase):
                 sidecar = json.loads((vdir / "base-tier/decision.json").read_text())
                 self.assertEqual(sidecar["round_id"], "a" * 32)
 
+                original_incumbent_reports = {
+                    evidence["path"]: Path(evidence["path"]).read_bytes()
+                    for evidence in decision["incumbent"]["evaluation"].values()
+                }
                 # Next round: uid 1 unchanged (no download, no scoring), uid 2 commits a new
                 # revision, and uid 3's copy is still refused.
                 records[hotkeys[2]] = raw_record(450, commit(later, "alice/d3", revision("later")))
                 before = len(requested)
                 registry, decision = epoch("b" * 32)
+                self.assertIn(2, {c["uid"] for c in decision["confirmed_candidates"]})
+                for path, contents in original_incumbent_reports.items():
+                    self.assertEqual(Path(path).read_bytes(), contents)
                 self.assertEqual(
                     requested[before:], [("alice/d3", n) for n in models.D3_CANDIDATE_FILES]
                 )
                 self.assertEqual(validate.call_count, 3)
                 runs = [json.loads(line) for line in log.read_text().splitlines()]
-                self.assertEqual(len(runs), 16)
-                self.assertEqual([r["accuracy"] for r in runs[12:]], [0.5] * 4)
+                self.assertEqual(len(runs), 18)
+                self.assertEqual(sorted(r["accuracy"] for r in runs[12:]), [0.55] * 2 + [0.99] * 4)
                 self.assertEqual(decision["round_id"], "b" * 32)
-                self.assertEqual(decision["pending_winner"]["uid"], 1)
+                self.assertEqual(decision["pending_winner"]["uid"], 2)
                 self.assertEqual({c["uid"] for c in decision["candidates"]}, {1, 2, 4, 5, 7})
                 self.assertIn("3", decision["rejected"])
 
@@ -337,7 +344,7 @@ class BaseTierIntakeTest(unittest.TestCase):
                 before = len(requested)
                 epoch("c" * 32)
                 self.assertEqual(len(requested), before)
-                self.assertEqual(len(log.read_text().splitlines()), 16)
+                self.assertEqual(len(log.read_text().splitlines()), 18)
 
     def test_commitment_format_and_the_earliest_block_rule(self):
         sha, rev = "a" * 64, "b" * 40
