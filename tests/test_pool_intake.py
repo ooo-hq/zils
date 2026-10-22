@@ -29,7 +29,7 @@ class PoolIntakeTest(unittest.TestCase):
             "candidate_model": models.D3,
             "jobs": {"task": {"incumbent": {"brier": 0.3}, "candidate": {"brier": 0.2}}},
         }
-        promote_base.verify_regression(report, "a" * 64, "b" * 64, models.D3)
+        promote_base.archival_verify_regression(report, "a" * 64, "b" * 64, models.D3)
         for changes in (
             {"candidate_sha256": "c" * 64},
             {"candidate_model": "d3-lite-0.8b-v1"},
@@ -38,7 +38,7 @@ class PoolIntakeTest(unittest.TestCase):
             {"jobs": {"task": {"incumbent": {"brier": 0.3}, "candidate": {"brier": 0.31}}}},
         ):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
-                promote_base.verify_regression({**report, **changes}, "a" * 64, "b" * 64, models.D3)
+                promote_base.archival_verify_regression({**report, **changes}, "a" * 64, "b" * 64, models.D3)
 
     def test_staging_preserves_mini_incumbent_history_and_outer_budget(self):
         track = {

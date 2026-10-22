@@ -231,3 +231,140 @@ class RegressionSuiteTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def election_fixture(candidate="b" * 64, incumbent="a" * 64, model=models.D3):
+    from zils import base_round
+
+    suite = {
+        "version": "zils-base-adapter-suite/v1",
+        "jobs": {j: {s: "c" * 64 for s in ("train", "calibration", "test")} for j in ("a", "b")},
+    }
+    runs = {
+        j: {
+            str(seed): {
+                side: {"brier": 0.3, "accuracy": 0.8} for side in ("incumbent", "candidate")
+            }
+            for seed in (553, 771, 991)
+        }
+        for j in suite["jobs"]
+    }
+    verdict = regression_suite.election_verdict(runs, expected_jobs=list(suite["jobs"]))
+    return suite, {
+        "candidate_sha256": candidate,
+        "incumbent_sha256": incumbent,
+        "candidate_model": model,
+        "incumbent_model": model,
+        "suite": suite,
+        "suite_sha256": base_round.dataset_hash(suite),
+        "runs": runs,
+        "seeds": [553, 771, 991],
+        "verdict": verdict,
+        "jobs": {
+            j: {s: value[s] for s in ("incumbent", "candidate")}
+            for j, value in verdict["jobs"].items()
+        },
+    }
+
+
+class ElectionRegressionTest(unittest.TestCase):
+    def test_flat_adapters_pass_and_boundaries_are_mean_fractions(self):
+        from scripts import promote_base
+
+        suite, report = election_fixture()
+        result = promote_base.verify_regression(
+            report, "b" * 64, "a" * 64, models.D3, expected_suite=suite
+        )
+        self.assertTrue(result["passed"])
+        for job in report["runs"].values():
+            for run in job.values():
+                run["candidate"].update(accuracy=0.79, brier=0.305)
+        self.assertTrue(
+            regression_suite.election_verdict(report["runs"], expected_jobs=list(suite["jobs"]))[
+                "passed"
+            ]
+        )
+        report["runs"]["a"]["553"]["candidate"]["accuracy"] = 0.789
+        self.assertFalse(
+            regression_suite.election_verdict(report["runs"], expected_jobs=list(suite["jobs"]))[
+                "passed"
+            ]
+        )
+
+    def test_forged_aggregates_omissions_and_wrong_bindings_fail(self):
+        import copy
+
+        from scripts import promote_base
+
+        suite, original = election_fixture()
+        mutations = [
+            lambda r: r["runs"].pop("b"),
+            lambda r: r["runs"]["a"].pop("553"),
+            lambda r: r["runs"]["a"].update({"1": r["runs"]["a"]["771"]}),
+            lambda r: r["jobs"]["a"]["candidate"].update(accuracy=1),
+            lambda r: r.update(candidate_sha256="d" * 64),
+            lambda r: r.update(candidate_model="wrong"),
+            lambda r: r["suite"]["jobs"]["a"].update(test="d" * 64),
+            lambda r: r["runs"]["a"]["553"]["candidate"].update(brier=float("nan")),
+        ]
+        for mutate in mutations:
+            report = copy.deepcopy(original)
+            mutate(report)
+            with self.assertRaises(ValueError):
+                promote_base.verify_regression(
+                    report, "b" * 64, "a" * 64, models.D3, expected_suite=suite
+                )
+        with self.assertRaises(ValueError):
+            regression_suite.election_verdict({}, expected_jobs=[])
+
+    def test_election_flags_reject_conflicts_before_training(self):
+        for flags in (
+            ["--seeds", "553"],
+            ["--tolerance", ".01"],
+            ["--incumbent-model", models.D3, "--candidate-model", models.D3],
+            ["--migration-references", "x"],
+        ):
+            with patch("sys.stderr"), self.assertRaises(SystemExit):
+                run_suite(["--incumbent", "x", "--candidate", "y", "--election", *flags])
+
+    def test_election_cli_and_verifier_agree_on_all_seeds(self):
+        from scripts import promote_base
+
+        suite, _ = election_fixture()
+        suite["jobs"].pop("b")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            reference, weights = root / "reference", root / "candidate"
+            for path, kind in ((reference, "base"), (weights, "candidate")):
+                path.mkdir()
+                models.write_metadata(path, kind=kind, model=models.D3)
+            for name in models.candidate_files(models.D3, "candidate"):
+                if name != "model.json":
+                    (weights / name).write_bytes(b"fixture")
+            flags = [
+                "--election",
+                "--model",
+                models.D3,
+                "--incumbent",
+                str(reference),
+                "--candidate",
+                str(weights),
+            ]
+            with patch.object(regression_suite, "suite_manifest", return_value=suite):
+                calls, report = run_suite(flags)
+            self.assertEqual(len(calls), 6)
+            self.assertEqual(
+                promote_base.verify_regression(
+                    report,
+                    report["candidate_sha256"],
+                    report["incumbent_sha256"],
+                    models.D3,
+                    expected_suite=suite,
+                ),
+                report["verdict"],
+            )
+            with (
+                patch.object(regression_suite, "suite_manifest", side_effect=[suite, {}]),
+                self.assertRaisesRegex(ValueError, "changed"),
+            ):
+                run_suite(flags)

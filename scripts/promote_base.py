@@ -39,7 +39,7 @@ def sha(path):
         return hashlib.file_digest(f, "sha256").hexdigest()
 
 
-def verify_regression(report, candidate, incumbent, model):
+def archival_verify_regression(report, candidate, incumbent, model):
     if (
         report.get("candidate_sha256") != candidate
         or report.get("incumbent_sha256") != incumbent
@@ -66,6 +66,12 @@ def verify_regression(report, candidate, incumbent, model):
         comparison[job] = values
     if not regression_suite.verdict(comparison)["passed"]:
         raise ValueError("candidate failed the adapter regression gate")
+
+
+def verify_regression(report, candidate, incumbent, model, *, expected_suite):
+    return regression_suite.verify_election(
+        report, candidate, incumbent, model, expected_suite=expected_suite
+    )
 
 
 def main():
@@ -128,7 +134,7 @@ def main():
             f"candidate hash {digest} differs from the confirmed winner {winner['sha256']}"
         )
     regression = json.loads(Path(args.regression_report).read_text())
-    verify_regression(regression, digest, decision["incumbent"]["sha256"], args.model)
+    archival_verify_regression(regression, digest, decision["incumbent"]["sha256"], args.model)
     staging.mkdir(parents=True, exist_ok=False)
     for name in models.candidate_files(args.model, "candidate"):
         if name != "model.json":

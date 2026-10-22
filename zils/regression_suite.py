@@ -48,6 +48,121 @@ def verdict(results, tolerance=DEFAULT_TOLERANCE):
     }
 
 
+ELECTION_SEEDS = [553, 771, 991]
+
+
+def suite_manifest(suite):
+    from . import base_exam
+
+    return {
+        "version": "zils-base-adapter-suite/v1",
+        "jobs": {
+            job.name: {
+                split: benchmark.file_hash(base_exam._regular(job / f"{split}.jsonl"))
+                for split in ("train", "calibration", "test")
+            }
+            for job in jobs(suite)
+        },
+    }
+
+
+def validate_suite(manifest):
+    from . import base_exam
+
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest) != {"version", "jobs"}
+        or manifest["version"] != "zils-base-adapter-suite/v1"
+        or not isinstance(manifest["jobs"], dict)
+        or not manifest["jobs"]
+    ):
+        raise ValueError("invalid pinned adapter suite")
+    for job, splits in manifest["jobs"].items():
+        if (
+            not isinstance(job, str)
+            or not job
+            or not isinstance(splits, dict)
+            or set(splits) != {"train", "calibration", "test"}
+        ):
+            raise ValueError("suite must pin every job split")
+        for value in splits.values():
+            base_exam._hash(value)
+
+
+def election_verdict(runs, *, expected_jobs):
+    if (
+        not expected_jobs
+        or len(set(expected_jobs)) != len(expected_jobs)
+        or not isinstance(runs, dict)
+        or set(runs) != set(expected_jobs)
+    ):
+        raise ValueError("adapter evidence must cover exactly the pinned jobs")
+    jobs = {}
+    for job in sorted(expected_jobs):
+        seeds = runs[job]
+        if not isinstance(seeds, dict) or set(seeds) != {str(s) for s in ELECTION_SEEDS}:
+            raise ValueError("adapter election requires exactly seeds 553, 771, 991")
+        totals = {side: {"accuracy": 0.0, "brier": 0.0} for side in ("incumbent", "candidate")}
+        for run in seeds.values():
+            if not isinstance(run, dict) or set(run) != set(totals):
+                raise ValueError("adapter seed must contain both sides")
+            for side, values in run.items():
+                for key, maximum in (("accuracy", 1), ("brier", 2)):
+                    value = values.get(key)
+                    if (
+                        type(value) not in (int, float)
+                        or not math.isfinite(value)
+                        or not 0 <= value <= maximum
+                    ):
+                        raise ValueError("adapter scores must be finite and in range")
+                    totals[side][key] += value / len(ELECTION_SEEDS)
+        drop = totals["incumbent"]["accuracy"] - totals["candidate"]["accuracy"]
+        increase = totals["candidate"]["brier"] - totals["incumbent"]["brier"]
+        jobs[job] = {
+            **totals,
+            "accuracy_drop": drop,
+            "brier_increase": increase,
+            "passed": drop <= 0.01 + 1e-12 and increase <= 0.005 + 1e-12,
+        }
+    return {
+        "passed": all(j["passed"] for j in jobs.values()),
+        "jobs": jobs,
+        "seeds": ELECTION_SEEDS,
+        "max_accuracy_drop": 0.01,
+        "max_brier_increase": 0.005,
+    }
+
+
+def verify_election(report, candidate, incumbent, model, *, expected_suite):
+    validate_suite(expected_suite)
+    if any(
+        report.get(k) != v
+        for k, v in {
+            "candidate_sha256": candidate,
+            "incumbent_sha256": incumbent,
+            "candidate_model": model,
+            "incumbent_model": model,
+            "suite": expected_suite,
+            "suite_sha256": base_round.dataset_hash(expected_suite),
+            "seeds": ELECTION_SEEDS,
+        }.items()
+    ):
+        raise ValueError("adapter report differs from pinned weights/profile/suite/seeds")
+    verdict = election_verdict(report.get("runs"), expected_jobs=list(expected_suite["jobs"]))
+    if report.get("verdict") != verdict or set(report.get("jobs", {})) != set(verdict["jobs"]):
+        raise ValueError("adapter reported aggregates differ from seed evidence")
+    for job, detail in verdict["jobs"].items():
+        for side in ("incumbent", "candidate"):
+            if any(
+                not math.isclose(report["jobs"][job][side].get(k, float("nan")), v, abs_tol=1e-12)
+                for k, v in detail[side].items()
+            ):
+                raise ValueError("adapter reported averages differ from seed evidence")
+    if not verdict["passed"]:
+        raise ValueError("candidate failed the adapter election gate")
+    return verdict
+
+
 def _run(command, env, cwd):
     result = subprocess.run(command, text=True, capture_output=True, env=env, cwd=cwd)
     if result.returncode:
@@ -174,6 +289,7 @@ def main():
         "--candidate-runtime-python",
         help="cross-profile only: interpreter of the candidate profile; default its env variable",
     )
+    parser.add_argument("--election", action="store_true")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--tolerance", type=float, default=DEFAULT_TOLERANCE)
     parser.add_argument(
@@ -188,7 +304,7 @@ def main():
     args = parser.parse_args()
     if not math.isfinite(args.tolerance) or args.tolerance < 0:
         parser.error("Tolerance must be finite and nonnegative")
-    seeds = args.seeds or ([553, 771, 991] if args.migration_references else [553])
+    seeds = args.seeds or ([553, 771, 991] if args.migration_references or args.election else [553])
     if len(seeds) != len(set(seeds)) or any(seed < 0 for seed in seeds):
         parser.error("Seeds must be distinct nonnegative integers")
     policy = {
@@ -203,6 +319,15 @@ def main():
         )
     if args.candidate_runtime_python and not cross:
         parser.error("--candidate-runtime-python applies to cross-profile mode only")
+    if args.election and (
+        cross
+        or args.migration_references
+        or args.tolerance != DEFAULT_TOLERANCE
+        or seeds != ELECTION_SEEDS
+    ):
+        parser.error(
+            "--election requires same-profile mode, exact seeds 553 771 991 and tolerance 0.005; migration is separate"
+        )
     incumbent_model = args.incumbent_model or args.model or models.D3
     candidate_model = args.candidate_model or incumbent_model
 
@@ -250,6 +375,11 @@ def main():
         "candidate": (candidate_model, Path(candidate_reference), candidate_python, candidate_env),
     }
     suite_jobs = jobs(args.suite)
+    pinned_suite = suite_manifest(args.suite) if args.election else None
+    pinned_weights = {
+        "candidate_sha256": zils.checkpoint_hash(args.candidate),
+        "incumbent_sha256": zils.checkpoint_hash(args.incumbent),
+    }
     frozen = (
         migration_regression.references(args.migration_references, suite_jobs, incumbent_model)
         if args.migration_references
@@ -313,7 +443,20 @@ def main():
         )
         results[job.name] = {k: v["brier"] for k, v in detail[job.name].items()}
         (out / "progress.json").write_text(json.dumps(results, indent=2) + "\n")
-    decision = verdict(results, args.tolerance)
+    if args.election and (
+        suite_manifest(args.suite) != pinned_suite
+        or pinned_weights
+        != {
+            "candidate_sha256": zils.checkpoint_hash(args.candidate),
+            "incumbent_sha256": zils.checkpoint_hash(args.incumbent),
+        }
+    ):
+        raise ValueError("suite or checkpoint changed during election training")
+    decision = (
+        election_verdict(runs, expected_jobs=list(pinned_suite["jobs"]))
+        if args.election
+        else verdict(results, args.tolerance)
+    )
     migration_report = migration_regression.summary(migration) if frozen else None
     if migration_report is not None:
         migration_report["stable_eligible"] &= decision["passed"]
@@ -349,6 +492,12 @@ def main():
         "candidate_sha256": zils.checkpoint_hash(args.candidate),
         "incumbent_sha256": zils.checkpoint_hash(args.incumbent),
     }
+    if args.election:
+        result.update(
+            suite=pinned_suite,
+            suite_sha256=base_round.dataset_hash(pinned_suite),
+            regression_seed_rule="mean-accuracy-and-brier-per-job",
+        )
     (out / "suite-result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(decision, indent=2))
 
