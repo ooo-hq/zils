@@ -80,7 +80,7 @@ class AuthorExamTest(unittest.TestCase):
             self.assertEqual([c["id"] for c in calibration], ["c0"])
             self.assertEqual([c["id"] for c in test], ["c1", "c3"])  # c2 disagreed, dup removed
             self.assertEqual(test[0]["state"], {"text": "state 1"})
-            self.assertEqual(set(test[0]["question"]["criteria"]), {"a", "b", "c"})
+            self.assertEqual(set(test[0]["question"]["criteria"]), {"A", "B", "C"})
             registry = json.loads((root / "registry.json").read_text())
             self.assertEqual(
                 registry, {"arts-known-choice-k2": {"category": "arts", "type": "choice"}}
@@ -108,6 +108,31 @@ class AuthorExamTest(unittest.TestCase):
             self.assertEqual(len(test), 3)
             with self.assertRaisesRegex(ValueError, "arts-known-noul-k2"):
                 author_exam.finish(tmp, "d1", calibration=2, test=5)
+
+    def test_finish_renames_choice_keys_so_names_cannot_leak_answers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "d1"
+            root.mkdir()
+            criteria = {"opt_wrong": "Paris", "opt_correct": "Lyon", "opt_other": "Nice"}
+            items = [
+                {
+                    "id": f"c{n}", "family": "arts-known-choice-k2", "category": "arts",
+                    "block": "known", "source_id": f"r{n}", "state": f"state {n}",
+                    "question": {"type": "choice", "instructions": "Pick.", "criteria": criteria},
+                    "label": "opt_correct", "explanation": "e",
+                }
+                for n in range(4)
+            ]  # fmt: skip
+            (root / "candidates.json").write_text(json.dumps(items))
+            (root / "answers.json").write_text(json.dumps({i["id"]: "opt_correct" for i in items}))
+            choice = {"arts-known-choice-k2": FAMILIES["arts-known-choice-k2"]}
+            (root / "families.json").write_text(json.dumps(choice))
+            author_exam.finish(tmp, "d1", calibration=1, test=3)
+            for line in (root / "test.jsonl").read_text().splitlines():
+                case = json.loads(line)
+                keys = list(case["question"]["criteria"])
+                self.assertEqual(keys, ["A", "B", "C"])
+                self.assertEqual(case["question"]["criteria"][case["label"]], "Lyon")
 
     def test_new_domain_tasks_rotate_across_draws(self):
         pools = {c: [f"t{c}{i}" for i in range(4)] for c in author_exam.BIGBENCH}

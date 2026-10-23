@@ -399,14 +399,19 @@ def finish(work, draw, calibration, test):
     for family, rows in sorted(kept.items()):
         for j, item in enumerate(rows[: calibration + test]):
             q = dict(item["question"])
-            if q["type"] == "choice":  # option order carries no signal
+            label = item["label"]
+            if q["type"] == "choice":
+                # Shuffle (order carries no signal), then rename keys A, B, C...: authored key names
+                # sometimes encode the answer (e.g. "opt_correct"), seen on 22 Oct 2026.
                 pairs = list(q["criteria"].items())
                 rng.shuffle(pairs)
-                q["criteria"] = dict(pairs)
+                letters = [chr(65 + i) for i in range(len(pairs))]
+                label = letters[[k for k, _ in pairs].index(label)]
+                q["criteria"] = {letter: text for letter, (_, text) in zip(letters, pairs)}
             splits["calibration" if j < calibration else "test"].append({
                 "id": item["id"], "family": family, "category": item["category"],
                 "block": item["block"], "source_id": item["source_id"],
-                "state": {"text": item["state"]}, "question": q, "label": item["label"],
+                "state": {"text": item["state"]}, "question": q, "label": label,
             })  # fmt: skip
     for name, rows in splits.items():
         text = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
