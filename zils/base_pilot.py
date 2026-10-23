@@ -298,7 +298,8 @@ def check(bundle, *, root):
                         abs(paired["improvement"] - paired["lower_95"]),
                         abs(paired["upper_95"] - paired["improvement"]),
                     )
-                    <= 0.5
+                    # Half the crown bar: an exam must resolve a winner's margin, no finer.
+                    <= bundle["policy"]["min_score_improvement"] / 2
                 )
                 comparisons.append(
                     {

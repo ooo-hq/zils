@@ -70,8 +70,9 @@ class AuthorExamTest(unittest.TestCase):
             (root / "candidates.json").write_text(json.dumps(items))
             answers = {"c0": "a", "c1": "a", "c2": "b", "c3": "a", "dup": "a"}
             (root / "answers.json").write_text(json.dumps(answers))
-            (root / "families.json").write_text(json.dumps(FAMILIES))
-            author_exam.finish(tmp, "d1", calibration=1)
+            choice = {"arts-known-choice-k2": FAMILIES["arts-known-choice-k2"]}
+            (root / "families.json").write_text(json.dumps(choice))
+            author_exam.finish(tmp, "d1", calibration=1, test=2)
             calibration = [
                 json.loads(x) for x in (root / "calibration.jsonl").read_text().splitlines()
             ]
@@ -84,6 +85,29 @@ class AuthorExamTest(unittest.TestCase):
             self.assertEqual(
                 registry, {"arts-known-choice-k2": {"category": "arts", "type": "choice"}}
             )
+
+    def test_finish_trims_to_exact_counts_and_refuses_short_families(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "d1"
+            root.mkdir()
+            items = [
+                {
+                    "id": f"n{n}", "family": "arts-known-noul-k2", "category": "arts",
+                    "block": "known", "source_id": f"r{n}", "state": f"state {n}",
+                    "question": {"type": "noul", "instructions": "Ironic?", "criteria": None},
+                    "label": "true" if n % 2 else "false", "explanation": "e",
+                }
+                for n in range(6)
+            ]  # fmt: skip
+            (root / "candidates.json").write_text(json.dumps(items))
+            (root / "answers.json").write_text(json.dumps({i["id"]: i["label"] for i in items}))
+            noul = {"arts-known-noul-k2": FAMILIES["arts-known-noul-k2"]}
+            (root / "families.json").write_text(json.dumps(noul))
+            author_exam.finish(tmp, "d1", calibration=2, test=3)  # 6 agreements, 5 kept
+            test = (root / "test.jsonl").read_text().splitlines()
+            self.assertEqual(len(test), 3)
+            with self.assertRaisesRegex(ValueError, "arts-known-noul-k2"):
+                author_exam.finish(tmp, "d1", calibration=2, test=5)
 
     def test_new_domain_tasks_rotate_across_draws(self):
         pools = {c: [f"t{c}{i}" for i in range(4)] for c in author_exam.BIGBENCH}
