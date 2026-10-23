@@ -11,7 +11,7 @@ references at Spearman 0.9 on Choice and yes/no families (see docs/base-election
 
     python -m scripts.author_exam author --work exams --draw r1 --per-family 72
     python -m scripts.author_exam verify --work exams --draw r1
-    python -m scripts.author_exam finish --work exams --draw r1 --calibration 8
+    python -m scripts.author_exam finish --work exams --draw r1 --calibration 8 --test 56
     python -m zils.base_exam seal ...   (see docs/base-election.md)
 
 Needs `ANTHROPIC_API_KEY` and requirements/exam.txt. Rows used by any earlier draw under --work are
@@ -344,8 +344,9 @@ def verify(work, draw, workers=25):
     print(json.dumps({"draw": draw, "checked": len(items), "answered": len(answers), **usage}))
 
 
-def finish(work, draw, calibration):
-    """Keep blind-pass agreements, shuffle Choice options, split calibration/test, write registry."""
+def finish(work, draw, calibration, test):
+    """Keep blind-pass agreements; exactly `calibration` + `test` per family so every draw has the
+    pilot's frozen blueprint; shuffle Choice options; write the splits and registry."""
     root = Path(work) / draw
     items = json.loads((root / "candidates.json").read_text())
     answers = json.loads((root / "answers.json").read_text())
@@ -361,9 +362,12 @@ def finish(work, draw, calibration):
             continue
         seen.add(key)
         kept.setdefault(item["family"], []).append(item)
+    short = sorted(f for f in families if len(kept.get(f, [])) < calibration + test)
+    if short:
+        raise ValueError(f"families short of {calibration}+{test} agreed items: {short}")
     splits = {"calibration": [], "test": []}
     for family, rows in sorted(kept.items()):
-        for j, item in enumerate(rows):
+        for j, item in enumerate(rows[: calibration + test]):
             q = dict(item["question"])
             if q["type"] == "choice":  # option order carries no signal
                 pairs = list(q["criteria"].items())
@@ -406,13 +410,14 @@ def main(argv=None):
             p.add_argument("--workers", type=int, default=25)
         if name == "finish":
             p.add_argument("--calibration", type=int, default=8)
+            p.add_argument("--test", type=int, default=56)
     args = parser.parse_args(argv)
     if args.command == "author":
         author(args.work, args.draw, args.per_family, args.known_only, args.workers)
     elif args.command == "verify":
         verify(args.work, args.draw, args.workers)
     else:
-        finish(args.work, args.draw, args.calibration)
+        finish(args.work, args.draw, args.calibration, args.test)
 
 
 if __name__ == "__main__":

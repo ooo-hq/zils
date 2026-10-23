@@ -66,12 +66,14 @@ private, then:
 ```sh
 python -m scripts.author_exam author --work exams --draw r1 --per-family 72
 python -m scripts.author_exam verify --work exams --draw r1
-python -m scripts.author_exam finish --work exams --draw r1 --calibration 8
+python -m scripts.author_exam finish --work exams --draw r1 --calibration 8 --test 56
 ```
 
-`finish` writes `calibration.jsonl`, `test.jsonl` and `registry.json`; add each known family's
+`finish` keeps exactly 8 calibration and 56 test items per family, so every draw shares the
+pilot's frozen blueprint (it stops and names any family that fell short; author more for it), and writes
+`calibration.jsonl`, `test.jsonl` and `registry.json`; add each known family's
 `publication` receipt from the history to the registry, then seal as below. A 72-per-family draw
-costs about $30 and keeps about 1,900 test items. Training splits are not used: on 22 Oct a draw
+costs about $30 and keeps 1,680 test items. Training splits are not used: on 22 Oct a draw
 seeded from them saturated the 4B references near 88% and failed the ranking gate.
 
 Use teacher-authored cases. Public decision datasets may seed newly rewritten
@@ -167,8 +169,9 @@ The external ranking scores Choice and yes/no families only: Decision Index refe
 answer Score questions, and on 22 Oct 2026 Score families alone moved the five-model Spearman
 from 1.0 to 0.7 by favouring the d3 runtime. Score families stay in every election, where all
 candidates share the pool's runtime, and in the within-pool precision comparisons.
-Every nondegenerate predeclared interval must be within 0.5 point of the estimate
-on each side. Identical or clipping-degenerate pairs provide no sizing evidence;
+Every nondegenerate predeclared interval must be within half the crown bar
+(1.5 points at +3) of the estimate on each side. A 0.5-point limit, written for the
+earlier +1 bar, needed about 17,000 test items per draw; about 1,900 meet 1.5. Identical or clipping-degenerate pairs provide no sizing evidence;
 the required within-pool pair must have nonzero paired variance. Failed validation
 requires a new untouched validation draw after any retuning. A pilot never crowns.
 
