@@ -1,0 +1,4 @@
+# Private exam authoring (scripts/author_exam.py); not needed by validators or miners.
+anthropic==2.1.0
+huggingface-hub==1.33.0
+pyarrow==25.0.1

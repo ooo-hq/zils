@@ -54,6 +54,26 @@ base allocation until an approved promotion changes the incumbent/history.
 
 ## Prepare public history and private exams
 
+`scripts/author_exam.py` is the qualified mini authoring recipe (22 Oct 2026). Claude Opus 5.5
+writes each item new from one public row used only as a style example, and a blind second pass keeps
+only agreements. Known families draw on held-out validation/test splits of datasets outside S1MB,
+Decision Index and JevBench; new-domain families use BIG-bench training tasks, three per category per
+draw, never reused. Public seeds for the 15 known families are published at
+`zils-ai/base-exam-seed-v1` (@`e737b87`) and `zils-ai/base-exam-seed-v2` (@`168ce9a`); seed v2 names
+the current `-k2` families. Install `requirements/exam.txt`, set `ANTHROPIC_API_KEY`, keep `--work`
+private, then:
+
+```sh
+python -m scripts.author_exam author --work exams --draw r1 --per-family 72
+python -m scripts.author_exam verify --work exams --draw r1
+python -m scripts.author_exam finish --work exams --draw r1 --calibration 8
+```
+
+`finish` writes `calibration.jsonl`, `test.jsonl` and `registry.json`; add each known family's
+`publication` receipt from the history to the registry, then seal as below. A 72-per-family draw
+costs about $30 and keeps about 1,900 test items. Training splits are not used: on 22 Oct a draw
+seeded from them saturated the 4B references near 88% and failed the ranking gate.
+
 Use teacher-authored cases. Public decision datasets may seed newly rewritten
 cases; never copy their public cases into the sealed exam or seed from S1MB,
 Decision Index or JevBench test sets. Never use customer examples. Audit semantic
