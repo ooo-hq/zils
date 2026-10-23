@@ -80,6 +80,9 @@ Nothing else: a `candidate.json`, a README or a stray `__pycache__` is rejected.
 Total size must stay under 9.5 GiB (the parent is 9.08 GB; a merged LoRA is the
 same size).
 
+For unattended bootstrap attempts using the existing public-data recipe, see
+[scheduled base mining](automatic-base-mining.md).
+
 ## Commit
 
 A candidate is two things: the artifact in **your own public Hugging Face model
