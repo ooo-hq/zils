@@ -48,6 +48,16 @@ def hf_jsonl(repo, path):
     return [(f"{repo}:{path}:{i}", json.loads(line)) for i, line in enumerate(lines)]
 
 
+def hf_jsonl_array(repo, paths):
+    from huggingface_hub import hf_hub_download
+
+    rows = []
+    for path in paths:
+        data = json.loads(Path(hf_hub_download(repo, path, repo_type="dataset")).read_text())
+        rows += [(f"{repo}:{path}:{i}", r) for i, r in enumerate(data)]
+    return rows
+
+
 def glaive():
     from huggingface_hub import hf_hub_download
 
@@ -73,7 +83,12 @@ SOURCES = {
         "cardiffnlp/tweet_eval", "irony/test-00000-of-00001.parquet"
     ),
     "glaive": glaive,
+    "multiarith": lambda: hf_jsonl_array("ChilleD/MultiArith", ("test.json", "train.json")),
+    "mnli-val-matched": lambda: hf_parquet(GLUE, "mnli/validation_matched-00000-of-00001.parquet"),
 }
+# Small held-out sets run out after a few draws; pair each with a same-task source.
+SOURCES["arith-word"] = lambda: SOURCES["svamp-test"]() + SOURCES["multiarith"]()
+SOURCES["entail-val"] = lambda: SOURCES["rte-val"]() + SOURCES["mnli-val-matched"]()
 # New-domain pools: BIG-bench training tasks (Glaive rows for tools). A task is used by one draw only.
 BIGBENCH = {
     "reasoning": [
@@ -126,9 +141,9 @@ for _tasks in BIGBENCH.values():
 KNOWN = {
     "reasoning-known-choice-k2": ("reasoning", "choice", "csqa-val", "Commonsense multiple-choice reasoning with 5 plausible options (CommonsenseQA style)."),
     "reasoning-known-noul-k2": ("reasoning", "noul", "csqa-val", "Is a stated answer to a commonsense question correct? Requires ruling out close alternatives."),
-    "reasoning-known-score-k2": ("reasoning", "score", "svamp-test", "Arithmetic word problems with distracting numbers; the answer is a small count."),
+    "reasoning-known-score-k2": ("reasoning", "score", "arith-word", "Arithmetic word problems with distracting numbers; the answer is a small count."),
     "language-known-choice-k2": ("language", "choice", "mnli-val", "Premise/hypothesis inference across genres: entailment, neutral or contradiction."),
-    "language-known-noul-k2": ("language", "noul", "rte-val", "Does the passage entail the hypothesis?"),
+    "language-known-noul-k2": ("language", "noul", "entail-val", "Does the passage entail the hypothesis?"),
     "language-known-score-k2": ("language", "score", "stsb-val", "Rate the semantic similarity of two sentences."),
     "retrieval-known-choice-k2": ("retrieval", "choice", "newsgroups-test", "Which of several close topic categories does a post belong to (20 Newsgroups style)?"),
     "retrieval-known-noul-k2": ("retrieval", "noul", "qnli-val", "Does the sentence contain the answer to the question?"),
