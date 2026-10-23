@@ -118,52 +118,21 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
             "--out",
             str(raw),
         ]
-    if model == models.IMAJEV:
-        command = [
-            settings.required("ZILS_IMAGE_RUNTIME_PYTHON"),
-            "-u",
-            "-m",
-            "zils.imajev_runner",
-            "--train",
-            "--cases",
-            str(directory / "miner-training.jsonl"),
-            "--checkpoint",
-            str(directory / "reference"),
-            "--images",
-            str(directory / "images"),
-            "--device",
-            device,
-            "--seed",
-            str(seed),
-            "--out",
-            str(raw),
-        ]
     if model in models.TEXT_ADAPTER_MODELS and (env := models.runtime_python_env(model)):
         command[0] = settings.required(env)
     print(
         f"miner {config['uid']}: training round {job['round_id']} on {device}; log {work / 'training.log'}",
         flush=True,
     )
-    if model == models.IMAJEV:
-        run_child(
-            command,
-            work / "training.log",
-            device,
-            model=model,
-            minimum_mib=job["min_free_mib"],
-            timeout=job["max_seconds"],
-            check_lease=check_lease,
-        )
-    else:
-        run_child(
-            command,
-            work / "training.log",
-            device,
-            model=model,
-            minimum_mib=job.get("min_free_mib", 0),
-            timeout=job.get("max_seconds", 3600),
-            check_lease=check_lease,
-        )
+    run_child(
+        command,
+        work / "training.log",
+        device,
+        model=model,
+        minimum_mib=job.get("min_free_mib", 0),
+        timeout=job.get("max_seconds", 3600),
+        check_lease=check_lease,
+    )
     frozen = work / ("artifacts-" + uuid.uuid4().hex)
     zils.stage(zils.submission(raw, config["uid"]), frozen)
     entry = zils.submission(frozen, config["uid"])

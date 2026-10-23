@@ -82,7 +82,7 @@ class MigrationRegressionTest(unittest.TestCase):
                     migration.references(config, [current], models.D3)["a"][1], RELEASE
                 )
                 with self.assertRaisesRegex(ValueError, "incumbent profile"):
-                    migration.references(config, [current], models.H2O)
+                    migration.references(config, [current], models.D3_POOL_MODELS["d3-lite"])
                 config.write_text(json.dumps({"a": entry | {"fingerprint": "0" * 64}}))
                 with self.assertRaisesRegex(ValueError, "fingerprint"):
                     migration.references(config, [current], models.D3)

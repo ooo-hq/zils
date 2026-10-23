@@ -114,7 +114,7 @@ class FeatureRoundTest(unittest.TestCase):
             if fail:
                 raise RuntimeError(fail)
             rows = [json.loads(line) for line in Path(cases).read_text().splitlines()]
-            self.assertEqual(kwargs["model"], PROMOTED)
+            self.assertEqual(kwargs["base_revision"], models.spec(PROMOTED)["base_revision"])
             self.assertEqual(kwargs["images"], Path(cases).parent / "images")
             result = []
             for entry in submissions:

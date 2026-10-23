@@ -1,10 +1,10 @@
-# Run a text or image fleet miner
+# Run a fleet miner
 
 Local and Bittensor testnet fleets support **d3-mini 4.5B** text jobs
-(`d3-mini-4.5b-v1`, the base since 17 October 2026). H2O Lightning 4B and the
-ImaJev image profile are retired; existing bundles for them keep working, and new
-bundles should pin d3. Existing Kev 0.8B bundles remain supported; JevK5 4B bundles
-are retired. For workers that claim different customer jobs,
+(`d3-mini-4.5b-v1`, the base since 17 October 2026). Existing Kev 0.8B bundles
+remain supported; H2O Lightning 4B, ImaJev and JevK5 4B bundles are retired and no
+longer run. d3 image jobs run in the [hosted queue](queue-miners.md), where a d3
+miner downloads a job's frozen training photos itself. For workers that claim different customer jobs,
 use the [queue miner guide](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md).
 Queue and fleet miners use the same trainers but different credentials and startup commands.
 
@@ -22,8 +22,7 @@ After the one-time setup below, run this in your assigned miner folder:
 The miner trains one candidate per round, submits its signed checkpoint, receives
 the validator's result, and waits for the next round. Stop with Ctrl+C, or use
 `./start-miner --rounds 1` for a single result. The first start downloads the
-pinned text base model. Image miners require the separately installed, verified
-image runtime described below. Later starts reuse the cache.
+pinned base model. Later starts reuse the cache.
 
 ## Prepare bundles on the validator
 
@@ -55,34 +54,6 @@ Only training data goes into a miner bundle. The validator keeps calibration
 cases, test cases, and full reports. Local bundles contain disposable signing
 keys and must stay private. [Testnet bundles](testnet.md) contain public wallet
 references instead; provision each hotkey separately.
-
-### Image fleets
-
-Fleet image bundles use the retired ImaJev profile only; `zils.fleet init`
-takes `--images` for ImaJev jobs and no other profile. New d3 image jobs run in
-the [hosted queue](queue-miners.md), where a d3 miner downloads a job's frozen
-training photos itself. Use this section only to rerun an existing ImaJev job.
-
-Complete the pinned runtime and maximum-context hardware qualification in
-[image training](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md#worker-and-service-setup)
-for every participating miner and the validator. Use a fresh published starting
-checkpoint, not an earlier customer adapter. The operator supplies an audited
-image-job directory built by `zils.image_jobs.build`, its canonical image cache
-(`<sha256>.png`), and measured admission limits. Those are private inputs; fleet
-initialization does not download customer photos or resolve hosted predecessor jobs.
-
-```bash
-.venv-kev/bin/python -m zils.fleet init --out .private/fleet-image \
-  --benchmark .private/jobs/image-v1 --checkpoint models/imajev-starting-checkpoint \
-  --images .private/image-cache --min-free-mib QUALIFIED_FREE_MIB \
-  --max-seconds QUALIFIED_TRAINING_SECONDS --host VALIDATOR_PRIVATE_IPV4
-```
-
-Replace both qualification placeholders with the operator's measurements. Memory
-admission must cover peak reserved GPU memory plus 512 MiB and be at least
-12,288 MiB; the training deadline must be 1–3,600 seconds. Use limits sufficient
-for every host in this fleet. Bundles receive only training photos; calibration
-and test photos stay with the validator. Export verifies image hashes and sizes.
 
 Each model uses its own fleet directory and ports. Never combine text and image
 scores into one reward vector. Only one validator may publish for a hotkey/subnet;
@@ -123,29 +94,9 @@ export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
 ./start-miner --device cuda --rounds 1
 ```
 
-For legacy H2O bundles, do the same with `.venv-h2o`, `requirements/h2o.txt`
-and `ZILS_H2O_RUNTIME_PYTHON`.
-
 d3 training waits until at least 12,288 MiB of GPU memory is free
 (`ZILS_D3_MIN_FREE_MIB` raises that floor). Neither side silently substitutes
-another runtime. The pins are `zils/d3-pins.json`; the retired H2O contract is in
-[h2o-queue.md](h2o-queue.md).
-
-For legacy ImaJev image bundles, also install and verify the isolated runtime on each host:
-
-```bash
-uv venv --python 3.13 .venv-image
-uv pip install --python .venv-image/bin/python --torch-backend=cu128 -r requirements/imajev.txt
-.venv-image/bin/python -m scripts.download_imajev --out models/imajev-reference
-export ZILS_IMAGE_RUNTIME_PYTHON="$PWD/.venv-image/bin/python"
-export ZILS_IMAGE_REFERENCE="$PWD/models/imajev-reference"
-./start-miner --device cuda --rounds 1
-```
-
-The validator needs these same image runtime variables. Set the shared
-`ZILS_COMPUTE_LOCK` and the qualified `ZILS_IMAGE_GPU_MEMORY_FRACTION` when sharing
-a GPU, as described in the image training guide. Low capacity makes a miner wait;
-it never permits a smaller unverified memory allowance.
+another runtime. The pins are `zils/d3-pins.json`.
 
 ### Windows / NVIDIA GPU
 

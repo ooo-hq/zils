@@ -258,7 +258,6 @@ def _scores(
             [{"uid": uid, "sha256": checkpoint, "checkpoint": str(path.resolve())}],
             draw_path / "expanded.jsonl",
             base_revision=models.spec(model)["base_revision"],
-            model=model,
             images=draw_path / "images",
             wait_for_capacity=wait_for_capacity,
         )

@@ -19,11 +19,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from zils import base_release, models, regression_suite  # noqa: E402
 
 ORIGIN = {
-    models.H2O: " by h2oai, Apache License 2.0",
     **{m: "; licence terms are in LICENSE" for m in models.d3_family()},
 }
 CANDIDATE_ID_PREFIX = {
-    models.H2O: "h2o-lightning-4b",
     **{m: models.D3_POOL_MODELS[models.pool_id(m)].removesuffix("-v1") for m in models.d3_family()},
 }
 
@@ -91,7 +89,7 @@ def main():
     parser.add_argument(
         "--repo",
         default=None,
-        help="Hugging Face repo id, default zils-ai/<h2o-lightning-4b|d3-mini-4.5b>-zils-r<round>",
+        help="Hugging Face repo id, default zils-ai/<d3-mini-4.5b>-zils-r<round>",
     )
     parser.add_argument(
         "--king-hotkey",

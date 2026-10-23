@@ -1,7 +1,6 @@
-"""Option 5 base candidates: full H2O weights with the parent's contract files, at the artifact interface."""
+"""Option 5 base candidates: full d3 weights with the parent's contract files, at the artifact interface."""
 
 import contextlib
-import hashlib
 import io
 import json
 import runpy
@@ -13,32 +12,17 @@ from unittest.mock import patch
 
 import zils
 from zils import models, protocol
-from zils.h2o import PINS, DecisionModel, validate_candidate
 
-CONTRACT = {name: b"contract " + name.encode() for name in models.H2O_CONTRACT_FILES}
-PARENT_CONFIG = {
-    "architectures": ["Qwen3_5ForConditionalGeneration"],
-    "transformers_version": "4.57.0.dev0",
-    "text_config": {"hidden_size": 2560, "num_hidden_layers": 32, "transformers_version": "5.15.0"},
-    "vision_config": {"model_type": "qwen3_5"},
-}
+WEIGHTS = "model-00001-of-00002.safetensors"
 
 
-def candidate(root, config=PARENT_CONFIG, weights=b"weights"):
+def candidate(root):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
-    for name, data in CONTRACT.items():
-        (root / name).write_bytes(data)
-    (root / "config.json").write_text(json.dumps(config))
-    (root / "model.safetensors").write_bytes(weights)
-    models.write_metadata(root, kind="candidate", model=models.H2O)
+    for name in models.candidate_files(models.D3, "candidate"):
+        (root / name).write_bytes(b"contract " + name.encode())
+    models.write_metadata(root, kind="candidate", model=models.D3)
     return root
-
-
-def pins_for_fixture():
-    files = dict(PINS["files"])
-    files.update({name: hashlib.sha256(data).hexdigest() for name, data in CONTRACT.items()})
-    return {**PINS, "files": files}
 
 
 class BaseCandidateTest(unittest.TestCase):
@@ -46,24 +30,27 @@ class BaseCandidateTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = candidate(Path(tmp) / "candidate")
             self.assertEqual(models.metadata(root)["kind"], "candidate")
-            self.assertEqual(models.artifact_files(root), models.CANDIDATE_FILES)
+            self.assertEqual(models.artifact_files(root), models.D3_CANDIDATE_FILES)
             self.assertEqual(
-                models.candidate_files(models.H2O, "candidate"), models.CANDIDATE_FILES
+                models.candidate_files(models.D3, "candidate"), models.D3_CANDIDATE_FILES
             )
             self.assertEqual(models.artifact_budget("candidate"), 10 * 1024**3)
             self.assertEqual(models.artifact_budget("adapter"), zils.MAX_ARTIFACT_BYTES)
             self.assertEqual(models.artifact_kind(root), "candidate")
             digest = zils.checkpoint_hash(root)
-            (root / "model.safetensors").write_bytes(b"other weights")
+            (root / WEIGHTS).write_bytes(b"other weights")
             self.assertNotEqual(zils.checkpoint_hash(root), digest)
             (root / "adapter_model.safetensors").write_bytes(b"lora")
             with self.assertRaisesRegex(ValueError, "mixes"):
                 models.artifact_files(root)
-            with self.assertRaisesRegex(ValueError, "H2O and d3 profiles only"):
-                models.candidate_files(models.IMAJEV, "candidate")
-            (Path(tmp) / "jev").mkdir()
-            with self.assertRaisesRegex(ValueError, "H2O and d3 profiles only"):
-                models.write_metadata(Path(tmp) / "jev", kind="candidate", model=models.IMAJEV)
+            with self.assertRaisesRegex(ValueError, "d3 profiles only"):
+                models.candidate_files(models.KEV, "candidate")
+            (Path(tmp) / "kev").mkdir()
+            with self.assertRaisesRegex(ValueError, "invalid model metadata"):
+                models.write_metadata(Path(tmp) / "kev", kind="candidate", model=models.KEV)
+            for model in models.RETIRED_MODELS:
+                with self.assertRaisesRegex(ValueError, "unsupported model identity"):
+                    models.candidate_files(model, "candidate")
 
     def test_download_transfers_every_candidate_file_under_its_own_budget(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -84,55 +71,16 @@ class BaseCandidateTest(unittest.TestCase):
             with protocol.local_server(Files) as endpoint:
                 claim = {"endpoint": endpoint, "sha256": zils.checkpoint_hash(source)}
                 protocol.fetch_checkpoint(
-                    claim, root / "download", model=models.H2O, kind="candidate"
+                    claim, root / "download", model=models.D3, kind="candidate"
                 )
-                self.assertEqual(set(requested), set(models.CANDIDATE_FILES))
+                self.assertEqual(set(requested), set(models.D3_CANDIDATE_FILES))
                 self.assertEqual(zils.checkpoint_hash(root / "download"), claim["sha256"])
                 # The adapter contract does not accept a candidate announcement.
                 with self.assertRaises((ValueError, OSError)):
-                    protocol.fetch_checkpoint(claim, root / "as-adapter", model=models.H2O)
-
-    def test_validation_pins_contract_files_and_text_architecture(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            parent = root / "parent"
-            parent.mkdir()
-            (parent / "config.json").write_text(json.dumps(PARENT_CONFIG))
-            saved = {
-                **PARENT_CONFIG,
-                "dtype": "bfloat16",
-                "use_cache": False,
-                "transformers_version": "5.17.0",
-                "text_config": {"hidden_size": 2560, "num_hidden_layers": 32},
-                "vision_config": {"model_type": "qwen3_5_vision", "rope_parameters": {}},
-            }
-            good = candidate(root / "good", saved)
-            with (
-                patch("zils.h2o.PINS", pins_for_fixture()),
-                patch("zils.h2o.pinned_base_path", return_value=parent),
-            ):
-                validate_candidate(good)
-                narrower = candidate(
-                    root / "narrower",
-                    {**saved, "text_config": {**saved["text_config"], "hidden_size": 2048}},
-                )
-                with self.assertRaisesRegex(ValueError, "architecture"):
-                    validate_candidate(narrower)
-                other = candidate(
-                    root / "other", {**saved, "architectures": ["Qwen3_5ForCausalLM"]}
-                )
-                with self.assertRaisesRegex(ValueError, "architecture"):
-                    validate_candidate(other)
-                edited = candidate(root / "edited", saved)
-                (edited / "serve_config.json").write_text("{}")
-                with self.assertRaisesRegex(ValueError, "pinned parent"):
-                    validate_candidate(edited)
-                with self.assertRaisesRegex(ValueError, "pinned base"):
-                    DecisionModel(good, "cuda", train=True)
+                    protocol.fetch_checkpoint(claim, root / "as-adapter", model=models.D3)
 
     def test_promote_base_targets_the_chosen_profile(self):
         for model, prefix, validator in (
-            (models.H2O, "h2o-lightning-4b", "zils.h2o.validate_candidate"),
             (models.D3, "d3-mini-4.5b", "zils.d3.validate_candidate"),
             ("d3-lite-0.8b-v1", "d3-lite-0.8b", "zils.d3.validate_candidate"),
         ):
@@ -229,9 +177,7 @@ class BaseCandidateTest(unittest.TestCase):
                         str(Path(__file__).parents[1] / "scripts/promote_base.py"),
                         run_name="__main__",
                     )
-                validate.assert_called_once_with(
-                    weights, *([model] if model in models.d3_family() else [])
-                )
+                validate.assert_called_once_with(weights, model)
                 result = json.loads(out.getvalue())
                 entry = result["proposed_spec_entry"]
                 self.assertEqual(entry["id"], f"{prefix}-zils-r3")
@@ -271,7 +217,7 @@ class BaseCandidateTest(unittest.TestCase):
             root = Path(tmp)
             weights = root / "candidate"
             weights.mkdir()
-            models.write_metadata(weights, kind="candidate", model=models.H2O)
+            models.write_metadata(weights, kind="candidate", model=models.D3_POOL_MODELS["d3-lite"])
             decision = root / "decision.json"
             decision.write_text(json.dumps({"confirmed_winner": {"sha256": "x"}}))
             argv = ["promote_base.py", "--model", models.D3, "--candidate", str(weights)]

@@ -27,9 +27,8 @@ and the guarded Bittensor testnet integration.
 
 d3-mini 4.5B (`d3-mini-4.5b-v1`) is the only served base since 17 October 2026, for
 text and image jobs; a d3 queue miner downloads a job's frozen training photos itself.
-H2O Lightning 4B and ImaJev 4B are retired: existing frozen jobs and bundles keep
-working, but new work uses d3. JevK5 4B is retired: its frozen checkpoints stay
-readable, but nothing creates, trains or serves them. Kev 0.8B jobs remain supported.
+H2O Lightning 4B, ImaJev 4B and JevK5 4B are retired: their frozen job records stay
+readable, but nothing creates, trains, evaluates or serves them. Kev 0.8B jobs remain supported.
 Each fleet pins one job and model. Text and image scores are not combined into one
 reward vector.
 
@@ -110,7 +109,7 @@ uv pip install --python .venv-kev/bin/python \
 .venv-kev/bin/python -m scripts.download_models
 ```
 
-For d3 fleets (and legacy H2O and ImaJev bundles), follow the [model-specific fleet setup](docs/mining.md).
+For d3 fleets, follow the [model-specific fleet setup](docs/mining.md).
 References are downloaded from pinned upstream revisions. Private
 checkpoints, wallets, datasets, and generated bundles are excluded from Git.
 

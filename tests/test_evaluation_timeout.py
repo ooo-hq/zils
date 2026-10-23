@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from zils import models, validator
+from zils import validator
 
 
 class EvaluationTimeoutTests(unittest.TestCase):
@@ -38,7 +38,6 @@ class EvaluationTimeoutTests(unittest.TestCase):
                     [{"uid": 0}, {"uid": 1}],
                     cases,
                     base_revision="r",
-                    model=models.D3,
                 )
             command, kwargs = calls[0][0][0], calls[0][1]
             self.assertEqual(command[command.index("--timeout") + 1], "2352")

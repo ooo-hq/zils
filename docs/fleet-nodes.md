@@ -2,7 +2,9 @@
 
 > **Dated design (14 October 2026).** This page records the plan as written then,
 > when H2O was the served text base. Since 17 October 2026 d3-mini is the only
-> served base and H2O serving is off. For current setup read
+> served base; H2O and Imajev were removed from the code on 22 October 2026, so the
+> H2O and image steps below no longer run. `scripts/provision_node.sh` now builds
+> and qualifies d3 only. For current setup read
 > [queued miners](queue-miners.md), [mining](mining.md) and
 > [validators](validators.md).
 
@@ -25,7 +27,7 @@ Two properties are required of every node:
 ## What exists today
 
 - The queue miner, its H2O runtime and qualification steps are documented in
-  [queue-miners.md](queue-miners.md) and [h2o-queue.md](h2o-queue.md). They
+  [queue-miners.md](queue-miners.md) and the retired H2O contract. They
   were installed by hand on the 4090 (WSL 2) and on the 10 October rollout.
 - Fleet bundles, the validator and testnet publication are documented in
   [mining.md](mining.md), [validators.md](validators.md),
@@ -156,11 +158,11 @@ already-provisioned one (see the [runbook](fleet-node-runbook.md)):
 2. Accounts, groups, directories, permissions.
 3. Source checkouts at the pinned revisions; `uv` environments from the
    `requirements/*.txt` pins; no network after this step except references.
-4. References downloaded and verified against `h2o-pins.json` and `d3-pins.json`.
+4. References downloaded and verified against `d3-pins.json`.
 5. Units installed, all disabled.
-6. `python -m scripts.qualify_node` for H2O, then again with `--model d3-mini-4.5b-v1`; the reports are the proof the image is good.
+6. `python -m scripts.qualify_node --model d3-mini-4.5b-v1`; the report is the proof the image is good.
 7. Writes `/etc/zils-node/image.json`: subnet revision, platform revision,
-   H2O pins hash (`pins_sha256_16`), d3 pins hash (`d3_pins_sha256_16`), qualification report hash, build time.
+   d3 pins hash (`pins_sha256_16`), qualification report hash, build time.
 
 Rebuild paths:
 
@@ -168,7 +170,7 @@ Rebuild paths:
 - **Snapshot**: after step 7 on a node with no secrets injected, take a
   DigitalOcean snapshot named from `pins_sha256_16` and the short `subnet_commit` in `image.json`. New nodes boot from it
   in minutes and run only boot-time injection plus role start. A snapshot is
-  retired whenever `subnet-ref.txt` or the H2O or d3 pins change; the script makes
+  retired whenever `subnet-ref.txt` or the d3 pins change; the script makes
   the next one.
 
 Nothing in the state directories is needed to rebuild: customer job state is

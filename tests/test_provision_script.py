@@ -79,8 +79,8 @@ class ProvisionScriptTest(unittest.TestCase):
     def test_qualify_clears_stale_adapter_before_running(self):
         text = SCRIPT.read_text()
         qualify = text[text.index("phase qualify") : text.index("phase image")]
-        clear = qualify.index('rm -rf "$STATE/qualification/adapter"')
-        self.assertIn('"$STATE/qualification/train.jsonl"', qualify)
+        clear = qualify.index('rm -rf "$STATE/qualification-d3/adapter"')
+        self.assertIn('"$STATE/qualification-d3/train.jsonl"', qualify)
         self.assertLess(clear, qualify.index("-m scripts.qualify_node"))
 
     def test_service_user_can_read_node_config_and_owns_caches(self):
@@ -131,42 +131,39 @@ class ProvisionScriptTest(unittest.TestCase):
         self.assertLess(
             env.index("UV_PYTHON_INSTALL_DIR"), env.index("uv venv"), "export before any uv call"
         )
-        self.assertLess(env.index("requirements/h2o.txt"), env.index("chmod -R a+rX"))
+        self.assertLess(env.index("requirements/d3.txt"), env.index("chmod -R a+rX"))
 
     def test_service_user_can_read_the_environments_whatever_the_inherited_umask(self):
         text = SCRIPT.read_text()
         self.assertLess(text.index("umask 022"), text.index("phase driver"))
         env = text[text.index("phase environments") : text.index("phase references")]
-        self.assertIn("chmod -R a+rX .venv-kev .venv-h2o .venv-d3", env)
+        self.assertIn("chmod -R a+rX .venv-kev .venv-d3", env)
         self.assertLess(env.index("requirements/d3.txt"), env.index("a+rX .venv-kev"))
 
-    def test_d3_runtime_follows_h2o_in_environments_references_qualify_and_image(self):
+    def test_d3_is_the_only_runtime_in_environments_references_qualify_and_image(self):
         text = SCRIPT.read_text()
+        self.assertNotIn("h2o", text.lower())
         env = text[text.index("phase environments") : text.index("phase references")]
-        self.assertLess(env.index(".venv-h2o"), env.index(".venv-d3"))
         self.assertIn("uv venv --python 3.12 .venv-d3", env)
         self.assertIn(
             "--python .venv-d3/bin/python --torch-backend=cu130 -r requirements/d3.txt", env
         )
         refs = text[text.index("phase references") : text.index("phase units")]
-        self.assertLess(refs.index("zils.h2o reference"), refs.index("zils.d3 reference"))
         self.assertIn("-m zils.d3 reference --out models/d3-reference", refs)
         qualify = text[text.index("phase qualify") : text.index("phase image")]
-        self.assertEqual(qualify.count("\n      qualify_runtime "), 2)
-        self.assertLess(qualify.index(".venv-h2o"), qualify.index("--model d3-mini-4.5b-v1"))
+        self.assertEqual(qualify.count("\n      qualify_runtime "), 1)
+        self.assertIn("qualify_runtime --model d3-mini-4.5b-v1", qualify)
         self.assertIn("--runtime-python $ROOT/.venv-d3/bin/python", qualify)
         self.assertIn('rm -rf "$STATE/qualification-d3/adapter"', qualify)
         self.assertIn("--out $STATE/qualification-d3", qualify)
         image = text[text.index("phase image") :]
         self.assertIn(
-            "PINS=$(sha256sum zils/h2o-pins.json requirements/h2o.txt | sha256sum | cut -c1-16)",
+            "PINS=$(sha256sum zils/d3-pins.json requirements/d3.txt | sha256sum | cut -c1-16)",
             image,
         )
-        self.assertIn(
-            "D3_PINS=$(sha256sum zils/d3-pins.json requirements/d3.txt | sha256sum | cut -c1-16)",
-            image,
-        )
-        self.assertIn("d3_pins_sha256_16", image)
+        self.assertIn("Q=$(sha256sum $STATE/qualification-d3/qualification.json", image)
+        self.assertIn('"pins_sha256_16"', image)
+        self.assertNotIn("d3_pins_sha256_16", image)
 
     def test_source_checks_out_the_fetched_ref_not_a_stale_local_branch(self):
         """An old snapshot's local `main` must not win over the fetched origin/main (zils-node-2, 19 Oct)."""

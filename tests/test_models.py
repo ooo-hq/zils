@@ -1,5 +1,6 @@
 """Model identity, artifact integrity and legacy compatibility at the queue interface."""
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -37,6 +38,13 @@ class ModelTest(unittest.TestCase):
             models.validate_spec(archived)
         with self.assertRaisesRegex(ValueError, "unsupported"):
             models.text_runtime(archived["id"])
+        for model, frozen in models.RETIRED_SPECS.items():
+            with self.subTest(model=model):
+                self.assertEqual(
+                    models.job_history_profile({"manifest": {"model": frozen}}), frozen
+                )
+                with self.assertRaisesRegex(ValueError, "unsupported model identity"):
+                    models.job_model({"model_profile": frozen})
 
     def test_job_history_rejects_changed_or_inconsistent_archived_profiles(self):
         archived = {
@@ -122,8 +130,8 @@ class ModelTest(unittest.TestCase):
 
     def test_runner_runs_as_a_script_and_rejects_unsupported_device(self):
         with tempfile.TemporaryDirectory() as tmp:
-            models.write_metadata(tmp, kind="base", model=models.H2O)
-            spec = models.spec(models.H2O)
+            models.write_metadata(tmp, kind="base", model=models.D3)
+            spec = models.spec(models.D3)
             result = subprocess.run(
                 [
                     sys.executable,
@@ -154,11 +162,11 @@ class ModelTest(unittest.TestCase):
                 "new-job",
                 examples(),
                 POLICY,
-                model=models.H2O,
+                model=models.D3,
                 allow_training_data_export=True,
             )
-            self.assertEqual(manifest["model"], models.spec(models.H2O))
-            self.assertEqual(models.job_model({"manifest": manifest}), models.H2O)
+            self.assertEqual(manifest["model"], models.spec(models.D3))
+            self.assertEqual(models.job_model({"manifest": manifest}), models.D3)
             self.assertEqual(models.job_model({"manifest": {}}), models.KEV)
             self.assertEqual(benchmark.audit(root), examples())
             manifest["model"]["base_revision"] = "0" * 40
@@ -170,7 +178,7 @@ class ModelTest(unittest.TestCase):
             root = Path(tmp)
             base = root / "base"
             base.mkdir()
-            models.write_metadata(base, kind="base", temperature=1.22, model=models.H2O)
+            models.write_metadata(base, kind="base", temperature=1.22, model=models.D3)
             self.assertEqual(models.artifact_files(base), ("model.json",))
             entry = zils.submission(base, 0)
             zils.stage(entry, root / "copy")
@@ -180,7 +188,7 @@ class ModelTest(unittest.TestCase):
             self.assertEqual(models.temperature(base), 1.22)
             candidate = root / "candidate"
             candidate.mkdir()
-            models.write_metadata(candidate, model=models.H2O)
+            models.write_metadata(candidate, model=models.D3)
             (candidate / "adapter_config.json").write_text("{}")
             (candidate / "adapter_model.safetensors").write_bytes(b"fixture")
             original = zils.checkpoint_hash(candidate)
@@ -194,7 +202,7 @@ class ModelTest(unittest.TestCase):
     def test_unknown_models_and_symlink_metadata_are_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            models.write_metadata(root, model=models.H2O)
+            models.write_metadata(root, model=models.D3)
             value = json.loads((root / "model.json").read_text())
             value["model"] = "untrusted/replacement"
             (root / "model.json").write_text(json.dumps(value))
@@ -206,10 +214,11 @@ class ModelTest(unittest.TestCase):
                 zils.checkpoint_hash(root)
 
     def test_candidate_base_env_names_the_profile_override(self):
-        self.assertEqual(models.candidate_base_env(models.H2O), "ZILS_H2O_CANDIDATE_BASE")
         self.assertEqual(models.candidate_base_env(models.D3), "ZILS_D3_CANDIDATE_BASE")
-        with self.assertRaisesRegex(ValueError, "no base-candidate support"):
-            models.candidate_base_env(models.IMAJEV)
+        for model in (models.KEV, *models.RETIRED_MODELS):
+            with self.subTest(model=model):
+                with self.assertRaisesRegex(ValueError, "no base-candidate support"):
+                    models.candidate_base_env(model)
 
     def test_d3_profile_is_pinned_and_unique(self):
         spec = models.spec(models.D3)
@@ -262,21 +271,25 @@ class ModelTest(unittest.TestCase):
         self.assertEqual(len(pins["files"]), 25)  # every manifest file except README.md, assets/*
         identity = models.profile_identity(models.D3)
         self.assertEqual(set(identity), {"profile_sha256", "runtime_sha256"})
-        self.assertNotEqual(
-            identity["runtime_sha256"], models.profile_identity(models.H2O)["runtime_sha256"]
-        )
+        for model in models.d3_family():
+            if model != models.D3:
+                self.assertNotEqual(
+                    identity["runtime_sha256"], models.profile_identity(model)["runtime_sha256"]
+                )
 
-    def test_h2o_and_imajev_identities_are_unchanged(self):
-        self.assertEqual(
-            models.profile_identity(models.H2O)["profile_sha256"],
-            "d28055e0296cba2afa5ba7f9052a3173ac7196b21f841898254b8e6df2b84506",
-        )
-        self.assertEqual(
-            models.profile_identity(models.IMAJEV)["profile_sha256"],
-            "3d53e354ad72ae067f33bfa8175d281507c467780a8c6c807cc0eb41eceb459c",
-        )
-        path = Path(models.__file__).with_name("h2o-pins.json")
-        self.assertEqual(models.pins(models.H2O), json.loads(path.read_text()))
+    def test_retired_h2o_and_imajev_identities_are_unchanged(self):
+        for model, expected in (
+            (models.H2O, "d28055e0296cba2afa5ba7f9052a3173ac7196b21f841898254b8e6df2b84506"),
+            ("imajev-4b-v1", "3d53e354ad72ae067f33bfa8175d281507c467780a8c6c807cc0eb41eceb459c"),
+        ):
+            with self.subTest(model=model):
+                frozen = json.dumps(
+                    models.RETIRED_SPECS[model], sort_keys=True, separators=(",", ":")
+                )
+                self.assertEqual(hashlib.sha256(frozen.encode()).hexdigest(), expected)
+                self.assertNotIn(model, models.SPECS)
+                with self.assertRaisesRegex(ValueError, "unsupported model identity"):
+                    models.profile_identity(model)
 
     def test_d3_metadata_requires_profile(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -298,13 +311,22 @@ class ModelTest(unittest.TestCase):
     def test_text_runtime_and_interpreter_lookup(self):
         self.assertEqual(models.text_runtime(models.D3).__name__, "zils.d3")
         self.assertEqual(models.runtime_python_env(models.D3), "ZILS_D3_RUNTIME_PYTHON")
-        self.assertEqual(models.runtime_python_env(models.H2O), "ZILS_H2O_RUNTIME_PYTHON")
+        for model in models.RETIRED_MODELS:
+            self.assertIsNone(models.runtime_python_env(model))
         self.assertEqual(models.candidate_files(models.D3), models.TEXT_ADAPTER_FILES)
         with self.assertRaisesRegex(ValueError, "unsupported"):
             models.text_runtime("jevk5-4b-v0.3")
 
-    def test_retired_jevk5_metadata_stays_readable_but_cannot_be_created_or_run(self):
-        retired = "jevk5-4b-v0.3"
+    def test_retired_metadata_stays_readable_but_cannot_be_created_or_run(self):
+        for retired in models.RETIRED_MODELS:
+            with self.subTest(model=retired):
+                self.check_retired_metadata(retired)
+        self.assertEqual(
+            models.candidate_files(models.D3, kind="candidate")[-len(models.D3_CONTRACT_FILES) :],
+            models.D3_CONTRACT_FILES,
+        )
+
+    def check_retired_metadata(self, retired):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(ValueError, "unsupported model identity"):
                 models.write_metadata(tmp, model=retired)
@@ -324,7 +346,11 @@ class ModelTest(unittest.TestCase):
                 models.artifact_files(tmp)
             with self.assertRaisesRegex(ValueError, "unsupported"):
                 models.spec(retired)
-        self.assertEqual(
-            models.candidate_files(models.D3, kind="candidate")[-len(models.D3_CONTRACT_FILES) :],
-            models.D3_CONTRACT_FILES,
-        )
+            value = json.loads((Path(tmp) / "model.json").read_text())
+            value["profile"] = models.RETIRED_SPECS[retired]
+            (Path(tmp) / "model.json").write_text(json.dumps(value))
+            self.assertEqual(models.checkpoint_model(tmp), retired)
+            value["profile"] = {**value["profile"], "base_revision": "0" * 40}
+            (Path(tmp) / "model.json").write_text(json.dumps(value))
+            with self.assertRaisesRegex(ValueError, "pinned profile"):
+                models.metadata(tmp)

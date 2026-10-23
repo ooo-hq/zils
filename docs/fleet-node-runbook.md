@@ -33,11 +33,9 @@ a manual run of those three steps, before `apply_role.sh` installs the
 queue-miner unit that references `models/d3-reference`.
 
 Record `profile_sha256`, `runtime_sha256`, `trainer_sha256`,
-`training.peak_gpu_mib` and `gpu.free_mib_at_start` from both reports (H2O and
-d3, which also carries `parity`); the operator registers each in
-`zils_worker_profiles` for this image hash. The image hashes are
-`pins_sha256_16` (H2O) and `d3_pins_sha256_16` (d3) from
-`/etc/zils-node/image.json`; record both.
+`training.peak_gpu_mib`, `gpu.free_mib_at_start` and `parity` from the d3
+report; the operator registers it in `zils_worker_profiles` for this image hash.
+The image hash is `pins_sha256_16` (d3) from `/etc/zils-node/image.json`.
 
 ## Snapshot (no secrets on the node yet)
 
@@ -79,8 +77,8 @@ resource and qualifies it (platform `docs/miner-grading.md`). Before training,
 the miner checks each job's longest example against its GPU (total memory, or
 `gpu_budget_mib` in the miner config when another service shares the card) and
 refuses jobs that cannot fit, so the coordinator offers them to another miner. The
-`fleet-validator` role is installed but has no runbook path yet; the first
-multi-host H2O round in `docs/fleet-nodes.md` is its acceptance test.
+`fleet-validator` role is installed but has no runbook path yet; a first
+multi-host d3 round is its acceptance test.
 
 ## Verify
 

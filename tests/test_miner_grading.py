@@ -9,9 +9,10 @@ from pathlib import Path
 from zils import miner_grading as grading, models
 
 NOW = datetime(2026, 10, 9, tzinfo=UTC)
+LITE = models.D3_POOL_MODELS["d3-lite"]  # another d3 profile with its own identity
 CONTEXT = {
-    "model": models.H2O,
-    **models.profile_identity(models.H2O),
+    "model": models.D3,
+    **models.profile_identity(models.D3),
     "trainer_sha256": "a" * 64,
     "rubric": "test/v1",
     "benchmark_sha256": "b" * 64,
@@ -42,7 +43,7 @@ def job(**overrides):
         "id": "job",
         "job_sha256": "c" * 64,
         "context": dict(CONTEXT),
-        "workload": grading.workload_profile([100] * 10, model=models.H2O),
+        "workload": grading.workload_profile([100] * 10, model=models.D3),
         "deadline": (NOW + timedelta(hours=2)).isoformat(),
         "consent": True,
         "purpose": "customer",
@@ -56,7 +57,7 @@ def worker(hotkey="worker", improvement=0.12, rate=0.1, **overrides):
         "enabled": True,
         "approved": True,
         "resource_id": hotkey,
-        "profile": models.profile_identity(models.H2O),
+        "profile": models.profile_identity(models.D3),
         "received_at": NOW.isoformat(),
         "ready": True,
         "reserved": False,
@@ -73,14 +74,14 @@ class GradingTests(unittest.TestCase):
         from zils import jobs
 
         splits = examples()
-        workload = grading.workload_profile([100] * len(splits["train"]), model=models.H2O)
+        workload = grading.workload_profile([100] * len(splits["train"]), model=models.D3)
         with tempfile.TemporaryDirectory() as tmp:
             old = jobs.build(
                 Path(tmp) / "old",
                 "old",
                 splits,
                 POLICY,
-                model=models.H2O,
+                model=models.D3,
                 allow_training_data_export=True,
             )
             self.assertNotIn("workload", old)
@@ -90,7 +91,7 @@ class GradingTests(unittest.TestCase):
                 "new",
                 splits,
                 POLICY,
-                model=models.H2O,
+                model=models.D3,
                 allow_training_data_export=True,
                 workload=workload,
             )
@@ -134,40 +135,38 @@ class GradingTests(unittest.TestCase):
             (1024, "tokens-1024"),
             (1025, "tokens-2048"),
         ]:
-            self.assertEqual(grading.workload_profile([length], model=models.H2O)["band"], band)
-        for lengths in ([], [0], [2049], [True], [1.5]):
+            self.assertEqual(grading.workload_profile([length], model=models.D3)["band"], band)
+        for lengths in ([], [0], [4097], [True], [1.5]):
             with self.assertRaises(ValueError):
-                grading.workload_profile(lengths, model=models.H2O)
+                grading.workload_profile(lengths, model=models.D3)
 
     def test_workload_cap_follows_the_profile(self):
         self.assertEqual(grading.workload_profile([4096], model=models.D3)["band"], "tokens-4096")
         with self.assertRaisesRegex(ValueError, "1..4096"):
             grading.workload_profile([4097], model=models.D3)
         with self.assertRaisesRegex(ValueError, "1..2048"):
-            grading.workload_profile([4096], model=models.H2O)
-        self.assertNotEqual(
-            grading.trainer_identity(models.D3), grading.trainer_identity(models.H2O)
-        )
+            grading.workload_profile([4096], model=models.KEV)
+        self.assertNotEqual(grading.trainer_identity(models.D3), grading.trainer_identity(LITE))
         d3 = grading.workload_profile([4096] * 2, model=models.D3)
         self.assertEqual(grading.validate_workload(d3, model=models.D3, examples=2), d3)
         with self.assertRaisesRegex(ValueError, "model mismatch|invalid workload tokens"):
-            grading.validate_workload(d3, model=models.H2O, examples=2)
+            grading.validate_workload(d3, model=LITE, examples=2)
 
     def test_contexts_are_keyed_by_model_and_band(self):
-        self.assertEqual(grading.context_key(CONTEXT), f"{models.H2O}/tokens-512")
+        self.assertEqual(grading.context_key(CONTEXT), f"{models.D3}/tokens-512")
         identity = {k: "f" * 64 for k in ("profile_sha256", "runtime_sha256")}
         d3 = {**CONTEXT, **identity, "model": models.D3, "band": "tokens-4096"}
-        h2o = {**CONTEXT, **identity, "model": models.H2O, "band": "tokens-2048"}
         self.assertTrue(grading.valid_context(d3))
-        # Stored H2O evidence stays readable; a band above H2O's cap was never produced.
-        self.assertTrue(grading.valid_context(h2o))
-        self.assertFalse(grading.valid_context({**h2o, "band": "tokens-4096"}))
-        self.assertEqual(grading.bands(models.H2O), ("tokens-512", "tokens-1024", "tokens-2048"))
+        self.assertFalse(grading.valid_context({**d3, "band": "tokens-8192"}))
+        # Stored evidence of a retired profile never grades a routing context.
+        for model in models.RETIRED_MODELS:
+            self.assertFalse(grading.valid_context({**d3, "model": model, "band": "tokens-2048"}))
+        self.assertEqual(grading.bands(models.KEV), ("tokens-512", "tokens-1024", "tokens-2048"))
         self.assertEqual(grading.bands(models.D3)[-1], "tokens-4096")
         # The same band under another model never grades this context.
         attempt = {
             "id": "other-model",
-            "context": {**CONTEXT, "model": models.D3},
+            "context": {**CONTEXT, "model": LITE},
             "outcome": "valid",
             "finished_at": NOW.isoformat(),
             "started_at": (NOW - timedelta(seconds=100)).isoformat(),
@@ -177,11 +176,11 @@ class GradingTests(unittest.TestCase):
         self.assertEqual(grading.performance_grade([attempt], CONTEXT, NOW)["successes"], 0)
         self.assertEqual(
             grading.qualification_grade(
-                [{**report(1), "context": {**CONTEXT, "model": models.D3}}], CONTEXT, NOW
+                [{**report(1), "context": {**CONTEXT, "model": LITE}}], CONTEXT, NOW
             )["quality_runs"],
             0,
         )
-        crossed = job(workload=grading.workload_profile([100] * 10, model=models.D3))
+        crossed = job(workload=grading.workload_profile([100] * 10, model=LITE))
         result = grading.rank_candidates(crossed, [worker()], NOW)
         self.assertIsNone(result["selected_hotkey"])
         self.assertEqual(result["exclusions"][0]["reason"], "unverified_workload_or_consent")
@@ -249,12 +248,12 @@ class GradingTests(unittest.TestCase):
         self.assertIsNone(result["selected_hotkey"])
         # Size beyond the measured probe is the miner's own fit check, not a routing exclusion.
         larger = job()
-        larger["workload"] = grading.workload_profile([300] * 100, model=models.H2O)
+        larger["workload"] = grading.workload_profile([300] * 100, model=models.D3)
         self.assertEqual(
             grading.rank_candidates(larger, [worker()], NOW)["selected_hotkey"], "worker"
         )
         # A job longer than the context's band ceiling is not this context's work.
-        longer = job(workload=grading.workload_profile([1000], model=models.H2O))
+        longer = job(workload=grading.workload_profile([1000], model=models.D3))
         self.assertEqual(
             grading.rank_candidates(longer, [worker()], NOW)["exclusions"][0]["reason"],
             "unverified_workload_or_consent",
@@ -267,20 +266,20 @@ class GradingTests(unittest.TestCase):
     def test_band_is_a_ceiling_and_the_smallest_covering_context_wins(self):
         small, large = {**CONTEXT, "band": "tokens-512"}, {**CONTEXT, "band": "tokens-2048"}
         contexts = {grading.context_key(c): c for c in (large, small)}
-        short = grading.workload_profile([100], model=models.H2O)
-        long = grading.workload_profile([1500], model=models.H2O)
+        short = grading.workload_profile([100], model=models.D3)
+        long = grading.workload_profile([1500], model=models.D3)
         self.assertIs(grading.covering_context(contexts, short), small)
         self.assertIs(grading.covering_context(contexts, long), large)
         self.assertIsNone(grading.covering_context({"x": small}, long))
         self.assertIsNone(
-            grading.covering_context(contexts, grading.workload_profile([100], model=models.D3))
+            grading.covering_context(contexts, grading.workload_profile([100], model=LITE))
         )
 
     def test_training_memory_estimate_covers_measured_d3_peaks(self):
         self.assertGreaterEqual(grading.training_mib(models.D3, 1895), 10538)
         self.assertGreaterEqual(grading.training_mib(models.D3, 6931), 13036)
         self.assertLess(grading.training_mib(models.D3, 8192), 24 * 1024)
-        self.assertIsNone(grading.training_mib(models.H2O, 1000))
+        self.assertIsNone(grading.training_mib(LITE, 1000))
         self.assertIsNone(grading.training_mib(models.D3, None))
 
     def test_reliability_and_speed_are_separate_from_customer_acceptance(self):

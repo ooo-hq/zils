@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 import zils
 
-from . import models, protocol as wire, settings
+from . import models, protocol as wire
 from .runtime import CapacityUnavailable, digest, locked, run_child, signed, signing_key, verified
 
 # The incumbent base is scored as a row outside every roster; the publisher refuses a roster uid there.
@@ -45,9 +45,7 @@ def run_evaluate(
     cases,
     *,
     base_revision,
-    model,
     images=None,
-    minimum_mib=0,
     wait_for_capacity=False,
 ):
     """One sandboxed `zils evaluate` of `submissions` on `cases`, deferred while GPU capacity is unavailable."""
@@ -67,9 +65,7 @@ def run_evaluate(
         "--base-revision",
         base_revision,
         "--runner-python",
-        settings.required("ZILS_IMAGE_RUNTIME_PYTHON")
-        if model == models.IMAJEV
-        else args.runtime_python,
+        args.runtime_python,
         "--device",
         args.device,
         "--timeout",
@@ -88,7 +84,6 @@ def run_evaluate(
                 args.device,
                 # Checkpoint staging also counts against the child, so each submission gets 120 s extra.
                 timeout=120 + (per_submission + 120) * len(submissions),
-                **({"model": model, "minimum_mib": minimum_mib} if model == models.IMAJEV else {}),
             )
             break
         except CapacityUnavailable:
@@ -114,7 +109,7 @@ def evaluate_round(
     benchmark.audit(data)
     manifest = json.loads((data / "manifest.json").read_text())
     model = models.validate_spec(manifest["model"]) if "model" in manifest else models.KEV
-    frozen_images = model == models.IMAJEV or "assets" in manifest  # verified <sha256>.png cache
+    frozen_images = "assets" in manifest  # verified <sha256>.png cache
     if config["base_revision"] != models.spec(model)["base_revision"]:
         raise ValueError("Evaluation configuration differs from the frozen model profile")
     if config.get("job_sha256") != (
@@ -148,9 +143,7 @@ def evaluate_round(
             submissions,
             cases,
             base_revision=base_revision or config["base_revision"],
-            model=model,
             images=directory / "images" if frozen_images else None,
-            minimum_mib=config.get("min_free_mib", 0),
             wait_for_capacity=wait_for_capacity,
         )
 
@@ -236,23 +229,12 @@ def evaluate_round(
         submitted={uid: m["claim"]["sha256"] for uid, m in registry.items()},
     )
     if baseline is not None:
-        delivery = jobs.select(baseline, report["miners"], manifest["acceptance"], model=model)
+        delivery = jobs.select(baseline, report["miners"], manifest["acceptance"])
         if delivery["status"] == "accepted":
             winner = next(entry for entry in fitted if entry["uid"] == delivery["uid"])
             release = attempt / "accepted-model"
             zils.stage(winner, release)
             delivery["checkpoint"] = str(release.relative_to(work))
-            evidence = {}
-            if model == models.IMAJEV:
-                from .image_metrics import public_metrics
-
-                selected = next(row for row in report["miners"] if row["uid"] == delivery["uid"])
-                evidence = {
-                    "image_metrics": {
-                        "baseline": public_metrics(baseline),
-                        "candidate": public_metrics(selected),
-                    }
-                }
             wire.write_json(
                 release / "release.json",
                 {
@@ -274,7 +256,6 @@ def evaluate_round(
                         else {}
                     ),
                     **delivery,
-                    **evidence,
                 },
             )
         report.update(
@@ -609,7 +590,6 @@ def base_tier_epoch(config, directory, work, registry, args, draws, *, wait_for_
                     pending,
                     path / f"{split}.jsonl",
                     base_revision=models.spec(model)["base_revision"],
-                    model=model,
                     wait_for_capacity=wait_for_capacity,
                 )
                 completed = time.time()
