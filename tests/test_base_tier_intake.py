@@ -54,7 +54,7 @@ def candidate(root, accuracy):
     return root
 
 
-def fake_hub(repos, requested, *, huge=(), truncate_once=None):
+def fake_hub(repos, requested, *, huge=(), truncate=None, range_requests=None, ignore_range=False):
     """Hugging Face's two public routes over {repo: {revision: directory}}: revision info with file
     sizes and LFS digests, and resolve, which redirects once like the real CDN hop. A repo in `huge`
     lists its model.json at the whole candidate byte budget."""
@@ -92,11 +92,20 @@ def fake_hub(repos, requested, *, huge=(), truncate_once=None):
                 return
             requested.append((cdn[1], cdn[3]))
             data = (source / cdn[3]).read_bytes()
-            self.send_response(200)
+            offset = 0
+            if header := self.headers.get("Range"):
+                if range_requests is not None:
+                    range_requests.append(header)
+                if not ignore_range:
+                    offset = int(re.fullmatch(r"bytes=(\d+)-", header)[1])
+            self.send_response(206 if offset else 200)
+            if offset:
+                self.send_header("Content-Range", f"bytes {offset}-{len(data) - 1}/{len(data)}")
+                data = data[offset:]
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
-            if truncate_once and cdn[3] in truncate_once:
-                truncate_once.remove(cdn[3])
+            if truncate and cdn[3] in truncate:
+                truncate.remove(cdn[3])
                 self.wfile.write(data[:-1])
                 self.close_connection = True
                 return
@@ -137,6 +146,50 @@ def revision(name):
     "use .venv-kev",
 )
 class BaseTierIntakeTest(unittest.TestCase):
+    def test_interrupted_shard_resumes_and_still_checks_commitment(self):
+        for ignore_range, bad_hash in ((False, False), (True, False), (False, True)):
+            with (
+                self.subTest(ignore_range=ignore_range, bad_hash=bad_hash),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                root = Path(tmp)
+                source = candidate(root / "source", 0.85)
+                shard = "model-00001-of-00002.safetensors"
+                ranges = []
+                claim = {
+                    "repo": "alice/d3",
+                    "revision": revision("strong"),
+                    "sha256": "0" * 64 if bad_hash else zils.checkpoint_hash(source),
+                }
+                with wire.local_server(
+                    fake_hub(
+                        {claim["repo"]: {claim["revision"]: source}},
+                        [],
+                        truncate=[shard],
+                        range_requests=ranges,
+                        ignore_range=ignore_range,
+                    )
+                ) as endpoint:
+                    if ignore_range:
+                        with self.assertRaisesRegex(OSError, "resume"):
+                            commitments.fetch(
+                                claim, root / "download", model=models.D3, endpoint=endpoint
+                            )
+                    elif bad_hash:
+                        with self.assertRaisesRegex(ValueError, "hash differs"):
+                            commitments.fetch(
+                                claim, root / "download", model=models.D3, endpoint=endpoint
+                            )
+                    else:
+                        result = commitments.fetch(
+                            claim, root / "download", model=models.D3, endpoint=endpoint
+                        )
+                        self.assertEqual(
+                            result["bytes"], sum(p.stat().st_size for p in source.iterdir())
+                        )
+                        self.assertEqual(zils.checkpoint_hash(root / "download"), claim["sha256"])
+                self.assertEqual(ranges, [f"bytes={(source / shard).stat().st_size - 1}-"])
+
     def test_commitments_are_pulled_once_scored_once_and_copies_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

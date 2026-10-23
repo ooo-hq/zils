@@ -15,7 +15,7 @@ import re
 import time
 from pathlib import Path
 from urllib.parse import quote, urlsplit
-from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 import zils
 
@@ -125,21 +125,36 @@ def fetch(claim, destination, *, model, endpoint=None):
     started, total = time.monotonic(), 0
     for name in files:
         url = f"{endpoint}/{claim['repo']}/resolve/{claim['revision']}/{quote(name)}"
-        with opener().open(url, timeout=30) as response:
-            size = int(response.headers.get("Content-Length", "-1"))
-            if not 0 <= size <= budget - total:
-                raise ValueError("invalid artifact size or checkpoint exceeds byte budget")
-            received = 0
-            with (destination / name).open("xb") as output:
-                while chunk := response.read(1024 * 1024):
-                    received += len(chunk)
-                    if received > size or time.monotonic() - started > DOWNLOAD_SECONDS:
-                        raise ValueError("artifact exceeds declared size or download deadline")
-                    output.write(chunk)
-            if received != size:
-                # A short HTTP body is a transport failure, not invalid model evidence.
-                raise OSError(f"truncated artifact {name}: received {received} of {size} bytes")
-            total += received
+        size = listed[name]["size"]
+        if type(size) is not int or not 0 <= size <= budget - total:
+            raise ValueError("invalid artifact size or checkpoint exceeds byte budget")
+        received = 0
+        with (destination / name).open("xb") as output:
+            # Resume short bodies twice; every byte still shares the same budget and deadline.
+            for _ in range(3):
+                if time.monotonic() - started > DOWNLOAD_SECONDS:
+                    raise OSError("artifact download deadline exceeded")
+                request = Request(url, headers={"Range": f"bytes={received}-"} if received else {})
+                with opener().open(request, timeout=30) as response:
+                    if received and (
+                        response.status != 206
+                        or response.headers.get("Content-Range")
+                        != f"bytes {received}-{size - 1}/{size}"
+                    ):
+                        raise OSError(f"artifact resume range mismatch: {name}")
+                    if int(response.headers.get("Content-Length", "-1")) != size - received:
+                        raise ValueError("artifact size differs from the pinned revision")
+                    while chunk := response.read(1024 * 1024):
+                        received += len(chunk)
+                        if received > size or time.monotonic() - started > DOWNLOAD_SECONDS:
+                            raise ValueError("artifact exceeds declared size or download deadline")
+                        output.write(chunk)
+                if received == size:
+                    break
+        if received != size:
+            # A short HTTP body is a transport failure, not invalid model evidence.
+            raise OSError(f"truncated artifact {name}: received {received} of {size} bytes")
+        total += received
     if models.checkpoint_model(destination) != model or models.artifact_files(destination) != files:
         raise ValueError("downloaded candidate differs from the required model profile")
     if zils.checkpoint_hash(destination) != claim["sha256"]:

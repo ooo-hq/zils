@@ -116,7 +116,7 @@ class BaseQueueTest(unittest.TestCase):
                 fake_hub(
                     {"alice/d3": {revision("strong"): challenger}},
                     requested,
-                    truncate_once={"model-00001-of-00002.safetensors"},
+                    truncate=["model-00001-of-00002.safetensors"] * 3,
                 )
             ) as hub,
             patch("zils.commitments.HF_ENDPOINT", hub),

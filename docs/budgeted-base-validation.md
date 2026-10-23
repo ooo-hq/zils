@@ -97,6 +97,11 @@ receive turns while those candidates wait. Changing pool profiles, draws or path
 configuration invalidates queue decisions and pending work without resetting the
 resource allowance. Private historical evaluation receipts remain on disk.
 
+Short HTTP bodies resume from the received byte offset at most twice per file,
+within the same byte and wall-time allowance. Range responses must match the
+requested offset and pinned file size; the complete checkpoint must still match
+its commitment hash. Exhausted resumes defer through the normal queue retry.
+
 Inspect queue status without publishing private exam data:
 
 ```sh
