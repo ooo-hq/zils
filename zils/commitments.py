@@ -137,7 +137,8 @@ def fetch(claim, destination, *, model, endpoint=None):
                         raise ValueError("artifact exceeds declared size or download deadline")
                     output.write(chunk)
             if received != size:
-                raise ValueError("truncated artifact")
+                # A short HTTP body is a transport failure, not invalid model evidence.
+                raise OSError(f"truncated artifact {name}: received {received} of {size} bytes")
             total += received
     if models.checkpoint_model(destination) != model or models.artifact_files(destination) != files:
         raise ValueError("downloaded candidate differs from the required model profile")

@@ -113,7 +113,11 @@ class BaseQueueTest(unittest.TestCase):
         args = SimpleNamespace(device="cpu", runtime_python=sys.executable, poll=0.1)
         with (
             wire.local_server(
-                fake_hub({"alice/d3": {revision("strong"): challenger}}, requested)
+                fake_hub(
+                    {"alice/d3": {revision("strong"): challenger}},
+                    requested,
+                    truncate_once={"model-00001-of-00002.safetensors"},
+                )
             ) as hub,
             patch("zils.commitments.HF_ENDPOINT", hub),
             patch("zils.base_pilot.verify_qualification"),
@@ -140,13 +144,29 @@ class BaseQueueTest(unittest.TestCase):
                 self.assertEqual(state["decisions"], {})
             with patch("zils.base_queue.time.time", return_value=4600):
                 self.assertTrue(queue.step(cfg, root, args))
+            with queue.state_at(root) as state:
+                row = state["entries"]["miner-1"]
+                self.assertEqual(row["status"], "pending")
+                self.assertIn("truncated artifact", row["error"])
+                self.assertIn("model-00001-of-00002.safetensors", row["error"])
+                self.assertEqual(row["ready_at"], 8200)
+                self.assertEqual(state["decisions"], {})
+                self.assertEqual(state["budget"]["download_bytes"], models.MAX_CANDIDATE_BYTES)
+            self.assertEqual(log.read_text(), "")
+            self.assertFalse(list((root / "base-pools").rglob("fetch-*")))
+            self.assertFalse(list((root / "base-pools").rglob("checkpoint")))
+            requested.clear()
+            with patch("zils.base_queue.time.time", return_value=8199):
+                self.assertFalse(queue.step(cfg, root, args))
+            with patch("zils.base_queue.time.time", return_value=8200):
+                self.assertTrue(queue.step(cfg, root, args))
             saved = queue.decisions(cfg, root)
             self.assertIn("d3-mini", saved, (root / "base-queue/state.json").read_text())
             first = saved["d3-mini"]
             self.assertEqual(first["pending_winner"]["uid"], 1)
-            with patch("zils.base_queue.time.time", return_value=4601):
+            with patch("zils.base_queue.time.time", return_value=8201):
                 self.assertFalse(queue.step(cfg, root, args))
-            with patch("zils.base_queue.time.time", return_value=47800):
+            with patch("zils.base_queue.time.time", return_value=51400):
                 self.assertTrue(queue.step(cfg, root, args))
             confirmed = queue.decisions(cfg, root)["d3-mini"]
             self.assertEqual(confirmed["confirmed_winner"]["uid"], 1)
