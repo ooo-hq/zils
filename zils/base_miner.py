@@ -71,8 +71,9 @@ def validate(config):
 
     if config.get("netuid") != 579:
         raise ValueError("This runner is restricted to testnet 579")
-    if config.get("interval_seconds", 0) < 86400:
-        raise ValueError("Leave at least one day between attempts")
+    interval = config.get("interval_seconds", 0)
+    if type(interval) is not int or interval < 0:
+        raise ValueError("interval_seconds must be a nonnegative integer")
     if not 1 <= config.get("max_training_seconds", 0) <= 21600:
         raise ValueError("Training timeout must be between 1 and 21600 seconds")
     if hashlib.sha256(Path(config["data"]).read_bytes()).hexdigest() != config["data_sha256"]:
@@ -102,7 +103,9 @@ def run(config):
     state.mkdir(parents=True, exist_ok=True)
     with (state / "runner.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        attempt_id = next_attempt(state, now=time.time(), interval=config["interval_seconds"])
+        attempt_id = next_attempt(
+            state, now=time.time(), interval=config.get("interval_seconds", 0)
+        )
         if attempt_id is None:
             print("Not due; current commitment retained", flush=True)
             return

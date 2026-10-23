@@ -11,6 +11,11 @@ This is a bootstrap recipe: one epoch of the existing LoRA trainer, with a new
 seed for each attempt. Repeating seeds/data variants is not evidence of model
 improvement. Validators independently assess each submitted checkpoint.
 
+Each miner chooses its own training schedule and recipe. The subnet does not
+require miners to take turns or wait a day between training attempts. This runner
+does not wait for a validator decision before starting its next completed-cycle
+attempt; training cadence and election confirmation timing are separate.
+
 ## Configuration
 
 Install the regular miner and d3 runtime first (see [mining](mining.md)). Prepare
@@ -35,7 +40,7 @@ Compute the export's SHA-256, then save a JSON configuration:
   "state": "/srv/miner/state",
   "compute_lock": "/var/lock/zils-training/cuda.lock",
   "yield_file": "/run/zils-base-miner/training",
-  "interval_seconds": 86400,
+  "interval_seconds": 0,
   "max_training_seconds": 21600,
   "start_after": 0
 }
@@ -60,10 +65,15 @@ it expires. Training subprocesses receive offline model-cache settings, not the
 publishing token. The host must contain the pinned model cache and have at least
 30 GiB free before an attempt begins.
 
-Run the command from a service manager. A timer can check every 15 minutes: the
-runner retains the current commitment until at least `interval_seconds` after
-the preceding completed attempt, and defers when the local compute lock is busy.
-`start_after` is an optional UTC Unix timestamp for staggering the first run.
+Run the command from a service manager. A timer can check every minute: the
+runner starts another attempt when the preceding attempt has completed and the
+local compute lock is available. `interval_seconds` defaults to zero; a positive
+value is an optional operator-selected pause after completion. `start_after` is
+an optional operator-selected UTC Unix timestamp, defaulting to no delay. Neither
+setting coordinates miners or imposes a subnet-wide training schedule.
+The existing commitment remains until a new immutable candidate is published
+and committed. A failed or uncertain publication still requires reconciliation;
+this runner does not queue further training behind an unresolved attempt.
 Use a service timeout of eight hours and kill the whole service process group
 on timeout. Keep existing customer adapter queue workers running.
 

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -53,6 +54,43 @@ class BaseMinerTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "testnet"):
             base_miner.validate({"netuid": 1})
 
+    def test_zero_or_omitted_interval_passes_preflight(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp) / "train.jsonl"
+            data.write_text("public data")
+            config = {
+                "netuid": 579,
+                "data": str(data),
+                "data_sha256": hashlib.sha256(data.read_bytes()).hexdigest(),
+                "reference": "/reference",
+                "model": "model",
+                "hotkey": "miner",
+                "repo": "owner/candidates",
+                "max_training_seconds": 10,
+            }
+            keys = SimpleNamespace(hotkey=SimpleNamespace(ss58_address="miner"))
+            with (
+                patch("zils.models.checkpoint_model", return_value="model"),
+                patch("zils.miner.wallet", return_value=keys),
+                patch("zils.base_miner.chain_state", return_value={"uid": 1}),
+                patch("zils.miner.commitments.check_repo"),
+            ):
+                self.assertEqual(base_miner.validate(config)[0], keys)
+                self.assertEqual(base_miner.validate(dict(config, interval_seconds=0))[0], keys)
+
+    def test_invalid_interval_is_refused(self):
+        for interval in (-1, float("nan"), "0", True):
+            with self.subTest(interval=interval), self.assertRaisesRegex(ValueError, "interval"):
+                base_miner.validate({"netuid": 579, "interval_seconds": interval})
+
+    def test_next_attempt_has_no_mandatory_cooldown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp)
+            (state / "attempt.json").write_text(
+                json.dumps({"status": "committed", "finished_at": 100})
+            )
+            self.assertEqual(base_miner.next_attempt(state, now=101, interval=0), "101")
+
     def test_uncertain_attempt_blocks_new_training(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
@@ -60,7 +98,7 @@ class BaseMinerTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "review"):
                 base_miner.next_attempt(state, now=100000, interval=86400)
 
-    def test_cadence_survives_service_restart(self):
+    def test_optional_operator_cadence_survives_service_restart(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = Path(tmp)
             (state / "attempt.json").write_text(
