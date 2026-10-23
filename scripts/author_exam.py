@@ -81,24 +81,33 @@ BIGBENCH = {
         "temporal_sequences", "tracking_shuffled_objects", "penguins_in_a_table",
         "reasoning_about_colored_objects", "elementary_math_qa", "unit_conversion",
         "physical_intuition", "strategyqa", "geometric_shapes", "checkmate_in_one",
+        "logic_grid_puzzle", "object_counting", "chess_state_tracking", "minute_mysteries_qa",
+        "modified_arithmetic", "cs_algorithms",
     ],
     "language": [
         "implicatures", "disambiguation_qa", "hyperbaton", "analytic_entailment",
         "epistemic_reasoning", "discourse_marker_prediction", "salient_translation_error_detection",
         "misconceptions", "logical_fallacy_detection", "presuppositions_as_nli",
-        "entailed_polarity", "conceptual_combinations",
+        "entailed_polarity", "conceptual_combinations", "formal_fallacies_syllogisms_negation",
+        "bridging_anaphora_resolution_barqa", "strange_stories", "tense", "disfl_qa",
+        "abstract_narrative_understanding",
     ],
     "retrieval": [
         "fact_checker", "vitaminc_fact_verification", "auto_categorization", "question_selection",
         "evaluating_information_essentiality", "human_organs_senses", "intent_recognition",
         "movie_recommendation", "fantasy_reasoning", "hindu_knowledge", "cause_and_effect",
-        "timedial", "social_iqa",
+        "timedial", "social_iqa", "qa_wikidata", "periodic_elements", "goal_step_wikihow",
+        "which_wiki_edit", "tellmewhy", "anachronisms",
     ],
-    "tools": ["code_line_description"],
+    "tools": [
+        "code_line_description", "semantic_parsing_spider", "semantic_parsing_in_context_sparc",
+        "mult_data_wrangling", "matrixshapes", "list_functions",
+    ],
     "arts": [
         "figure_of_speech_detection", "metaphor_boolean", "understanding_fables", "riddle_sense",
         "irony_identification", "snarks", "emoji_movie", "ruin_names",
-        "emojis_emotion_prediction", "phrase_relatedness", "color", "kanji_ascii",
+        "emojis_emotion_prediction", "phrase_relatedness", "color", "kanji_ascii", "rhyming",
+        "real_or_fake_text", "metaphor_understanding", "ascii_word_recognition", "word_unscrambling",
     ],
 }  # fmt: skip
 for _tasks in BIGBENCH.values():
