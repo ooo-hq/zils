@@ -7,6 +7,10 @@ Vision and box competitions keep their own metrics. CPU fixtures establish
 software behavior; they do not qualify an exam, measure model improvement or
 establish an official leaderboard result.
 
+For independent miners at larger scale, use the opt-in
+[budgeted base-validation queue](budgeted-base-validation.md) to move candidate
+downloads and scoring outside weight publication while preserving these gates.
+
 ## What miners improve
 
 Miners train and merge full-weight candidates under the existing

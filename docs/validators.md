@@ -191,6 +191,10 @@ candidates earn nothing until an approved promotion changes the incumbent and
 king history. Disabled/unowned allocations burn under the existing subnet-owner
 rule; failures in one pool do not transfer its allocation to another.
 
+For bounded asynchronous candidate evaluation, enable the
+[budgeted base-validation queue](budgeted-base-validation.md) and its separate
+worker. Pending candidate work does not replace the existing king history.
+
 Each pool's private `base_pool_rounds` entry names `base_reference`,
 `base_round_dir`, `family_history`, `suite_manifest` and `pilot_report`. The
 validator audits current history, score policy, pool pilot and draw independence

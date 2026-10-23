@@ -47,6 +47,7 @@ def run_evaluate(
     base_revision,
     images=None,
     wait_for_capacity=False,
+    capacity_model=None,
 ):
     """One sandboxed `zils evaluate` of `submissions` on `cases`, deferred while GPU capacity is unavailable."""
     manifest = attempt / f"{name}-submissions.json"
@@ -84,6 +85,7 @@ def run_evaluate(
                 args.device,
                 # Checkpoint staging also counts against the child, so each submission gets 120 s extra.
                 timeout=120 + (per_submission + 120) * len(submissions),
+                model=capacity_model,
             )
             break
         except CapacityUnavailable:
@@ -298,10 +300,15 @@ def attach_base_pools(config, directory, work, report):
     frozen = work / "base-pools.json"
     if not frozen.exists():
         decisions = {}
-        for pool, entry in normalized["pools"].items():
-            current = directory / "base-pools" / pool / "base-tier" / "decision.json"
-            if entry["enabled"] and current.exists():
-                decisions[pool] = json.loads(current.read_text())
+        if "base_validation_queue" in config:
+            from . import base_queue
+
+            decisions = base_queue.decisions(config, directory)
+        else:
+            for pool, entry in normalized["pools"].items():
+                current = directory / "base-pools" / pool / "base-tier" / "decision.json"
+                if entry["enabled"] and current.exists():
+                    decisions[pool] = json.loads(current.read_text())
         wire.write_json(frozen, {"config": normalized, "decisions": decisions})
     saved = json.loads(frozen.read_text())
     if saved["config"] != normalized:
@@ -350,6 +357,14 @@ def pool_rounds(config, directory):
 
 def base_pools_epoch(config, directory, work, snapshot, args, rounds):
     from . import commitments, feature_commitments
+
+    if "base_validation_queue" in config:
+        from . import base_queue
+
+        summary = base_queue.enqueue(config, directory, snapshot)
+        if not (work / "pool-intake.json").exists():
+            wire.write_json(work / "pool-intake.json", {"queue": summary})
+        return
 
     snapshot = {
         **snapshot,
@@ -521,8 +536,13 @@ def base_tier_epoch(config, directory, work, registry, args, draws, *, wait_for_
                 fetched.rename(target)
             except (ValueError, OSError, http.client.HTTPException) as error:
                 shutil.rmtree(fetched, ignore_errors=True)
+                if "base_validation_queue" in config and not isinstance(error, ValueError):
+                    raise
                 rejected[uid] = str(error)[:400]
                 continue
+            finally:
+                if fetched.exists():
+                    shutil.rmtree(fetched, ignore_errors=True)
         if zils.checkpoint_hash(target) != claim["sha256"]:
             raise ValueError("cached checkpoint changed")
         entries[uid] = (claim["sha256"], target)
@@ -591,6 +611,7 @@ def base_tier_epoch(config, directory, work, registry, args, draws, *, wait_for_
                     path / f"{split}.jsonl",
                     base_revision=models.spec(model)["base_revision"],
                     wait_for_capacity=wait_for_capacity,
+                    capacity_model=model if "base_validation_queue" in config else None,
                 )
                 completed = time.time()
                 # Re-read the current history in case publication happened during inference.
@@ -766,6 +787,10 @@ def admission_settings(config):
 def validator(config, directory, args):
     from . import feature_round, feature_tracks
 
+    if "base_validation_queue" in config:
+        from . import base_queue
+
+        base_queue.policy(config)
     key = signing_key(config)
     admission, public_endpoints = admission_settings(config)
     members = (
