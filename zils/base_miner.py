@@ -67,10 +67,13 @@ def commit_once(config, keys, hotkey, text):
 
 
 def validate(config):
-    from . import miner, models
+    from . import miner, models, testnet
 
-    if config.get("netuid") != 579:
-        raise ValueError("This runner is restricted to testnet 579")
+    network = config.get("network", "test")
+    if network == "test" and config.get("netuid") != miner.NETUID:
+        raise ValueError(f"On testnet this runner is restricted to subnet {miner.NETUID}")
+    if network not in testnet.ENDPOINTS or type(config.get("netuid")) is not int:
+        raise ValueError("network must be test or finney, with an explicit integer netuid")
     interval = config.get("interval_seconds", 0)
     if type(interval) is not int or interval < 0:
         raise ValueError("interval_seconds must be a nonnegative integer")
@@ -84,7 +87,7 @@ def validate(config):
     hotkey = keys.hotkey.ss58_address
     if hotkey != config["hotkey"]:
         raise ValueError("Wallet differs from this miner identity")
-    chain = miner.chain_config(config["netuid"])
+    chain = miner.chain_config(config["netuid"], network)
     if chain_state(chain, hotkey)["uid"] is None:
         raise ValueError("Miner is not registered")
     miner.commitments.check_repo(config["repo"])

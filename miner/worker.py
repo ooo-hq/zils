@@ -189,7 +189,7 @@ def miner(config, directory, args):
                         from zils import testnet
 
                         if job.get("chain") != config["chain"]:
-                            raise ValueError("validator round is not for this testnet")
+                            raise ValueError("validator round is not for this chain subnet")
                         if not (work / "candidate.json").exists():
                             with testnet.connect(config) as sub:
                                 testnet.preflight(config, sub)

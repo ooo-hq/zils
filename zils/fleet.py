@@ -181,7 +181,7 @@ def main(argv=None):
             command.add_argument(
                 "--publish-weights",
                 action="store_true",
-                help="publish configured testnet weights after evaluation",
+                help="publish configured chain weights after evaluation",
             )
     args = parser.parse_args(argv)
 
@@ -218,14 +218,14 @@ def main(argv=None):
         if config["base_revision"] != models.spec(model)["base_revision"]:
             raise ValueError("Fleet configuration differs from its pinned model profile")
         if getattr(args, "publish_weights", False) and "chain" not in config:
-            raise ValueError("--publish-weights requires a testnet fleet config")
+            raise ValueError("--publish-weights requires a chain fleet config")
         if "base_tier" in config and "base_pools" in config:
             raise ValueError("configure base_tier or base_pools, never both")
         if "base_pools" in config:
             from . import model_pools
 
             if "chain" not in config:
-                raise ValueError("model pools require a testnet fleet config")
+                raise ValueError("model pools require a chain fleet config")
             model_pools.validate(config["base_pools"])
         if "feature_tracks" in config:
             from . import feature_tracks
@@ -235,13 +235,13 @@ def main(argv=None):
             from . import base_round
 
             if "chain" not in config:
-                raise ValueError("a base-tier track requires a testnet fleet config")
+                raise ValueError("a base-tier track requires a chain fleet config")
             base_round.validate_track(config["base_tier"])
         if "adapter_evidence" in config:
             from . import queue_evidence
 
             if "chain" not in config:
-                raise ValueError("queue adapter evidence requires a testnet fleet config")
+                raise ValueError("queue adapter evidence requires a chain fleet config")
             queue_evidence.validate_track(config["adapter_evidence"])
         base_draws(config, directory)
         signing_key(config)

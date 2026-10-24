@@ -50,9 +50,12 @@ class BaseMinerTest(unittest.TestCase):
                 json.loads((root / "state/attempt.json").read_text())["status"], "training"
             )
 
-    def test_mainnet_is_refused(self):
+    def test_testnet_is_579_and_mainnet_needs_an_explicit_netuid(self):
         with self.assertRaisesRegex(ValueError, "testnet"):
             base_miner.validate({"netuid": 1})
+        for config in ({"network": "mainnet", "netuid": 553}, {"network": "finney"}):
+            with self.subTest(config=config), self.assertRaisesRegex(ValueError, "explicit"):
+                base_miner.validate(config)
 
     def test_zero_or_omitted_interval_passes_preflight(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -77,6 +80,8 @@ class BaseMinerTest(unittest.TestCase):
             ):
                 self.assertEqual(base_miner.validate(config)[0], keys)
                 self.assertEqual(base_miner.validate(dict(config, interval_seconds=0))[0], keys)
+                mainnet = base_miner.validate(dict(config, network="finney", netuid=553))
+                self.assertEqual(mainnet[1], {"chain": {"network": "finney", "netuid": 553}})
 
     def test_invalid_interval_is_refused(self):
         for interval in (-1, float("nan"), "0", True):

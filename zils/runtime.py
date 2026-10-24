@@ -264,7 +264,7 @@ def signing_key(config):
             raise ValueError("wallet hotkey does not match the configured identity")
         return key
     if "chain" in config:
-        raise ValueError("testnet services require a registered wallet hotkey")
+        raise ValueError("chain services require a registered wallet hotkey")
     return Keypair.create_from_seed(config["seed"])
 
 

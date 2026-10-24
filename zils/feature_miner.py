@@ -38,6 +38,7 @@ def check_remote(repo, revision, candidate, sha256, manifest):
 def _receipt(args, manifest, sha256, hotkey, uid, revision, stored):
     receipt = {
         "version": "zils-feature-commit-receipt/v1",
+        "network": args.network,
         "netuid": args.netuid,
         "uid": uid,
         "hotkey": hotkey,
@@ -64,9 +65,11 @@ def commit_candidate(args):
         commitments.check_revision(revision)
     keys = miner.wallet(args)
     hotkey = keys.hotkey.ss58_address
-    state = miner.hotkey_state(args.netuid, hotkey)
+    state = miner.hotkey_state(args.netuid, hotkey, args.network)
     if state["uid"] is None:
-        raise ValueError(f"hotkey {hotkey} is not registered on testnet subnet {args.netuid}")
+        raise ValueError(
+            f"hotkey {hotkey} is not registered on {testnet.NAMES[args.network]} subnet {args.netuid}"
+        )
     current = (state["commitment"] or {}).get("data")
     print(
         f"miner {state['uid']}: {manifest['track_id']} bundle {sha256}\n"
@@ -89,7 +92,7 @@ def commit_candidate(args):
     text = features.format_commitment(sha256, revision, args.repo)
     if current == text:
         return _receipt(args, manifest, sha256, hotkey, state["uid"], revision, state["commitment"])
-    config = miner.chain_config(args.netuid)
+    config = miner.chain_config(args.netuid, args.network)
     with testnet.connect(config, raw_calls=True) as sub:
         testnet.write_commitment(config, sub, keys, text)
         after = testnet.hotkey_state(config, sub, hotkey)["commitment"]
@@ -119,12 +122,20 @@ def main(argv=None):
     commit.add_argument("--wallet-name")
     commit.add_argument("--wallet-hotkey")
     commit.add_argument("--wallet-path")
-    commit.add_argument("--netuid", type=int, default=miner.NETUID)
+    commit.add_argument(
+        "--network",
+        choices=tuple(testnet.ENDPOINTS),
+        default="test",
+        help="finney is mainnet and needs an explicit --netuid",
+    )
+    commit.add_argument("--netuid", type=int)
     commit.add_argument(
         "--yes", action="store_true", help="allow upload and chain write; default is dry run"
     )
     args = parser.parse_args(argv)
     try:
+        if hasattr(args, "netuid"):
+            args.netuid = miner.resolve_netuid(args.network, args.netuid)
         if args.command == "pack":
             manifest = features.pack(args.checkpoint, args.out, args.track)
             print(
