@@ -9,9 +9,9 @@ published at zils-ai/base-exam-seed-v1 and -v2; their receipts live in the famil
 Qualified for d3-mini on 22 Oct 2026: two consecutive sealed draws ranked five Decision Index
 references at Spearman 0.9 on Choice and yes/no families (see docs/base-election.md).
 
-    python -m scripts.author_exam author --work exams --draw r1 --per-family 72
+    python -m scripts.author_exam author --work exams --draw r1 --per-family 96
     python -m scripts.author_exam verify --work exams --draw r1
-    python -m scripts.author_exam finish --work exams --draw r1 --calibration 8 --test 56
+    python -m scripts.author_exam finish --work exams --draw r1 --calibration 8 --test 75
     python -m zils.base_exam seal ...   (see docs/base-election.md)
 
 Needs `ANTHROPIC_API_KEY` and requirements/exam.txt. Rows used by any earlier draw under --work are
@@ -512,7 +512,7 @@ def main(argv=None):
             p.add_argument("--workers", type=int, default=25)
         if name == "finish":
             p.add_argument("--calibration", type=int, default=8)
-            p.add_argument("--test", type=int, default=56)
+            p.add_argument("--test", type=int, default=75)
     args = parser.parse_args(argv)
     if args.command == "author":
         author(args.work, args.draw, args.per_family, args.known_only, args.workers)
