@@ -258,6 +258,27 @@ def reserve_download(config, directory, job, size):
         budget["download_bytes"] += size
 
 
+BLOCK_SECONDS = 12
+
+
+def admit_submission(directory, claim, pool, cooldown):
+    """A hotkey's distinct submissions to one pool must be committed at least `cooldown` apart,
+    measured in chain blocks so every validator reaches the same answer. A commitment inside the
+    cooldown is refused and recorded; the miner commits again once it has passed."""
+    blocks = -(-cooldown // BLOCK_SECONDS)
+    with state_at(directory) as state:
+        pools = state.setdefault("submissions", {}).setdefault(claim["hotkey"], {})
+        last = pools.get(pool)
+        if last and last["sha256"] == claim["sha256"]:
+            return  # a retry or the confirmation run of the accepted submission
+        if last and claim["block"] < last["block"] + blocks:
+            raise ValueError(
+                f"committed at block {claim['block']}, inside the {pool} cooldown; commit again"
+                f" at or after block {last['block'] + blocks}"
+            )
+        pools[pool] = {"block": claim["block"], "sha256": claim["sha256"]}
+
+
 def awaiting_confirmation(directory):
     """Hashes scored once and waiting for their confirmation run. Their repo may be gone by then,
     so the cached copy is the only one the validator can rely on."""
@@ -310,6 +331,7 @@ def evaluate(config, directory, job, args, work):
         raise ValueError("candidate parent is not an enabled pool profile")
     if claim["sha256"] == enabled["incumbent_sha256"]:
         raise ValueError("incumbent is not a candidate")
+    admit_submission(directory, claim, pool, enabled.get("cooldown_seconds", 0))
     settings, root, draws = validator.pool_rounds(config, Path(directory))[pool]
     target = root / "base-tier/store" / claim["sha256"] / "checkpoint"
     size = models.artifact_budget("candidate", model)

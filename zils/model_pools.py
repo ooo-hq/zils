@@ -28,7 +28,11 @@ def validate(config):
             raise ValueError("incumbent profile belongs to a different model pool")
         track = base_round.validate_track(
             {
-                **{k: v for k, v in entry.items() if k not in ("model", "enabled")},
+                **{
+                    k: v
+                    for k, v in entry.items()
+                    if k not in ("model", "enabled", "cooldown_seconds")
+                },
                 "burn_uid": burn,
             },
             allow_empty_draws=not entry["enabled"],
@@ -39,6 +43,12 @@ def validate(config):
             raise ValueError("pool policy values must be finite")
         track.pop("burn_uid")
         result[pool] = {"model": models.spec(model), "enabled": entry["enabled"], **track}
+        if "cooldown_seconds" in entry:
+            # Minimum spacing between one hotkey's distinct submissions to this pool.
+            cooldown = entry["cooldown_seconds"]
+            if type(cooldown) is not int or not 0 <= cooldown <= 30 * 86400:
+                raise ValueError("pool cooldown_seconds must be an integer in [0, 30 days]")
+            result[pool]["cooldown_seconds"] = cooldown
     if not math.isclose(sum(p["share"] for p in result.values()), 1.0, abs_tol=1e-9):
         raise ValueError("model pool allocations must sum to one")
     return {"share": share, "burn_uid": burn, "pools": result}
