@@ -38,17 +38,24 @@ base pools on this validator; other validators maintain independent budgets.
 | Setting | Enforcement |
 | --- | --- |
 | `window_seconds` | Persistent local accounting window; restarting does not reset it. |
-| `max_candidates` | Maximum attempts, including retries, in that window. |
-| `max_seconds` | Total wall time reserved for metadata, download, validation and evaluation. Unused time is refunded after an observed completion; a crashed worker keeps its reservation charged. |
+| `max_candidates` | Maximum attempts, including retries, in that window. An attempt deferred for GPU capacity is returned to the window. |
+| `max_seconds` | Total wall time reserved for metadata, download, validation and evaluation. Time spent waiting for the GPU is not charged. Unused time is refunded after an observed completion, and all of it after a GPU-capacity deferral; a crashed worker keeps its reservation charged. |
 | `max_download_bytes` | Reserve the profile's maximum candidate bytes before each uncached download, including failures. Metadata requests retain their existing size/time limits. |
 | `max_cache_bytes` | Retained candidate-weight cache limit. Least-recently-used weights may be evicted; private scores, receipts and configured incumbent references are retained. |
 
-The worker interrupts an attempt at its remaining wall-time allowance. Evaluator
-subprocess cleanup can add up to 12 seconds. The cache limit excludes reference
-models, logs, evidence and temporary staging: the worker also requires free space
-for two candidate-sized staging copies plus 2 GiB. Monitor those retained files;
-this is not a total-filesystem quota. An evicted checkpoint may need downloading
-again for confirmation, while its prior bound evaluation evidence remains cached.
+The worker downloads without the GPU, then holds the shared compute lock
+(`ZILS_COMPUTE_LOCK`) from the attempt's first evaluation until it ends, so
+calibration and test cannot lose the GPU to other local work between steps. It
+waits up to `window_seconds` for that lock, so other work holding it, such as
+the validator's own round, can finish. If the lock stays busy, or free GPU memory
+is below the profile floor, the attempt defers to the next window with its
+allowance returned. The worker interrupts an attempt at its remaining wall-time
+allowance. Evaluator subprocess cleanup can add up to 12 seconds. The cache limit
+excludes reference models, logs, evidence and temporary staging: the worker also
+requires free space for two candidate-sized staging copies plus 2 GiB. Monitor
+those retained files; this is not a total-filesystem quota. An evicted checkpoint
+may need downloading again for confirmation, while its prior bound evaluation
+evidence remains cached.
 
 ## Run the worker
 

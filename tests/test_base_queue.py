@@ -28,6 +28,8 @@ from zils import (
 )
 from zils.runtime import CapacityUnavailable
 
+CPU = SimpleNamespace(device="cpu")
+
 
 def config():
     return {
@@ -326,12 +328,38 @@ class BaseQueueTest(unittest.TestCase):
     def test_busy_gpu_defers_without_exposing_or_erasing_existing_results(self):
         queue.enqueue(self.cfg, self.root, snapshot(2))
         with patch("zils.base_queue.evaluate", side_effect=CapacityUnavailable()):
-            self.assertTrue(queue.step(self.cfg, self.root, None))
+            self.assertTrue(queue.step(self.cfg, self.root, CPU))
         with queue.state_at(self.root) as state:
             row = state["entries"]["miner-1"]
             self.assertEqual(row["status"], "pending")
             self.assertTrue(row["frozen"])
             self.assertIsNone(state["active"])
+            # Nothing was evaluated, so the attempt and its time return to the window.
+            self.assertEqual(state["budget"]["candidates"], 0)
+            self.assertEqual(state["budget"]["seconds"], 0)
+
+    def test_deferred_candidate_retry_passes_its_own_cooldown(self):
+        cfg = copy.deepcopy(self.cfg)
+        queue.enqueue(cfg, self.root, snapshot(1))
+        busy = True
+
+        def attempt(config, directory, job, args, work, lease):
+            queue.admit_submission(directory, job["claim"], "d3-mini", 12 * 3600)
+            if busy:
+                raise CapacityUnavailable()
+            raise ValueError("invalid candidate")  # any terminal outcome after admission
+
+        with patch("zils.base_queue.evaluate", side_effect=attempt):
+            self.assertTrue(queue.step(cfg, self.root, CPU))
+            with queue.state_at(self.root) as state:
+                row = state["entries"]["miner-1"]
+                self.assertEqual(row["status"], "pending")
+                row["ready_at"] = 0
+            busy = False
+            self.assertTrue(queue.step(cfg, self.root, CPU))
+        with queue.state_at(self.root) as state:
+            row = state["entries"]["miner-1"]
+            self.assertEqual((row["status"], row["error"]), ("done", "invalid candidate"))
 
     def test_http_outage_retries_but_invalid_revision_completes(self):
         for code, status in ((503, "pending"), (429, "pending"), (404, "done")):
@@ -343,7 +371,7 @@ class BaseQueueTest(unittest.TestCase):
                     "zils.base_queue.evaluate",
                     side_effect=HTTPError("fixture", code, "error", {}, None),
                 ):
-                    queue.step(self.cfg, root, None)
+                    queue.step(self.cfg, root, CPU)
                 with queue.state_at(root) as state:
                     self.assertEqual(state["entries"]["miner-1"]["status"], status)
 
