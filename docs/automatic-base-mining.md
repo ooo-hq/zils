@@ -68,9 +68,18 @@ publishing token. The host must contain the pinned model cache and have at least
 Run the command from a service manager. A timer can check every minute: the
 runner starts another attempt when the preceding attempt has completed and the
 local compute lock is available. `interval_seconds` defaults to zero; a positive
-value is an optional operator-selected pause after completion. `start_after` is
-an optional operator-selected UTC Unix timestamp, defaulting to no delay. Neither
+value is an operator-selected pause after a committed attempt finishes. `start_after`
+is an optional operator-selected UTC Unix timestamp, defaulting to no delay. Neither
 setting coordinates miners or imposes a subnet-wide training schedule.
+
+Validators may enforce a per-pool [submission cooldown](model-pools.md): a
+hotkey's next distinct commitment to that pool is refused until the cooldown has
+passed since its last accepted one, measured in chain blocks. A refused candidate
+still cost its full training and upload. Set `interval_seconds` to at least the
+pool's cooldown, plus a small margin because the chain counts blocks rather than
+seconds; the next commitment then lands after the cooldown, since training
+follows the pause. With the default of zero, a short training run produces
+candidates that are refused.
 The existing commitment remains until a new immutable candidate is published
 and committed. A failed or uncertain publication still requires reconciliation;
 this runner does not queue further training behind an unresolved attempt.
