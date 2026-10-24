@@ -183,5 +183,38 @@ class AuthorExamTest(unittest.TestCase):
                 self.assertEqual(len(used | again), 6)
 
 
+class BatchRunTest(unittest.TestCase):
+    def test_batch_results_map_back_and_a_rerun_reuses_the_saved_batch(self):
+        from types import SimpleNamespace as NS
+
+        def message(text, stop="end_turn"):
+            return NS(
+                stop_reason=stop,
+                content=[NS(type="text", text=text)],
+                usage=NS(input_tokens=3, output_tokens=5),
+            )
+
+        results = [
+            NS(custom_id="r1", result=NS(type="succeeded", message=message("b"))),
+            NS(custom_id="r0", result=NS(type="succeeded", message=message("a"))),
+            NS(custom_id="r2", result=NS(type="errored")),
+        ]
+        created = []
+        batches = NS(
+            create=lambda requests: created.append(requests) or NS(id="batch-1"),
+            retrieve=lambda batch_id: NS(processing_status="ended"),
+            results=lambda batch_id: iter(results),
+        )
+        client = NS(messages=NS(batches=batches))
+        requests = [("fam--0", {"model": "m"}), ("fam--1", {"model": "m"}), ("x", {"model": "m"})]
+        with tempfile.TemporaryDirectory() as tmp:
+            record = Path(tmp) / "batch.json"
+            out, usage = author_exam.run_batch(client, requests, record, poll=0)
+            self.assertEqual(out, {"fam--0": "a", "fam--1": "b", "x": None})
+            self.assertEqual(usage, {"input_tokens": 6, "output_tokens": 10})
+            author_exam.run_batch(client, requests, record, poll=0)
+        self.assertEqual(len(created), 1)  # the rerun collected the saved batch
+
+
 if __name__ == "__main__":
     unittest.main()
