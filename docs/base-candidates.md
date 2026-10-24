@@ -87,7 +87,7 @@ For unattended bootstrap attempts using the existing public-data recipe, see
 
 A candidate is two things: the artifact in **your own public Hugging Face model
 repo**, pinned by commit, and **one chain commitment** made with your registered
-miner hotkey on subnet 579 (the hotkey file only; the coldkey is never read):
+miner hotkey on subnet `<NETUID>` (the hotkey file only; the coldkey is never read):
 
 ```text
 zils1:<checkpoint sha256>:<revision>:<owner/repo>
@@ -170,9 +170,7 @@ eligibility, pending and confirmed winner) is published by each validator in its
 signed round result over its own HTTP API (`GET /results/<round>`); the chain does
 not carry it. What the chain does carry, readable without any URL, is the payout:
 the validator's weights and your incentive, for example
-`btcli subnets metagraph --netuid 579 --network test`. A validator could publish
-its API address on chain (`serve_axon`) so miners find it without an operator
-announcement; not done yet.
+`btcli subnets metagraph --netuid <NETUID> --network finney`.
 
 ### Reference recipe: train a LoRA, merge it
 
@@ -229,10 +227,10 @@ burned (below), not paid to anyone.
 Per-case results are never returned; you learn aggregate metrics only. The
 round's questions are published after the round closes and are not reused.
 
-On a testnet fleet with a `base_tier` track, the kings are paid at every
+On a validator with a `base_tier` track, the kings are paid at every
 publication from the base tier's share of the one weight vector, blended with
 the adapter round's weights; a share with no recipient goes to the burn uid; see
-[the two-track rule](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first).
+[the two-track rule](mining.md#two-tracks-the-base-tier-pays-first).
 
 ## Validator and publisher tooling
 

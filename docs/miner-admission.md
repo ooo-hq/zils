@@ -4,14 +4,14 @@
 `202610180001_chain_admission.sql`) and on the miner side (this repository); off in
 production until the owner sets `ZILS_CHAIN_ADMISSION=on` on the coordinator.**
 
-Registration on Bittensor subnet 579 is the admission. There is no application,
+Registration on the Zils subnet is the admission. There is no application,
 no form and no operator approval. This matches the fleet validator's
 `admission: chain` mode (built, off) and extends it to the hosted customer-job
 queue, which today only talks to hotkeys an operator inserted by hand.
 
 ## 1. What a miner does
 
-1. Register a hotkey on subnet 579 ([registration](bittensor-registration.md)).
+1. Register a hotkey on the Zils subnet ([registration](bittensor-registration.md)).
 2. Read the [miner terms](mining-terms.md). Mining under a registered hotkey is
    acceptance; the first signed claim records it.
 3. Install the runtime and the d3 reference ([queue miners](queue-miners.md)),
@@ -24,7 +24,7 @@ queue, which today only talks to hotkeys an operator inserted by hand.
 
 ## 2. What the coordinator does (built, off by default)
 
-- Admit any hotkey registered on 579 at the current chain snapshot: create the
+- Admit any hotkey registered on the configured subnet at the current chain snapshot: create the
   `fez_training_workers` row on first contact with the next free queue UID,
   `terms_sha256` from the claim, `terms_accepted_at` now. Deregistered hotkeys
   are disabled at the next snapshot.
@@ -55,18 +55,7 @@ Zils pays it. Registration already costs the miner a burn, which is the
 spam gate Bittensor provides; a second gate here would be a form by another
 name. Cap it: one qualification run per hotkey per 30 days.
 
-## 5. Miners page
-
-Replace "All miners are currently run by Zils; outside miners can join once
-the subnet moves to mainnet" with:
-
-> Subnet 579 on the Bittensor testnet. Register a hotkey on 579, run the miner,
-> and you are in under the [miner terms](mining-terms.md). Testnet rewards have
-> no value and no earnings are promised.
-
-zils-web change, out of scope here.
-
-## 6. What exists and how to enable it
+## 5. What exists and how to enable it
 
 Everything in section 2 is implemented behind one switch. Nothing changes while
 it is off: `fez_worker_nonce` still refuses hotkeys without an operator row.
@@ -82,7 +71,8 @@ continues (operator-registered nodes need neither key).
 **Coordinator side (zils-platform).**
 
 - `POST /v1/workers/admit`: signature checked, hotkey looked up in the subnet's
-  registration set (read from the testnet chain, cached five minutes; a hotkey
+  registration set (read from the chain named by `ZILS_CHAIN_NETWORK` and
+  `ZILS_CHAIN_NETUID`, cached five minutes; a hotkey
   that drops off the chain is refused at the next refresh), terms hash compared
   with the current one, report checked against the pinned profile. Then
   `zils_admit_worker` writes the `fez_training_workers` row (next free queue UID,
@@ -109,7 +99,8 @@ continues (operator-registered nodes need neither key).
 `ZILS_CHAIN_ADMISSION=on`, `ZILS_INTERNAL_OWNER_ID` (the internal test
 account's UUID, credited), `ZILS_QUALIFICATION_SOURCE_JOB` (one of the
 validated `qual-d3-2048-*` jobs; its three input splits must still exist);
-install `requirements/testnet.txt` in the API's environment for the chain read;
+install `requirements/testnet.txt` (the chain SDK pin) in the API's environment
+for the chain read;
 restart `zils-training-api`. When these terms change, the new hash goes in
 `ZILS_MINER_TERMS_SHA256` (or the platform constant) and miners re-admit by
 restarting with the new `terms_sha256`.

@@ -8,10 +8,10 @@ it does not need Supabase credentials or an inbound public server.
 The setup below is for **d3-mini 4.5B** (`d3-mini-4.5b-v1`), the base on both
 channels since 17 October 2026; it trains text and image jobs. The H2O Lightning 4B
 and ImaJev image profiles are retired and take no jobs. For a
-**Bittensor testnet fleet**, use
+**closed Bittensor fleet**, use
 [registration](bittensor-registration.md) and
 [bundle setup](mining.md). Queue assignments publish no Bittensor weights by
-themselves. A testnet validator can pay delivered queue work from its adapter
+themselves. A validator can pay delivered queue work from its adapter
 share ([validators §7](validators.md#7-pay-the-adapter-track-from-hosted-queue-work),
 off by default); only hotkeys registered on that subnet earn.
 
@@ -176,7 +176,7 @@ base itself, is the [base tier](base-candidates.md): a full-weight candidate you
 train and merge yourself, examined on a sealed holdout by a fleet validator and
 paid from the chain's weight vector (king of the hill: only the miners of
 promoted bases are paid). It needs a hotkey
-registered on testnet subnet 579, a public Hugging Face repo and
+registered on subnet `<NETUID>`, a public Hugging Face repo and
 `zils.miner commit-candidate`; see
 [compete from outside](mining.md#compete-in-the-base-tier-from-outside) and
 [open admission](validators.md#open-admission-base-tier).

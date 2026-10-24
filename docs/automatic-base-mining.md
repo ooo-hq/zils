@@ -5,7 +5,10 @@ public-data training attempt, merges it into a full checkpoint, publishes an
 immutable Hugging Face revision and commits it with the miner's own registered
 hotkey. It uses the same training and candidate validation as `zils.d3` and
 `zils commit-candidate`. It does not elect winners, move channels or migrate
-customer adapters. Currently restricted to testnet 579.
+customer adapters. Set `"network": "finney"` and the subnet's `netuid`; mainnet
+has no default netuid. Set `interval_seconds` at or above your pool's submission
+cooldown ([model pools](model-pools.md)); a distinct candidate committed inside
+the cooldown is refused by validators.
 
 This is a bootstrap recipe: one epoch of the existing LoRA trainer, with a new
 seed for each attempt. Repeating seeds/data variants is not evidence of model
@@ -26,7 +29,8 @@ Compute the export's SHA-256, then save a JSON configuration:
 
 ```json
 {
-  "netuid": 579,
+  "network": "finney",
+  "netuid": <NETUID>,
   "model": "d3-mini-4.5b-v1",
   "wallet_name": "YOUR_WALLET",
   "wallet_hotkey": "YOUR_HOTKEY",
@@ -40,7 +44,7 @@ Compute the export's SHA-256, then save a JSON configuration:
   "state": "/srv/miner/state",
   "compute_lock": "/var/lock/zils-training/cuda.lock",
   "yield_file": "/run/zils-base-miner/training",
-  "interval_seconds": 0,
+  "interval_seconds": 43200,
   "max_training_seconds": 21600,
   "start_after": 0
 }
