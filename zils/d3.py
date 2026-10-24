@@ -238,6 +238,23 @@ def verify_runtime(model=models.D3):
             raise OSError(f"d3 fast kernel is unavailable: {name}")
 
 
+def check_mps_training(model, inputs):
+    if model != "d3-lite-0.8b-v1" or not isinstance(inputs, list) or not 0 < len(inputs) <= 512:
+        raise ValueError("MPS mining supports only d3-lite text examples of at most 512 tokens")
+
+
+def verify_mps_runtime(model):
+    import torch
+
+    if model != "d3-lite-0.8b-v1" or not torch.backends.mps.is_available():
+        raise OSError("MPS mining requires d3-lite on an Apple GPU")
+    if sys.version_info[:2] != (3, 13):
+        raise OSError("MPS mining requires Python 3.13")
+    for name, version in {"torch": "2.10.0", "transformers": "5.17.0", "peft": "0.21.0"}.items():
+        if importlib.metadata.version(name).split("+")[0] != version:
+            raise OSError(f"MPS mining requires {name}=={version}")
+
+
 def validate_adapter_config(checkpoint, targets):
     path = Path(checkpoint) / "adapter_config.json"
     if path.is_symlink() or not path.is_file() or path.stat().st_size > 16384:
@@ -456,13 +473,21 @@ class DecisionModel:
         candidate = self.meta["kind"] == "candidate"
         if candidate and train:
             raise ValueError("adapters train on the pinned base, not on a base candidate")
-        if device != "cuda" or not torch.cuda.is_available() or not torch.cuda.is_bf16_supported():
-            raise OSError("d3 requires a BF16-capable CUDA GPU")
-        verify_runtime(self.meta["model"])
+        if device == "mps":
+            verify_mps_runtime(self.meta["model"])
+            torch.mps.set_per_process_memory_fraction(0.3)
+        else:
+            if (
+                device != "cuda"
+                or not torch.cuda.is_available()
+                or not torch.cuda.is_bf16_supported()
+            ):
+                raise OSError("d3 requires a BF16-capable CUDA GPU")
+            verify_runtime(self.meta["model"])
         required = pins(self.meta["model"])
         maximum = models.spec(self.meta["model"])["max_input_tokens"]
         self.device = device
-        torch.set_num_threads(6)
+        torch.set_num_threads(2 if device == "mps" else 6)
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
         torch.set_float32_matmul_precision("highest")
@@ -476,7 +501,7 @@ class DecisionModel:
         # README.md and assets/* that the pinned snapshot does not download.
         self.runtime = self.encoder.native.D3.from_pretrained(
             root,
-            device="cuda:0",
+            device="mps" if device == "mps" else "cuda:0",
             batch_size=1,
             max_length=maximum,
             verify="none",
@@ -498,7 +523,11 @@ class DecisionModel:
         self.readout = runtime.readout
         if self.readout.dtype != torch.float32 or self.readout.shape[0] != 255:
             raise OSError("d3 readout must be FP32 with 255 codes")
-        if any(p.dtype != torch.bfloat16 or not p.is_cuda for p in self.base.parameters()):
+        if any(
+            p.dtype != torch.bfloat16
+            or not (p.is_cuda if device == "cuda" else p.device.type == "mps")
+            for p in self.base.parameters()
+        ):
             raise OSError("d3 backbone must be BF16 on the GPU")
         self.base.config.use_cache = False
         self.base.config.text_config.use_cache = False
@@ -538,7 +567,7 @@ class DecisionModel:
                     "lora_" in n
                     and "language_model.layers." in n
                     and p.dtype == torch.float32
-                    and p.is_cuda
+                    and (p.is_cuda if device == "cuda" else p.device.type == "mps")
                     for n, p in trainable
                 )
                 or any(torch.count_nonzero(p) for n, p in trainable if "lora_B" in n)
@@ -633,7 +662,10 @@ class DecisionModel:
         if self.base.training or torch.is_autocast_enabled("cuda"):
             raise OSError("d3 inference requires eval mode without autocast")
         with torch.inference_mode():
-            values = (self.logits(ids, len(keys)).double() / temperature).softmax(-1).cpu().tolist()
+            logits = self.logits(ids, len(keys))
+            if self.device == "mps":
+                logits = logits.cpu()  # Apple GPUs do not implement float64.
+            values = (logits.double() / temperature).softmax(-1).cpu().tolist()
         if not all(math.isfinite(v) for v in values) or abs(sum(values) - 1) >= 1e-6:
             raise RuntimeError("d3 produced an invalid distribution")
         return dict(zip(keys, values, strict=True))
@@ -781,7 +813,7 @@ def main():
     for name in ("data", "reference", "out"):
         trainer.add_argument("--" + name, required=True)
     trainer.add_argument("--seed", required=True, type=int)
-    trainer.add_argument("--device", choices=("cuda",), default="cuda")
+    trainer.add_argument("--device", choices=("cuda", "mps"), default="cuda")
     merger = sub.add_parser("candidate", help="merge an adapter into a full-weight base candidate")
     merger.add_argument("--adapter", required=True)
     merger.add_argument("--out", required=True)

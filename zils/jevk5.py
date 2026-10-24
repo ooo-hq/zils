@@ -67,6 +67,8 @@ def train(args, *, model_id):
         ) != {"decision"}:
             raise ValueError("training export must contain exactly one decision per example")
         images = row.get("images", [])
+        if args.device == "mps" and images:
+            raise ValueError("MPS mining supports text training only")
         if images and "inputs" not in models.spec(model_id):
             raise ValueError(f"{model_id} does not accept images")
         if not isinstance(images, list):
@@ -95,6 +97,8 @@ def train(args, *, model_id):
             if images
             else model.encode(row["state"], question)
         )
+        if args.device == "mps":
+            engine.check_mps_training(model_id, inputs)
         if label not in keys:
             raise ValueError("training label is not an allowed outcome")
         temperature = (
@@ -178,7 +182,14 @@ def train(args, *, model_id):
                 "mean_loss": sum(losses) / len(losses),
                 "training_seconds": time.perf_counter() - started,
                 "device": args.device,
-                "peak_gpu_allocated_bytes": torch.cuda.max_memory_allocated(),
+                "peak_gpu_allocated_bytes": torch.cuda.max_memory_allocated()
+                if args.device != "mps"
+                else None,
+                **(
+                    {"mps_driver_allocated_bytes": torch.mps.driver_allocated_memory()}
+                    if args.device == "mps"
+                    else {}
+                ),
             },
             indent=2,
         )

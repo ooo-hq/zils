@@ -285,6 +285,7 @@ class CommitCandidateTest(unittest.TestCase):
         self.assertIn("wallets there: fixture", out)
         self.assertIn("hotkeys: miner", out)
         self.assertIn("✗ hugging face\n  not uploaded yet", out)
+
         saved = json.loads(self.config.read_text())
         self.assertEqual(saved["wallet_name"], "fixture")
         self.assertEqual(saved["wallet_hotkey"], "miner")
@@ -306,6 +307,18 @@ class CommitCandidateTest(unittest.TestCase):
             code, out = self.run_miner("setup", wallet=False)
         self.assertNotIn("revision", json.loads(self.config.read_text()))
         self.assertIn("✗ hugging face\n  not uploaded yet", out)
+
+    def test_setup_preserves_explicit_mps_device(self):
+        answers = iter([self.wallet["path"], "", "", "", "alice/lite"])
+        with (
+            patch("builtins.input", lambda prompt: next(answers)),
+            patch("zils.miner.doctor", return_value=True),
+        ):
+            code, out = self.run_miner(
+                "setup", "--model", "d3-lite-0.8b-v1", "--device", "mps", wallet=False
+            )
+        self.assertEqual(code, 0, out)
+        self.assertEqual(json.loads(self.config.read_text())["device"], "mps")
 
     def test_doctor_requires_a_profile_or_candidate_and_prints_each_tiers_recipe(self):
         code, out = self.run_miner("doctor")

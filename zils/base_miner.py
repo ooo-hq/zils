@@ -74,6 +74,11 @@ def validate(config):
         raise ValueError(f"On testnet this runner is restricted to subnet {miner.NETUID}")
     if network not in testnet.ENDPOINTS or type(config.get("netuid")) is not int:
         raise ValueError("network must be test or finney, with an explicit integer netuid")
+    device = config.get("device", "cuda")
+    if device not in ("cuda", "mps") or (
+        device == "mps" and config.get("model") != "d3-lite-0.8b-v1"
+    ):
+        raise ValueError("Use CUDA, or MPS for d3-lite only")
     interval = config.get("interval_seconds", 0)
     if type(interval) is not int or interval < 0:
         raise ValueError("interval_seconds must be a nonnegative integer")
@@ -102,6 +107,7 @@ def run(config):
         print("Waiting for this node's scheduled start", flush=True)
         return
     keys, chain = validate(config)
+    device = config.get("device", "cuda")
     state = Path(config["state"])
     state.mkdir(parents=True, exist_ok=True)
     with (state / "runner.lock").open("a") as lock:
@@ -146,11 +152,16 @@ def run(config):
                 save(state / "attempt.json", receipt)
 
             record("training")
-            flag = Path(config["yield_file"])
-            flag.touch(exist_ok=False)
+            flag = Path(config["yield_file"]) if device == "cuda" else None
+            if flag is not None:
+                flag.touch(exist_ok=False)
             try:
                 deadline = time.monotonic() + 180
-                while not gpu_ready("cuda", model=config["model"], minimum_mib=12288):
+                while not gpu_ready(
+                    device,
+                    model=config["model"] if device == "cuda" else None,
+                    minimum_mib=12288 if device == "cuda" else 4096,
+                ):
                     if time.monotonic() >= deadline:
                         raise RuntimeError("Serving did not yield GPU capacity within 180 seconds")
                     time.sleep(3)
@@ -175,6 +186,8 @@ def run(config):
                     TOKENIZERS_PARALLELISM="false",
                     PYTHONUNBUFFERED="1",
                 )
+                if device == "mps":
+                    env["D3_FAST"] = "0"
                 with (directory / "training.log").open("ab") as log:
                     subprocess.run(
                         [
@@ -190,6 +203,8 @@ def run(config):
                             str(directory / "adapter"),
                             "--seed",
                             str(seed),
+                            "--device",
+                            device,
                         ],
                         env=env,
                         stdout=log,
@@ -199,7 +214,8 @@ def run(config):
                         check=True,
                     )
             finally:
-                flag.unlink(missing_ok=True)
+                if flag is not None:
+                    flag.unlink(missing_ok=True)
         finally:
             os.close(gpu)
         record("merging")

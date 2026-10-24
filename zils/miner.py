@@ -25,7 +25,16 @@ NETUID = 579
 REQUIRED_MODULES = ("bittensor", "bittensor_wallet", "huggingface_hub", "kev", "torch")
 PINNED_BITTENSOR = "11.1.0"
 WALLET_PATH = "~/.bittensor/wallets"
-SAVED = ("wallet_name", "wallet_hotkey", "wallet_path", "model", "candidate", "repo", "revision")
+SAVED = (
+    "wallet_name",
+    "wallet_hotkey",
+    "wallet_path",
+    "model",
+    "candidate",
+    "repo",
+    "revision",
+    "device",
+)
 INSTALL = "curl -fsSL https://zils.ai/install.sh | sh"
 STABLE_URL = "https://raw.githubusercontent.com/ooo-hq/zils/main/release/stable"
 
@@ -269,6 +278,8 @@ def doctor(args):
     def requirements():
         missing = []
         for name in REQUIRED_MODULES:
+            if name == "kev" and getattr(args, "device", None) == "mps":
+                continue  # The lite-only Mac path does not load legacy Kev checkpoints.
             try:
                 importlib.import_module(name)
             except ImportError:
@@ -284,6 +295,7 @@ def doctor(args):
             )
 
     def d3_runtime():
+        device = getattr(args, "device", None) or "cuda"
         python = d3_python()
         if not python.exists():
             return (
@@ -295,6 +307,8 @@ def doctor(args):
             " assert torch.cuda.is_available() and torch.cuda.is_bf16_supported(),"
             " 'no BF16-capable CUDA GPU is visible'"
         )
+        if device == "mps":
+            check = "import sys; from zils import d3; d3.verify_mps_runtime(sys.argv[1])"
         done = subprocess.run(
             [str(python), "-c", check, args.model], cwd=zils.ROOT, capture_output=True, text=True
         )
@@ -330,7 +344,7 @@ def doctor(args):
                 "no --candidate; train and merge one with the reference recipe\n"
                 f"  {d3} reference --model {args.model} --out {reference}\n"
                 f"  {d3} train --data train.jsonl --reference {reference}"
-                f" --out {adapter} --seed 553 --device cuda\n"
+                f" --out {adapter} --seed 553 --device {getattr(args, 'device', None) or 'cuda'}\n"
                 f"  {d3} candidate --adapter {adapter} --out {merged}"
                 f" > {args.model}-provenance.json\n"
                 "then run zils setup again, or\n"
@@ -453,6 +467,7 @@ def setup(args):
         config.pop("revision", None)  # a changed target must not reuse the uploaded revision
     config |= {"wallet_path": path, "wallet_name": name, "wallet_hotkey": hotkey}
     config |= {"model": model, "candidate": candidate, "repo": repo}
+    config["device"] = args.device or config.get("device", "cuda")
     write_config(config)
     print(f"{paint('32', '✓')} saved to {config_path()}\n", flush=True)
     for key in SAVED:
@@ -477,6 +492,11 @@ def main(argv=None):
             help="finney is mainnet and needs an explicit --netuid",
         )
         command.add_argument("--netuid", type=int)
+        command.add_argument(
+            "--device",
+            choices=("cuda", "mps"),
+            help="training backend; MPS is a short-text lite mining pilot",
+        )
         command.add_argument(
             "--model",
             choices=models.d3_family(),

@@ -1,0 +1,10 @@
+# Explicit short-text d3-lite mining backend; CUDA validators remain unchanged.
+torch==2.10.0
+torchvision==0.25.0
+transformers==5.17.0
+peft==0.21.0
+pillow==13.0.0
+numpy==2.5.4
+huggingface-hub==1.33.0
+bittensor==11.1.0
+typer==0.16.0

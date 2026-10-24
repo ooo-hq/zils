@@ -11,6 +11,49 @@ from zils import base_miner
 
 
 class BaseMinerTest(unittest.TestCase):
+    def test_mps_rejects_other_profiles_before_reading_data(self):
+        with self.assertRaisesRegex(ValueError, "lite"):
+            base_miner.validate({"netuid": 579, "device": "mps", "model": "d3-mini-4.5b-v1"})
+
+    def test_mps_failure_never_requests_serving_shutdown(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "gpu.lock").touch()
+            config = {
+                "state": str(root / "state"),
+                "device": "mps",
+                "interval_seconds": 0,
+                "compute_lock": str(root / "gpu.lock"),
+                "yield_file": str(root / "yield"),
+                "hotkey": "miner",
+                "model": "d3-lite-0.8b-v1",
+                "data_sha256": "a" * 64,
+                "runtime_python": "python",
+                "data": "/public/train",
+                "reference": "/base",
+                "max_training_seconds": 10,
+            }
+
+            def fail_training(args, **kwargs):
+                self.assertFalse((root / "yield").exists())
+                self.assertEqual(args[-2:], ["--device", "mps"])
+                self.assertNotIn("HF_TOKEN", kwargs["env"])
+                raise subprocess.TimeoutExpired("train", 10)
+
+            with (
+                patch("zils.base_miner.validate", return_value=(None, {})),
+                patch("huggingface_hub.HfApi"),
+                patch("zils.runtime.gpu_ready", return_value=True),
+                patch(
+                    "zils.base_miner.shutil.disk_usage",
+                    return_value=SimpleNamespace(free=100 * 1024**3),
+                ),
+                patch("zils.base_miner.subprocess.run", side_effect=fail_training),
+                patch.dict("os.environ", {"HF_TOKEN": "secret"}),
+            ):
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    base_miner.run(config)
+
     def test_training_failure_releases_gpu_and_removes_serving_yield(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

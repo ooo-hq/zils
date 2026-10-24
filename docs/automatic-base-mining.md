@@ -86,6 +86,41 @@ this runner does not queue further training behind an unresolved attempt.
 Use a service timeout of eight hours and kill the whole service process group
 on timeout. Keep existing customer adapter queue workers running.
 
+## Apple GPU lite mining pilot
+
+An explicit `device: "mps"` configuration supports `d3-lite-0.8b-v1` text
+training on Apple Silicon. It preserves the standard adapter format, candidate
+merge, immutable upload and testnet commitment flow. CUDA remains the default;
+this does not qualify Apple GPUs for validator or hosted customer-job execution.
+
+From a checkout containing this backend, install the separate miner environment:
+
+```sh
+python3.13 -m venv .venv-mps
+.venv-mps/bin/python -m pip install -e . -r requirements/mps-miner.txt
+export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-mps/bin/python"
+export D3_FAST=0
+.venv-mps/bin/zils setup --model d3-lite-0.8b-v1 --device mps
+```
+
+Create the lite reference with `zils.d3 reference --model d3-lite-0.8b-v1`.
+Select public training rows that encode to at most 512 tokens. Longer rows and
+media training are rejected; this training limit does not change the model's
+inference contract. The backend limits MPS allocations to 30% of the device's
+recommended working-set size and uses reference kernels. The runner additionally
+requires 4 GiB available/reclaimable memory and the existing 30 GiB disk floor.
+
+MPS attempts never create or remove the serving yield file. On shared serving
+hardware, a supervisor must monitor actual inference and stop the miner's entire
+process group if serving fails or exceeds the operator's latency budget. CPU
+process priority is not GPU priority. Test the actual hardware and workload before
+enabling recurring runs; short probes do not establish sustained service capacity.
+Retain failure receipts for review and preserve the exclusive compute lock.
+
+Pool activation and rewards are independent of miner setup. Registration and
+successful candidate publication do not establish that a validator accepts the
+lite pool or that a candidate improves quality.
+
 ## Receipts and recovery
 
 `state/attempt.json` records the latest stage; `state/attempts/<id>/` retains
