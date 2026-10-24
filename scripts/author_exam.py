@@ -109,9 +109,9 @@ SOURCES = {
         "sentiment/test-00000-of-00001.parquet",
         "b3a375baf0f409c77e6bc7aa35102b7b3534f8be",
     ),
-    "tweet-hate-test": lambda: hf_parquet(
+    "tweet-irony-val": lambda: hf_parquet(
         "cardiffnlp/tweet_eval",
-        "hate/test-00000-of-00001.parquet",
+        "irony/validation-00000-of-00001.parquet",
         "b3a375baf0f409c77e6bc7aa35102b7b3534f8be",
     ),
 }
@@ -216,7 +216,7 @@ NEW_DOMAIN = {
         "ds-multirc": ("aps/super_glue", "multirc/validation/0000.parquet", CONVERTED),
     },
     "arts": {
-        "ds-sarcasm-headlines": ("raquiba/Sarcasm_News_Headline", "default/test/0000.parquet", CONVERTED),
+        # Sarcasm headlines left this pool: arts-known-noul-k3 is irony (24 Oct 2026).
         "ds-humor": ("CreativeLang/ColBERT_Humor_Detection", "default/train/0000.parquet", CONVERTED),
         "ds-sst5": ("SetFit/sst5", "default/validation/0000.parquet", CONVERTED),
         "ds-formality": ("osyvokon/pavlick-formality-scores", "default/test/0000.parquet", CONVERTED),
@@ -250,7 +250,7 @@ KNOWN = {
     "tools-known-noul-k2": ("tools", "noul", "glaive", "Should the assistant call a function now, given the conversation and schemas?"),
     "tools-known-score-k2": ("tools", "score", "glaive", "How many required arguments can be filled from the conversation so far?"),
     "arts-known-choice-k3": ("arts", "choice", "emotion-test", "Which emotion does a short personal message express: sadness, joy, love, anger, fear or surprise?"),
-    "arts-known-noul-k3": ("arts", "noul", "tweet-hate-test", "Is this short post hateful toward a group of people?"),
+    "arts-known-noul-k3": ("arts", "noul", "tweet-irony-val", "Is this short post ironic?"),
     "arts-known-score-k3": ("arts", "score", "tweet-sentiment-test", "Rate how positive a short post is, from very negative to very positive."),
 }  # fmt: skip
 
