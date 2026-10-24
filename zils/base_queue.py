@@ -258,7 +258,18 @@ def reserve_download(config, directory, job, size):
         budget["download_bytes"] += size
 
 
-def make_room(directory, target, size, maximum, *, protected=()):
+def awaiting_confirmation(directory):
+    """Hashes scored once and waiting for their confirmation run. Their repo may be gone by then,
+    so the cached copy is the only one the validator can rely on."""
+    with state_at(directory) as state:
+        return {
+            r["claim"]["sha256"]
+            for r in state["entries"].values()
+            if r["status"] == "pending" and r["ready_at"]
+        }
+
+
+def make_room(directory, target, size, maximum, *, protected=(), confirming=()):
     """Evict only reproducible candidate weights; retain all evaluation and release evidence."""
     caches = []
     # worker.lock excludes any other queue fetch, including recovery after SIGKILL.
@@ -276,7 +287,11 @@ def make_room(directory, target, size, maximum, *, protected=()):
     for path, amount in sorted(caches, key=lambda item: item[0].stat().st_mtime):
         if total + needed <= maximum:
             break
-        if path != target and path.resolve() not in protected:
+        if (
+            path != target
+            and path.resolve() not in protected
+            and path.parent.name not in confirming
+        ):
             shutil.rmtree(path)
             total -= amount
     if total + needed > maximum:
@@ -307,6 +322,7 @@ def evaluate(config, directory, job, args, work):
             (Path(directory) / p["base_reference"]).resolve()
             for p in config["base_pool_rounds"].values()
         },
+        confirming=awaiting_confirmation(directory),
     )
     if not target.exists():
         reserve_download(config, directory, job, size)
