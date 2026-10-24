@@ -32,11 +32,11 @@ MAX_SEED_CHARS = 3000
 SCORE_KEYS = ["0", "1", "2", "3", "4"]
 
 
-def hf_parquet(repo, path):
+def hf_parquet(repo, path, revision=None):
     import pyarrow.parquet as pq
     from huggingface_hub import hf_hub_download
 
-    p = hf_hub_download(repo, path, repo_type="dataset")
+    p = hf_hub_download(repo, path, repo_type="dataset", revision=revision)
     return [(f"{repo}:{path}:{i}", r) for i, r in enumerate(pq.read_table(p).to_pylist())]
 
 
@@ -99,6 +99,9 @@ BIGBENCH = {
         "logic_grid_puzzle", "object_counting", "chess_state_tracking", "minute_mysteries_qa",
         "modified_arithmetic", "cs_algorithms", "arithmetic", "chinese_remainder_theorem",
         "dyck_languages", "intersect_geometry", "physics", "undo_permutation",
+        # Added 24 Oct 2026 (>= 72 train rows, outside S1MB and the Decision Index).
+        "operators", "unit_interpretation", "key_value_maps", "symbol_interpretation",
+        "simp_turing_concept", "empirical_judgments",
     ],
     "language": [
         "implicatures", "disambiguation_qa", "hyperbaton", "analytic_entailment",
@@ -108,6 +111,7 @@ BIGBENCH = {
         "bridging_anaphora_resolution_barqa", "strange_stories", "tense", "disfl_qa",
         "abstract_narrative_understanding", "contextual_parametric_knowledge_conflicts",
         "authorship_verification", "linguistic_mappings", "analogical_similarity", "gem", "few_shot_nlg",
+        "international_phonetic_alphabet_nli",
     ],
     "retrieval": [
         "fact_checker", "vitaminc_fact_verification", "auto_categorization", "question_selection",
@@ -116,7 +120,7 @@ BIGBENCH = {
         "timedial", "social_iqa", "qa_wikidata", "periodic_elements", "goal_step_wikihow",
         "which_wiki_edit", "tellmewhy", "anachronisms", "movie_dialog_same_or_different",
         "play_dialog_same_or_different", "topical_chat", "language_identification",
-        "paragraph_segmentation", "conlang_translation",
+        "paragraph_segmentation", "conlang_translation", "sports_understanding",
     ],
     "tools": [
         "code_line_description", "semantic_parsing_spider", "semantic_parsing_in_context_sparc",
@@ -129,6 +133,7 @@ BIGBENCH = {
         "real_or_fake_text", "metaphor_understanding", "ascii_word_recognition", "word_unscrambling",
         "mnist_ascii", "language_games", "cryptonite", "social_support", "linguistics_puzzles",
         "swahili_english_proverbs", "moral_permissibility", "hhh_alignment",
+        "simple_ethical_questions",
     ],
 }  # fmt: skip
 for _tasks in BIGBENCH.values():
@@ -136,6 +141,67 @@ for _tasks in BIGBENCH.values():
         SOURCES[f"bb-{_task}"] = lambda t=_task: hf_parquet(
             "tasksource/bigbench", f"{t}/train-00000-of-00001.parquet"
         )
+
+# More new-domain pools (24 Oct 2026): BIG-bench ran out after the d3-mini draws. Held-out splits of
+# English datasets outside the Decision Index, S1MB, JevBench and the known families' sources; tasks
+# BIG-bench already supplied (Social IQa, movie recommendation) are left out. A task is used by one draw only.
+CONVERTED = "refs/convert/parquet"
+NEW_DOMAIN = {
+    "reasoning": {
+        "ds-piqa": ("ybisk/piqa", "plain_text/validation/0000.parquet", CONVERTED),
+        "ds-logiqa": ("lucasmccabe/logiqa", "default/validation/0000.parquet", CONVERTED),
+        "ds-reclor": ("metaeval/reclor", "default/validation/0000.parquet", CONVERTED),
+        "ds-mathqa": ("allenai/math_qa", "default/validation/0000.parquet", CONVERTED),
+        "ds-cosmosqa": ("allenai/cosmos_qa", "default/validation/0000.parquet", CONVERTED),
+        "ds-sciq": ("allenai/sciq", "data/validation-00000-of-00001.parquet", None),
+        "ds-qasc": ("allenai/qasc", "data/validation-00000-of-00001.parquet", None),
+    },
+    "language": {
+        "ds-cola": ("nyu-mll/glue", "cola/validation-00000-of-00001.parquet", None),
+        "ds-mrpc": ("nyu-mll/glue", "mrpc/validation-00000-of-00001.parquet", None),
+        "ds-wic": ("aps/super_glue", "wic/validation-00000-of-00001.parquet", None),
+        "ds-copa": ("aps/super_glue", "copa/validation-00000-of-00001.parquet", None),
+        "ds-wsc": ("aps/super_glue", "wsc.fixed/validation/0000.parquet", CONVERTED),
+        "ds-scinli": ("tasksource/scinli", "default/validation/0000.parquet", CONVERTED),
+        "ds-subj": ("SetFit/subj", "default/test/0000.parquet", CONVERTED),
+        "ds-counterfactual": ("SetFit/amazon_counterfactual_en", "default/test/0000.parquet", CONVERTED),
+        "ds-factuality": ("metaeval/recast", "recast_factuality/validation/0000.parquet", CONVERTED),
+        "ds-veridicality": ("metaeval/recast", "recast_megaveridicality/validation/0000.parquet", CONVERTED),
+        "ds-odd-man-out": ("tasksource/linguisticprobing", "odd_man_out/validation-00000-of-00001.parquet", None),
+        "ds-coordination": ("tasksource/linguisticprobing", "coordination_inversion/validation-00000-of-00001.parquet", None),
+    },
+    "retrieval": {
+        "ds-boolq": ("google/boolq", "data/validation-00000-of-00001.parquet", None),
+        "ds-squad2": ("rajpurkar/squad_v2", "squad_v2/validation-00000-of-00001.parquet", None),
+        "ds-climate-fever": ("tdiggelm/climate_fever", "data/test-00000-of-00001.parquet", None),
+        "ds-qqp": ("nyu-mll/glue", "qqp/validation-00000-of-00001.parquet", None),
+        "ds-pubmedqa": ("qiaojin/PubMedQA", "pqa_artificial/train-00000-of-00001.parquet", None),
+        "ds-medical-pairs": ("curaihealth/medical_questions_pairs", "data/train-00000-of-00001.parquet", None),
+        "ds-scifact": ("allenai/scifact", "claims/validation/0000.parquet", CONVERTED),
+        "ds-health-fact": ("ImperialCollegeLondon/health_fact", "default/validation/0000.parquet", CONVERTED),
+        "ds-trec": ("CogComp/trec", "default/test/0000.parquet", CONVERTED),
+        "ds-fever": ("copenlu/fever_gold_evidence", "default/validation/0000.parquet", CONVERTED),
+        "ds-medqa": ("bigbio/med_qa", "med_qa_en_4options_bigbio_qa/validation/0000.parquet", CONVERTED),
+        "ds-multirc": ("aps/super_glue", "multirc/validation/0000.parquet", CONVERTED),
+    },
+    "arts": {
+        "ds-sarcasm-headlines": ("raquiba/Sarcasm_News_Headline", "default/test/0000.parquet", CONVERTED),
+        "ds-humor": ("CreativeLang/ColBERT_Humor_Detection", "default/train/0000.parquet", CONVERTED),
+        "ds-sst5": ("SetFit/sst5", "default/validation/0000.parquet", CONVERTED),
+        "ds-formality": ("osyvokon/pavlick-formality-scores", "default/test/0000.parquet", CONVERTED),
+        "ds-flute": ("ColumbiaNLP/FLUTE", "default/train/0000.parquet", CONVERTED),
+        "ds-amazon-polarity": ("fancyzhx/amazon_polarity", "amazon_polarity/test-00000-of-00001.parquet", None),
+        "ds-app-reviews": ("sealuzh/app_reviews", "data/train-00000-of-00001.parquet", None),
+        "ds-yelp-stars": ("Yelp/yelp_review_full", "yelp_review_full/test-00000-of-00001.parquet", None),
+        "ds-rotten-tomatoes": ("cornell-movie-review-data/rotten_tomatoes", "validation.parquet", None),
+        "ds-quotes": ("Abirate/english_quotes", "default/train/0000.parquet", CONVERTED),
+        "ds-figurative-nli": ("tasksource/figurative-nli", "default/train/0000.parquet", CONVERTED),
+        "ds-imdb": ("stanfordnlp/imdb", "plain_text/test-00000-of-00001.parquet", None),
+    },
+}  # fmt: skip
+for _pool in NEW_DOMAIN.values():
+    for _key, _where in _pool.items():
+        SOURCES[_key] = lambda w=_where: hf_parquet(*w)
 
 # Known families: names match the published seed (zils-ai/base-exam-seed-v2) and the history receipts.
 KNOWN = {
@@ -260,7 +326,8 @@ def new_families(work, draw, need):
             }
     families = {}
     for category, tasks in BIGBENCH.items():
-        pool = [f"bb-{t}" for t in tasks if f"bb-{t}" not in used]
+        pool = [f"bb-{t}" for t in tasks] + list(NEW_DOMAIN.get(category, {}))
+        pool = [s for s in pool if s not in used]
         pool = [s for s in pool if len(SOURCES[s]()) >= need]
         if category == "tools":
             pool += ["glaive"] * 3

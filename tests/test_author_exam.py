@@ -141,6 +141,7 @@ class AuthorExamTest(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as tmp,
             patch.dict(author_exam.BIGBENCH, pools, clear=True),
+            patch.dict(author_exam.NEW_DOMAIN, {}, clear=True),
             patch.dict(author_exam.SOURCES, sources, clear=True),
         ):
             first = author_exam.new_families(tmp, "d1", 72)
@@ -151,6 +152,35 @@ class AuthorExamTest(unittest.TestCase):
                 author_exam.new_families(tmp, "d2", 72)
             tools = {v[2] for k, v in first.items() if k.startswith("tools-")}
             self.assertIn("glaive", tools)
+
+    def test_new_domain_pools_extend_bigbench_without_reuse(self):
+        known = {source for _, _, source, _ in author_exam.KNOWN.values()}
+        keys = [k for pool in author_exam.NEW_DOMAIN.values() for k in pool]
+        self.assertEqual(len(keys), len(set(keys)))
+        self.assertTrue(set(author_exam.NEW_DOMAIN) <= set(author_exam.BIGBENCH))
+        self.assertFalse(known & set(keys))
+        self.assertTrue(all(k in author_exam.SOURCES for k in keys))
+        # A used BIG-bench task stays used; a new-domain dataset fills the gap.
+        pools = {c: [f"t{c}{i}" for i in range(3)] for c in author_exam.BIGBENCH}
+        extra = {c: {f"ds-{c}{i}": ("repo", "path", None) for i in range(3)} for c in pools}
+        sources = {f"bb-{t}": (lambda: [("r", {})] * 100) for ts in pools.values() for t in ts}
+        sources |= {k: (lambda: [("r", {})] * 100) for p in extra.values() for k in p}
+        sources["glaive"] = lambda: [("r", {})] * 100
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.dict(author_exam.BIGBENCH, pools, clear=True),
+            patch.dict(author_exam.NEW_DOMAIN, extra, clear=True),
+            patch.dict(author_exam.SOURCES, sources, clear=True),
+        ):
+            first = author_exam.new_families(tmp, "d1", 72)
+            (Path(tmp) / "d1").mkdir()
+            (Path(tmp) / "d1" / "families.json").write_text(json.dumps(first))
+            second = author_exam.new_families(tmp, "d2", 72)
+            for category in ("reasoning", "language", "retrieval", "arts"):
+                used = {v[2] for k, v in first.items() if k.startswith(category)}
+                again = {v[2] for k, v in second.items() if k.startswith(category)}
+                self.assertFalse(used & again)
+                self.assertEqual(len(used | again), 6)
 
 
 if __name__ == "__main__":
