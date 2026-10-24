@@ -87,8 +87,30 @@ SOURCES = {
     "mnli-val-matched": lambda: hf_parquet(GLUE, "mnli/validation_matched-00000-of-00001.parquet"),
 }
 # Small held-out sets run out after a few draws; pair each with a same-task source.
-SOURCES["arith-word"] = lambda: SOURCES["svamp-test"]() + SOURCES["multiarith"]()
 SOURCES["entail-val"] = lambda: SOURCES["rte-val"]() + SOURCES["mnli-val-matched"]()
+# 24 Oct 2026: four more held-out splits so the known families last beyond the d3-mini draws. Rows
+# are style examples only (Claude writes and answers every item), so an unlabeled test split works.
+SOURCES["csqa-test"] = lambda: hf_parquet("tau/commonsense_qa", "data/test-00000-of-00001.parquet")
+SOURCES["tweet-emotion-val"] = lambda: hf_parquet(
+    "cardiffnlp/tweet_eval", "emotion/validation-00000-of-00001.parquet"
+)
+SOURCES["tweet-irony-val"] = lambda: hf_parquet(
+    "cardiffnlp/tweet_eval", "irony/validation-00000-of-00001.parquet"
+)
+SOURCES["asdiv-val"] = lambda: hf_parquet(
+    "EleutherAI/asdiv", "asdiv/validation-00000-of-00001.parquet"
+)
+SOURCES["csqa-held-out"] = lambda: SOURCES["csqa-val"]() + SOURCES["csqa-test"]()
+SOURCES["arith-word"] = lambda: (
+    SOURCES["svamp-test"]() + SOURCES["multiarith"]() + SOURCES["asdiv-val"]()
+)
+SOURCES["emotion-val"] = lambda: hf_parquet(
+    "dair-ai/emotion", "split/validation-00000-of-00001.parquet"
+)
+SOURCES["tweet-emotion"] = lambda: (
+    SOURCES["tweet-emotion-test"]() + SOURCES["tweet-emotion-val"]() + SOURCES["emotion-val"]()
+)
+SOURCES["tweet-irony"] = lambda: SOURCES["tweet-irony-test"]() + SOURCES["tweet-irony-val"]()
 # New-domain pools: BIG-bench training tasks (Glaive rows for tools). A task is used by one draw only.
 BIGBENCH = {
     "reasoning": [
@@ -205,8 +227,8 @@ for _pool in NEW_DOMAIN.values():
 
 # Known families: names match the published seed (zils-ai/base-exam-seed-v2) and the history receipts.
 KNOWN = {
-    "reasoning-known-choice-k2": ("reasoning", "choice", "csqa-val", "Commonsense multiple-choice reasoning with 5 plausible options (CommonsenseQA style)."),
-    "reasoning-known-noul-k2": ("reasoning", "noul", "csqa-val", "Is a stated answer to a commonsense question correct? Requires ruling out close alternatives."),
+    "reasoning-known-choice-k2": ("reasoning", "choice", "csqa-held-out", "Commonsense multiple-choice reasoning with 5 plausible options (CommonsenseQA style)."),
+    "reasoning-known-noul-k2": ("reasoning", "noul", "csqa-held-out", "Is a stated answer to a commonsense question correct? Requires ruling out close alternatives."),
     "reasoning-known-score-k2": ("reasoning", "score", "arith-word", "Arithmetic word problems with distracting numbers; the answer is a small count."),
     "language-known-choice-k2": ("language", "choice", "mnli-val", "Premise/hypothesis inference across genres: entailment, neutral or contradiction."),
     "language-known-noul-k2": ("language", "noul", "entail-val", "Does the passage entail the hypothesis?"),
@@ -217,9 +239,9 @@ KNOWN = {
     "tools-known-choice-k2": ("tools", "choice", "glaive", "Which function call (name and arguments) correctly serves the request, among close candidates?"),
     "tools-known-noul-k2": ("tools", "noul", "glaive", "Should the assistant call a function now, given the conversation and schemas?"),
     "tools-known-score-k2": ("tools", "score", "glaive", "How many required arguments can be filled from the conversation so far?"),
-    "arts-known-choice-k2": ("arts", "choice", "tweet-emotion-test", "Which emotion does a short post express: anger, joy, optimism or sadness?"),
-    "arts-known-noul-k2": ("arts", "noul", "tweet-irony-test", "Is this short post ironic?"),
-    "arts-known-score-k2": ("arts", "score", "tweet-emotion-test", "Rate the intensity of the emotion a short post expresses."),
+    "arts-known-choice-k2": ("arts", "choice", "tweet-emotion", "Which emotion does a short post express: anger, joy, optimism or sadness?"),
+    "arts-known-noul-k2": ("arts", "noul", "tweet-irony", "Is this short post ironic?"),
+    "arts-known-score-k2": ("arts", "score", "tweet-emotion", "Rate the intensity of the emotion a short post expresses."),
 }  # fmt: skip
 
 TYPE_RULES = {
