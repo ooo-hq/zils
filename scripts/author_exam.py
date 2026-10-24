@@ -177,13 +177,15 @@ for _tasks in BIGBENCH.values():
 CONVERTED = "refs/convert/parquet"
 NEW_DOMAIN = {
     "reasoning": {
-        "ds-piqa": ("ybisk/piqa", "plain_text/validation/0000.parquet", CONVERTED),
         "ds-logiqa": ("lucasmccabe/logiqa", "default/validation/0000.parquet", CONVERTED),
         "ds-reclor": ("metaeval/reclor", "default/validation/0000.parquet", CONVERTED),
         "ds-mathqa": ("allenai/math_qa", "default/validation/0000.parquet", CONVERTED),
         "ds-cosmosqa": ("allenai/cosmos_qa", "default/validation/0000.parquet", CONVERTED),
         "ds-sciq": ("allenai/sciq", "data/validation-00000-of-00001.parquet", None),
         "ds-qasc": ("allenai/qasc", "data/validation-00000-of-00001.parquet", None),
+        # PIQA validation is the k3 reasoning yes/no source, so it left this pool (24 Oct 2026).
+        "ds-ropes": ("allenai/ropes", "plain_text/validation/0000.parquet", CONVERTED),
+        "ds-folio": ("tasksource/folio", "default/validation/0000.parquet", CONVERTED),
     },
     "language": {
         "ds-cola": ("nyu-mll/glue", "cola/validation-00000-of-00001.parquet", None),
