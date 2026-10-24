@@ -2,9 +2,12 @@
 
 Validators independently verify submitted artifacts, calibrate probabilities,
 and score held-out examples. Miner-reported metrics do not determine rewards.
-A testnet fleet validator publishes weights only after explicit configuration
-and review (`--publish-weights`). Base-tier miners join by registering on testnet
-subnet 579; mainnet is not implemented.
+A chain validator publishes weights only after explicit configuration and
+review (`--publish-weights`). Zils runs on Bittensor mainnet (`finney`), subnet
+`<NETUID>`; base-tier miners join by registering there. The chain commands live
+in the `zils.testnet` module, which serves both networks: the config's
+`"chain": {"network": "finney", "netuid": <NETUID>}` selects mainnet and its
+pinned endpoint, and there is no mainnet default.
 
 ## Queue validator
 
@@ -88,7 +91,7 @@ Settle or explicitly handle pending rounds before changing configuration. Use
 close public admission. Disabling pool intake does not authorize returning to
 old-policy crowns; preserve the reviewed incumbent and existing customer pins.
 
-## Bittensor testnet validator
+## Bittensor chain validator
 
 This path uses a model-pinned fleet, a static roster and private-network
 transport. For the base tier open to every registered hotkey, see
@@ -97,8 +100,7 @@ transport. For the base tier open to every registered hotkey, see
 ### 1. Register and check eligibility
 
 Follow [Bittensor registration](bittensor-registration.md) using a dedicated
-validator hotkey, distinct from every miner hotkey. Use the operator-confirmed
-testnet netuid. Miners and validators both register a hotkey to obtain a UID.
+validator hotkey, distinct from every miner hotkey. Use subnet `<NETUID>` on `finney`. Miners and validators both register a hotkey to obtain a UID.
 
 Registration alone does not grant validation rights. Check the live metagraph
 and subnet parameters for the validator's permit and stake requirements. The
@@ -112,8 +114,9 @@ SDK still enforces the chain's transaction requirements.
 Complete the [fleet model setup](mining.md) for the operator-selected text or image
 profile, including the matching reference and qualified hardware.
 Install `requirements/testnet.txt` in `.venv-kev`.
-Create the frozen job and registered identity file using
-[testnet fleet setup](testnet.md#provision-the-registered-identities).
+Create the frozen job and registered identity file with
+`python -m zils.fleet init --testnet-identities IDENTITIES.json` (the identity
+file's `chain` names the network and netuid).
 Keep test/calibration data on the validator and distribute only each miner's
 assigned bundle. The validator host needs its hotkey, not the coldkey.
 
@@ -121,10 +124,10 @@ With the generated configuration in place, run the read-only check:
 
 ```bash
 .venv-kev/bin/python -m zils.testnet preflight \
-  --config .private/testnet-fleet/validator/config.json
+  --config .private/chain-fleet/validator/config.json
 ```
 
-Confirm the testnet/netuid, validator UID, every miner UID-to-hotkey mapping,
+Confirm the network/netuid, validator UID, every miner UID-to-hotkey mapping,
 permit, weight limits, required version, and publication cooldown. A changed
 registration requires a new roster, not reassignment of an old score.
 
@@ -134,12 +137,12 @@ Start each configured miner with `./start-miner --rounds 1`. On the validator:
 
 ```bash
 .venv-kev/bin/python -m zils.fleet validator \
-  --config .private/testnet-fleet/validator/config.json --rounds 1
+  --config .private/chain-fleet/validator/config.json --rounds 1
 ```
 
 This scores submissions and previews chain publication without sending weights.
 Inspect the round's `report.json` under
-`.private/testnet-fleet/validator/state/rounds/`. Check failures, calibrated
+`.private/chain-fleet/validator/state/rounds/`. Check failures, calibrated
 scores, and registered identities. The normalized skill weights and customer
 model-acceptance decision are different outputs: a miner can earn a proposed
 weight without producing an accepted customer model.
@@ -147,12 +150,12 @@ weight without producing an accepted customer model.
 ### 4. Publish the reviewed round
 
 Replace `ROUND` below with the completed round directory's name. This command
-**submits a testnet weight transaction** using the validator hotkey:
+**submits a weight transaction on the configured network** using the validator hotkey:
 
 ```bash
 .venv-kev/bin/python -m zils.testnet publish \
-  --config .private/testnet-fleet/validator/config.json \
-  --round .private/testnet-fleet/validator/state/rounds/ROUND
+  --config .private/chain-fleet/validator/config.json \
+  --round .private/chain-fleet/validator/state/rounds/ROUND
 ```
 
 Only one process should publish for this hotkey and subnet. For subsequent
@@ -166,15 +169,15 @@ An included commit is not yet a verified reveal. After the chain's reveal period
 
 ```bash
 .venv-kev/bin/python -m zils.testnet verify \
-  --config .private/testnet-fleet/validator/config.json \
-  --round .private/testnet-fleet/validator/state/rounds/ROUND
+  --config .private/chain-fleet/validator/config.json \
+  --round .private/chain-fleet/validator/state/rounds/ROUND
 ```
 
 Keep `report.json`, `chain-attempt.json`, and `chain-receipt.json` together.
 Verification checks the current identities, a later chain update, and expected
 weight proportions. If a receipt is `unknown`, inspect the chain before manual
 recovery; deleting the attempt marker and retrying can duplicate a submission.
-See [testnet outcomes](testnet.md#read-the-outcome) for restart behavior.
+A restarted publisher never retries an interrupted submission automatically.
 
 ### 6. Pay the base tier from the same vector
 
@@ -250,12 +253,10 @@ unregistered hotkey earns nothing. No earner: the adapter share burns at
 signer or window, an invalid row, one artifact hash earning twice, a report
 without evidence when the section is set, and evidence when it is not.
 Receipts record `"adapter_source": "queue"`. The fleet refuses the section on a
-non-testnet config.
+config without a `chain` section.
 
 Trust: the platform's processor evaluated the work; the signature proves the
 export came from the platform, not that the evaluation was right. Customer test
 data stays private, so other validators can audit the export but not re-score it.
 
-The [first verified testnet round](testnet-round-001.md) demonstrates this closed
-path. It does not establish current validator uptime, open access, mainnet
-support, or queue training-to-chain integration.
+
