@@ -26,7 +26,12 @@ Old receipts remain archival; new single-base intake requires this migration. Ne
 
 `base_pools` contains `share` (the outer base budget), `burn_uid`, and `pools`.
 Each pool entry contains its immutable `model`, `enabled`, `share` (fraction of
-that base budget), `incumbent_sha256`, `kings`, `draws` and `policy`. Fractions must
+that base budget), `incumbent_sha256`, `kings`, `draws` and `policy`.
+An optional `cooldown_seconds` sets the minimum spacing between one hotkey's
+distinct submissions to that pool, measured between commitment blocks (12 s per
+block). With the budgeted queue, a commitment inside the cooldown is refused and
+recorded on that hotkey's queue row; the miner commits again after it has passed.
+A retry or the confirmation run of an accepted submission is never refused. Fractions must
 sum to one. Disabled or unowned pools burn their fraction; another pool cannot
 inherit it. Last-five-distinct registered kings split each earned allocation.
 Burn publication checks that `burn_uid` is the subnet owner's uid.

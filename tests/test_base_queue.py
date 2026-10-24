@@ -395,6 +395,37 @@ class BaseQueueTest(unittest.TestCase):
             queue.make_room(self.root, target, 30, 40, protected={reference.resolve()})
         self.assertTrue((reference / "weights").exists())
 
+    def test_pool_cooldown_refuses_a_second_submission_too_soon(self):
+        def claim(sha, block, hotkey="miner-1"):
+            return {"sha256": sha * 64, "block": block, "hotkey": hotkey}
+
+        hours12 = 12 * 3600  # 3600 blocks
+        queue.admit_submission(self.root, claim("a", 1000), "d3-mini", hours12)
+        queue.admit_submission(self.root, claim("a", 1000), "d3-mini", hours12)  # retry
+        with self.assertRaisesRegex(ValueError, "at or after block 4600"):
+            queue.admit_submission(self.root, claim("b", 4599), "d3-mini", hours12)
+        # Other pools and other hotkeys have their own clocks.
+        queue.admit_submission(self.root, claim("c", 1001), "d3-lite", hours12)
+        queue.admit_submission(self.root, claim("d", 1002, "miner-2"), "d3-mini", hours12)
+        queue.admit_submission(self.root, claim("b", 4600), "d3-mini", hours12)
+        with queue.state_at(self.root) as state:
+            self.assertEqual(state["submissions"]["miner-1"]["d3-mini"]["block"], 4600)
+        queue.admit_submission(self.root, claim("e", 4601), "d3-mini", 0)
+
+    def test_pool_cooldown_is_validated(self):
+        for value in (-1, 1.5, True, "3600", 31 * 86400):
+            cfg = copy.deepcopy(self.cfg["base_pools"])
+            next(iter(cfg["pools"].values()))["cooldown_seconds"] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "cooldown"):
+                model_pools.validate(cfg)
+        cfg = copy.deepcopy(self.cfg["base_pools"])
+        name, entry = next(iter(cfg["pools"].items()))
+        entry["cooldown_seconds"] = 43200
+        self.assertEqual(model_pools.validate(cfg)["pools"][name]["cooldown_seconds"], 43200)
+        self.assertNotIn(
+            "cooldown_seconds", model_pools.validate(self.cfg["base_pools"])["pools"][name]
+        )
+
     def test_invalid_policies_fail_before_intake(self):
         for value in (0, -1, True, 1.5):
             cfg = copy.deepcopy(self.cfg)
