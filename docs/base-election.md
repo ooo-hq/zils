@@ -63,9 +63,12 @@ writes each item new from one public row used only as a style example, and a bli
 only agreements. Known families draw on held-out validation/test splits of datasets outside S1MB,
 Decision Index and JevBench; new-domain families use BIG-bench training tasks, three per category per
 draw, never reused. Public seeds for the 15 known families are published at
-`zils-ai/base-exam-seed-v1` (@`e737b87`) and `zils-ai/base-exam-seed-v2` (@`168ce9a`); seed v2 names
-the current `-k2` families. Install `requirements/exam.txt`, set `ANTHROPIC_API_KEY`, keep `--work`
-private, then:
+`zils-ai/base-exam-seed-v1` (@`e737b87`), `zils-ai/base-exam-seed-v2` (@`168ce9a`) and
+`zils-ai/base-exam-seed-v3` (@`0593c78`). The current known families are the nine `-k2` language,
+retrieval and tools families (seed v2) and the six `-k3` reasoning and arts families (seed v3), which
+replaced `-k2` families whose held-out sources ran out. Install `requirements/exam.txt`, set
+`ANTHROPIC_API_KEY`, keep `--work` private, then (`--batch` uses the Message Batches API at half price
+and resumes the same batch after a restart):
 
 ```sh
 python -m scripts.author_exam author --work exams --draw r1 --per-family 96
