@@ -1,4 +1,4 @@
-"""Collect checkpoints, calibrate and score them, and optionally publish testnet weights."""
+"""Collect checkpoints, calibrate and score them, and optionally publish chain weights."""
 
 import collections
 import http.client
@@ -778,7 +778,7 @@ def admission_settings(config):
     if mode not in ("members", "chain"):
         raise ValueError("admission must be 'members' or 'chain'")
     if mode == "chain" and ("chain" not in config or not public):
-        raise ValueError("chain admission requires a testnet configuration and public_endpoints")
+        raise ValueError("chain admission requires a chain configuration and public_endpoints")
     if mode == "members" and public and any("port" not in m for m in config["members"].values()):
         raise ValueError("members need artifact ports")
     return mode, public
@@ -1089,7 +1089,7 @@ def validator(config, directory, args):
                 if "tracks" in outcome or "adapter_source" in outcome:
                     # Miners see the published vector, not the frozen-job round alone.
                     public["weights"] = outcome["requested_weights"]
-                print(f"validator: testnet weights {outcome['status']}", flush=True)
+                print(f"validator: chain weights {outcome['status']}", flush=True)
             wire.write_json(work / "result.json", signed(public, key))
             with condition:
                 current["status"] = "complete"

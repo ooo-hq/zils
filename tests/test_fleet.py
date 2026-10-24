@@ -112,7 +112,7 @@ class FleetTest(unittest.TestCase):
             err = io.StringIO()
             with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
                 fleet.main(["validator", "--config", str(config)])
-            self.assertIn("testnet fleet config", err.getvalue())
+            self.assertIn("chain fleet config", err.getvalue())
             config.write_text(
                 json.dumps(
                     {
@@ -128,7 +128,7 @@ class FleetTest(unittest.TestCase):
             err = io.StringIO()
             with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
                 fleet.main(["validator", "--config", str(config)])
-            self.assertIn("testnet fleet config", err.getvalue())
+            self.assertIn("chain fleet config", err.getvalue())
 
     def test_public_validator_address_needs_public_endpoints(self):
         import contextlib

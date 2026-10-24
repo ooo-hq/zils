@@ -153,7 +153,8 @@ class TestnetTest(unittest.TestCase):
         self.assertEqual(t.preflight(config, sub)["validator_uid"], 0)
         self.assertEqual(sub.last_block, 250)
         for field, value in (
-            ("network", "finney"),
+            ("network", "mainnet"),
+            ("network", "local"),
             ("netuid", 0),
             ("netuid", True),
             ("netuid", "553"),
@@ -162,6 +163,16 @@ class TestnetTest(unittest.TestCase):
             bad["chain"][field] = value
             with self.assertRaises(ValueError):
                 t.preflight(bad, sub)
+        mainnet = copy.deepcopy(config)
+        mainnet["chain"]["network"] = "finney"
+        self.assertEqual(t.check_config(mainnet), 553)
+        with self.assertRaisesRegex(ValueError, "pinned mainnet endpoint"):
+            t.preflight(mainnet, sub)
+        sub.network, sub.endpoint = "finney", t.ENDPOINTS["finney"]
+        self.assertEqual(t.preflight(mainnet, sub)["network"], "finney")
+        with self.assertRaisesRegex(ValueError, "pinned testnet endpoint"):
+            t.preflight(config, sub)
+        sub.network, sub.endpoint = "test", t.ENDPOINT
         fresh = copy.deepcopy(config)
         fresh["chain"]["netuid"] = 777
         sub.expected_netuid = 777

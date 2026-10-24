@@ -1,4 +1,4 @@
-"""Closed Zils rehearsal on Bittensor testnet. Local mode never imports the SDK."""
+"""Zils chain access for Bittensor testnet and mainnet (finney). Local mode never imports the SDK."""
 
 import argparse
 import hashlib
@@ -9,7 +9,13 @@ from pathlib import Path
 
 import zils
 
-ENDPOINT = "wss://test.finney.opentensor.ai:443"
+# One pinned endpoint per network. Mainnet is never a default: a config must name "finney".
+ENDPOINTS = {
+    "test": "wss://test.finney.opentensor.ai:443",
+    "finney": "wss://entrypoint-finney.opentensor.ai:443",
+}
+ENDPOINT = ENDPOINTS["test"]
+NAMES = {"test": "testnet", "finney": "mainnet"}
 # Sent as every weight write's version_key. A release that changes scoring bumps it; once validators
 # have had time to `zils update`, the owner raises the subnet's weights_version to match, and the
 # chain then rejects weights from older validators. Until then both versions count.
@@ -28,11 +34,13 @@ def check_config(config):
     if (
         not isinstance(chain, dict)
         or set(chain) != {"network", "netuid"}
-        or chain["network"] != "test"
+        or chain["network"] not in ENDPOINTS
         or type(chain["netuid"]) is not int
         or not 1 <= chain["netuid"] < 4096
     ):
-        raise ValueError("chain mode requires network test and an explicit subnet ID in 1..4095")
+        raise ValueError(
+            "chain mode requires network test or finney and an explicit subnet ID in 1..4095"
+        )
     return chain["netuid"]
 
 
@@ -40,12 +48,13 @@ def check_config(config):
 def connect(config, *, raw_calls=False):
     """`raw_calls` admits the one raw extrinsic Zils sends, `Commitments.set_commitment`."""
     netuid = check_config(config)
+    network = config["chain"]["network"]
     if version("bittensor") != "11.1.0":
         raise ValueError("install requirements/testnet.txt (bittensor 11.1.0)")
     import bittensor as bt
 
     with bt.Subtensor(
-        network="test",
+        network=network,
         fallback_endpoints=[],
         archive_endpoints=[],
         policy=bt.Policy(allowed_netuids=[netuid], allow_raw_calls=raw_calls),
@@ -120,15 +129,18 @@ def write_commitment(config, sub, wallet, text):
 def preflight(config, sub):
     """Pin reads to one block; a replaced UID must never inherit a miner's score."""
     netuid = check_config(config)
-    if sub.network != "test" or sub.endpoint != ENDPOINT:
-        raise ValueError("unexpected chain connection; only the pinned testnet endpoint is allowed")
+    network = config["chain"]["network"]
+    if sub.network != network or sub.endpoint != ENDPOINTS[network]:
+        raise ValueError(
+            f"unexpected chain connection; only the pinned {NAMES[network]} endpoint is allowed"
+        )
     block = sub.block
 
     def query(item, *params):
         return sub.query(("SubtensorModule", item), list(params), block=block)
 
     if not query("NetworksAdded", netuid):
-        raise ValueError(f"testnet subnet {netuid} does not exist")
+        raise ValueError(f"{NAMES[network]} subnet {netuid} does not exist")
     validator = config["validator_hotkey"]
     validator_uid = query("Uids", netuid, validator)
     if validator_uid is None or query("Keys", netuid, validator_uid) != validator:
@@ -204,11 +216,11 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
     netuid = check_config(config)
     identities = {uid: item["hotkey"] for uid, item in config["members"].items()}
     if report.get("chain") != config["chain"] or report.get("identities") != identities:
-        raise ValueError("report was not evaluated for this registered testnet fleet")
+        raise ValueError("report was not evaluated for this registered chain fleet")
     model = config.get("model", models.spec(models.KEV))
     models.validate_spec(model)
     if report.get("model", models.spec(models.KEV)) != model:
-        raise ValueError("Report differs from the testnet fleet model profile")
+        raise ValueError("Report differs from the chain fleet model profile")
     pools = config.get("base_pools")
     pool_report = report.get("base_pools")
     if pools is not None or pool_report is not None:
@@ -424,7 +436,7 @@ def verify_receipt(config, record, sub):
     """Read current weights; a successful timelock commit alone is not a revealed weight vector."""
     state = preflight(config, sub)
     if {k: record[k] for k in ("network", "netuid")} != config["chain"]:
-        raise ValueError("receipt is not for the configured testnet subnet")
+        raise ValueError("receipt is not for the configured chain subnet")
     if (
         record["validator_hotkey"] != state["validator_hotkey"]
         or record["members"] != state["members"]
@@ -500,7 +512,7 @@ def main():
                         )
             print(json.dumps(result, indent=2))
     except (ValueError, OSError, KeyError) as error:
-        parser.exit(1, f"zils testnet: {error}\n")
+        parser.exit(1, f"zils chain: {error}\n")
 
 
 if __name__ == "__main__":

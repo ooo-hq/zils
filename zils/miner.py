@@ -104,13 +104,22 @@ def update():
         raise RuntimeError("the installer failed; its log path is printed above")
 
 
-def chain_config(netuid):
-    return {"chain": {"network": "test", "netuid": netuid}}
+def chain_config(netuid, network="test"):
+    return {"chain": {"network": network, "netuid": netuid}}
 
 
-def hotkey_state(netuid, hotkey):
+def resolve_netuid(network, netuid):
+    """Testnet defaults to 579; mainnet has no default, so a mainnet write is always explicit."""
+    if netuid is not None:
+        return netuid
+    if network == "test":
+        return NETUID
+    raise ValueError("--network finney needs an explicit --netuid")
+
+
+def hotkey_state(netuid, hotkey, network="test"):
     """The hotkey's uid (None when unregistered) and current commitment, read from the chain."""
-    config = chain_config(netuid)
+    config = chain_config(netuid, network)
     with testnet.connect(config) as sub:
         return testnet.hotkey_state(config, sub, hotkey)
 
@@ -180,7 +189,9 @@ def commit_command(args, revision=None):
         f"--candidate {args.candidate} --repo {args.repo}"
         + (f" --revision {revision}" if revision else ""),
     ]
-    if args.netuid != NETUID:
+    if args.network != "test":
+        command.append(f"--network {args.network}")
+    if args.netuid != NETUID or args.network != "test":
         command.append(f"--netuid {args.netuid}")
     return " \\\n  ".join(command + ["--yes"])
 
@@ -192,9 +203,11 @@ def commit_candidate(args):
         commitments.check_revision(args.revision)
     keys = wallet(args)
     hotkey = keys.hotkey.ss58_address
-    state = hotkey_state(args.netuid, hotkey)
+    state = hotkey_state(args.netuid, hotkey, args.network)
     if state["uid"] is None:
-        raise ValueError(f"hotkey {hotkey} is not registered on testnet subnet {args.netuid}")
+        raise ValueError(
+            f"hotkey {hotkey} is not registered on {testnet.NAMES[args.network]} subnet {args.netuid}"
+        )
     current = (state["commitment"] or {}).get("data")
     revision = args.revision
     print(
@@ -221,7 +234,7 @@ def commit_candidate(args):
     if current == text:
         print(f"already committed at block {state['commitment']['block']}; nothing to do")
         return state["commitment"]
-    config = chain_config(args.netuid)
+    config = chain_config(args.netuid, args.network)
     with testnet.connect(config, raw_calls=True) as sub:
         testnet.write_commitment(config, sub, keys, text)
         after = testnet.hotkey_state(config, sub, hotkey)["commitment"]
@@ -250,7 +263,7 @@ def doctor(args):
     from importlib.metadata import PackageNotFoundError, version
 
     flags = f"--wallet {args.wallet_name} --wallet-hotkey {args.wallet_hotkey} --wallet-path {args.wallet_path}"
-    btcli = f"btcli --network test {flags}"
+    btcli = f"btcli --network {args.network} {flags}"
     state = {}
 
     def requirements():
@@ -300,10 +313,10 @@ def doctor(args):
         state["hotkey"] = key.hotkey.ss58_address
 
     def registration():
-        state.update(hotkey_state(args.netuid, state["hotkey"]))
+        state.update(hotkey_state(args.netuid, state["hotkey"], args.network))
         if state["uid"] is None:
             return (
-                f"hotkey {state['hotkey']} is not registered on testnet subnet {args.netuid};"
+                f"hotkey {state['hotkey']} is not registered on {testnet.NAMES[args.network]} subnet {args.netuid};"
                 f" fund the coldkey with test TAO, then\n"
                 f"  {btcli} tx burned-register --netuid {args.netuid}"
             )
@@ -385,7 +398,7 @@ def doctor(args):
         f"\n{paint('1;32', 'Ready.')} uid {state['uid']} committed {state['sha256'][:12]} at block"
         f" {state['commitment']['block']}; every validator pulls it at its next round. Results:"
         " the chain weights for your uid (btcli subnets metagraph --netuid"
-        f" {args.netuid} --network test)",
+        f" {args.netuid} --network {args.network})",
         flush=True,
     )
     return True
@@ -457,7 +470,13 @@ def main(argv=None):
         "commit-candidate", help="upload a base candidate and commit it on chain"
     )
     for command in (start, check, commit):
-        command.add_argument("--netuid", type=int, default=NETUID)
+        command.add_argument(
+            "--network",
+            choices=tuple(testnet.ENDPOINTS),
+            default="test",
+            help="finney is mainnet and needs an explicit --netuid",
+        )
+        command.add_argument("--netuid", type=int)
         command.add_argument(
             "--model",
             choices=models.d3_family(),
@@ -475,6 +494,8 @@ def main(argv=None):
     )
     args = parser.parse_args(argv)
     try:
+        if hasattr(args, "netuid"):
+            args.netuid = resolve_netuid(args.network, args.netuid)
         if args.command == "setup":
             if not setup(args):
                 parser.exit(1)

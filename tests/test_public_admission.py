@@ -89,7 +89,7 @@ class PublicAdmissionTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "public_endpoints"):
             validator.admission_settings({"chain": {}, "admission": "chain"})
-        with self.assertRaisesRegex(ValueError, "testnet"):
+        with self.assertRaisesRegex(ValueError, "chain configuration"):
             validator.admission_settings({"admission": "chain", "public_endpoints": True})
         with self.assertRaisesRegex(ValueError, "admission"):
             validator.admission_settings({"admission": "open"})

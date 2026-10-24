@@ -74,7 +74,7 @@ class CommitCandidateTest(unittest.TestCase):
         hub = self.enterContext(wire.local_server(fake_hub(self.repos, self.requested)))
         self.enterContext(patch("zils.commitments.HF_ENDPOINT", hub))
         self.enterContext(patch("zils.d3.validate_candidate", Mock()))
-        self.connects = []
+        self.connects, self.chains = [], []
         self.config = root / "zils" / "miner.json"
         self.enterContext(patch.dict(os.environ, {"ZILS_MINER_CONFIG": str(self.config)}))
         self.d3 = root / "venv-d3" / "python"
@@ -92,6 +92,7 @@ class CommitCandidateTest(unittest.TestCase):
         def connect(config, *, raw_calls=False):
             testnet.check_config(config)
             self.connects.append(raw_calls)
+            self.chains.append(config["chain"])
             yield self.chain
 
         self.enterContext(patch("zils.testnet.connect", connect))
@@ -162,6 +163,31 @@ class CommitCandidateTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn("already committed at block 301; nothing to do", out)
         self.assertEqual(len(self.chain.calls), 1)
+
+    def test_mainnet_needs_an_explicit_netuid(self):
+        flags = ("--candidate", str(self.candidate), "--repo", "alice/d3")
+        code, out = self.run_miner("commit-candidate", *flags, "--network", "finney")
+        self.assertEqual(code, 1)
+        self.assertIn("--network finney needs an explicit --netuid", out)
+        self.assertEqual(self.chains, [])
+        # The fixture chain answers for subnet 579; the network is what this checks.
+        code, out = self.run_miner(
+            "commit-candidate", *flags, "--network", "finney", "--netuid", "579"
+        )
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.chains, [{"network": "finney", "netuid": 579}])
+        self.assertEqual(self.chain.calls, [])
+        args = SimpleNamespace(
+            model="d3-mini-4.5b-v1",
+            wallet_name="w",
+            wallet_hotkey="h",
+            wallet_path="p",
+            candidate="c",
+            repo="r",
+            network="finney",
+            netuid=579,
+        )
+        self.assertIn("--network finney \\\n  --netuid 579", miner.commit_command(args))
 
     def test_refuses_bad_revision_branch_mismatch_and_unregistered(self):
         flags = ("--candidate", str(self.candidate), "--repo", "alice/d3", "--yes")
