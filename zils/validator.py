@@ -48,8 +48,10 @@ def run_evaluate(
     images=None,
     wait_for_capacity=False,
     capacity_model=None,
+    lease=None,
 ):
-    """One sandboxed `zils evaluate` of `submissions` on `cases`, deferred while GPU capacity is unavailable."""
+    """One sandboxed `zils evaluate` of `submissions` on `cases`, deferred while GPU capacity is unavailable.
+    A `lease` (base_queue.ComputeLease) is acquired before the first evaluation and kept by its owner."""
     manifest = attempt / f"{name}-submissions.json"
     wire.write_json(manifest, submissions)
     report = attempt / f"{name}.json"
@@ -76,6 +78,8 @@ def run_evaluate(
     ]
     if images is not None:
         command.extend(["--images", str(images)])
+    if lease is not None:
+        lease.acquire()
     waiting = False
     while True:
         try:
@@ -474,7 +478,9 @@ def base_draws(config, directory):
     return draws
 
 
-def base_tier_epoch(config, directory, work, registry, args, draws, *, wait_for_capacity=False):
+def base_tier_epoch(
+    config, directory, work, registry, args, draws, *, wait_for_capacity=False, lease=None
+):
     """Evaluate immutable checkpoints; preserve original timing and private evidence on reuse."""
     from . import base_exam, base_round, benchmark, commitments
 
@@ -612,6 +618,7 @@ def base_tier_epoch(config, directory, work, registry, args, draws, *, wait_for_
                     base_revision=models.spec(model)["base_revision"],
                     wait_for_capacity=wait_for_capacity,
                     capacity_model=model if "base_validation_queue" in config else None,
+                    lease=lease,
                 )
                 completed = time.time()
                 # Re-read the current history in case publication happened during inference.

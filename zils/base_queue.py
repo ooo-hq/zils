@@ -2,14 +2,17 @@
 
 import argparse
 import contextlib
+import fcntl
 import hashlib
 import http.client
 import json
+import os
 import re
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -17,6 +20,7 @@ from urllib.error import HTTPError
 
 from . import base_round, commitments, model_pools, models, protocol as wire, validator
 from .runtime import CapacityUnavailable, locked
+from .settings import get as setting
 
 FIELDS = {
     "window_seconds",
@@ -322,7 +326,62 @@ def make_room(directory, target, size, maximum, *, protected=(), confirming=()):
         raise BudgetExhausted("insufficient free space for candidate staging")
 
 
-def evaluate(config, directory, job, args, work):
+LEASE_POLL = 5
+
+
+class ComputeLease:
+    """Holds the shared compute lock from an attempt's first evaluation until `release`, so its
+    calibration and test steps cannot lose the GPU to other local work in between. Downloads run
+    before it is taken. Acquisition polls for at most `wait_seconds` and raises CapacityUnavailable;
+    `waited` is the time spent, excluded from the attempt's wall-time charge and alarm.
+
+    run_child takes the lock itself and runtime.py is pinned by exam qualification
+    (base_pilot local_code), so while held, ZILS_COMPUTE_LOCK points run_child at a private lock."""
+
+    def __init__(self, device, wait_seconds, private):
+        default = Path(tempfile.gettempdir()) / f"fez-compute-{os.getuid()}-{device}.lock"
+        self.shared = Path(setting("ZILS_COMPUTE_LOCK", str(default)))
+        self.wait, self.private = wait_seconds, Path(private)
+        self.stream, self.waited, self.previous = None, 0.0, None
+
+    def acquire(self):
+        if self.stream is not None:
+            return
+        stream = os.fdopen(os.open(self.shared, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600), "w")
+        paused = signal.setitimer(signal.ITIMER_REAL, 0)[0]
+        started = time.monotonic()
+        try:
+            while True:
+                try:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() - started >= self.wait:
+                        raise CapacityUnavailable() from None
+                    time.sleep(LEASE_POLL)
+        except BaseException:
+            stream.close()
+            raise
+        finally:
+            self.waited += time.monotonic() - started
+            if paused:
+                signal.setitimer(signal.ITIMER_REAL, paused)
+        self.stream = stream
+        self.previous = os.environ.get("ZILS_COMPUTE_LOCK")
+        os.environ["ZILS_COMPUTE_LOCK"] = str(self.private)
+
+    def release(self):
+        if self.stream is None:
+            return
+        if self.previous is None:
+            os.environ.pop("ZILS_COMPUTE_LOCK", None)
+        else:
+            os.environ["ZILS_COMPUTE_LOCK"] = self.previous
+        self.stream.close()
+        self.stream = None
+
+
+def evaluate(config, directory, job, args, work, lease=None):
     claim = job["claim"]
     model = commitments.parent_model(claim)
     pool = models.pool_id(model)
@@ -349,7 +408,14 @@ def evaluate(config, directory, job, args, work):
     if not target.exists():
         reserve_download(config, directory, job, size)
     result = validator.base_tier_epoch(
-        settings, root, work, {claim["uid"]: claim}, args, draws, wait_for_capacity=False
+        settings,
+        root,
+        work,
+        {claim["uid"]: claim},
+        args,
+        draws,
+        wait_for_capacity=False,
+        lease=lease,
     )
     if target.exists():
         target.touch()
@@ -367,13 +433,29 @@ def evaluate(config, directory, job, args, work):
     return pool, result, ready_at
 
 
-def finish(config, directory, job, elapsed, *, result=None, ready_at=0, error=None, retry=False):
+def finish(
+    config,
+    directory,
+    job,
+    elapsed,
+    *,
+    result=None,
+    ready_at=0,
+    error=None,
+    retry=False,
+    deferred=False,
+):
     with state_at(directory) as state:
         if state["active"] != job:
             return
         state["active"] = None
-        # Refund unused reserved time only on a cleanly observed completion.
-        state["budget"]["seconds"] -= max(0, job["seconds"] - elapsed)
+        if deferred:
+            # No GPU capacity, nothing evaluated: the attempt and its time return to the window.
+            state["budget"]["candidates"] -= 1
+            state["budget"]["seconds"] -= job["seconds"]
+        else:
+            # Refund unused reserved time only on a cleanly observed completion.
+            state["budget"]["seconds"] -= max(0, job["seconds"] - elapsed)
         if state["context"] != job["context"]:
             return
         row = state["entries"].get(job["claim"]["hotkey"])
@@ -405,11 +487,15 @@ def step(config, directory, args):
         work.mkdir(mode=0o700, parents=True)
         wire.write_json(work / "job.json", job)
         started = time.monotonic()
-        result, ready_at, error, retry = None, 0, None, False
+        result, ready_at, error, retry, deferred = None, 0, None, False, False
+        # Hold the GPU across every evaluation step; waiting for it is not charged.
+        lease = ComputeLease(args.device, policy(config)["window_seconds"], work / "compute.lock")
         try:
             with deadline(job["seconds"]):
-                pool, decision, ready_at = evaluate(config, directory, job, args, work)
+                pool, decision, ready_at = evaluate(config, directory, job, args, work, lease)
                 result = (pool, decision)
+        except CapacityUnavailable as exc:
+            error, retry, deferred = str(exc)[:400], True, True
         except ValueError as exc:
             error = str(exc)[:400]
         except HTTPError as exc:
@@ -418,19 +504,26 @@ def step(config, directory, args):
         except (
             BudgetExhausted,
             EvaluationDeadline,
-            CapacityUnavailable,
             OSError,
             RuntimeError,
             http.client.HTTPException,
             subprocess.TimeoutExpired,
         ) as exc:
             error, retry = str(exc)[:400], True
+        finally:
+            lease.release()
         if retry:
             ready_at = job["window"] + policy(config)["window_seconds"]
-        elapsed = time.monotonic() - started
+        elapsed = max(0.0, time.monotonic() - started - lease.waited)
         wire.write_json(
             work / "result.json",
-            {"elapsed": elapsed, "error": error, "retry": retry, "ready_at": ready_at},
+            {
+                "elapsed": elapsed,
+                "waited": lease.waited,
+                "error": error,
+                "retry": retry,
+                "ready_at": ready_at,
+            },
         )
         finish(
             config,
@@ -441,6 +534,7 @@ def step(config, directory, args):
             ready_at=ready_at,
             error=error,
             retry=retry,
+            deferred=deferred,
         )
         return True
 
