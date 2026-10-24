@@ -87,12 +87,35 @@ class PublicAdmissionTest(unittest.TestCase):
             ),
             ("chain", True),
         )
-        with self.assertRaisesRegex(ValueError, "public_endpoints"):
+        with self.assertRaisesRegex(ValueError, "public_endpoints or adapter_evidence"):
             validator.admission_settings({"chain": {}, "admission": "chain"})
+        # Pull-only validator: base candidates from chain commitments, adapter work from evidence.
+        self.assertEqual(
+            validator.admission_settings(
+                {"chain": {}, "admission": "chain", "adapter_evidence": {}}
+            ),
+            ("chain", False),
+        )
         with self.assertRaisesRegex(ValueError, "chain configuration"):
             validator.admission_settings({"admission": "chain", "public_endpoints": True})
         with self.assertRaisesRegex(ValueError, "admission"):
             validator.admission_settings({"admission": "open"})
+
+    def test_pull_only_validator_refuses_announcements_without_crashing(self):
+        config = {"chain": {}, "admission": "chain", "adapter_evidence": {}}
+        message = {"claim": {"uid": 7, "round_id": "r"}, "signature": "00"}
+        code, payload = validator.accept(
+            config,
+            {"status": "collecting", "round_id": "r"},
+            {7: "hk"},
+            {},
+            None,
+            message,
+            "203.0.113.5",
+            False,
+        )
+        self.assertEqual(code, 403)
+        self.assertIn("queue evidence", payload["error"])
 
 
 if __name__ == "__main__":

@@ -743,6 +743,8 @@ def accept(config, current, members, registry, rounds, message, source, public_e
     uid = claim.get("uid")
     if type(uid) is not int or uid not in members:
         raise ValueError("unknown miner")
+    if not public_endpoints and "port" not in config.get("members", {}).get(str(uid), {}):
+        return 403, {"error": "this validator pays adapter work from queue evidence"}
     if claim.get("round_id") != current["round_id"]:
         return 409, {"error": "round has changed; request the current round"}
     # Pin downloads to the authenticated caller's TCP source address. The artifact port
@@ -779,13 +781,17 @@ def round_config(config, admission, members):
 
 
 def admission_settings(config):
-    """Static member allowlist with private transport, or chain-derived members with public endpoints."""
+    """Static member allowlist with private transport, or chain-derived members. Chain members
+    announce adapter artifacts to a public endpoint, unless adapter weights come from queue
+    evidence: then the validator takes no announcements and needs no inbound address."""
     mode = config.get("admission", "members")
     public = bool(config.get("public_endpoints"))
     if mode not in ("members", "chain"):
         raise ValueError("admission must be 'members' or 'chain'")
-    if mode == "chain" and ("chain" not in config or not public):
-        raise ValueError("chain admission requires a chain configuration and public_endpoints")
+    if mode == "chain" and "chain" not in config:
+        raise ValueError("chain admission requires a chain configuration")
+    if mode == "chain" and not public and "adapter_evidence" not in config:
+        raise ValueError("chain admission requires public_endpoints or adapter_evidence")
     if mode == "members" and public and any("port" not in m for m in config["members"].values()):
         raise ValueError("members need artifact ports")
     return mode, public

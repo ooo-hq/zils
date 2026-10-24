@@ -34,6 +34,11 @@ section:
   link-local, multicast and reserved addresses are refused in this mode, and
   submissions are throttled per source address (30 per minute).
 
+A validator that takes adapter weights from signed queue evidence (`adapter_evidence`)
+can use `"admission": "chain"` without `public_endpoints`. It needs no inbound
+address: base candidates come from chain commitments and adapter work from the
+evidence export, so it refuses adapter announcements from chain members.
+
 Registration on the subnet is the admission check; there is no further vetting.
 Every submission is still hash-verified, size-bounded, and scored in the
 isolated runner described in [evaluation](evaluation.md).
