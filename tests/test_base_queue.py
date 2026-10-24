@@ -426,6 +426,30 @@ class BaseQueueTest(unittest.TestCase):
             "cooldown_seconds", model_pools.validate(self.cfg["base_pools"])["pools"][name]
         )
 
+    def test_cache_budget_keeps_a_candidate_awaiting_confirmation(self):
+        store = self.root / "base-pools/d3-mini/base-tier/store"
+        waiting, done = store / ("a" * 64) / "checkpoint", store / ("b" * 64) / "checkpoint"
+        for path in (waiting, done):
+            path.mkdir(parents=True)
+            (path / "weights").write_bytes(b"x" * 30)
+        target = store / ("c" * 64) / "checkpoint"
+        with patch("zils.base_queue.shutil.disk_usage", return_value=SimpleNamespace(free=10**12)):
+            queue.make_room(self.root, target, 30, 70, confirming={"a" * 64})
+        self.assertTrue((waiting / "weights").exists())
+        self.assertFalse(done.exists())
+        with self.assertRaises(queue.BudgetExhausted):
+            queue.make_room(self.root, target, 30, 40, confirming={"a" * 64})
+        self.assertTrue((waiting / "weights").exists())
+
+    def test_only_scored_pending_rows_await_confirmation(self):
+        with queue.state_at(self.root) as state:
+            state["entries"] = {
+                "h1": {"claim": {"sha256": "a" * 64}, "status": "pending", "ready_at": 5},
+                "h2": {"claim": {"sha256": "b" * 64}, "status": "pending", "ready_at": 0},
+                "h3": {"claim": {"sha256": "c" * 64}, "status": "done", "ready_at": 0},
+            }
+        self.assertEqual(queue.awaiting_confirmation(self.root), {"a" * 64})
+
     def test_invalid_policies_fail_before_intake(self):
         for value in (0, -1, True, 1.5):
             cfg = copy.deepcopy(self.cfg)
