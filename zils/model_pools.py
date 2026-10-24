@@ -4,6 +4,14 @@ import math
 
 from . import base_round, core, models
 
+# Pool-entry keys that are not part of the base-tier payout track.
+NOT_TRACK = ("model", "enabled", "cooldown_seconds")
+
+
+def track(entry):
+    """The base-tier track inside a pool entry, as base_round.validate_track accepts it."""
+    return {k: v for k, v in entry.items() if k not in NOT_TRACK}
+
 
 def validate(config):
     if not isinstance(config, dict) or set(config) != {"share", "burn_uid", "pools"}:
@@ -26,23 +34,19 @@ def validate(config):
             model = models.validate_spec(model)
         if not isinstance(model, str) or models.pool_id(model) != pool:
             raise ValueError("incumbent profile belongs to a different model pool")
-        track = base_round.validate_track(
+        checked = base_round.validate_track(
             {
-                **{
-                    k: v
-                    for k, v in entry.items()
-                    if k not in ("model", "enabled", "cooldown_seconds")
-                },
+                **track(entry),
                 "burn_uid": burn,
             },
             allow_empty_draws=not entry["enabled"],
         )
-        if not math.isfinite(track["share"]):
+        if not math.isfinite(checked["share"]):
             raise ValueError("pool share must be finite")
-        if any(not math.isfinite(v) for v in track["policy"].values()):
+        if any(not math.isfinite(v) for v in checked["policy"].values()):
             raise ValueError("pool policy values must be finite")
-        track.pop("burn_uid")
-        result[pool] = {"model": models.spec(model), "enabled": entry["enabled"], **track}
+        checked.pop("burn_uid")
+        result[pool] = {"model": models.spec(model), "enabled": entry["enabled"], **checked}
         if "cooldown_seconds" in entry:
             # Minimum spacing between one hotkey's distinct submissions to this pool.
             cooldown = entry["cooldown_seconds"]
@@ -61,8 +65,7 @@ def weights(config, decisions, members):
     vectors, shares, records = {}, {}, {}
     burned = 0.0
     for pool, entry in config["pools"].items():
-        track = {k: v for k, v in entry.items() if k not in ("model", "enabled")}
-        track["burn_uid"] = config["burn_uid"]
+        pool_track = {**track(entry), "burn_uid": config["burn_uid"]}
         decision = decisions.get(pool)
         if not entry["enabled"]:
             if decision is not None:
@@ -75,9 +78,9 @@ def weights(config, decisions, members):
                 or decision.get("model") != entry["model"]
             ):
                 raise ValueError("base decision differs from its pool or incumbent profile")
-            earned = base_round.track_weights(track, decision, members)
+            earned = base_round.track_weights(pool_track, decision, members)
         else:
-            earned = base_round.king_weights(track, members)
+            earned = base_round.king_weights(pool_track, members)
         vectors[pool], shares[pool] = earned, entry["share"]
         if not earned:
             burned += entry["share"]

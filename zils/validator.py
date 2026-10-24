@@ -342,7 +342,7 @@ def pool_rounds(config, directory):
         settings = {
             **{k: v for k, v in config.items() if k not in ("base_pools", "base_pool_rounds")},
             "model": entry["model"],
-            "base_tier": {k: v for k, v in entry.items() if k not in ("model", "enabled")},
+            "base_tier": model_pools.track(entry),
             **{k: str((Path(directory) / v).resolve()) for k, v in paths[pool].items()},
             "pool_id": pool,
         }
