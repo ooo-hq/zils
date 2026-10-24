@@ -86,6 +86,8 @@ class BaseQueueTest(unittest.TestCase):
                         "incumbent_sha256": zils.checkpoint_hash(reference),
                         "kings": [],
                         "draws": [base_round.draw(root / "draws" / n) for n in ("first", "second")],
+                        # A configured cooldown must reach every pool consumer intact.
+                        "cooldown_seconds": 43200,
                     }
                 },
             },

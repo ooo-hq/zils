@@ -79,7 +79,7 @@ def active_context(config, pool_id, *, directory):
     ):
         raise ValueError("active pool requires reference, draws, history, suite and pilot paths")
     resolved = {k: str((Path(directory) / v).resolve()) for k, v in paths.items()}
-    track = {k: v for k, v in entry.items() if k not in ("model", "enabled")}
+    track = model_pools.track(entry)
     settings = {
         **config,
         **resolved,
