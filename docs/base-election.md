@@ -71,16 +71,16 @@ replaced `-k2` families whose held-out sources ran out. Install `requirements/ex
 and resumes the same batch after a restart):
 
 ```sh
-python -m scripts.author_exam author --work exams --draw r1 --per-family 96
+python -m scripts.author_exam author --work exams --draw r1 --per-family 120
 python -m scripts.author_exam verify --work exams --draw r1
-python -m scripts.author_exam finish --work exams --draw r1 --calibration 8 --test 75
+python -m scripts.author_exam finish --work exams --draw r1 --calibration 8 --test 100
 ```
 
-`finish` keeps exactly 8 calibration and 75 test items per family, so every draw shares the
+`finish` keeps exactly 8 calibration and 100 test items per family, so every draw shares the
 pilot's frozen blueprint (it stops and names any family that fell short; author more for it), and writes
 `calibration.jsonl`, `test.jsonl` and `registry.json`; add each known family's
-`publication` receipt from the history to the registry, then seal as below. A 96-per-family draw
-costs about $40 and keeps about 2,250 test items. Training splits are not used: on 22 Oct a draw
+`publication` receipt from the history to the registry, then seal as below. A 120-per-family draw
+costs about $55 (direct; half with `--batch`) and keeps 3,000 test items. Training splits are not used: on 22 Oct a draw
 seeded from them saturated the 4B references near 88% and failed the ranking gate.
 
 Use teacher-authored cases. Public decision datasets may seed newly rewritten
@@ -178,8 +178,9 @@ from 1.0 to 0.7 by favouring the d3 runtime. Score families stay in every electi
 candidates share the pool's runtime, and in the within-pool precision comparisons.
 Every nondegenerate predeclared interval must be within half the crown bar
 (1.0 point at +2) of the estimate on each side. On 23–24 Oct 2026, 1,680-item test splits
-(56 per family) gave a mean 95% half-width of 1.16 points on real candidates; 75 per family
-(about 1.34x) targets 1.0. Identical or clipping-degenerate pairs provide no sizing evidence;
+(56 per family) gave a mean 95% half-width of 1.16 points on real candidates. A 75-per-family
+pilot (24 Oct) measured the within-pool pair at 0.79 and 1.09 on its two draws, so draws keep 100
+test items per family (3,000), about 0.94 expected. Identical or clipping-degenerate pairs provide no sizing evidence;
 the required within-pool pair must have nonzero paired variance. Failed validation
 requires a new untouched validation draw after any retuning. A pilot never crowns.
 
