@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from . import models
 from .cloud import APIError
 from .miner_grading import trainer_identity
-from .runtime import gpu_ready
+from .serving_yield import ready as gpu_ready
 
 
 def validate_presence(body):
