@@ -9,9 +9,9 @@ published at zils-ai/base-exam-seed-v1 and -v2; their receipts live in the famil
 Qualified for d3-mini on 22 Oct 2026: two consecutive sealed draws ranked five Decision Index
 references at Spearman 0.9 on Choice and yes/no families (see docs/base-election.md).
 
-    python -m scripts.author_exam author --work exams --draw r1 --per-family 72
+    python -m scripts.author_exam author --work exams --draw r1 --per-family 120
     python -m scripts.author_exam verify --work exams --draw r1
-    python -m scripts.author_exam finish --work exams --draw r1 --calibration 8 --test 56
+    python -m scripts.author_exam finish --work exams --draw r1 --calibration 8 --test 100
     python -m zils.base_exam seal ...   (see docs/base-election.md)
 
 Needs `ANTHROPIC_API_KEY` and requirements/exam.txt. Rows used by any earlier draw under --work are
@@ -85,21 +85,46 @@ SOURCES = {
     "glaive": glaive,
     "multiarith": lambda: hf_jsonl_array("ChilleD/MultiArith", ("test.json", "train.json")),
     "mnli-val-matched": lambda: hf_parquet(GLUE, "mnli/validation_matched-00000-of-00001.parquet"),
+    # k3 sources (24 Oct 2026): held-out splits outside S1MB and the Decision Index, pinned.
+    "siqa-val": lambda: hf_parquet(
+        "lighteval/siqa",
+        "data/validation-00000-of-00001-90bb85eab85fcfa8.parquet",
+        "54c6a1f8cb6daf4f5abf24a601852612fb35eb25",
+    ),
+    "piqa-val": lambda: hf_parquet(
+        "baber/piqa", "piqa_validation.parquet", "142f6d7367fd9877f0fb3b5734ea6a545f54cdd1"
+    ),
+    "asdiv-val": lambda: hf_parquet(
+        "EleutherAI/asdiv",
+        "asdiv/validation-00000-of-00001.parquet",
+        "8f95807222d87b4c688c3c22a6ba2801e1fa03e2",
+    ),
+    "emotion-test": lambda: hf_parquet(
+        "dair-ai/emotion",
+        "split/test-00000-of-00001.parquet",
+        "cab853a1dbdf4c42c2b3ef2173804746df8825fe",
+    ),
+    "tweet-sentiment-test": lambda: hf_parquet(
+        "cardiffnlp/tweet_eval",
+        "sentiment/test-00000-of-00001.parquet",
+        "b3a375baf0f409c77e6bc7aa35102b7b3534f8be",
+    ),
+    "tweet-irony-val": lambda: hf_parquet(
+        "cardiffnlp/tweet_eval",
+        "irony/validation-00000-of-00001.parquet",
+        "b3a375baf0f409c77e6bc7aa35102b7b3534f8be",
+    ),
 }
 # Small held-out sets run out after a few draws; pair each with a same-task source.
 SOURCES["entail-val"] = lambda: SOURCES["rte-val"]() + SOURCES["mnli-val-matched"]()
-# 24 Oct 2026: four more held-out splits so the known families last beyond the d3-mini draws. Rows
+# 24 Oct 2026 (#110): more held-out splits for the k2 families. The k3 families replaced the k2
+# reasoning and arts families for later draws; these combined sources remain for reference. Rows
 # are style examples only (Claude writes and answers every item), so an unlabeled test split works.
 SOURCES["csqa-test"] = lambda: hf_parquet("tau/commonsense_qa", "data/test-00000-of-00001.parquet")
 SOURCES["tweet-emotion-val"] = lambda: hf_parquet(
     "cardiffnlp/tweet_eval", "emotion/validation-00000-of-00001.parquet"
 )
-SOURCES["tweet-irony-val"] = lambda: hf_parquet(
-    "cardiffnlp/tweet_eval", "irony/validation-00000-of-00001.parquet"
-)
-SOURCES["asdiv-val"] = lambda: hf_parquet(
-    "EleutherAI/asdiv", "asdiv/validation-00000-of-00001.parquet"
-)
+# tweet-irony-val and asdiv-val are defined (pinned) in SOURCES above; they back the k3 families.
 SOURCES["csqa-held-out"] = lambda: SOURCES["csqa-val"]() + SOURCES["csqa-test"]()
 SOURCES["arith-word"] = lambda: (
     SOURCES["svamp-test"]() + SOURCES["multiarith"]() + SOURCES["asdiv-val"]()
@@ -139,7 +164,7 @@ BIGBENCH = {
         "fact_checker", "vitaminc_fact_verification", "auto_categorization", "question_selection",
         "evaluating_information_essentiality", "human_organs_senses", "intent_recognition",
         "movie_recommendation", "fantasy_reasoning", "hindu_knowledge", "cause_and_effect",
-        "timedial", "social_iqa", "qa_wikidata", "periodic_elements", "goal_step_wikihow",
+        "timedial", "qa_wikidata", "periodic_elements", "goal_step_wikihow",
         "which_wiki_edit", "tellmewhy", "anachronisms", "movie_dialog_same_or_different",
         "play_dialog_same_or_different", "topical_chat", "language_identification",
         "paragraph_segmentation", "conlang_translation", "sports_understanding",
@@ -170,13 +195,20 @@ for _tasks in BIGBENCH.values():
 CONVERTED = "refs/convert/parquet"
 NEW_DOMAIN = {
     "reasoning": {
-        "ds-piqa": ("ybisk/piqa", "plain_text/validation/0000.parquet", CONVERTED),
         "ds-logiqa": ("lucasmccabe/logiqa", "default/validation/0000.parquet", CONVERTED),
         "ds-reclor": ("metaeval/reclor", "default/validation/0000.parquet", CONVERTED),
         "ds-mathqa": ("allenai/math_qa", "default/validation/0000.parquet", CONVERTED),
         "ds-cosmosqa": ("allenai/cosmos_qa", "default/validation/0000.parquet", CONVERTED),
         "ds-sciq": ("allenai/sciq", "data/validation-00000-of-00001.parquet", None),
         "ds-qasc": ("allenai/qasc", "data/validation-00000-of-00001.parquet", None),
+        # PIQA validation is the k3 reasoning yes/no source, so it left this pool (24 Oct 2026).
+        "ds-ropes": ("allenai/ropes", "plain_text/validation/0000.parquet", CONVERTED),
+        "ds-folio": ("tasksource/folio", "default/validation/0000.parquet", CONVERTED),
+        # 100-item draws (25 Oct 2026): the pools ran out; non-medical held-out splits, none in S1MB or
+        # the Decision Index.
+        "ds-math-algebra": ("EleutherAI/hendrycks_math", "algebra/test/0000.parquet", CONVERTED),
+        "ds-theoremqa": ("TIGER-Lab/TheoremQA", "default/test/0000.parquet", CONVERTED),
+        "ds-fld": ("hitachi-nlp/FLD.v2", "default/validation/0000.parquet", CONVERTED),
     },
     "language": {
         "ds-cola": ("nyu-mll/glue", "cola/validation-00000-of-00001.parquet", None),
@@ -191,23 +223,32 @@ NEW_DOMAIN = {
         "ds-veridicality": ("metaeval/recast", "recast_megaveridicality/validation/0000.parquet", CONVERTED),
         "ds-odd-man-out": ("tasksource/linguisticprobing", "odd_man_out/validation-00000-of-00001.parquet", None),
         "ds-coordination": ("tasksource/linguisticprobing", "coordination_inversion/validation-00000-of-00001.parquet", None),
+        "ds-bigram-shift": ("tasksource/linguisticprobing", "bigram_shift/validation/0000.parquet", CONVERTED),
+        "ds-past-present": ("tasksource/linguisticprobing", "past_present/validation/0000.parquet", CONVERTED),
+        "ds-subj-number": ("tasksource/linguisticprobing", "subj_number/validation/0000.parquet", CONVERTED),
+        "ds-obj-number": ("tasksource/linguisticprobing", "obj_number/validation/0000.parquet", CONVERTED),
+        "ds-sentence-length": ("tasksource/linguisticprobing", "sentence_length/validation/0000.parquet", CONVERTED),
     },
     "retrieval": {
         "ds-boolq": ("google/boolq", "data/validation-00000-of-00001.parquet", None),
         "ds-squad2": ("rajpurkar/squad_v2", "squad_v2/validation-00000-of-00001.parquet", None),
         "ds-climate-fever": ("tdiggelm/climate_fever", "data/test-00000-of-00001.parquet", None),
         "ds-qqp": ("nyu-mll/glue", "qqp/validation-00000-of-00001.parquet", None),
-        "ds-pubmedqa": ("qiaojin/PubMedQA", "pqa_artificial/train-00000-of-00001.parquet", None),
-        "ds-medical-pairs": ("curaihealth/medical_questions_pairs", "data/train-00000-of-00001.parquet", None),
-        "ds-scifact": ("allenai/scifact", "claims/validation/0000.parquet", CONVERTED),
+        # PubMedQA, SciFact, MedQA and medical question pairs left this pool (25 Oct 2026): their
+        # requests trip the author model's biology safety classifier and return no items.
         "ds-health-fact": ("ImperialCollegeLondon/health_fact", "default/validation/0000.parquet", CONVERTED),
         "ds-trec": ("CogComp/trec", "default/test/0000.parquet", CONVERTED),
         "ds-fever": ("copenlu/fever_gold_evidence", "default/validation/0000.parquet", CONVERTED),
-        "ds-medqa": ("bigbio/med_qa", "med_qa_en_4options_bigbio_qa/validation/0000.parquet", CONVERTED),
         "ds-multirc": ("aps/super_glue", "multirc/validation/0000.parquet", CONVERTED),
+        # Biomedical sources (SciFact, PubMedQA) can trip the author model's safety classifier and
+        # return no items; DROP is a non-medical reading-comprehension replacement (24 Oct 2026).
+        "ds-drop": ("ucinlp/drop", "default/validation/0000.parquet", CONVERTED),
+        "ds-triviaqa": ("mandarjoshi/trivia_qa", "rc.nocontext/validation/0000.parquet", CONVERTED),
+        "ds-wikiqa": ("microsoft/wiki_qa", "default/test/0000.parquet", CONVERTED),
+        "ds-coqa": ("stanfordnlp/coqa", "default/validation/0000.parquet", CONVERTED),
     },
     "arts": {
-        "ds-sarcasm-headlines": ("raquiba/Sarcasm_News_Headline", "default/test/0000.parquet", CONVERTED),
+        # Sarcasm headlines left this pool: arts-known-noul-k3 is irony (24 Oct 2026).
         "ds-humor": ("CreativeLang/ColBERT_Humor_Detection", "default/train/0000.parquet", CONVERTED),
         "ds-sst5": ("SetFit/sst5", "default/validation/0000.parquet", CONVERTED),
         "ds-formality": ("osyvokon/pavlick-formality-scores", "default/test/0000.parquet", CONVERTED),
@@ -219,17 +260,22 @@ NEW_DOMAIN = {
         "ds-quotes": ("Abirate/english_quotes", "default/train/0000.parquet", CONVERTED),
         "ds-figurative-nli": ("tasksource/figurative-nli", "default/train/0000.parquet", CONVERTED),
         "ds-imdb": ("stanfordnlp/imdb", "plain_text/test-00000-of-00001.parquet", None),
+        "ds-figqa": ("nightingal3/fig-qa", "default/validation/0000.parquet", CONVERTED),
+        "ds-tweet-topic": ("cardiffnlp/tweet_topic_single", "tweet_topic_single/test_2021/0000.parquet", CONVERTED),
+        "ds-puns": ("tasksource/recast", "recast_puns/validation/0000.parquet", CONVERTED),
     },
 }  # fmt: skip
 for _pool in NEW_DOMAIN.values():
     for _key, _where in _pool.items():
         SOURCES[_key] = lambda w=_where: hf_parquet(*w)
 
-# Known families: names match the published seed (zils-ai/base-exam-seed-v2) and the history receipts.
+# Known families: names match the published seeds (zils-ai/base-exam-seed-v2 for k2, v3 for k3) and the
+# history receipts.
 KNOWN = {
-    "reasoning-known-choice-k2": ("reasoning", "choice", "csqa-held-out", "Commonsense multiple-choice reasoning with 5 plausible options (CommonsenseQA style)."),
-    "reasoning-known-noul-k2": ("reasoning", "noul", "csqa-held-out", "Is a stated answer to a commonsense question correct? Requires ruling out close alternatives."),
-    "reasoning-known-score-k2": ("reasoning", "score", "arith-word", "Arithmetic word problems with distracting numbers; the answer is a small count."),
+    # k3 (24 Oct 2026) replaces the k2 reasoning and arts families, whose held-out sources ran out.
+    "reasoning-known-choice-k3": ("reasoning", "choice", "siqa-val", "Social commonsense: what a person most likely wants, feels or does next, among close options (Social IQa style)."),
+    "reasoning-known-noul-k3": ("reasoning", "noul", "piqa-val", "Physical commonsense: does the stated method actually achieve the goal (PIQA style)?"),
+    "reasoning-known-score-k3": ("reasoning", "score", "asdiv-val", "Arithmetic word problems with distracting numbers; the answer is a small count."),
     "language-known-choice-k2": ("language", "choice", "mnli-val", "Premise/hypothesis inference across genres: entailment, neutral or contradiction."),
     "language-known-noul-k2": ("language", "noul", "entail-val", "Does the passage entail the hypothesis?"),
     "language-known-score-k2": ("language", "score", "stsb-val", "Rate the semantic similarity of two sentences."),
@@ -239,9 +285,9 @@ KNOWN = {
     "tools-known-choice-k2": ("tools", "choice", "glaive", "Which function call (name and arguments) correctly serves the request, among close candidates?"),
     "tools-known-noul-k2": ("tools", "noul", "glaive", "Should the assistant call a function now, given the conversation and schemas?"),
     "tools-known-score-k2": ("tools", "score", "glaive", "How many required arguments can be filled from the conversation so far?"),
-    "arts-known-choice-k2": ("arts", "choice", "tweet-emotion", "Which emotion does a short post express: anger, joy, optimism or sadness?"),
-    "arts-known-noul-k2": ("arts", "noul", "tweet-irony", "Is this short post ironic?"),
-    "arts-known-score-k2": ("arts", "score", "tweet-emotion", "Rate the intensity of the emotion a short post expresses."),
+    "arts-known-choice-k3": ("arts", "choice", "emotion-test", "Which emotion does a short personal message express: sadness, joy, love, anger, fear or surprise?"),
+    "arts-known-noul-k3": ("arts", "noul", "tweet-irony-val", "Is this short post ironic?"),
+    "arts-known-score-k3": ("arts", "score", "tweet-sentiment-test", "Rate how positive a short post is, from very negative to very positive."),
 }  # fmt: skip
 
 TYPE_RULES = {
@@ -299,11 +345,42 @@ ANSWER_SCHEMA = {
 }
 
 
-def run(requests, workers=25):
-    """Send (custom_id, params) pairs concurrently; returns custom_id -> text or None."""
+def run_batch(client, requests, record, poll=60):
+    """Message Batches API at half price. The batch id is saved to `record` first, so a rerun after
+    a crash collects the same batch instead of paying for a second one."""
+    ids = {f"r{i}": custom_id for i, (custom_id, _) in enumerate(requests)}  # API ids: <=64 chars
+    record = Path(record)
+    if record.exists():
+        batch_id = json.loads(record.read_text())["id"]
+    else:
+        batch = client.messages.batches.create(
+            requests=[{"custom_id": f"r{i}", "params": p} for i, (_, p) in enumerate(requests)]
+        )
+        batch_id = batch.id
+        record.write_text(json.dumps({"id": batch_id, "requests": len(requests)}))
+    print(json.dumps({"batch": batch_id, "requests": len(requests)}), flush=True)
+    while client.messages.batches.retrieve(batch_id).processing_status != "ended":
+        time.sleep(poll)
+    out, usage = {c: None for c in ids.values()}, {"input_tokens": 0, "output_tokens": 0}
+    for result in client.messages.batches.results(batch_id):
+        if result.result.type != "succeeded":
+            continue
+        message = result.result.message
+        usage["input_tokens"] += message.usage.input_tokens
+        usage["output_tokens"] += message.usage.output_tokens
+        if message.stop_reason == "end_turn":
+            out[ids[result.custom_id]] = next(b.text for b in message.content if b.type == "text")
+    return out, usage
+
+
+def run(requests, workers=25, record=None):
+    """Send (custom_id, params) pairs; returns custom_id -> text or None. With `record`, use the
+    Batches API (asynchronous, half price) and save the batch id there."""
     import anthropic
 
     client = anthropic.Anthropic()
+    if record is not None:
+        return run_batch(client, requests, record)
 
     def one(item):
         custom_id, params = item
@@ -362,12 +439,14 @@ def new_families(work, draw, need):
     return families
 
 
-def author(work, draw, per_family, known_only=False, workers=25):
+def author(work, draw, per_family, known_only=False, workers=25, batch=False, only=None):
     root = Path(work) / draw
     root.mkdir(parents=True, exist_ok=True)
     families = dict(KNOWN)
     if not known_only:
         families.update(new_families(work, draw, per_family))
+    if only:  # e.g. "-k3": a public seed for newly introduced known families only
+        families = {k: v for k, v in families.items() if only in k}
     used, taken, cache, requests, plan = used_rows(work, draw), set(), {}, [], {}
     for family, (_, kind, source, brief) in families.items():
         if source not in cache:
@@ -398,7 +477,7 @@ def author(work, draw, per_family, known_only=False, workers=25):
             }))  # fmt: skip
     (root / "families.json").write_text(json.dumps(families, indent=1))
     (root / "plan.json").write_text(json.dumps(plan, indent=1))
-    texts, usage = run(requests, workers)
+    texts, usage = run(requests, workers, root / "author-batch.json" if batch else None)
     (root / "author-usage.json").write_text(json.dumps(usage))
     items = candidates(texts, families, plan, draw)
     (root / "candidates.json").write_text(json.dumps(items, indent=1))
@@ -437,7 +516,7 @@ def candidates(texts, families, plan, draw):
     return items
 
 
-def verify(work, draw, workers=25):
+def verify(work, draw, workers=25, batch=False):
     root = Path(work) / draw
     items = json.loads((root / "candidates.json").read_text())
     requests = []
@@ -456,7 +535,7 @@ def verify(work, draw, workers=25):
             "model": MODEL, "max_tokens": 8000, "messages": [{"role": "user", "content": content}],
             "output_config": {"effort": "medium", "format": {"type": "json_schema", "schema": ANSWER_SCHEMA}},
         }))  # fmt: skip
-    texts, usage = run(requests, workers)
+    texts, usage = run(requests, workers, root / "verify-batch.json" if batch else None)
     answers = {k: json.loads(v)["answer"].strip() for k, v in texts.items() if v is not None}
     (root / "answers.json").write_text(json.dumps(answers, indent=1))
     (root / "verify-usage.json").write_text(json.dumps(usage))
@@ -530,16 +609,26 @@ def main(argv=None):
         if name == "author":
             p.add_argument("--per-family", type=int, required=True)
             p.add_argument("--known-only", action="store_true", help="public seed samples")
+            p.add_argument("--only", help="author only families whose name contains this")
         if name in ("author", "verify"):
             p.add_argument("--workers", type=int, default=25)
+            p.add_argument("--batch", action="store_true", help="Batches API: half price, slower")
         if name == "finish":
             p.add_argument("--calibration", type=int, default=8)
-            p.add_argument("--test", type=int, default=56)
+            p.add_argument("--test", type=int, default=100)
     args = parser.parse_args(argv)
     if args.command == "author":
-        author(args.work, args.draw, args.per_family, args.known_only, args.workers)
+        author(
+            args.work,
+            args.draw,
+            args.per_family,
+            args.known_only,
+            args.workers,
+            args.batch,
+            args.only,
+        )
     elif args.command == "verify":
-        verify(args.work, args.draw, args.workers)
+        verify(args.work, args.draw, args.workers, args.batch)
     else:
         finish(args.work, args.draw, args.calibration, args.test)
 

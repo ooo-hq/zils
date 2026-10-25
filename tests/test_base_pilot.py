@@ -132,12 +132,12 @@ class BasePilotTest(unittest.TestCase):
                 blueprint=self.bundle["blueprint"],
                 runtime_identity=self.bundle["runtime_identity"],
             )
-        # Precision is half the crown bar (+3 points): +/-1.5 passes, anything wider fails.
-        at_limit = {**precise(), "lower_95": -0.5, "upper_95": 2.5}
+        # Precision is half the crown bar (+2 points): +/-1.0 passes, anything wider fails.
+        at_limit = {**precise(), "lower_95": 0.0, "upper_95": 2.0}
         with patch.object(base_metrics, "paired_improvement", return_value=at_limit):
             self.assertTrue(base_pilot.check(self.bundle, root=self.root)["passed"])
         with patch.object(
-            base_metrics, "paired_improvement", return_value={**precise(), "upper_95": 2.5001}
+            base_metrics, "paired_improvement", return_value={**precise(), "upper_95": 2.0001}
         ):
             self.assertFalse(base_pilot.check(self.bundle, root=self.root)["passed"])
         with patch.object(

@@ -34,11 +34,11 @@ baselines, soft labels and incomplete coverage are rejected before inference.
 The fixed production policy is:
 
 ```json
-{"score_version": 1, "min_score_improvement": 3.0,
+{"score_version": 1, "min_score_improvement": 2.0,
  "max_brier_increase": 0.005, "bootstrap_resamples": 2000}
 ```
 
-Each candidate needs at least +3 points, a strictly positive paired bootstrap
+Each candidate needs at least +2 points, a strictly positive paired bootstrap
 lower 95% bound, and calibrated full-vector Brier no more than 0.005 worse.
 Temperature is fitted only on calibration. Resampling is paired within families,
 stratified by class for yes/no, with original baselines held fixed. All candidates
@@ -63,21 +63,24 @@ writes each item new from one public row used only as a style example, and a bli
 only agreements. Known families draw on held-out validation/test splits of datasets outside S1MB,
 Decision Index and JevBench; new-domain families use BIG-bench training tasks, three per category per
 draw, never reused. Public seeds for the 15 known families are published at
-`zils-ai/base-exam-seed-v1` (@`e737b87`) and `zils-ai/base-exam-seed-v2` (@`168ce9a`); seed v2 names
-the current `-k2` families. Install `requirements/exam.txt`, set `ANTHROPIC_API_KEY`, keep `--work`
-private, then:
+`zils-ai/base-exam-seed-v1` (@`e737b87`), `zils-ai/base-exam-seed-v2` (@`168ce9a`) and
+`zils-ai/base-exam-seed-v3` (@`0593c78`). The current known families are the nine `-k2` language,
+retrieval and tools families (seed v2) and the six `-k3` reasoning and arts families (seed v3), which
+replaced `-k2` families whose held-out sources ran out. Install `requirements/exam.txt`, set
+`ANTHROPIC_API_KEY`, keep `--work` private, then (`--batch` uses the Message Batches API at half price
+and resumes the same batch after a restart):
 
 ```sh
-python -m scripts.author_exam author --work exams --draw r1 --per-family 72
+python -m scripts.author_exam author --work exams --draw r1 --per-family 120
 python -m scripts.author_exam verify --work exams --draw r1
-python -m scripts.author_exam finish --work exams --draw r1 --calibration 8 --test 56
+python -m scripts.author_exam finish --work exams --draw r1 --calibration 8 --test 100
 ```
 
-`finish` keeps exactly 8 calibration and 56 test items per family, so every draw shares the
+`finish` keeps exactly 8 calibration and 100 test items per family, so every draw shares the
 pilot's frozen blueprint (it stops and names any family that fell short; author more for it), and writes
 `calibration.jsonl`, `test.jsonl` and `registry.json`; add each known family's
-`publication` receipt from the history to the registry, then seal as below. A 72-per-family draw
-costs about $30 and keeps 1,680 test items. Training splits are not used: on 22 Oct a draw
+`publication` receipt from the history to the registry, then seal as below. A 120-per-family draw
+costs about $55 (direct; half with `--batch`) and keeps 3,000 test items. Training splits are not used: on 22 Oct a draw
 seeded from them saturated the 4B references near 88% and failed the ranking gate.
 
 Use teacher-authored cases. Public decision datasets may seed newly rewritten
@@ -174,8 +177,10 @@ answer Score questions, and on 22 Oct 2026 Score families alone moved the five-m
 from 1.0 to 0.7 by favouring the d3 runtime. Score families stay in every election, where all
 candidates share the pool's runtime, and in the within-pool precision comparisons.
 Every nondegenerate predeclared interval must be within half the crown bar
-(1.5 points at +3) of the estimate on each side. A 0.5-point limit, written for the
-earlier +1 bar, needed about 17,000 test items per draw; about 1,900 meet 1.5. Identical or clipping-degenerate pairs provide no sizing evidence;
+(1.0 point at +2) of the estimate on each side. On 23–24 Oct 2026, 1,680-item test splits
+(56 per family) gave a mean 95% half-width of 1.16 points on real candidates. A 75-per-family
+pilot (24 Oct) measured the within-pool pair at 0.79 and 1.09 on its two draws, so draws keep 100
+test items per family (3,000), about 0.94 expected. Identical or clipping-degenerate pairs provide no sizing evidence;
 the required within-pool pair must have nonzero paired variance. Failed validation
 requires a new untouched validation draw after any retuning. A pilot never crowns.
 
