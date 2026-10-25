@@ -214,6 +214,9 @@ NEW_DOMAIN = {
         "ds-fever": ("copenlu/fever_gold_evidence", "default/validation/0000.parquet", CONVERTED),
         "ds-medqa": ("bigbio/med_qa", "med_qa_en_4options_bigbio_qa/validation/0000.parquet", CONVERTED),
         "ds-multirc": ("aps/super_glue", "multirc/validation/0000.parquet", CONVERTED),
+        # Biomedical sources (SciFact, PubMedQA) can trip the author model's safety classifier and
+        # return no items; DROP is a non-medical reading-comprehension replacement (24 Oct 2026).
+        "ds-drop": ("ucinlp/drop", "default/validation/0000.parquet", CONVERTED),
     },
     "arts": {
         # Sarcasm headlines left this pool: arts-known-noul-k3 is irony (24 Oct 2026).
