@@ -186,6 +186,11 @@ NEW_DOMAIN = {
         # PIQA validation is the k3 reasoning yes/no source, so it left this pool (24 Oct 2026).
         "ds-ropes": ("allenai/ropes", "plain_text/validation/0000.parquet", CONVERTED),
         "ds-folio": ("tasksource/folio", "default/validation/0000.parquet", CONVERTED),
+        # 100-item draws (25 Oct 2026): the pools ran out; non-medical held-out splits, none in S1MB or
+        # the Decision Index.
+        "ds-math-algebra": ("EleutherAI/hendrycks_math", "algebra/test/0000.parquet", CONVERTED),
+        "ds-theoremqa": ("TIGER-Lab/TheoremQA", "default/test/0000.parquet", CONVERTED),
+        "ds-fld": ("hitachi-nlp/FLD.v2", "default/validation/0000.parquet", CONVERTED),
     },
     "language": {
         "ds-cola": ("nyu-mll/glue", "cola/validation-00000-of-00001.parquet", None),
@@ -200,6 +205,11 @@ NEW_DOMAIN = {
         "ds-veridicality": ("metaeval/recast", "recast_megaveridicality/validation/0000.parquet", CONVERTED),
         "ds-odd-man-out": ("tasksource/linguisticprobing", "odd_man_out/validation-00000-of-00001.parquet", None),
         "ds-coordination": ("tasksource/linguisticprobing", "coordination_inversion/validation-00000-of-00001.parquet", None),
+        "ds-bigram-shift": ("tasksource/linguisticprobing", "bigram_shift/validation/0000.parquet", CONVERTED),
+        "ds-past-present": ("tasksource/linguisticprobing", "past_present/validation/0000.parquet", CONVERTED),
+        "ds-subj-number": ("tasksource/linguisticprobing", "subj_number/validation/0000.parquet", CONVERTED),
+        "ds-obj-number": ("tasksource/linguisticprobing", "obj_number/validation/0000.parquet", CONVERTED),
+        "ds-sentence-length": ("tasksource/linguisticprobing", "sentence_length/validation/0000.parquet", CONVERTED),
     },
     "retrieval": {
         "ds-boolq": ("google/boolq", "data/validation-00000-of-00001.parquet", None),
@@ -217,6 +227,9 @@ NEW_DOMAIN = {
         # Biomedical sources (SciFact, PubMedQA) can trip the author model's safety classifier and
         # return no items; DROP is a non-medical reading-comprehension replacement (24 Oct 2026).
         "ds-drop": ("ucinlp/drop", "default/validation/0000.parquet", CONVERTED),
+        "ds-triviaqa": ("mandarjoshi/trivia_qa", "rc.nocontext/validation/0000.parquet", CONVERTED),
+        "ds-wikiqa": ("microsoft/wiki_qa", "default/test/0000.parquet", CONVERTED),
+        "ds-coqa": ("stanfordnlp/coqa", "default/validation/0000.parquet", CONVERTED),
     },
     "arts": {
         # Sarcasm headlines left this pool: arts-known-noul-k3 is irony (24 Oct 2026).
@@ -231,6 +244,9 @@ NEW_DOMAIN = {
         "ds-quotes": ("Abirate/english_quotes", "default/train/0000.parquet", CONVERTED),
         "ds-figurative-nli": ("tasksource/figurative-nli", "default/train/0000.parquet", CONVERTED),
         "ds-imdb": ("stanfordnlp/imdb", "plain_text/test-00000-of-00001.parquet", None),
+        "ds-figqa": ("nightingal3/fig-qa", "default/validation/0000.parquet", CONVERTED),
+        "ds-tweet-topic": ("cardiffnlp/tweet_topic_single", "tweet_topic_single/test_2021/0000.parquet", CONVERTED),
+        "ds-puns": ("tasksource/recast", "recast_puns/validation/0000.parquet", CONVERTED),
     },
 }  # fmt: skip
 for _pool in NEW_DOMAIN.values():
