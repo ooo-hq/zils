@@ -182,6 +182,19 @@ class AuthorExamTest(unittest.TestCase):
                 self.assertFalse(used & again)
                 self.assertEqual(len(used | again), 6)
 
+    def test_known_families_have_rows_for_several_more_draws(self):
+        # Combined sources keep earlier row IDs, so rows used by past draws stay excluded.
+        for key, parts in {
+            "csqa-held-out": ("csqa-val", "csqa-test"),
+            "tweet-emotion": ("tweet-emotion-test", "tweet-emotion-val", "emotion-val"),
+            "tweet-irony": ("tweet-irony-test", "tweet-irony-val"),
+            "arith-word": ("svamp-test", "multiarith", "asdiv-val"),
+        }.items():
+            fakes = {p: (lambda p=p: [(f"{p}:{i}", {}) for i in range(3)]) for p in parts}
+            with patch.dict(author_exam.SOURCES, fakes):
+                ids = [sid for sid, _ in author_exam.SOURCES[key]()]
+            self.assertEqual(ids, [f"{p}:{i}" for p in parts for i in range(3)])
+
 
 class BatchRunTest(unittest.TestCase):
     def test_batch_results_map_back_and_a_rerun_reuses_the_saved_batch(self):

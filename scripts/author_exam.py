@@ -116,8 +116,26 @@ SOURCES = {
     ),
 }
 # Small held-out sets run out after a few draws; pair each with a same-task source.
-SOURCES["arith-word"] = lambda: SOURCES["svamp-test"]() + SOURCES["multiarith"]()
 SOURCES["entail-val"] = lambda: SOURCES["rte-val"]() + SOURCES["mnli-val-matched"]()
+# 24 Oct 2026 (#110): more held-out splits for the k2 families. The k3 families replaced the k2
+# reasoning and arts families for later draws; these combined sources remain for reference. Rows
+# are style examples only (Claude writes and answers every item), so an unlabeled test split works.
+SOURCES["csqa-test"] = lambda: hf_parquet("tau/commonsense_qa", "data/test-00000-of-00001.parquet")
+SOURCES["tweet-emotion-val"] = lambda: hf_parquet(
+    "cardiffnlp/tweet_eval", "emotion/validation-00000-of-00001.parquet"
+)
+# tweet-irony-val and asdiv-val are defined (pinned) in SOURCES above; they back the k3 families.
+SOURCES["csqa-held-out"] = lambda: SOURCES["csqa-val"]() + SOURCES["csqa-test"]()
+SOURCES["arith-word"] = lambda: (
+    SOURCES["svamp-test"]() + SOURCES["multiarith"]() + SOURCES["asdiv-val"]()
+)
+SOURCES["emotion-val"] = lambda: hf_parquet(
+    "dair-ai/emotion", "split/validation-00000-of-00001.parquet"
+)
+SOURCES["tweet-emotion"] = lambda: (
+    SOURCES["tweet-emotion-test"]() + SOURCES["tweet-emotion-val"]() + SOURCES["emotion-val"]()
+)
+SOURCES["tweet-irony"] = lambda: SOURCES["tweet-irony-test"]() + SOURCES["tweet-irony-val"]()
 # New-domain pools: BIG-bench training tasks (Glaive rows for tools). A task is used by one draw only.
 BIGBENCH = {
     "reasoning": [
@@ -251,7 +269,8 @@ for _pool in NEW_DOMAIN.values():
     for _key, _where in _pool.items():
         SOURCES[_key] = lambda w=_where: hf_parquet(*w)
 
-# Known families: names match the published seed (zils-ai/base-exam-seed-v2) and the history receipts.
+# Known families: names match the published seeds (zils-ai/base-exam-seed-v2 for k2, v3 for k3) and the
+# history receipts.
 KNOWN = {
     # k3 (24 Oct 2026) replaces the k2 reasoning and arts families, whose held-out sources ran out.
     "reasoning-known-choice-k3": ("reasoning", "choice", "siqa-val", "Social commonsense: what a person most likely wants, feels or does next, among close options (Social IQa style)."),
