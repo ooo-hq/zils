@@ -216,13 +216,11 @@ NEW_DOMAIN = {
         "ds-squad2": ("rajpurkar/squad_v2", "squad_v2/validation-00000-of-00001.parquet", None),
         "ds-climate-fever": ("tdiggelm/climate_fever", "data/test-00000-of-00001.parquet", None),
         "ds-qqp": ("nyu-mll/glue", "qqp/validation-00000-of-00001.parquet", None),
-        "ds-pubmedqa": ("qiaojin/PubMedQA", "pqa_artificial/train-00000-of-00001.parquet", None),
-        "ds-medical-pairs": ("curaihealth/medical_questions_pairs", "data/train-00000-of-00001.parquet", None),
-        "ds-scifact": ("allenai/scifact", "claims/validation/0000.parquet", CONVERTED),
+        # PubMedQA, SciFact, MedQA and medical question pairs left this pool (25 Oct 2026): their
+        # requests trip the author model's biology safety classifier and return no items.
         "ds-health-fact": ("ImperialCollegeLondon/health_fact", "default/validation/0000.parquet", CONVERTED),
         "ds-trec": ("CogComp/trec", "default/test/0000.parquet", CONVERTED),
         "ds-fever": ("copenlu/fever_gold_evidence", "default/validation/0000.parquet", CONVERTED),
-        "ds-medqa": ("bigbio/med_qa", "med_qa_en_4options_bigbio_qa/validation/0000.parquet", CONVERTED),
         "ds-multirc": ("aps/super_glue", "multirc/validation/0000.parquet", CONVERTED),
         # Biomedical sources (SciFact, PubMedQA) can trip the author model's safety classifier and
         # return no items; DROP is a non-medical reading-comprehension replacement (24 Oct 2026).
