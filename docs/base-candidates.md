@@ -199,6 +199,50 @@ on, the exam is realistic decisions in families you have not seen: the 18
 October rehearsal candidate, trained on 8,400 synthetic rule cases, learned the
 format perfectly and still tied stock d3 on the sealed draws.
 
+### Teacher Chain recipe (experimental): learn from a larger model, then soup
+
+`zils.teacher` trains a student on a larger d3-family model's answers instead of
+single labels. The teacher answers a question pool with a probability for every
+declared option; the student fine-tunes every language-model weight of the
+pinned base so its distribution matches the teacher's (KL divergence), scored
+exactly as validators score; `soup` then averages the student back toward the
+pinned parent. Each step writes an ordinary base candidate.
+
+```bash
+# pool.jsonl: one {"state", "question"} per line (labels, if present, are ignored)
+.venv-d3/bin/python -m zils.teacher answer --teacher models/d3-27b --pool pool.jsonl --out answers.jsonl
+.venv-d3/bin/python -m zils.teacher train --answers answers.jsonl --reference models/d3-reference \
+  --out student --lr 1e-6
+.venv-d3/bin/python -m zils.teacher soup --out candidate stock:0.5 student:0.5
+```
+
+Requirements and settings from the 26 October 2026 pilot (vllm-sr/d3 27B
+teacher, d3-mini student, one NVIDIA H200): the teacher needs about 51 GB and
+answered about 10 questions per second; the student's full fine-tune with FP32
+master weights needs about 100 GB and trained at about 7 rows per second, so it
+does not fit 20–24 GB cards. Learning rate 1e-5 diverged; 1e-6 lowered the
+held-out KL to the teacher from 0.095 to 0.039 in one epoch over 67,224 answers.
+Gradient checkpointing is not supported (its recompute fails torch's metadata
+check), and on Hopper GPUs the attention backward pass needs `pip install
+tilelang` (Triton 3.6 is refused by flash-linear-attention).
+
+Results of that pilot, unfavorable ones included. The pool covered 17 task
+families (68,224 questions). Measured as paired score gaps against stock
+d3-mini with 95% bootstrap intervals:
+
+| Candidate | Development exam from the Decision Index's task sources (2 draws) | Current exam's qualification draws (2) |
+|---|---:|---:|
+| Student alone | +5.45 [+3.11, +7.20], +2.16 [−0.10, +3.74] | **−2.14** [−3.11, −1.29], **−1.67** [−2.71, −0.63] |
+| Soup, 0.5 parent / 0.25 + 0.25 two students | +4.03 [+1.95, +5.39], +3.23 [+1.34, +4.45] | −0.33 [−0.96, +0.20], +0.23 [−0.30, +0.92] |
+
+The development exam shares task families (not rows) with the pool, so part of
+its gain is in-distribution; on its new-domain half the student moved +2.2 and
+−3.8 and the soup +1.4 and −0.9. The student learned the pool's families and
+lost general ability; the soup kept most of the gain without the loss but is
+level, not better, on the exam that decides elections. A broader pool is the
+next experiment. Treat this recipe as a starting point to beat, not a winning
+recipe.
+
 ## How it is scored
 
 All five text pools use the [decision-quality election](base-election.md).
