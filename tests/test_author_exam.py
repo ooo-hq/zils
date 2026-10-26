@@ -182,6 +182,33 @@ class AuthorExamTest(unittest.TestCase):
                 self.assertFalse(used & again)
                 self.assertEqual(len(used | again), 6)
 
+    def test_exam_v4_fills_every_cell_from_unscored_index_splits(self):
+        families = author_exam.EXAMS["v4"]
+        cells = {(category, kind) for category, kind, _, _ in families.values()}
+        self.assertEqual(len(families), 15)
+        self.assertEqual(
+            cells,
+            {(c, k) for c in author_exam.BIGBENCH for k in ("choice", "noul", "score")},
+        )
+        sources = {source for _, _, source, _ in families.values()}
+        self.assertTrue(sources <= set(author_exam.SOURCES))
+        new = {k for pool in author_exam.NEW_DOMAIN.values() for k in pool}
+        self.assertFalse(sources & new)
+        # The Index scores test splits (and HellaSwag/WinoGrande validation); v4 seeds never read them.
+        rows = []
+        for source in sources - {"glaive", "v4-clinc-train"}:
+            with (
+                patch.object(
+                    author_exam, "hf_parquet", lambda repo, path, rev=None: [(f"{repo}:{path}", {})]
+                ),
+                patch.object(author_exam, "github_csv", lambda repo, commit, path: [(path, {})]),
+            ):
+                rows += [sid for sid, _ in author_exam.SOURCES[source]()]
+        self.assertTrue(rows)
+        self.assertFalse(
+            [sid for sid in rows if "test" in sid or "hellaswag:data/validation" in sid]
+        )
+
     def test_known_families_have_rows_for_several_more_draws(self):
         # Combined sources keep earlier row IDs, so rows used by past draws stay excluded.
         for key, parts in {

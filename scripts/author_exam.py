@@ -5,6 +5,8 @@ kept only if an independent blind pass (same model, no label shown) gives the sa
 from held-out validation/test splits of datasets outside the Decision Index, S1MB and JevBench test
 sets, and from BIG-bench training tasks for new domains. Known families match the public seeds
 published at zils-ai/base-exam-seed-v1 and -v2; their receipts live in the family history.
+`--exam v4` swaps in the Exam v4 known families: train/dev/validation splits of the Decision Index's
+own task sources (never the splits its suite scores), so elections reward the skills it measures.
 
 Qualified for d3-mini on 22 Oct 2026: two consecutive sealed draws ranked five Decision Index
 references at Spearman 0.9 on Choice and yes/no families (see docs/base-election.md).
@@ -65,6 +67,31 @@ def glaive():
     p = Path(hf_hub_download("glaiveai/glaive-function-calling-v2", path, repo_type="dataset"))
     rows = json.loads(p.read_text())
     return [(f"glaive:{i}", r) for i, r in enumerate(rows) if "functioncall" in r.get("chat", "")]
+
+
+def github_csv(repo, commit, path):
+    import csv
+    import io
+    import urllib.request
+
+    url = f"https://raw.githubusercontent.com/{repo}/{commit}/{path}"
+    with urllib.request.urlopen(url, timeout=60) as response:
+        text = response.read().decode("utf-8-sig")
+    return [(f"{repo}:{path}:{i}", r) for i, r in enumerate(csv.DictReader(io.StringIO(text)))]
+
+
+def clinc_train():
+    import urllib.request
+
+    commit = "828f8093932c8fe6ca7936c3d2e52903b1c523de"
+    url = f"https://raw.githubusercontent.com/clinc/oos-eval/{commit}/data/data_full.json"
+    with urllib.request.urlopen(url, timeout=60) as response:
+        data = json.loads(response.read())
+    return [
+        (f"clinc/oos-eval:{split}:{i}", {"text": text, "intent": intent})
+        for split in ("train", "oos_train")
+        for i, (text, intent) in enumerate(data[split])
+    ]
 
 
 GLUE = "nyu-mll/glue"
@@ -136,6 +163,63 @@ SOURCES["tweet-emotion"] = lambda: (
     SOURCES["tweet-emotion-test"]() + SOURCES["tweet-emotion-val"]() + SOURCES["emotion-val"]()
 )
 SOURCES["tweet-irony"] = lambda: SOURCES["tweet-irony-test"]() + SOURCES["tweet-irony-val"]()
+# Exam v4 (25 Oct 2026): train/dev/validation splits of the Decision Index's own task sources, never
+# the split its suite scores, so elections reward the skills the Index measures. Pinned.
+MMLU, ARC, ANLI, HUMOR = (
+    "cais/mmlu",
+    "allenai/ai2_arc",
+    "facebook/anli",
+    "SemEvalWorkshop/humicroedit",
+)
+MMLU_REV, ARC_REV = (
+    "c30699e8356da336a370243923dbaf21066bb9fe",
+    "210d026faf9955653af8916fad021475a3f00453",
+)
+ANLI_REV, HUMOR_REV = (
+    "8e4813d81f46d313dac7892e1c28076917cfcdf9",
+    "6199d8c10f4bbcd56225241add3abf12c1834840",
+)
+SOURCES["v4-knowledge-mc"] = lambda: (
+    hf_parquet(MMLU, "all/validation-00000-of-00001.parquet", MMLU_REV)
+    + hf_parquet(MMLU, "all/dev-00000-of-00001.parquet", MMLU_REV)
+    + hf_parquet(ARC, "ARC-Challenge/train-00000-of-00001.parquet", ARC_REV)
+    + hf_parquet(ARC, "ARC-Challenge/validation-00000-of-00001.parquet", ARC_REV)
+)
+SOURCES["v4-hellaswag-train"] = lambda: hf_parquet(
+    "Rowan/hellaswag",
+    "data/train-00000-of-00001.parquet",
+    "218ec52e09a7e7462a5400043bb9a69a41d06b76",
+)
+SOURCES["v4-gsm8k-train"] = lambda: hf_parquet(
+    "openai/gsm8k", "main/train-00000-of-00001.parquet", "740312add88f781978c0658806c59bc2815b9866"
+)
+SOURCES["v4-anli-dev"] = lambda: [
+    row for part in ("r1", "r2", "r3")
+    for row in hf_parquet(ANLI, f"plain_text/dev_{part}-00000-of-00001.parquet", ANLI_REV)
+]  # fmt: skip
+SOURCES["v4-anli-train"] = lambda: hf_parquet(
+    ANLI, "plain_text/train_r1-00000-of-00001.parquet", ANLI_REV
+)
+SOURCES["v4-isarcasm-train"] = lambda: github_csv(
+    "iabufarha/iSarcasmEval", "dfc708b53bde1bb571abfb5692f63231c2232195", "train/train.En.csv"
+)
+SOURCES["v4-banking77-train"] = lambda: github_csv(
+    "PolyAI-LDN/task-specific-datasets",
+    "57ec275d8078af65b7731c2a98be812d844a6d6b",
+    "banking_data/train.csv",
+)
+SOURCES["v4-clinc-train"] = clinc_train
+SOURCES["v4-esci-train"] = lambda: [  # US products only: the exam is English
+    (sid, r) for sid, r in hf_parquet(
+        "tasksource/esci", "data/train-00000-of-00011-2d36455632bef8a2.parquet", "8113b17a5d4099e20243282c926f1bc1a08a4d13"
+    ) if r.get("product_locale") == "us"
+]  # fmt: skip
+SOURCES["v4-humicroedit-pairs-train"] = lambda: hf_parquet(
+    HUMOR, "subtask-2/train/0000.parquet", HUMOR_REV
+)
+SOURCES["v4-humicroedit-grades-train"] = lambda: hf_parquet(
+    HUMOR, "subtask-1/train/0000.parquet", HUMOR_REV
+)
 # New-domain pools: BIG-bench training tasks (Glaive rows for tools). A task is used by one draw only.
 BIGBENCH = {
     "reasoning": [
@@ -290,6 +374,27 @@ KNOWN = {
     "arts-known-score-k3": ("arts", "score", "tweet-sentiment-test", "Rate how positive a short post is, from very negative to very positive."),
 }  # fmt: skip
 
+# Exam v4: the same 15 cells, seeded from the Decision Index's own task sources (see SOURCES).
+# Tools keeps Glaive (a function-calling training corpus): every Index tools benchmark is test-only.
+KNOWN_V4 = {
+    "reasoning-known-choice-k4": ("reasoning", "choice", "v4-knowledge-mc", "Knowledge and science questions with one correct answer among close options (MMLU / ARC style)."),
+    "reasoning-known-noul-k4": ("reasoning", "noul", "v4-hellaswag-train", "Is this the most plausible next step of the described everyday activity (HellaSwag style)?"),
+    "reasoning-known-score-k4": ("reasoning", "score", "v4-gsm8k-train", "Multi-step grade-school math word problems whose answer is a small count (GSM8K style)."),
+    "language-known-choice-k4": ("language", "choice", "v4-anli-dev", "Adversarial premise/hypothesis inference: entailment, neutral or contradiction (ANLI style)."),
+    "language-known-noul-k4": ("language", "noul", "v4-isarcasm-train", "Is this short post intended to be sarcastic (iSarcasmEval style)?"),
+    "language-known-score-k4": ("language", "score", "v4-anli-train", "How many of the hypothesis's separate claims does the premise support (ANLI style)?"),
+    "retrieval-known-choice-k4": ("retrieval", "choice", "v4-banking77-train", "Which of several close banking intents does a customer request express (BANKING77 style)?"),
+    "retrieval-known-noul-k4": ("retrieval", "noul", "v4-clinc-train", "Is the user request within the listed assistant intents rather than out of scope (CLINC150 style)?"),
+    "retrieval-known-score-k4": ("retrieval", "score", "v4-esci-train", "How well does a product match a shopping query, from irrelevant to exact (Amazon ESCI style)?"),
+    "tools-known-choice-k4": ("tools", "choice", "glaive", "Which of the supplied functions should be called for the request, among close candidates (BFCL tool-selection style)?"),
+    "tools-known-noul-k4": ("tools", "noul", "glaive", "Should this one candidate function be invoked for the request (BFCL tool-selection style)?"),
+    "tools-known-score-k4": ("tools", "score", "glaive", "How many of the supplied functions does the request need (BFCL multiple-tool style)?"),
+    "arts-known-choice-k4": ("arts", "choice", "v4-humicroedit-pairs-train", "Which of two one-word headline edits did readers find funnier (Humicroedit style)?"),
+    "arts-known-noul-k4": ("arts", "noul", "v4-humicroedit-grades-train", "Did readers find this one-word headline edit funny at all (Humicroedit style)?"),
+    "arts-known-score-k4": ("arts", "score", "v4-humicroedit-grades-train", "Rate how funny readers found a one-word headline edit, from not funny to very funny (Humicroedit style)."),
+}  # fmt: skip
+EXAMS = {"v3": KNOWN, "v4": KNOWN_V4}
+
 TYPE_RULES = {
     "choice": "Question type choice: 3-8 options with short snake_case keys; exactly one correct.",
     "noul": (
@@ -439,10 +544,10 @@ def new_families(work, draw, need):
     return families
 
 
-def author(work, draw, per_family, known_only=False, workers=25, batch=False, only=None):
+def author(work, draw, per_family, known_only=False, workers=25, batch=False, only=None, exam="v3"):
     root = Path(work) / draw
     root.mkdir(parents=True, exist_ok=True)
-    families = dict(KNOWN)
+    families = dict(EXAMS[exam])
     if not known_only:
         families.update(new_families(work, draw, per_family))
     if only:  # e.g. "-k3": a public seed for newly introduced known families only
@@ -610,6 +715,7 @@ def main(argv=None):
             p.add_argument("--per-family", type=int, required=True)
             p.add_argument("--known-only", action="store_true", help="public seed samples")
             p.add_argument("--only", help="author only families whose name contains this")
+            p.add_argument("--exam", choices=sorted(EXAMS), default="v3", help="known families")
         if name in ("author", "verify"):
             p.add_argument("--workers", type=int, default=25)
             p.add_argument("--batch", action="store_true", help="Batches API: half price, slower")
@@ -626,6 +732,7 @@ def main(argv=None):
             args.workers,
             args.batch,
             args.only,
+            args.exam,
         )
     elif args.command == "verify":
         verify(args.work, args.draw, args.workers, args.batch)

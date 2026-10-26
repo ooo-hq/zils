@@ -83,6 +83,17 @@ pilot's frozen blueprint (it stops and names any family that fell short; author 
 costs about $55 (direct; half with `--batch`) and keeps 3,000 test items. Training splits are not used: on 22 Oct a draw
 seeded from them saturated the 4B references near 88% and failed the ranking gate.
 
+**Exam v4 (proposed, not qualified).** `author --exam v4` swaps in 15 known families (`-k4`) seeded
+from the Decision Index's own task sources, so that an election win rewards the skills the Index
+measures: MMLU/ARC, HellaSwag, GSM8K, ANLI, iSarcasmEval, BANKING77, CLINC150, Amazon ESCI and
+Humicroedit, plus Glaive for tools (every Index tools benchmark is test-only). Only train, dev or
+validation splits the Index suite does not score are used, never its test sets, so this is an
+exception to the training-split note above. Evidence so far: on 25 Oct 2026 an unsealed
+development exam built from the same sources as raw rows (no rewriting) ranked the five references
+at Spearman 0.9 on two disjoint draws and placed both 4B leaders clearly above d3-mini (paired gaps
++3.2 to +6.5; board +3.7 and +4.3), where the current exam's gaps were −0.7 to +4.5. Exam v4 replaces
+the current families only after a rewritten draw passes the same qualification.
+
 Use teacher-authored cases. Public decision datasets may seed newly rewritten
 cases; never copy their public cases into the sealed exam or seed from S1MB,
 Decision Index or JevBench test sets. Never use customer examples. Audit semantic
