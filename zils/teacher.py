@@ -1,13 +1,16 @@
-"""Teacher Chain tools for base miners: label a question pool with a teacher, learn from it, soup.
+"""Zils Relay tools for base miners: label a question pool with a teacher, learn from it, soup.
 
     python -m zils.teacher answer --teacher DIR --pool POOL.jsonl --out ANSWERS.jsonl
-    python -m zils.teacher train --answers ANSWERS.jsonl --out CANDIDATE [--lr 1e-6] [--seed 1]
-    python -m zils.teacher soup --out CANDIDATE stock:0.5 STUDENT:0.5
+    python -m zils.teacher train --answers ANSWERS.jsonl --reference REF --out CANDIDATE \
+        [--lora 64] [--train-answer-layer] [--start KING] [--lr LR] [--seed 1]
+    python -m zils.teacher soup --model d3-mini --out CANDIDATE stock:0.5 STUDENT:0.5
 
 A teacher is any larger d3-family checkpoint with its vendor runtime (``d3_runtime.py``) in its folder.
-`answer` keeps the teacher's probability for every declared option. `train` fine-tunes every
-language-model weight of the pinned base so its option distribution matches the teacher's
-(KL divergence), scoring options exactly as validators do (last hidden state x pinned FP32 readout).
+`answer` keeps the teacher's probability for every declared option. `train` fits the base named by
+the reference (any z3 size) so its option distribution matches the teacher's (KL divergence),
+scoring options exactly as validators do (last hidden state x FP32 answer layer). By default every
+language-model weight trains (FP32 masters, about 100 GB for d3-mini); `--lora 64` trains a merged
+LoRA that fits 20-24 GB cards, and `--train-answer-layer` also retrains readout.safetensors.
 `soup` averages candidates with the pinned parent (weight averaging); in the 26 Oct 2026 pilot a
 0.5 parent / 0.5 students soup kept most of the student's gain without its loss on the sealed exam.
 Outputs are ordinary base candidates; commit them with ``zils commit-candidate``.
@@ -101,13 +104,15 @@ def kl(model, state, question, teacher):
     return torch.sum(target * (target.log() - student))
 
 
-def write_candidate(model, out):
-    """The pinned parent's shards with the trained tensor values, its index and contract files."""
+def write_candidate(model, out, readout=None):
+    """The pinned parent's shards with the trained tensor values, its index and contract files.
+    A trained answer layer (`readout`) replaces the parent's."""
     import torch
     from safetensors import safe_open
     from safetensors.torch import save_file
 
-    parent = d3.pinned_base_path()
+    profile = model.meta["model"]
+    parent = d3.pinned_base_path(model=profile)
     layout = d3.weight_map(parent)
     trained = {k: v.detach().to("cpu", torch.bfloat16) for k, v in model.base.state_dict().items()}
     if missing := sorted(set(layout) - set(trained)):
@@ -117,15 +122,24 @@ def write_candidate(model, out):
         with safe_open(str(parent / shard), framework="pt") as stream:
             tensors = {key: trained[key].contiguous() for key in stream.keys()}
         save_file(tensors, str(out / shard), metadata={"format": "pt"})
-    copy_contract(parent, out)
+    copy_contract(parent, out, readout, profile)
 
 
-def copy_contract(parent, out):
+def copy_contract(parent, out, readout=None, profile=models.D3):
     index = "model.safetensors.index.json"
     for name in (*((index,) if (parent / index).exists() else ()), *models.D3_CONTRACT_FILES):
         shutil.copyfile(parent / name, out / name)
-    models.write_metadata(out, kind="candidate", model=models.D3)
-    d3.validate_candidate(out, models.D3)
+    models.write_metadata(out, kind="candidate", model=profile)
+    if readout is not None:
+        from safetensors import safe_open
+        from safetensors.torch import save_file
+
+        with safe_open(str(parent / "readout.safetensors"), framework="pt") as stream:
+            (key,) = stream.keys()
+            dtype = stream.get_tensor(key).dtype
+        value = readout.detach().to("cpu", dtype).contiguous()
+        save_file({key: value}, str(out / "readout.safetensors"), metadata={"format": "pt"})
+    d3.validate_candidate(out, profile)  # a trained answer layer must keep the parent's schema
 
 
 def train(args):
@@ -142,16 +156,46 @@ def train(args):
     random.shuffle(data)
     if args.limit:
         data = data[: args.limit]
-    model = d3.DecisionModel(Path(args.reference), "cuda")  # no LoRA: the backbone itself trains
-    params = [p for n, p in model.base.named_parameters() if n.startswith("language_model.")]
+    model = d3.DecisionModel(Path(args.reference), "cuda")
+    if (
+        args.start
+    ):  # build on an existing candidate (e.g. the pool's king) instead of the stock base
+        load_candidate(model, Path(args.start), model.meta["model"])
     model.base.requires_grad_(False)
-    for p in params:
-        p.requires_grad_(True)
-    # FP32 master weights with AdamW by hand: BF16 Adam states lose updates this small. About 100 GB
-    # of GPU memory for d3-mini; lr above ~1e-6 diverged in the pilot. No gradient checkpointing: its
-    # recompute runs outside the runtime's sdpa context and fails torch's metadata check.
-    masters = [p.detach().float().clone() for p in params]
-    optimizer = torch.optim.AdamW(masters, lr=args.lr, weight_decay=0.0)
+    if args.lora:
+        # LoRA on the 152 language targets: fits 20-24 GB cards; merged into the weights at the end.
+        from peft import LoraConfig, get_peft_model
+
+        targets = [
+            name
+            for name, _ in model.base.named_modules()
+            if name.startswith("language_model.layers.") and name.rsplit(".", 1)[-1] in d3.TARGETS
+        ]
+        config = LoraConfig(r=args.lora, lora_alpha=2 * args.lora, lora_dropout=0.0,
+                            target_modules=targets, bias="none")  # fmt: skip
+        peft = get_peft_model(model.base, config)
+        params = [p for n, p in peft.named_parameters() if "lora_" in n]
+        for p in params:
+            p.data = p.data.float()  # FP32 adapters; the backbone stays BF16
+            p.requires_grad_(True)
+        masters = params
+    else:
+        # Full fine-tune with FP32 master weights by hand: BF16 Adam states lose updates this small.
+        # About 100 GB for d3-mini; lr above ~1e-6 diverged in the pilot.
+        params = [p for n, p in model.base.named_parameters() if n.startswith("language_model.")]
+        for p in params:
+            p.requires_grad_(True)
+        masters = [p.detach().float().clone() for p in params]
+    # No gradient checkpointing: its recompute runs outside the runtime's sdpa context and fails
+    # torch's metadata check.
+    lr = args.lr or (5e-5 if args.lora else 1e-6)
+    groups, trainable = [{"params": masters, "lr": lr}], list(masters)
+    if args.train_answer_layer:
+        # The FP32 readout (255 codes x hidden) learns too; DecisionModel.logits reads model.readout.
+        model.readout = torch.nn.Parameter(model.readout.detach().clone())
+        groups.append({"params": [model.readout], "lr": args.answer_layer_lr or lr})
+        trainable.append(model.readout)
+    optimizer = torch.optim.AdamW(groups, weight_decay=0.0)
     steps = math.ceil(len(data) / args.accumulate)
     warmup = max(1, steps // 30)
     schedule = torch.optim.lr_scheduler.LambdaLR(
@@ -171,22 +215,39 @@ def train(args):
         batch = data[step * args.accumulate : (step + 1) * args.accumulate]
         for r in batch:
             (kl(model, *r) / len(batch)).backward()
-        for p, m in zip(params, masters, strict=True):
-            m.grad = p.grad.float() if p.grad is not None else torch.zeros_like(m)
-            p.grad = None
-        torch.nn.utils.clip_grad_norm_(masters, 1.0)
+        if masters is not params:
+            for p, m in zip(params, masters, strict=True):
+                m.grad = p.grad.float() if p.grad is not None else torch.zeros_like(m)
+                p.grad = None
+        torch.nn.utils.clip_grad_norm_(trainable, 1.0)
         optimizer.step()
         schedule.step()
         optimizer.zero_grad(set_to_none=True)
-        with torch.no_grad():
-            for p, m in zip(params, masters, strict=True):
-                p.copy_(m.to(torch.bfloat16))
+        if masters is not params:
+            with torch.no_grad():
+                for p, m in zip(params, masters, strict=True):
+                    p.copy_(m.to(torch.bfloat16))
         if (step + 1) % 500 == 0 or step + 1 == steps:
             print(
                 json.dumps({"step": step + 1, "of": steps, "held_out_kl": held_out()}), flush=True
             )
     model.base.eval()
-    write_candidate(model, Path(args.out))
+    if args.lora:
+        for p in params:  # merge in BF16, the backbone's dtype
+            p.data = p.data.to(torch.bfloat16)
+        model.base = peft.merge_and_unload()
+    write_candidate(model, Path(args.out), model.readout if args.train_answer_layer else None)
+
+
+def load_candidate(model, path, profile=models.D3):
+    """Replace the loaded base weights with a validated candidate's (same names and shapes)."""
+    from safetensors.torch import load_file
+
+    d3.validate_candidate(path, profile)
+    weights = {}
+    for shard in sorted(set(d3.weight_map(path).values())):
+        weights.update(load_file(str(path / shard)))
+    model.base.load_state_dict(weights, strict=True)
 
 
 def parse_parts(specs):
@@ -204,7 +265,9 @@ def soup(args):
     from safetensors import safe_open
     from safetensors.torch import save_file
 
-    parent = d3.pinned_base_path()
+    profile = models.D3_POOL_MODELS.get(args.model, args.model)  # pool name or profile id
+    models.spec(profile)
+    parent = d3.pinned_base_path(model=profile)
     parts = [(parent if p == "stock" else Path(p), w) for p, w in parse_parts(args.parts)]
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=False)
@@ -217,7 +280,16 @@ def soup(args):
             for key in streams[0][0].keys()
         }
         save_file(tensors, str(out / shard), metadata={"format": "pt"})
-    copy_contract(parent, out)
+    # Answer layers average too; with every part on the parent's readout this is the parent's.
+    readouts = []
+    for root, w in parts:
+        with safe_open(str(root / "readout.safetensors"), framework="pt") as stream:
+            (key,) = stream.keys()
+            readouts.append((stream.get_tensor(key), w))
+    if all(torch.equal(r, readouts[0][0]) for r, _ in readouts):
+        copy_contract(parent, out, profile=profile)
+    else:
+        copy_contract(parent, out, sum(r.float() * w for r, w in readouts), profile)
 
 
 def main(argv=None):
@@ -231,12 +303,18 @@ def main(argv=None):
     t.add_argument("--answers", required=True)
     t.add_argument("--out", required=True)
     t.add_argument("--reference", required=True, help="the pinned base reference (model.json)")
-    t.add_argument("--lr", type=float, default=1e-6)
+    t.add_argument("--lr", type=float, help="default 1e-6 full fine-tune, 5e-5 with --lora")
+    t.add_argument("--lora", type=int, default=0, help="LoRA rank; 0 trains every weight")
+    t.add_argument("--start", help="candidate to build on (e.g. the current king); default stock")
+    t.add_argument("--train-answer-layer", action="store_true",
+                   help="also train the answer layer, readout.safetensors (same shape and dtype, finite)")  # fmt: skip
+    t.add_argument("--answer-layer-lr", type=float, help="default: the main learning rate")
     t.add_argument("--seed", type=int, default=1)
     t.add_argument("--accumulate", type=int, default=16)
     t.add_argument("--limit", type=int)
     s = commands.add_parser("soup", help="weight-average candidates with the pinned parent")
     s.add_argument("--out", required=True)
+    s.add_argument("--model", default=models.D3, help="z3 pool (d3-lite ... d3) or profile id")
     s.add_argument("parts", nargs="+", help="PATH:WEIGHT; PATH 'stock' is the pinned parent")
     args = parser.parse_args(argv)
     {"answer": answer, "train": train, "soup": soup}[args.command](args)
