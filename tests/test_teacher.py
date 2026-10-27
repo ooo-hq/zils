@@ -9,7 +9,7 @@ import torch
 from safetensors import safe_open
 from safetensors.torch import save_file
 
-from zils import teacher
+from zils import models, teacher
 
 CHOICE = {"type": "choice", "instructions": "Pick.", "criteria": {"A": "one", "B": "two"}}
 NOUL = {"type": "noul", "instructions": "True?"}
@@ -61,6 +61,24 @@ class TeacherTest(unittest.TestCase):
         )
         self.assertGreater(teacher.kl(FakeModel([0.0, 3.0]), {}, CHOICE, target).item(), 0.5)
 
+    def test_start_loads_a_validated_candidate_into_the_backbone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            king = Path(tmp)
+            save_file(
+                {"weight": torch.ones(2, 2), "bias": torch.zeros(2)},
+                str(king / "model.safetensors"),
+            )
+            model = argparse.Namespace(base=torch.nn.Linear(2, 2))
+            with (
+                patch.object(teacher.d3, "validate_candidate") as validate,
+                patch.object(
+                    teacher.d3, "weight_map", return_value={"weight": "model.safetensors"}
+                ),
+            ):
+                teacher.load_candidate(model, king)
+            validate.assert_called_once()
+            self.assertTrue(torch.equal(model.base.weight, torch.ones(2, 2)))
+
     def test_soup_weights_must_be_a_distribution(self):
         self.assertEqual(
             teacher.parse_parts(["stock:0.5", "/a/b:0.5"]), [("stock", 0.5), ("/a/b", 0.5)]
@@ -69,17 +87,41 @@ class TeacherTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 teacher.parse_parts(bad)
 
+    def soup_parts(self, root, student_readout=0.0):
+        for name, value, readout in (("parent", 0.0, 0.0), ("student", 4.0, student_readout)):
+            (root / name).mkdir()
+            save_file(
+                {"w": torch.full((2, 2), value, dtype=torch.bfloat16)},
+                str(root / name / "model.safetensors"),
+            )
+            save_file({"r": torch.full((3, 2), readout)}, str(root / name / "readout.safetensors"))
+
+    def test_soup_averages_trained_answer_layers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.soup_parts(root, student_readout=2.0)
+            args = argparse.Namespace(
+                out=str(root / "soup"),
+                parts=["stock:0.5", f"{root / 'student'}:0.5"],
+                model="d3-mini",
+            )
+            with (
+                patch.object(teacher.d3, "pinned_base_path", return_value=root / "parent"),
+                patch.object(teacher.d3, "weight_map", return_value={"w": "model.safetensors"}),
+                patch.object(teacher, "copy_contract") as contract,
+            ):
+                teacher.soup(args)
+            readout = contract.call_args.args[2]
+            self.assertTrue(torch.equal(readout, torch.full((3, 2), 1.0)))
+
     def test_soup_averages_every_tensor_against_the_parent(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for name, value in (("parent", 0.0), ("student", 4.0)):
-                (root / name).mkdir()
-                save_file(
-                    {"w": torch.full((2, 2), value, dtype=torch.bfloat16)},
-                    str(root / name / "model.safetensors"),
-                )
+            self.soup_parts(root)
             args = argparse.Namespace(
-                out=str(root / "soup"), parts=["stock:0.75", f"{root / 'student'}:0.25"]
+                out=str(root / "soup"),
+                parts=["stock:0.75", f"{root / 'student'}:0.25"],
+                model="d3-mini",
             )
             with (
                 patch.object(teacher.d3, "pinned_base_path", return_value=root / "parent"),
@@ -91,7 +133,39 @@ class TeacherTest(unittest.TestCase):
                 value = stream.get_tensor("w")
             self.assertEqual(value.dtype, torch.bfloat16)
             self.assertTrue(math.isclose(float(value[0, 0]), 1.0))
-            contract.assert_called_once_with(root / "parent", root / "soup")
+            contract.assert_called_once_with(root / "parent", root / "soup", profile=models.D3)
+
+    def test_soup_resolves_a_pool_name_to_its_base(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.soup_parts(root)
+            args = argparse.Namespace(
+                out=str(root / "soup"),
+                parts=["stock:0.5", f"{root / 'student'}:0.5"],
+                model="d3-lite",
+            )
+            with (
+                patch.object(teacher.d3, "pinned_base_path", return_value=root / "parent") as base,
+                patch.object(teacher.d3, "weight_map", return_value={"w": "model.safetensors"}),
+                patch.object(teacher, "copy_contract") as contract,
+            ):
+                teacher.soup(args)
+            base.assert_called_once_with(model="d3-lite-0.8b-v1")
+            self.assertEqual(contract.call_args.kwargs["profile"], "d3-lite-0.8b-v1")
+
+    def test_trained_answer_layer_is_written_then_validated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent, out = Path(tmp) / "parent", Path(tmp) / "out"
+            parent.mkdir(), out.mkdir()
+            for name in models.D3_CONTRACT_FILES:
+                (parent / name).write_bytes(b"x")
+            save_file({"readout": torch.zeros(3, 2)}, str(parent / "readout.safetensors"))
+            with patch.object(teacher.d3, "validate_candidate") as validate:
+                teacher.copy_contract(parent, out, torch.ones(3, 2, dtype=torch.float64))
+            with safe_open(str(out / "readout.safetensors"), framework="pt") as stream:
+                value = stream.get_tensor("readout")
+            self.assertEqual((value.dtype, float(value.sum())), (torch.float32, 6.0))
+            validate.assert_called_once_with(out, models.D3)
 
 
 if __name__ == "__main__":

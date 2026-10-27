@@ -202,49 +202,66 @@ on, the exam is realistic decisions in families you have not seen: the 18
 October rehearsal candidate, trained on 8,400 synthetic rule cases, learned the
 format perfectly and still tied stock d3 on the sealed draws.
 
-### Teacher Chain recipe (experimental): learn from a larger model, then soup
+### Zils Relay recipe (experimental): learn from a larger model, then soup
 
-`zils.teacher` trains a student on a larger d3-family model's answers instead of
-single labels. The teacher answers a question pool with a probability for every
-declared option; the student fine-tunes every language-model weight of the
-pinned base so its distribution matches the teacher's (KL divergence), scored
-exactly as validators score; `soup` then averages the student back toward the
-pinned parent. Each step writes an ordinary base candidate.
+In Zils Relay the largest z3 model teaches the smaller sizes. `zils.teacher`
+trains a student on a larger d3-family model's answers instead of single labels.
+The teacher answers a question pool with a probability for every declared option;
+the student is fitted so its distribution matches the teacher's (KL divergence),
+scored exactly as validators score; `soup` then averages the student back toward
+the pinned parent. Each step writes an ordinary base candidate. The student's
+size comes from its reference (any z3 pool); `soup --model` names the pool.
 
 ```bash
 # pool.jsonl: one {"state", "question"} per line (labels, if present, are ignored)
-.venv-d3/bin/python -m zils.teacher answer --teacher models/d3-27b --pool pool.jsonl --out answers.jsonl
+.venv-d3/bin/python -m zils.teacher answer --teacher models/d3-ultra --pool pool.jsonl --out answers.jsonl
+# 20-24 GB cards: a rank-64 LoRA merged into the weights, answer layer retrained too
 .venv-d3/bin/python -m zils.teacher train --answers answers.jsonl --reference models/d3-reference \
-  --out student --lr 1e-6
-.venv-d3/bin/python -m zils.teacher soup --out candidate stock:0.5 student:0.5
+  --out student --lora 64 --train-answer-layer --answer-layer-lr 1e-5
+.venv-d3/bin/python -m zils.teacher soup --model d3-mini --out candidate stock:0.5 student:0.5
 ```
 
-Requirements and settings from the 26 October 2026 pilot (vllm-sr/d3 27B
-teacher, d3-mini student, one NVIDIA H200): the teacher needs about 51 GB and
-answered about 10 questions per second; the student's full fine-tune with FP32
-master weights needs about 100 GB and trained at about 7 rows per second, so it
-does not fit 20–24 GB cards. Learning rate 1e-5 diverged; 1e-6 lowered the
-held-out KL to the teacher from 0.095 to 0.039 in one epoch over 67,224 answers.
+Without `--lora` every language-model weight trains with FP32 master weights:
+about 100 GB for d3-mini at about 7 rows per second on one NVIDIA H200, so it
+does not fit 20–24 GB cards; learning rate 1e-5 diverged and 1e-6 is the default.
+`--lora 64` (default learning rate 5e-5) peaked at 21.9 GB with the answer layer
+training. `--start KING` builds on an existing candidate instead of stock.
 Gradient checkpointing is not supported (its recompute fails torch's metadata
 check), and on Hopper GPUs the attention backward pass needs `pip install
-tilelang` (Triton 3.6 is refused by flash-linear-attention).
+tilelang` (Triton 3.6 is refused by flash-linear-attention). The 27B teachers
+need 51–54 GB; vllm-sr/d3 answered about 11 questions per second on one H200
+and vllm-sr/d3-ultra about 5.4 (two processes on one card: about 9).
 
-Results of that pilot, unfavorable ones included. The pool covered 17 task
-families (68,224 questions). Measured as paired score gaps against stock
-d3-mini with 95% bootstrap intervals:
+Results of the 26–27 October 2026 runs on d3-mini, unfavorable ones included.
+Gaps are paired against stock d3-mini with 95% bootstrap intervals, on the
+development exam built from the Decision Index's task sources ("index check")
+and on the current exam's two qualification draws (the exam that decides
+elections). Teacher: vllm-sr/d3 27B. The first pool covered 17 task families
+(68,224 questions); the broad pool adds 177,336 questions from about 250
+further commercially licensed sources. After license filtering, broad-pool
+students trained on 238,806 teacher answers.
 
-| Candidate | Development exam from the Decision Index's task sources (2 draws) | Current exam's qualification draws (2) |
+| Candidate | Index check (2 draws) | Election exam (2 draws) |
 |---|---:|---:|
-| Student alone | +5.45 [+3.11, +7.20], +2.16 [−0.10, +3.74] | **−2.14** [−3.11, −1.29], **−1.67** [−2.71, −0.63] |
-| Soup, 0.5 parent / 0.25 + 0.25 two students | +4.03 [+1.95, +5.39], +3.23 [+1.34, +4.45] | −0.33 [−0.96, +0.20], +0.23 [−0.30, +0.92] |
+| Full fine-tune, first pool | +5.45 [+3.11, +7.20], +2.16 [−0.10, +3.74] | **−2.14** [−3.11, −1.29], **−1.67** [−2.71, −0.63] |
+| Soup of two such students, 0.5 parent | +4.03 [+1.95, +5.39], +3.23 [+1.34, +4.45] | −0.33 [−0.96, +0.20], +0.23 [−0.30, +0.92] |
+| LoRA 64, license-filtered first pool | +4.43 [+2.36, +6.01], +3.45 [+1.23, +4.85] | −0.63 [−1.43, +0.12], −0.30 [−1.19, +0.57] |
+| Its soup, 0.5 parent | +3.33 [+1.45, +4.59], +2.93 [+1.12, +4.13] | −0.31 [−0.82, +0.27], +0.03 [−0.56, +0.66] |
+| LoRA 64 + answer layer | +3.64 [+1.52, +5.16], +3.22 [+1.04, +4.77] | −0.81 [−1.65, −0.03], −0.02 [−0.80, +0.78] |
+| Its soup, 0.5 parent | +2.97 [+0.99, +4.11], +2.97 [+1.16, +4.15] | −0.14 [−0.77, +0.43], +0.15 [−0.38, +0.73] |
+| Full fine-tune, broad pool | +6.34 [+3.92, +8.11], +3.41 [+1.10, +4.98] | **−1.03** [−2.14, −0.04], −0.82 [−1.93, +0.37] |
+| Its soup, 0.5 parent | +5.25 [+3.04, +6.80], +3.83 [+1.85, +5.11] | +0.02 [−0.87, +0.82], +0.46 [−0.32, +1.33] |
+| Its soup, 0.75 parent | +3.24 [+1.45, +4.46], +2.22 [+0.76, +3.23] | +0.47 [+0.02, +0.96], +0.27 [−0.21, +0.86] |
 
-The development exam shares task families (not rows) with the pool, so part of
-its gain is in-distribution; on its new-domain half the student moved +2.2 and
-−3.8 and the soup +1.4 and −0.9. The student learned the pool's families and
-lost general ability; the soup kept most of the gain without the loss but is
-level, not better, on the exam that decides elections. A broader pool is the
-next experiment. Treat this recipe as a starting point to beat, not a winning
-recipe.
+On the same election exam the teachers themselves lead stock d3-mini by
++14.59 [+12.99, +16.37] and +17.30 [+15.53, +19.08] (vllm-sr/d3) and by
++17.18 and +19.97 (vllm-sr/d3-ultra, which beats vllm-sr/d3 by +2.59
+[+1.52, +3.53] and +2.67 [+1.64, +3.72]). Students gain on the index check,
+which shares task families with the pools, but recover less than one point of
+a 15–20 point teacher lead on the election exam; a 3.5 times broader pool moved
+the index check, not the election exam. The bottleneck is transfer, not the
+teacher. Soups keep students level rather than worse. Treat this recipe as a
+starting point to beat, not a winning recipe.
 
 ## How it is scored
 
