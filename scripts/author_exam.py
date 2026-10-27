@@ -269,6 +269,20 @@ for _pool in NEW_DOMAIN.values():
     for _key, _where in _pool.items():
         SOURCES[_key] = lambda w=_where: hf_parquet(*w)
 
+
+def load_private_sources(path):
+    """Add new-domain tasks kept outside this public repo: {category: {key: [repo, path, revision]}}.
+    The lists above are spent; miners can read them, so later draws take tasks from this file."""
+    for category, pool in json.loads(Path(path).read_text()).items():
+        if category not in BIGBENCH:
+            raise ValueError(f"unknown category {category}")
+        for key, where in pool.items():
+            if key in SOURCES:
+                raise ValueError(f"{key} is already a source")
+            NEW_DOMAIN.setdefault(category, {})[key] = tuple(where)
+            SOURCES[key] = lambda w=tuple(where): hf_parquet(*w)
+
+
 # Known families: names match the published seeds (zils-ai/base-exam-seed-v2 for k2, v3 for k3) and the
 # history receipts.
 KNOWN = {
@@ -610,6 +624,9 @@ def main(argv=None):
             p.add_argument("--per-family", type=int, required=True)
             p.add_argument("--known-only", action="store_true", help="public seed samples")
             p.add_argument("--only", help="author only families whose name contains this")
+            p.add_argument(
+                "--private-sources", help="JSON of new-domain tasks kept out of the repo"
+            )
         if name in ("author", "verify"):
             p.add_argument("--workers", type=int, default=25)
             p.add_argument("--batch", action="store_true", help="Batches API: half price, slower")
@@ -618,6 +635,8 @@ def main(argv=None):
             p.add_argument("--test", type=int, default=100)
     args = parser.parse_args(argv)
     if args.command == "author":
+        if args.private_sources:
+            load_private_sources(args.private_sources)
         author(
             args.work,
             args.draw,
