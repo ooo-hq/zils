@@ -72,7 +72,11 @@ Set `"recipe": "relay"` to train on teacher answers instead of labels (see the
 `limit` caps the answers per attempt so training fits `max_training_seconds`,
 and `soup` is the student's weight against the parent (default 0.5).
 `gpu_free_mib` (default 12288) is the free GPU memory the runner waits for
-before training; measure your card's peak first.
+before training; measure your card's peak first. On a 20 GB RTX 4000 Ada, rank 64
+with the answer layer peaked at about 16 GB on questions of at most 1,500
+characters with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` in the service
+environment (passed through to training); 3,000-character questions reached the
+card's limit.
 
 Run the preflight under the intended service account:
 
