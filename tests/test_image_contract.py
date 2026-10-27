@@ -19,7 +19,7 @@ class CapabilitiesTest(unittest.TestCase):
                 "max_videos": 1,
                 "max_questions": 8,
                 "max_options": 255,
-                "max_input_tokens": 4096,
+                "max_input_tokens": 8192,
                 "unknown_key": None,
             },
         )

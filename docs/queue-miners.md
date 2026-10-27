@@ -71,7 +71,7 @@ The Bittensor SDK is installed here to read the wallet hotkey; these commands
 send no chain transactions. The reference command downloads and verifies the
 pinned base weights (9.1 GB for d3) and writes `models/d3-reference/model.json`.
 The pins are `zils/d3-pins.json` (vendor release `zils-ai/d3-mini-4.5b-v1`,
-4,096-token inputs, up to four images or one video per decision). The operator
+8,192-token inputs on a card with at least 20 GB, up to four images or one video per decision). The operator
 must explicitly qualify this hotkey for d3 on your actual hardware
 (`scripts.qualify_node --model d3-mini-4.5b-v1` writes the report); an approval
 for another profile does not qualify it for d3.

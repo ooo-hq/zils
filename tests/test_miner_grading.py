@@ -136,14 +136,18 @@ class GradingTests(unittest.TestCase):
             (1025, "tokens-2048"),
         ]:
             self.assertEqual(grading.workload_profile([length], model=models.D3)["band"], band)
-        for lengths in ([], [0], [4097], [True], [1.5]):
+        for lengths in ([], [0], [8193], [True], [1.5]):
             with self.assertRaises(ValueError):
                 grading.workload_profile(lengths, model=models.D3)
 
     def test_workload_cap_follows_the_profile(self):
         self.assertEqual(grading.workload_profile([4096], model=models.D3)["band"], "tokens-4096")
+        self.assertEqual(grading.workload_profile([4097], model=models.D3)["band"], "tokens-8192")
+        self.assertEqual(grading.workload_profile([8192], model=models.D3)["band"], "tokens-8192")
+        with self.assertRaisesRegex(ValueError, "1..8192"):
+            grading.workload_profile([8193], model=models.D3)
         with self.assertRaisesRegex(ValueError, "1..4096"):
-            grading.workload_profile([4097], model=models.D3)
+            grading.workload_profile([4097], model=LITE)
         with self.assertRaisesRegex(ValueError, "1..2048"):
             grading.workload_profile([4096], model=models.KEV)
         self.assertNotEqual(grading.trainer_identity(models.D3), grading.trainer_identity(LITE))
@@ -157,12 +161,15 @@ class GradingTests(unittest.TestCase):
         identity = {k: "f" * 64 for k in ("profile_sha256", "runtime_sha256")}
         d3 = {**CONTEXT, **identity, "model": models.D3, "band": "tokens-4096"}
         self.assertTrue(grading.valid_context(d3))
-        self.assertFalse(grading.valid_context({**d3, "band": "tokens-8192"}))
+        self.assertTrue(grading.valid_context({**d3, "band": "tokens-8192"}))
+        self.assertFalse(grading.valid_context({**d3, "band": "tokens-16384"}))
+        self.assertFalse(grading.valid_context({**d3, "model": LITE, "band": "tokens-8192"}))
         # Stored evidence of a retired profile never grades a routing context.
         for model in models.RETIRED_MODELS:
             self.assertFalse(grading.valid_context({**d3, "model": model, "band": "tokens-2048"}))
         self.assertEqual(grading.bands(models.KEV), ("tokens-512", "tokens-1024", "tokens-2048"))
-        self.assertEqual(grading.bands(models.D3)[-1], "tokens-4096")
+        self.assertEqual(grading.bands(models.D3)[-1], "tokens-8192")
+        self.assertEqual(grading.bands(LITE)[-1], "tokens-4096")
         # The same band under another model never grades this context.
         attempt = {
             "id": "other-model",

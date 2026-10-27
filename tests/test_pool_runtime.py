@@ -40,7 +40,7 @@ class PoolRuntimeTest(unittest.TestCase):
                     readout_dtype="float32",
                     prompt="d3",
                     backbone_type="qwen3_5",
-                    max_length=4096,
+                    max_length=models.spec(model)["max_input_tokens"],
                     backbone=base,
                     readout=torch.zeros(255, width),
                 )
