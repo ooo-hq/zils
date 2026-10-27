@@ -219,6 +219,7 @@ def run(config):
                         "ZILS_D3_BASE_DIR",
                         "TRITON_CACHE_DIR",
                         "TORCHINDUCTOR_CACHE_DIR",
+                        "PYTORCH_CUDA_ALLOC_CONF",
                         "XDG_CACHE_HOME",
                     )
                 }
