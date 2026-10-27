@@ -156,7 +156,7 @@ class QualifyNodeTest(unittest.TestCase):
         cap = models.spec(models.D3)["max_input_tokens"]
         self.assertEqual(len(rows), 6)
         self.assertEqual({repeats(r["state"]) for r in rows}, {expected(cap - 200)})
-        self.assertEqual(expected(cap - 200), 1438)
+        self.assertEqual(expected(cap - 200), 3076)
         self.assertEqual(len(cases), 9)
         self.assertEqual({repeats(c["state"]) for c in cases[:6]}, {expected(cap - 200)})
         self.assertEqual(

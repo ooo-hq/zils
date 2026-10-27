@@ -101,8 +101,8 @@ Mini keeps its existing measured memory curve. Other lineages need a local
 `qualifications` mapping in the queue-worker config, from exact profile ID to that
 host's `qualification.json`. The fit check requires matching profile/runtime/trainer
 identities and a measured prompt ceiling covering the job. It reserves the measured
-peak plus the larger of 1,024 MiB or 15% as headroom. A result measured below 4,096
-tokens does not qualify the full 4,096-token band. This local fit check does not
+peak plus the larger of 1,024 MiB or 15% as headroom. A result measured below a
+band's ceiling (for example 8,192 tokens for mini) does not qualify that band. This local fit check does not
 replace coordinator-issued capacity/quality qualifications. Image jobs additionally
 require `training.modalities` to include `images`, a measured ceiling covering the
 profile cap and a peak covering those image probes. The text qualification command

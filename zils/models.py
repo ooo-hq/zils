@@ -72,7 +72,9 @@ SPECS[D3] = {
     "base_revision": "b54402a963373cc44713f18c9596c580e31cc68b",
     "runtime_revision": "d3-vendor-runtime-a475367/v1",
     "prompt": "d3-native-v1",
-    "max_input_tokens": 4096,
+    # Only d3-mini takes customer jobs. 8,192 trained in 12.0 GiB on an RTX 4090 (27 Oct 2026),
+    # so 20 GB cards still qualify.
+    "max_input_tokens": 8192,
     "recipe": "d3-language-lora16-adamw/v1",
     "calibration": "native-then-heldout-temperature/v1",
     "inputs": {"images": 4, "video": True},
@@ -97,6 +99,8 @@ for _pool, _model in D3_POOL_MODELS.items():
         "base": _pins["vendor"]["repo"],
         "base_revision": _pins["revision"],
         "runtime_revision": f"d3-vendor-runtime-{_pins['files']['d3_runtime.py'][:12]}/v1",
+        # Pools keep their qualified cap; raise one only after measuring its training memory there.
+        "max_input_tokens": 4096,
     }
     TEXT_ADAPTER_MODELS = (*TEXT_ADAPTER_MODELS, _model)
     TEXT_RUNTIME_MODULES[_model] = ".d3"

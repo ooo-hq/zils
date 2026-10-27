@@ -64,7 +64,7 @@ TRAINER_FILES = {
     },
 }
 # Tuned bands; a profile's input cap decides which of them it can reach.
-BANDS = (512, 1024, 2048, 4096)
+BANDS = (512, 1024, 2048, 4096, 8192)
 
 
 def trainer_identity(model):
@@ -87,7 +87,9 @@ def bands(model):
 
 # Training memory of the shared trainer (MiB) at a job's longest example, for the miner's own fit
 # check. d3: 10,538 MiB measured at ~1.9k tokens (hosted trainer), 13,036 MiB reserved at 6,931
-# tokens (Claims run, RTX 4090). ponytail: linear fit over two points; refit when a probe at 8k runs.
+# tokens (Claims run, RTX 4090). Qualification probes on a 4090 (27 Oct 2026) peaked lower: 12,263 MiB
+# at 7,992 tokens, 15,713 MiB at 16,184. ponytail: kept the higher two-point line because real jobs ran
+# above the probe shape; refit from customer jobs at 8k-16k.
 TRAINING_MIB = {"d3-mini": (9500, 0.6)}
 
 

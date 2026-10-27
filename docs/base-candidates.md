@@ -55,7 +55,7 @@ Only the weights and the answer layer change. A d3 candidate must keep:
 - the answer layer, `readout.safetensors`, either byte-identical or retrained
   with the parent's tensor names, shapes and dtypes (FP32, one row per answer
   code) and only finite values;
-- the 4,096-token input limit and the pinned runtime (`zils/d3-pins.json`, or
+- the pool's input limit (8,192 tokens for mini, 4,096 for the other pools) and the pinned runtime (`zils/d3-pins.json`, or
   the pool's own pins file).
 
 Before loading a d3 candidate the validator checks that its index `weight_map`

@@ -227,7 +227,7 @@ class ModelTest(unittest.TestCase):
             models.pins(models.D3)["vendor"],
             {"repo": "vllm-sr/d3-mini", "revision": "a475367de0d8133a3c1a2a0dc12303d89cfa2ab4"},
         )
-        self.assertEqual(spec["max_input_tokens"], 4096)
+        self.assertEqual(spec["max_input_tokens"], 8192)
         self.assertEqual(spec["inputs"], {"images": 4, "video": True})
         revisions = [models.spec(m)["base_revision"] for m in models.SPECS]
         self.assertEqual(len(revisions), len(set(revisions)))
