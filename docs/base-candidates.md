@@ -44,16 +44,19 @@ the 152 language targets, contract files copied byte for byte.
 
 ## What stays fixed
 
-Only the weights change. A d3 candidate must keep:
+Only the weights and the answer layer change. A d3 candidate must keep:
 
 - the architecture, layer sizes and tokenizer of the pinned base, so the
   production LoRA recipe attaches to the same 152 language modules;
-- the 19 files listed as `models.D3_CONTRACT_FILES` byte-identical to the parent
+- the files listed as `models.D3_CONTRACT_FILES` byte-identical to the parent
   (`config.json`, `decision_config.json`, the two preprocessor configs,
-  `chat_template.jinja`, tokenizer files, `readout.safetensors`, the seven vendor
-  runtime modules, `LICENSE`, `NOTICE`);
-- the 4,096-token input limit, the FP32 code readout and the pinned runtime
-  (`zils/d3-pins.json`).
+  `chat_template.jinja`, tokenizer files, the seven vendor runtime modules,
+  `LICENSE`, `NOTICE`);
+- the answer layer, `readout.safetensors`, either byte-identical or retrained
+  with the parent's tensor names, shapes and dtypes (FP32, one row per answer
+  code) and only finite values;
+- the 4,096-token input limit and the pinned runtime (`zils/d3-pins.json`, or
+  the pool's own pins file).
 
 Before loading a d3 candidate the validator checks that its index `weight_map`
 names exactly the parent index's tensors, maps them only to the two shard file
@@ -61,8 +64,8 @@ names, and that each shard holds exactly the tensors the index assigns to it;
 transformers then rejects any tensor whose shape differs from the parent. Vendor
 code is always loaded from the vendor release, never from a candidate.
 
-The validator refuses a candidate whose contract files differ from the parent
-hashes, that contains any file outside the list below, or whose weights do not
+The validator refuses a candidate whose contract files (other than a
+retrained answer layer) differ from the parent hashes, that contains any file outside the list below, or whose weights do not
 load exactly.
 
 ## Artifact

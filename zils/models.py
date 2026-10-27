@@ -82,12 +82,13 @@ D3_POOL_MODELS = {
     "d3-nano": "d3-nano-2.2b-v1",
     "d3-mini": D3,
     "d3-flash": "d3-flash-8.4b-v1",
-    "d3": "d3-26b-v1",
+    # z3 27B pool: vllm-sr/d3-ultra replaced vllm-sr/d3 as the base (higher Decision Index and Exam v3).
+    "d3": "d3-ultra-26b-v1",
 }
 for _pool, _model in D3_POOL_MODELS.items():
     if _model == D3:
         continue
-    _pins_file = "d3-full-pins.json" if _pool == "d3" else f"{_pool}-pins.json"
+    _pins_file = "d3-ultra-pins.json" if _pool == "d3" else f"{_pool}-pins.json"
     _pins = json.loads(Path(__file__).with_name(_pins_file).read_text())
     SPECS[_model] = {
         **SPECS[D3],

@@ -128,6 +128,12 @@ def check_media(images=(), videos=(), model=models.D3):
     return pictures
 
 
+class TokenIds(list):
+    """A text prompt's token ids; `state` is its state block's token count under prefix_bidir attention."""
+
+    state = None
+
+
 class Encoder:
     """The vendor's prompt and tokenizer without its weights, so CPU hosts can validate inputs."""
 
@@ -135,6 +141,8 @@ class Encoder:
         from transformers import AutoTokenizer
 
         self.model = profile(model)
+        # prefix_bidir (d3-ultra): the state block attends only to itself; the question attends to everything.
+        self.blocked = pins(self.model)["attention"] == "prefix_bidir"
         self.native = d3_runtime = vendor(model)
         self.root = root
         self.tokenizer = AutoTokenizer.from_pretrained(root, local_files_only=True)
@@ -143,6 +151,8 @@ class Encoder:
         config = json.loads((Path(root) / "decision_config.json").read_text())
         if config["prompt"] != "d3" or config["codes"] != self.codes:
             raise OSError("d3 answer codes differ from its tokenizer")
+        # header-v1 (d3-ultra): the request's questions lead the state; validators send one question.
+        self.header = config.get("prompt_layout") == "header-v1"
 
     @functools.cached_property
     def processor(self):
@@ -159,9 +169,25 @@ class Encoder:
         normalized = self.native.normalize_question(question)
         if normalized.keys != declared:
             raise ValueError("d3 outcomes differ from the declared outcomes")
+        blocked = getattr(self, "blocked", False)  # test doubles skip __init__
         if not images and not videos:
-            text = self.native.render(self.tokenizer, "d3", state, normalized.rendered, self.codes)
-            batch = ids = self.tokenizer(text, add_special_tokens=False)["input_ids"]
+            header = ([normalized.rendered],) if getattr(self, "header", False) else ()
+            text = self.native.render(
+                self.tokenizer, "d3", state, normalized.rendered, self.codes, *header
+            )
+            offsets = {"return_offsets_mapping": True} if blocked else {}
+            encoded = self.tokenizer(text, add_special_tokens=False, **offsets)
+            batch = ids = TokenIds(encoded["input_ids"])
+            if blocked:
+                # The vendor's D3.state_block for a text prompt (no media tokens).
+                ids.state = self.native.state_token_count(
+                    encoded["offset_mapping"], self.native.state_end_char(text, state)
+                )
+                if not 0 < ids.state < len(ids):
+                    raise ValueError("d3 prompt has no separable state block")
+        elif blocked:
+            # ponytail: text only under prefix_bidir; media needs the vendor's expanded-token state count.
+            raise ValueError("this d3 profile accepts text prompts only")
         else:
             # The vendor's D3.image_text / D3.video_text prompt, expanded by the pinned processor.
             native, rendered = self.native, normalized.rendered
@@ -264,8 +290,9 @@ def validate_adapter_config(checkpoint, targets):
 
 
 def validate_candidate(checkpoint, model=None):
-    """A base candidate changes weights only; every contract file, config.json included, is its parent's pin.
-    `model`, when given, is the parent profile the caller expects."""
+    """A base candidate changes weights only; every contract file, config.json included, is its parent's pin,
+    except the answer layer (readout.safetensors), which may be retrained if it keeps the parent's tensor names,
+    shapes and dtypes and stays finite. `model`, when given, is the parent profile the caller expects."""
     checkpoint = Path(checkpoint)
     meta = models.metadata(checkpoint)
     if (
@@ -280,6 +307,7 @@ def validate_candidate(checkpoint, model=None):
     for entry in checkpoint.iterdir():
         if entry.name not in candidate_files:
             raise ValueError(f"base candidate contains an unexpected entry: {entry.name}")
+    trained_readout = False
     for name in candidate_files:
         path = checkpoint / name
         if path.is_symlink() or not path.is_file():
@@ -287,7 +315,9 @@ def validate_candidate(checkpoint, model=None):
         if name in models.D3_CONTRACT_FILES:
             with path.open("rb") as stream:
                 if hashlib.file_digest(stream, "sha256").hexdigest() != files[name]:
-                    raise ValueError(f"base candidate {name} differs from the pinned parent")
+                    if name != "readout.safetensors":
+                        raise ValueError(f"base candidate {name} differs from the pinned parent")
+                    trained_readout = True
     # Read tensor headers only: names, shapes and dtypes must match the pinned parent.
     from safetensors import SafetensorError, safe_open
 
@@ -330,6 +360,35 @@ def validate_candidate(checkpoint, model=None):
                 raise ValueError(
                     f"base candidate {shard} is not a safetensors file: {error}"
                 ) from None
+    if trained_readout:
+        check_readout(parent_root / "readout.safetensors", checkpoint / "readout.safetensors")
+
+
+def check_readout(parent, candidate):
+    """A retrained answer layer keeps the parent's tensor names, shapes and dtypes and holds finite values."""
+    import torch
+    from safetensors import SafetensorError, safe_open
+
+    try:
+        with (
+            safe_open(str(parent), framework="pt") as expected,
+            safe_open(str(candidate), framework="pt") as actual,
+        ):
+            if list(actual.keys()) != list(expected.keys()):
+                raise ValueError("base candidate answer layer tensor names differ from the parent")
+            for key in expected.keys():
+                reference, value = expected.get_slice(key), actual.get_tensor(key)
+                if (
+                    list(value.shape) != list(reference.get_shape())
+                    or actual.get_slice(key).get_dtype() != reference.get_dtype()
+                ):
+                    raise ValueError("base candidate answer layer schema differs from the parent")
+                if not torch.isfinite(value).all():
+                    raise ValueError("base candidate answer layer holds nonfinite values")
+    except SafetensorError as error:
+        raise ValueError(
+            f"base candidate answer layer is not a safetensors file: {error}"
+        ) from None
 
 
 def weight_map(root):
@@ -566,6 +625,12 @@ class DecisionModel:
         """`inputs` is a token-id list (text) or the encoder's processor batch (images, video)."""
         import torch
 
+        blocks = None
+        if getattr(self.encoder, "blocked", False):
+            state = getattr(inputs, "state", None)
+            if state is None:
+                raise ValueError("prefix_bidir prompts need their state block token count")
+            blocks = self.encoder.native.StateBlocks.of(len(inputs), [len(inputs)], [state])
         if isinstance(inputs, list):
             tokens = torch.tensor([inputs], dtype=torch.long, device=self.device)
             inputs = {"input_ids": tokens, "attention_mask": torch.ones_like(tokens)}
@@ -583,9 +648,12 @@ class DecisionModel:
                 else:
                     embeds, positions = self.base.get_input_embeddings()(inputs["input_ids"]), None
                 args = (embeds, inputs["attention_mask"])
-                hidden = self.runtime.encoder(*args, *(() if positions is None else (positions,)))[
-                    :, -1
-                ]
+                extra = {} if blocks is None else {"blocks": blocks}
+                hidden = self.runtime.encoder(
+                    *args, *(() if positions is None else (positions,)), **extra
+                )[:, -1]
+            elif blocks is not None:
+                raise OSError("prefix_bidir attention requires the vendor prompt encoder")
             else:
                 hidden = self.base(**inputs, use_cache=False).last_hidden_state[:, -1]
         if hidden.dtype != torch.bfloat16:
@@ -760,7 +828,10 @@ def parity(model, cases):
         ids, keys = model.encode(case["state"], case["question"])
         ours = list(model.probabilities(ids, keys, case["question"], 1.0).values())
         with torch.inference_mode():
-            reference = model.runtime.probabilities([ids], [len(keys)])[0]
+            states = (
+                ([ids.state],) if getattr(getattr(model, "encoder", None), "blocked", False) else ()
+            )
+            reference = model.runtime.probabilities([ids], [len(keys)], *states)[0]
         difference = max(abs(a - b) for a, b in zip(ours, reference, strict=True))
         if difference >= 1e-6 or ours.index(max(ours)) != reference.index(max(reference)):
             raise RuntimeError(f"d3 parity failed on case {case['id']}: {difference}")
