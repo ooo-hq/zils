@@ -270,6 +270,37 @@ class D3ModuleTest(unittest.TestCase):
         batch, names = encoder.inputs({}, QUESTION)
         self.assertEqual((batch, names), ([1, 2, 3], ["a", "b"]))
 
+    def test_prefix_bidir_prompts_carry_their_state_block_to_the_encoder(self):
+        encoder = media_encoder(None)
+        encoder.blocked = True
+        encoder.tokenizer = lambda text, add_special_tokens, return_offsets_mapping: {
+            "input_ids": [1, 2, 3, 4],
+            "offset_mapping": [(0, 1), (1, 2), (2, 3), (3, 4)],
+        }
+        encoder.native.state_end_char = lambda text, state: 2
+        encoder.native.state_token_count = lambda offsets, end: sum(b <= end for _, b in offsets)
+        encoder.native.StateBlocks = SimpleNamespace(of=lambda width, lengths, states: states)
+        ids, _ = encoder.encode({}, QUESTION)
+        self.assertEqual((ids, ids.state), ([1, 2, 3, 4], 2))
+        with self.assertRaisesRegex(ValueError, "text prompts only"):
+            encoder.inputs({}, QUESTION, images=[png()])
+
+        seen = {}
+
+        def prompt_encoder(embeds, mask, blocks=None):
+            seen["blocks"] = blocks
+            return torch.zeros(1, embeds.shape[1], 255, dtype=torch.bfloat16)
+
+        model = d3.DecisionModel.__new__(d3.DecisionModel)
+        model.device, model.encoder = "cpu", encoder
+        model.readout = torch.eye(255, dtype=torch.float32)
+        model.base = SimpleNamespace(get_input_embeddings=lambda: torch.nn.Embedding(8, 255))
+        model.runtime = SimpleNamespace(encoder=prompt_encoder)
+        model.logits(ids, 2)
+        self.assertEqual(seen["blocks"], [2])
+        with self.assertRaisesRegex(ValueError, "state block token count"):
+            model.logits([1, 2, 3, 4], 2)  # plain ids lose the state block
+
     def test_image_and_video_prompts_go_through_the_processor(self):
         processor = FakeProcessor()
         encoder = media_encoder(processor)
@@ -374,6 +405,29 @@ class D3ModuleTest(unittest.TestCase):
                     weights(candidate, weight_map, tensors)
                     with self.assertRaisesRegex(ValueError, message):
                         d3.validate_candidate(candidate)
+
+    def test_candidate_may_retrain_the_answer_layer_with_the_parents_schema(self):
+        from safetensors.torch import save_file
+
+        with tempfile.TemporaryDirectory() as root:
+            candidate, _ = self.candidate(Path(root))
+            readout = candidate / "readout.safetensors"
+            save_file({"readout": torch.zeros(4, 3)}, str(Path(root) / "base" / readout.name))
+            save_file({"readout": torch.ones(4, 3)}, str(readout))
+            d3.validate_candidate(candidate)  # differs from the pin, same schema: accepted
+            for message, tensors in (
+                ("nonfinite", {"readout": torch.full((4, 3), float("nan"))}),
+                ("schema differs", {"readout": torch.ones(5, 3)}),
+                ("schema differs", {"readout": torch.ones(4, 3, dtype=torch.float16)}),
+                ("names differ", {"head": torch.ones(4, 3)}),
+            ):
+                with self.subTest(message=message):
+                    save_file(tensors, str(readout))
+                    with self.assertRaisesRegex(ValueError, message):
+                        d3.validate_candidate(candidate)
+            readout.write_bytes(b"not safetensors")
+            with self.assertRaisesRegex(ValueError, "not a safetensors file"):
+                d3.validate_candidate(candidate)
 
     def test_write_candidate_merges_the_adapter_into_the_parent_shards(self):
         from safetensors.torch import load_file, save_file

@@ -6,6 +6,14 @@ king history, allocation and exact model profiles. Registration does not make a
 pool available for training or serving. New pools start disabled and unallocated;
 qualification, channel configuration and healthy capacity are separate requirements.
 
+The `d3` pool's pinned base is `vllm-sr/d3-ultra` (profile `d3-ultra-26b-v1`,
+`zils/d3-ultra-pins.json`), which replaced `vllm-sr/d3` (`d3-26b-v1`). It uses
+`prefix_bidir` attention: the input block attends only to itself and the question
+attends to every token. Validators score it with the vendor's block mask; this
+profile accepts text prompts only. A configuration that still names `d3-26b-v1`
+for the `d3` pool fails validation; set that entry's `model` to the new profile
+before upgrading.
+
 ## Stage an existing mini validator
 
 From a checkout installed with the normal validator dependencies, write a **new**
