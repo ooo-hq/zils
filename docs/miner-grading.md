@@ -22,5 +22,5 @@ Run `make check` to exercise the shared policy and worker contracts. Hosted
 assignment, admission, database migrations, resource binding and qualification
 administration moved to the
 [zils-platform operator guide](https://github.com/ooo-hq/zils-platform/blob/main/docs/miner-grading.md).
-The closed Bittensor fleet's weight publication remains documented in
-[testnet operation](testnet.md).
+The closed Bittensor fleet's weight publication is documented in
+[validator setup](validators.md).

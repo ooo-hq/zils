@@ -13,41 +13,38 @@
 Miners train candidate models. Validators verify their artifacts, calibrate
 probabilities, evaluate held-out examples, and compute miner scores. This
 repository contains those workers, their shared model and protocol contracts,
-and the guarded Bittensor testnet integration.
+and the guarded Bittensor chain integration.
 
 ## Start here
 
 | Role | Guide |
 | --- | --- |
 | Run a d3 queue miner on NVIDIA hardware | [Queued miners](docs/queue-miners.md) |
-| Compete in the base tier on testnet subnet 579 | [Registration](docs/bittensor-registration.md), then [base tier from outside](docs/mining.md#compete-in-the-base-tier-from-outside) |
-| Join a closed Bittensor testnet fleet | [Registration](docs/bittensor-registration.md), then [miner setup](docs/mining.md) |
+| Compete in the base tier on subnet `<NETUID>` | [Registration](docs/bittensor-registration.md), then [base tier from outside](docs/mining.md#compete-in-the-base-tier-from-outside) |
 | Run a validator | [Validator setup](docs/validators.md) |
 | Develop or evaluate the subnet | [Local development](docs/development.md), [evaluation contract](docs/evaluation.md) |
 
-d3-mini 4.5B (`d3-mini-4.5b-v1`) is the only served base since 17 October 2026, for
-text and image jobs; a d3 queue miner downloads a job's frozen training photos itself.
-H2O Lightning 4B, ImaJev 4B and JevK5 4B are retired: their frozen job records stay
-readable, but nothing creates, trains, evaluates or serves them. Kev 0.8B jobs remain supported.
+d3 bases serve text and image jobs; a d3 queue miner downloads a job's frozen
+training photos itself. Kev 0.8B jobs remain supported.
 Each fleet pins one job and model. Text and image scores are not combined into one
 reward vector.
 
-Two tracks pay from one testnet weight vector. In the **base tier**, a miner
-registered on testnet subnet 579 uploads a full-weight d3 candidate to Hugging Face
+Two tracks pay from one weight vector. In the **base tier**, a miner
+registered on Bittensor mainnet subnet `<NETUID>` uploads a full-weight d3 candidate to Hugging Face
 and commits it on chain with `zils commit-candidate`; registration is the admission.
 Start with `curl -fsSL https://zils.ai/install.sh | sh`, then `zils doctor` names each next step. Only kings are paid: the last five distinct registered miners
 whose candidates were promoted split the base share, and an unearned share is
 burned ([base candidates](docs/base-candidates.md),
-[two-track payment](docs/mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)).
-**Adapter rounds** pay the rest. The hosted customer queue still requires operator
-admission and does not publish chain weights; its chain-derived admission is
-built but off. Mainnet participation is not implemented.
+[two-track payment](docs/mining.md#two-tracks-the-base-tier-pays-first)).
+Each pool may set a minimum spacing between one hotkey's submissions.
+**Adapter rounds** pay the rest. Customer jobs in the hosted queue go to approved
+operators.
 
 ## Repository scope
 
 | Repository | Owns |
 | --- | --- |
-| **zils** — this repository | Miners, validators, training, evaluation, model integrity, signed protocols, testnet weights |
+| **zils** — this repository | Miners, validators, training, evaluation, model integrity, signed protocols, chain weights |
 | [zils-platform](https://github.com/ooo-hq/zils-platform) | Hosted APIs, account/billing logic, storage, database migrations, queue orchestration, serving |
 | [zils-sdk](https://github.com/ooo-hq/zils-sdk) | Python/TypeScript clients, CLI, MCP |
 | [zils-web](https://github.com/ooo-hq/zils-web) | Website, playground, customer dashboard |
@@ -72,7 +69,7 @@ export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
 d3 requires CUDA. The miner uses
 outbound HTTPS and receives only approved training data and signed upload URLs.
 Keep calibration/test data and operator service credentials off miner accounts.
-For the separate testnet fleet, run `./start-miner --rounds 1` from its assigned
+For a closed chain fleet, run `./start-miner --rounds 1` from its assigned
 bundle after completing the [fleet guide](docs/mining.md).
 
 ## Validator setup
@@ -82,7 +79,7 @@ A configured Bittensor validator evaluates one round with:
 
 ```sh
 .venv-kev/bin/python -m zils.fleet validator \
-  --config .private/testnet-fleet/validator/config.json --rounds 1
+  --config .private/chain-fleet/validator/config.json --rounds 1
 ```
 
 This previews weights without publishing. Chain submission remains a separate,
@@ -97,7 +94,7 @@ code. Its deployment and database access are separate from miner installation.
 
 ### Repository setup
 
-For the Kev local/testnet fleet, install Git, Python 3.13, and `uv` on macOS,
+For the Kev local fleet, install Git, Python 3.13, and `uv` on macOS,
 Linux, or WSL 2:
 
 ```sh
@@ -121,15 +118,14 @@ Install the [development dependencies](docs/development.md), then run:
 make check
 ```
 
-Checks exercise workers, signed submissions, evaluation, and testnet behavior
+Checks exercise workers, signed submissions, evaluation, and chain behavior
 with local fixtures. They need no live chain or hosted account. Optional GPU
 checks are explicitly gated. Node.js and hosted database services are not
 needed for this repository's checks.
 
 ## Results and limits
 
-The [first verified testnet round](docs/testnet-round-001.md) is recorded evidence,
-not a statement of current subnet admission or uptime. [Experiment reports](docs/experiments.md)
+[Experiment reports](docs/experiments.md)
 and the [public JevBench comparison](docs/jevbench-public.md) preserve results,
 including regressions. Synthetic fixture tests establish behavior, not model
 quality, hostile-checkpoint isolation, or production capacity.

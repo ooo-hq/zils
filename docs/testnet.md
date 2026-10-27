@@ -14,7 +14,7 @@ every hotkey registered on the subnet ([open admission](validators.md#open-admis
 miners commit candidates on chain and the validator scores them in its sandboxed
 runner. Base and adapter tracks pay from one weight vector; an unearned share is
 burned at `base_tier.burn_uid`
-([two-track payment](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)).
+([two-track payment](mining.md#two-tracks-the-base-tier-pays-first)).
 Which validators are running is on the metagraph, not in these docs. Mainnet is
 not implemented.
 

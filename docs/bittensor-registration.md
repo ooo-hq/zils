@@ -1,21 +1,14 @@
 # Register a miner on Bittensor
 
-This guide joins an existing subnet; a miner does not create a subnet.
+This guide joins the existing Zils subnet; a miner does not create a subnet.
 
-Zils runs on Bittensor **testnet subnet 579**; the fleet rejects mainnet.
-Registration serves two paths:
+Zils runs on Bittensor mainnet (`finney`), subnet `<NETUID>`. Registration is
+the admission to the base tier: register, then
+[compete from outside](mining.md#compete-in-the-base-tier-from-outside) by
+committing a candidate on chain. No operator approval is needed.
 
-- **Base tier (open).** Registration on 579 is the admission: register, then
-  [compete from outside](mining.md#compete-in-the-base-tier-from-outside) by
-  committing a d3-mini candidate on chain. No operator approval is needed.
-- **Closed, model-pinned fleets.** The operator selects a d3-mini 4.5B text job
-  (or a Kev job) and qualifies the participating hardware.
-  To receive work there, the operator must also add your UID and hotkey to the
-  validator's roster. Confirm the subnet ID with that operator.
-
-The [hosted queue](queue-miners.md) uses approved hotkeys and local queue UIDs;
-it does not require on-chain registration or publish chain weights. Its
-chain-derived [admission](miner-admission.md) is built but off.
+Customer adapter jobs from the [hosted queue](queue-miners.md) go to approved
+operators; registration alone does not assign customer work.
 
 Registration gives a hotkey a chain UID.
 For validator operation, continue with [Run a validator](validators.md).
@@ -23,8 +16,8 @@ For validator operation, continue with [Run a validator](validators.md).
 ## 1. Install the pinned CLI
 
 Use a trusted Linux or macOS workstation with Git and Python 3.13. These wallet
-steps also work in WSL 2; run the Bittensor fleet on Linux or macOS. From a fresh
-clone, create a separate environment for wallet administration:
+steps also work in WSL 2. From a fresh clone, create a separate environment for
+wallet administration:
 
 ```bash
 git clone https://github.com/ooo-hq/zils.git
@@ -34,30 +27,28 @@ python3.13 -m venv .venv-btcli
 .venv-btcli/bin/btcli --version
 ```
 
-The version must be `11.1.0`, matching Zils' testnet SDK. The Typer pin keeps this
-CLI's help and exit handling compatible. Bittensor v11 includes `btcli`; these
-commands use its [v11 CLI flags](https://www.bittensor.com/docs/cli).
+The version must be `11.1.0`, matching the Zils chain SDK. The Typer pin keeps
+this CLI's help and exit handling compatible. Bittensor v11 includes `btcli`;
+these commands use its [v11 CLI flags](https://www.bittensor.com/docs/cli).
 
 Set these values in the terminal you will use for the following steps:
 
 ```bash
-export ZILS_NETUID=579
-export ZILS_WALLET=zils-testnet-miner
+export ZILS_NETUID=<NETUID>
+export ZILS_WALLET=zils-miner
 export ZILS_HOTKEY=miner-1
 export ZILS_WALLET_PATH="$HOME/.bittensor/wallets"
 ```
 
-579 is the Zils testnet subnet; for a closed fleet on another subnet, use the
-operator's numeric subnet ID (1–4095) instead. The wallet
-and hotkey names above are examples for a new, dedicated testnet identity.
-If you already have an identity, use its names and wallet directory instead.
+The wallet and hotkey names are examples for a new, dedicated identity. If you
+already have an identity, use its names and wallet directory instead.
 
 ## 2. Create and fund the identity
 
 For a **new** identity, create an encrypted coldkey and a separate hotkey:
 
 ```bash
-.venv-btcli/bin/btcli --network test \
+.venv-btcli/bin/btcli --network finney \
   --wallet "$ZILS_WALLET" --wallet-hotkey "$ZILS_HOTKEY" \
   --wallet-path "$ZILS_WALLET_PATH" wallet create
 .venv-btcli/bin/btcli --wallet-path "$ZILS_WALLET_PATH" wallet list
@@ -65,15 +56,13 @@ For a **new** identity, create an encrypted coldkey and a separate hotkey:
 
 Record the recovery phrases privately when prompted. Skip creation when reusing
 an existing wallet; do not overwrite its keys. Keep the coldkey on the trusted
-administration workstation. Mining and weight signing use the hotkey.
+administration workstation. Mining and commitments use the hotkey only.
 
-Ask the testnet operator for test TAO funding to the **coldkey's public address**.
-For public testnet funding channels, use the community link on the
-[official Bittensor site](https://www.bittensor.com/docs/quickstart).
-Never send a recovery phrase or private key. Check the funded balance:
+Fund the **coldkey's public address** with enough TAO for the registration
+burn. Never send a recovery phrase or private key to anyone. Check the balance:
 
 ```bash
-.venv-btcli/bin/btcli --network test --wallet "$ZILS_WALLET" \
+.venv-btcli/bin/btcli --network finney --wallet "$ZILS_WALLET" \
   --wallet-path "$ZILS_WALLET_PATH" wallet balance
 ```
 
@@ -82,27 +71,28 @@ Never send a recovery phrase or private key. Check the funded balance:
 Read the current subnet details, registration price, and admission settings:
 
 ```bash
-.venv-btcli/bin/btcli --network test subnets show "$ZILS_NETUID"
-.venv-btcli/bin/btcli --network test query burn --netuid "$ZILS_NETUID"
-.venv-btcli/bin/btcli --network test query subnet-hyperparameters \
+.venv-btcli/bin/btcli --network finney subnets show "$ZILS_NETUID"
+.venv-btcli/bin/btcli --network finney query burn --netuid "$ZILS_NETUID"
+.venv-btcli/bin/btcli --network finney query subnet-hyperparameters \
   --netuid "$ZILS_NETUID"
 ```
 
-Stop if the subnet is missing or registration is disabled (and, for a closed
-fleet, if the operator has not confirmed admission). The price changes with chain state; check the current
-collateral settings too. Preview the coldkey-signed transaction first:
+Stop if the subnet is missing or registration is disabled. The burn price
+changes with demand, and a full subnet replaces its lowest-ranked UID outside
+the immunity period when a new hotkey registers. Preview the coldkey-signed
+transaction first:
 
 ```bash
-.venv-btcli/bin/btcli --network test --wallet "$ZILS_WALLET" \
+.venv-btcli/bin/btcli --network finney --wallet "$ZILS_WALLET" \
   --wallet-hotkey "$ZILS_HOTKEY" --wallet-path "$ZILS_WALLET_PATH" \
   --dry-run tx burned-register --netuid "$ZILS_NETUID"
 ```
 
-The next command **submits a testnet registration and charges test TAO** after
-you confirm. Review the network, subnet, hotkey, and cost in the terminal:
+The next command **submits a mainnet registration and burns TAO** after you
+confirm. Review the network, subnet, hotkey, and cost in the terminal:
 
 ```bash
-.venv-btcli/bin/btcli --network test --wallet "$ZILS_WALLET" \
+.venv-btcli/bin/btcli --network finney --wallet "$ZILS_WALLET" \
   --wallet-hotkey "$ZILS_HOTKEY" --wallet-path "$ZILS_WALLET_PATH" \
   tx burned-register --netuid "$ZILS_NETUID"
 ```
@@ -116,39 +106,18 @@ check the registration before submitting again.
 Query the registered identity and subnet membership:
 
 ```bash
-.venv-btcli/bin/btcli --network test --wallet "$ZILS_WALLET" \
+.venv-btcli/bin/btcli --network finney --wallet "$ZILS_WALLET" \
   --wallet-hotkey "$ZILS_HOTKEY" --wallet-path "$ZILS_WALLET_PATH" \
   query uid --netuid "$ZILS_NETUID"
-.venv-btcli/bin/btcli --network test query metagraph --netuid "$ZILS_NETUID"
+.venv-btcli/bin/btcli --network finney query metagraph --netuid "$ZILS_NETUID"
 ```
 
 The UID query must return an integer, not `None`/`null`. Match that UID to the
-hotkey's public SS58 address in the metagraph. Do not assume the UID is `1` or
-reuse a local queue UID.
+hotkey's public SS58 address in the metagraph.
 
-Give the validator operator the network (`test`), netuid, public hotkey address,
-and actual UID. Wallet names and paths in a fleet configuration must match the
-machine that will run that identity; they are not key material.
+## 5. Compete
 
-## 5. Join the Zils fleet
-
-For the base tier, stop here and continue with
-[compete from outside](mining.md#compete-in-the-base-tier-from-outside). For a
-closed fleet, the operator uses those public identities to generate the
-[registered fleet and run preflight](testnet.md#provision-the-registered-identities).
-Receive your assigned `miner-UID.tar.gz`, provision only your hotkey on the miner
-host through a private channel, and follow the [miner setup](mining.md#set-up-each-machine-once).
-Install `requirements/testnet.txt` in the miner's model environment as well.
-Never give the validator your recovery phrase or coldkey.
-
-From the unpacked, configured miner directory, start one round:
-
-```bash
-./start-miner --rounds 1
-```
-
-Zils uses private-network artifact exchange and an explicit roster; publishing
-a generic Axon endpoint does not connect this fleet. Keep the configured miner
-port reachable from the validator and the validator port reachable from miners.
-If the chain replaces your UID or hotkey, stop and have the operator regenerate
-the roster. Registration alone does not establish work availability or rewards.
+Continue with [compete from outside](mining.md#compete-in-the-base-tier-from-outside).
+Zils commands take `--network finney --netuid "$ZILS_NETUID"`; mainnet is never
+a default, so a command without both flags never touches mainnet. Never give
+anyone your recovery phrase or coldkey.

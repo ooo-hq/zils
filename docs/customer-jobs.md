@@ -8,7 +8,7 @@ local workflow, not a hosted customer service or a published model release.
 This page describes the local bundle workflow, where one fleet configuration
 pins one job. For a shared pool that claims different customer jobs without
 regenerating bundles, use the [Supabase training queue](https://github.com/ooo-hq/zils-platform/blob/main/docs/supabase-training.md).
-It adds private uploads and approved-miner assignments. A testnet validator can
+It adds private uploads and approved-miner assignments. A validator can
 pay the adapter track from that queue's delivered customer jobs
 (`adapter_evidence`, merged and off by default; see
 [validators §7](validators.md#7-pay-the-adapter-track-from-hosted-queue-work)). The existing synthetic fleet remains supported.
@@ -22,15 +22,13 @@ Use only data authorized for training and for export to the configured miners.
 The export flag records an operator decision; it does not provide encryption,
 confidential compute, legal authorization, or isolation from miner operators.
 
-**Outside miners (policy decided 18 October 2026, not yet in effect).** Zils is
-a Bittensor subnet. The [miner terms](mining-terms.md) were published on
-18 October 2026; once queue admission [opens](miner-admission.md) (built, off), a job's training split goes to the miner
-pool: any hotkey registered on subnet 579 and qualified for the base, whether or
-not Zils runs it. There is no per-job opt-out; authorizing training-data export
-when creating the job is the customer's consent, and the terms bind every miner
-in the pool to that one job: no retention, no redistribution, no training other
+**Who trains customer jobs.** Customer jobs go only to operators Zils has
+approved under written customer-job terms; registration on the subnet alone
+never assigns customer data. Authorizing training-data export when creating
+the job is the customer's consent, and those terms bind every assigned operator
+to that one job: no retention, no redistribution, no training other
 models on it, deletion on completion. Calibration and test splits never leave
-the processor. Until admission opens, every miner in the pool is run by Zils.
+the processor.
 
 Create three JSONL files under ignored `.private/` storage: `train.jsonl`,
 `calibration.jsonl`, and `test.jsonl`. Each line uses the existing decision-case
@@ -101,7 +99,7 @@ distribute it only to approved operators. The job freezes the selected model;
 the fleet rejects a mismatched reference. Legacy Kev jobs retain their
 original reference and recipe. No automatic model
 download, training, or chain transaction is triggered by building the job manifest.
-Fleet initialization requires the downloaded reference. Testnet fleets still
+Fleet initialization requires the downloaded reference. Chain fleets still
 use the existing explicit roster and publication flags.
 
 ## Inspect the result

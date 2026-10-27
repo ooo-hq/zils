@@ -1,6 +1,6 @@
 # Bounding-box feature competition
 
-The box track is a **synthetic-only pilot on Bittensor testnet subnet 579**.
+The box track is a **synthetic-only pilot** on subnet `<NETUID>`.
 Miners train a bounding-box adapter for an exact parent model, publish an
 immutable bundle, and commit its location with a registered hotkey. Validators
 evaluate the adapter on private exams; a confirmed challenger becomes a paid
@@ -11,8 +11,8 @@ allocation. It does not establish that a particular validator has deployed or
 enabled it. Before training for rewards, check that validator's signed round
 result (`GET /results/<round>`) for its `feature_tracks` configuration, exact
 parent, allocation, and decisions, then check its chain receipt. An accepted
-commitment alone does not establish evaluation or payment. Testnet rewards have
-no monetary value, and this pilot does not establish real-image box quality.
+commitment alone does not establish evaluation or payment, and this pilot does
+not establish real-image box quality.
 
 ## Tracks and rewards
 
@@ -73,8 +73,8 @@ unavailable in your checkout, update to the validator-supported release before
 continuing. The Python 3.13 environment handles the wallet and commitment;
 the separate Python 3.12 environment trains the model.
 
-Register your hotkey using the [testnet registration guide](bittensor-registration.md)
-and read the [miner terms](mining-terms.md). Provision only the hotkey on the
+Register your hotkey using the [registration guide](bittensor-registration.md)
+and read the [base-tier terms](base-tier-terms.md). Provision only the hotkey on the
 mining host; keep the coldkey and recovery phrases on your administration
 machine. No validator address or inbound miner port is required for box
 commitments.
@@ -169,7 +169,7 @@ your hotkey lives elsewhere. This first command is a dry run:
 .venv-kev/bin/python -m zils.feature_miner commit \
   --candidate box-lite-bundle --repo OWNER/BOX_REPO \
   --wallet-name YOUR_WALLET --wallet-hotkey YOUR_HOTKEY \
-  --wallet-path "$HOME/.bittensor/wallets" --netuid 579
+  --wallet-path "$HOME/.bittensor/wallets" --network finney --netuid <NETUID>
 ```
 
 Review the parent, track, hash, repository and current commitment. **There is one
@@ -177,7 +177,7 @@ active chain commitment per hotkey across base and feature competitions.** A new
 box commitment replaces that hotkey's previous base or feature entry. Use
 separately registered hotkeys for simultaneous entries.
 
-Add `--yes` to the same command to authorize uploading and writing the testnet
+Add `--yes` to the same command to authorize uploading and writing the chain
 commitment. It uploads only the adapter bundle, verifies the complete remote
 bundle at the returned immutable commit, writes with the hotkey, and reads the
 chain value back. The final JSON receipt includes both hashes, the Hugging Face

@@ -1,9 +1,7 @@
 # Run a fleet miner
 
-Local and Bittensor testnet fleets support **d3-mini 4.5B** text jobs
-(`d3-mini-4.5b-v1`, the base since 17 October 2026). Existing Kev 0.8B bundles
-remain supported; H2O Lightning 4B, ImaJev and JevK5 4B bundles are retired and no
-longer run. d3 image jobs run in the [hosted queue](queue-miners.md), where a d3
+Local and chain fleets support **d3-mini 4.5B** text jobs
+(`d3-mini-4.5b-v1`). Existing Kev 0.8B bundles remain supported. d3 image jobs run in the [hosted queue](queue-miners.md), where a d3
 miner downloads a job's frozen training photos itself. For workers that claim different customer jobs,
 use the [queue miner guide](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md).
 Queue and fleet miners use the same trainers but different credentials and startup commands.
@@ -52,7 +50,7 @@ are 8900 for the validator and 8901–8903 for three miners. Assign one
 
 Only training data goes into a miner bundle. The validator keeps calibration
 cases, test cases, and full reports. Local bundles contain disposable signing
-keys and must stay private. [Testnet bundles](testnet.md) contain public wallet
+keys and must stay private. Chain fleet bundles contain public wallet
 references instead; provision each hotkey separately.
 
 Each model uses its own fleet directory and ports. Never combine text and image
@@ -127,18 +125,18 @@ From the repository root:
 Remove `--rounds 1` for continuous rounds. The validator evaluates after every
 miner submits or the collection deadline expires. It verifies signatures and
 hashes, calibrates each candidate, and scores the separate evaluation cases.
-Local mode never writes weights to Bittensor. Testnet mode needs registered
-wallets and explicit publication; follow the [testnet guide](testnet.md).
+Local mode never writes weights to Bittensor. Chain mode needs registered
+wallets and explicit publication.
 
-## Two tracks on the testnet: the base tier pays first
+## Two tracks: the base tier pays first
 
-On a testnet fleet whose validator config carries `base_pools`, miners
+On a validator whose config carries `base_pools`, miners
 earn on two tracks, paid from one weight vector on the configured subnet:
 
 - **Base tier (primary, continuous).** Beat the pinned incumbent in your
   [model tier](model-pools.md). Submit a full-weight candidate under the
   [base candidate contract](base-candidates.md). The validator's base-tier
-  scorer follows the [decision-quality election](base-election.md): +1 point,
+  scorer follows the [decision-quality election](base-election.md): +3 points,
   a positive paired lower 95% bound and Brier regression at most 0.005, followed
   by candidate-specific confirmation, the three-seed adapter suite and a common
   release-window closing exam. Only crowned kings are paid.
@@ -161,7 +159,7 @@ earn on two tracks, paid from one weight vector on the configured subnet:
   reliability over the window. Qualification runs and operator-owned jobs earn
   nothing, and your queue hotkey must be registered on the subnet.
 
-Split: the base tier takes `base_pools.share` of the vector (for example **0.7**;
+Split: the base tier takes `base_pools.share` of the vector (configuration;
 the validator records the share in every chain attempt and receipt), adapters
 the rest. Each track is normalized over its own earners first, so a miner with
 no eligible base candidate still earns its adapter share and a miner that trains
@@ -176,7 +174,9 @@ the validator refuses to publish a burn slice unless `burn_uid` is the subnet
 owner hotkey's uid at that block.
 
 Anti-gaming: one adapter submission per hotkey per round and one base candidate
-commitment per hotkey on chain; a claim cannot change within a round; a candidate
+commitment per hotkey on chain; each pool may set a submission cooldown
+(`cooldown_seconds`, see [model pools](model-pools.md)), and a distinct candidate
+committed inside it is refused and recorded; a claim cannot change within a round; a candidate
 hash another hotkey committed at an earlier block is refused; every
 sealed split is audited against its manifest before scoring, and payment goes
 only to registered roster UIDs. You receive aggregate metrics, never per-case
@@ -197,13 +197,13 @@ on the sealed exam.
 ## Compete in the base tier from outside
 
 You do not need a bundle, an operator or an invitation to enter the base tier:
-registration on subnet 579 is the admission. About an afternoon end to end, most
+registration on subnet `<NETUID>` is the admission. About an afternoon end to end, most
 of it the training run.
 
 You do not need any validator's address or hotkey to compete: candidates are
 chain commitments that every validator reads itself. Validators are run by
 whoever operates them; find them on the metagraph
-(`btcli subnets metagraph --netuid 579 --network test`).
+(`btcli subnets metagraph --netuid <NETUID> --network finney`).
 
 Start with the installer on the mining host. It clones Zils into `~/.zils/zils`,
 builds the miner runtime and, on Linux x86_64 with an NVIDIA GPU, the d3 training
@@ -238,11 +238,11 @@ mini. A candidate for a different tier or parent profile is rejected before uplo
 
 From then on `zils doctor` names the next step and prints its command; the steps are:
 
-1. **Register a hotkey on testnet subnet 579** following the
+1. **Register a hotkey on subnet `<NETUID>`** following the
    [registration guide](bittensor-registration.md); keep the hotkey file on the
    mining host and the coldkey elsewhere.
-2. **Read the [miner terms](mining-terms.md).** Running a miner against a Zils
-   validator means you accept them.
+2. **Read the [base-tier terms](base-tier-terms.md).** Committing a candidate
+   with a registered hotkey means you accept them.
 3. **Train and merge a candidate** with the
    [reference recipe](base-candidates.md#reference-recipe-train-a-lora-merge-it):
    `zils.d3 reference`, `zils.d3 train` on data of your choosing, `zils.d3 candidate`
@@ -255,10 +255,11 @@ From then on `zils doctor` names the next step and prints its command; the steps
    with your hotkey (details in [base candidates: commit](base-candidates.md#commit)):
 
    ```bash
-   zils commit-candidate
+   zils commit-candidate --network finney --netuid <NETUID>
    ```
 
-   It reads the wallet, base profile, candidate and repo saved by `zils setup`;
+   Mainnet is never a default: pass `--network finney --netuid <NETUID>` to
+   `zils doctor` and `zils commit-candidate` every time. It reads the wallet, base profile, candidate and repo saved by `zils setup`;
    flags such as `--model`, `--candidate` or `--repo` override them for one run.
    Upload and remote verification use the selected candidate's pinned file list,
    including the correct number of weight shards for its tier.
@@ -274,18 +275,20 @@ From then on `zils doctor` names the next step and prints its command; the steps
    failing one with the exact command that fixes it:
 
    ```bash
-   zils doctor
+   zils doctor --network finney --netuid <NETUID>
    ```
 
    You can run it before step 1 (it tells you to create the wallet), before
    step 3 (it prints the merge recipe), before step 4 (it prints the commit
    command) and again after each fix.
 6. **Read the result.** Your payout is on chain: the validators' weights and your
-   incentive (`btcli subnets metagraph --netuid 579 --network test`). The
+   incentive (`btcli subnets metagraph --netuid <NETUID> --network finney`). The
    aggregate row per round (Brier and accuracy against the incumbent, eligibility,
    the pending and confirmed winner) is in each validator's signed round result on
    its own API (`GET /results/<round>`), not on chain. Per-case results are never returned. An ineligible or
-   rejected candidate earns nothing; fix it, merge again and commit the new hash.
+   rejected candidate earns nothing; fix it, merge again and commit the new hash
+   once your pool's cooldown since your last accepted submission has passed (a
+   refused commitment names the first block that will be accepted).
    Leave an unchanged commitment alone: it stays in every round at no cost, and
    committing it again moves your block later, which can hand the hash to a copier
    who committed it in between.
