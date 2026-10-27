@@ -182,6 +182,24 @@ class AuthorExamTest(unittest.TestCase):
                 self.assertFalse(used & again)
                 self.assertEqual(len(used | again), 6)
 
+    def test_private_sources_join_the_pool_without_overwriting_public_ones(self):
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.dict(author_exam.NEW_DOMAIN, {}, clear=True),
+            patch.dict(author_exam.SOURCES, {"bb-x": None}, clear=True),
+        ):
+            path = Path(tmp) / "private.json"
+            path.write_text(json.dumps({"reasoning": {"ds-p": ["repo", "f.parquet", None]}}))
+            author_exam.load_private_sources(path)
+            self.assertEqual(
+                author_exam.NEW_DOMAIN["reasoning"]["ds-p"], ("repo", "f.parquet", None)
+            )
+            self.assertIn("ds-p", author_exam.SOURCES)
+            for bad in ({"reasoning": {"bb-x": ["r", "p", None]}}, {"cooking": {}}):
+                path.write_text(json.dumps(bad))
+                with self.assertRaises(ValueError):
+                    author_exam.load_private_sources(path)
+
     def test_known_families_have_rows_for_several_more_draws(self):
         # Combined sources keep earlier row IDs, so rows used by past draws stay excluded.
         for key, parts in {
