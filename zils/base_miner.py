@@ -66,6 +66,56 @@ def commit_once(config, keys, hotkey, text):
     return after
 
 
+def commands(config, directory, seed):
+    """(train, finish) commands for the configured recipe. `adapter` (default): one epoch of the
+    production LoRA on labeled public data, merged into the parent. `relay` (Zils Relay): a merged
+    LoRA fitted to teacher answers, optionally with the answer layer, then souped with the parent."""
+    python = config["runtime_python"]
+    if config.get("recipe", "adapter") == "adapter":
+        return (
+            [python, "-m", "zils.d3", "train", "--data", config["data"],
+             "--reference", config["reference"], "--out", str(directory / "adapter"),
+             "--seed", str(seed)],
+            [python, "-m", "zils.d3", "candidate", "--adapter", str(directory / "adapter"),
+             "--out", str(directory / "candidate")],
+        )  # fmt: skip
+    relay = config["relay"]
+    train = [python, "-m", "zils.teacher", "train", "--answers", config["data"],
+             "--reference", config["reference"], "--out", str(directory / "student"),
+             "--seed", str(seed), "--lora", str(relay["lora"])]  # fmt: skip
+    if relay.get("answer_layer"):
+        train += [
+            "--train-answer-layer",
+            "--answer-layer-lr",
+            str(relay.get("answer_layer_lr", 1e-5)),
+        ]
+    if relay.get("limit"):
+        train += ["--limit", str(relay["limit"])]
+    weight = relay.get("soup", 0.5)
+    soup = [python, "-m", "zils.teacher", "soup", "--model", config["model"],
+            "--out", str(directory / "candidate"),
+            f"stock:{1 - weight:g}", f"{directory / 'student'}:{weight:g}"]  # fmt: skip
+    return train, soup
+
+
+def validate_recipe(config):
+    recipe = config.get("recipe", "adapter")
+    if recipe == "adapter":
+        return
+    relay = config.get("relay")
+    if recipe != "relay" or not isinstance(relay, dict):
+        raise ValueError("recipe must be adapter, or relay with a relay section")
+    if set(relay) - {"lora", "answer_layer", "answer_layer_lr", "limit", "soup"}:
+        raise ValueError("unknown relay setting")
+    if type(relay.get("lora")) is not int or not 1 <= relay["lora"] <= 256:
+        raise ValueError("relay lora must be an integer rank in [1, 256]")
+    if "limit" in relay and (type(relay["limit"]) is not int or relay["limit"] < 1):
+        raise ValueError("relay limit must be a positive integer")
+    weight = relay.get("soup", 0.5)
+    if type(weight) not in (int, float) or not 0 < weight <= 1:
+        raise ValueError("relay soup must be the student's weight in (0, 1]")
+
+
 def validate(config):
     from . import miner, models, testnet
 
@@ -79,6 +129,7 @@ def validate(config):
         raise ValueError("interval_seconds must be a nonnegative integer")
     if not 1 <= config.get("max_training_seconds", 0) <= 21600:
         raise ValueError("Training timeout must be between 1 and 21600 seconds")
+    validate_recipe(config)
     if hashlib.sha256(Path(config["data"]).read_bytes()).hexdigest() != config["data_sha256"]:
         raise ValueError("Public training data changed")
     if models.checkpoint_model(config["reference"]) != config["model"]:
@@ -137,6 +188,7 @@ def run(config):
                 "model": config["model"],
                 "hotkey": config["hotkey"],
                 "data_sha256": config["data_sha256"],
+                "recipe": config.get("recipe", "adapter"),
                 "started_at": time.time(),
             }
 
@@ -150,7 +202,8 @@ def run(config):
             flag.touch(exist_ok=False)
             try:
                 deadline = time.monotonic() + 180
-                while not gpu_ready("cuda", model=config["model"], minimum_mib=12288):
+                need = config.get("gpu_free_mib", 12288)
+                while not gpu_ready("cuda", model=config["model"], minimum_mib=need):
                     if time.monotonic() >= deadline:
                         raise RuntimeError("Serving did not yield GPU capacity within 180 seconds")
                     time.sleep(3)
@@ -175,22 +228,10 @@ def run(config):
                     TOKENIZERS_PARALLELISM="false",
                     PYTHONUNBUFFERED="1",
                 )
+                train, finish = commands(config, directory, seed)
                 with (directory / "training.log").open("ab") as log:
                     subprocess.run(
-                        [
-                            config["runtime_python"],
-                            "-m",
-                            "zils.d3",
-                            "train",
-                            "--data",
-                            config["data"],
-                            "--reference",
-                            config["reference"],
-                            "--out",
-                            str(directory / "adapter"),
-                            "--seed",
-                            str(seed),
-                        ],
+                        train,
                         env=env,
                         stdout=log,
                         stderr=subprocess.STDOUT,
@@ -205,16 +246,7 @@ def run(config):
         record("merging")
         with (directory / "merge.log").open("ab") as log:
             subprocess.run(
-                [
-                    config["runtime_python"],
-                    "-m",
-                    "zils.d3",
-                    "candidate",
-                    "--adapter",
-                    str(directory / "adapter"),
-                    "--out",
-                    str(directory / "candidate"),
-                ],
+                finish,
                 env=env,
                 stdout=log,
                 stderr=subprocess.STDOUT,

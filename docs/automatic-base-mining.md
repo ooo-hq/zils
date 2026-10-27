@@ -53,6 +53,27 @@ when the file disappears. Configure service cleanup to remove this file after
 termination, including forced termination. The runner waits up to 180 seconds
 for serving to yield, rather than training into insufficient free memory.
 
+### Zils Relay recipe
+
+Set `"recipe": "relay"` to train on teacher answers instead of labels (see the
+[Zils Relay recipe](base-candidates.md#zils-relay-recipe-experimental-learn-from-a-larger-model-then-soup)).
+`data` is then a `zils.teacher answer` output, and each attempt runs
+`zils.teacher train --lora` followed by `zils.teacher soup` with the parent:
+
+```json
+{
+  "recipe": "relay",
+  "relay": {"lora": 64, "answer_layer": true, "limit": 40000, "soup": 0.5},
+  "gpu_free_mib": 18000
+}
+```
+
+`lora` is the LoRA rank, `answer_layer` also retrains `readout.safetensors`,
+`limit` caps the answers per attempt so training fits `max_training_seconds`,
+and `soup` is the student's weight against the parent (default 0.5).
+`gpu_free_mib` (default 12288) is the free GPU memory the runner waits for
+before training; measure your card's peak first.
+
 Run the preflight under the intended service account:
 
 ```sh
