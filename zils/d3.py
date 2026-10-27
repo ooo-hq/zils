@@ -151,6 +151,8 @@ class Encoder:
         config = json.loads((Path(root) / "decision_config.json").read_text())
         if config["prompt"] != "d3" or config["codes"] != self.codes:
             raise OSError("d3 answer codes differ from its tokenizer")
+        # header-v1 (d3-ultra): the request's questions lead the state; validators send one question.
+        self.header = config.get("prompt_layout") == "header-v1"
 
     @functools.cached_property
     def processor(self):
@@ -169,7 +171,10 @@ class Encoder:
             raise ValueError("d3 outcomes differ from the declared outcomes")
         blocked = getattr(self, "blocked", False)  # test doubles skip __init__
         if not images and not videos:
-            text = self.native.render(self.tokenizer, "d3", state, normalized.rendered, self.codes)
+            header = ([normalized.rendered],) if getattr(self, "header", False) else ()
+            text = self.native.render(
+                self.tokenizer, "d3", state, normalized.rendered, self.codes, *header
+            )
             offsets = {"return_offsets_mapping": True} if blocked else {}
             encoded = self.tokenizer(text, add_special_tokens=False, **offsets)
             batch = ids = TokenIds(encoded["input_ids"])

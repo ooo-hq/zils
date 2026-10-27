@@ -272,7 +272,11 @@ class D3ModuleTest(unittest.TestCase):
 
     def test_prefix_bidir_prompts_carry_their_state_block_to_the_encoder(self):
         encoder = media_encoder(None)
-        encoder.blocked = True
+        encoder.blocked = encoder.header = True
+        rendered = []
+        encoder.native.render = lambda tokenizer, prompt, state, q, codes, *header: (
+            rendered.append(header) or "text"
+        )
         encoder.tokenizer = lambda text, add_special_tokens, return_offsets_mapping: {
             "input_ids": [1, 2, 3, 4],
             "offset_mapping": [(0, 1), (1, 2), (2, 3), (3, 4)],
@@ -282,6 +286,7 @@ class D3ModuleTest(unittest.TestCase):
         encoder.native.StateBlocks = SimpleNamespace(of=lambda width, lengths, states: states)
         ids, _ = encoder.encode({}, QUESTION)
         self.assertEqual((ids, ids.state), ([1, 2, 3, 4], 2))
+        self.assertEqual(rendered, [([QUESTION],)])  # header-v1: the one question leads the state
         with self.assertRaisesRegex(ValueError, "text prompts only"):
             encoder.inputs({}, QUESTION, images=[png()])
 
