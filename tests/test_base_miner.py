@@ -143,6 +143,51 @@ class BaseMinerTest(unittest.TestCase):
             self.assertEqual(base_miner.commit_once({}, None, "hotkey", "same")["block"], 1)
         write.assert_not_called()
 
+    def test_relay_recipe_trains_on_teacher_answers_then_soups(self):
+        config = {
+            "runtime_python": "py", "data": "/answers.jsonl", "reference": "/ref", "model": "d3-mini-4.5b-v1",
+            "recipe": "relay", "relay": {"lora": 32, "answer_layer": True, "limit": 9000, "soup": 0.5},
+        }  # fmt: skip
+        train, finish = base_miner.commands(config, Path("/a"), 7)
+        self.assertEqual(train[:4], ["py", "-m", "zils.teacher", "train"])
+        for flag in (
+            "--lora 32",
+            "--train-answer-layer",
+            "--answer-layer-lr 1e-05",
+            "--limit 9000",
+        ):
+            self.assertIn(flag, " ".join(train))
+        self.assertEqual(
+            finish[3:],
+            [
+                "soup",
+                "--model",
+                "d3-mini-4.5b-v1",
+                "--out",
+                "/a/candidate",
+                "stock:0.5",
+                "/a/student:0.5",
+            ],
+        )
+        adapter, merge = base_miner.commands({**config, "recipe": "adapter"}, Path("/a"), 7)
+        self.assertEqual(
+            (adapter[2:4], merge[2:4]), (["zils.d3", "train"], ["zils.d3", "candidate"])
+        )
+
+    def test_relay_settings_are_checked(self):
+        base_miner.validate_recipe({})
+        base_miner.validate_recipe({"recipe": "relay", "relay": {"lora": 64}})
+        for bad in (
+            {"recipe": "other"},
+            {"recipe": "relay"},
+            {"recipe": "relay", "relay": {"lora": 0}},
+            {"recipe": "relay", "relay": {"lora": 64, "limit": 0}},
+            {"recipe": "relay", "relay": {"lora": 64, "soup": 1.5}},
+            {"recipe": "relay", "relay": {"lora": 64, "typo": 1}},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                base_miner.validate_recipe(bad)
+
 
 if __name__ == "__main__":
     unittest.main()
