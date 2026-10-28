@@ -648,13 +648,30 @@ class PinnedServerTests(unittest.TestCase):
         self.assertEqual(caught.exception.reason, "refused")
 
     def test_busy_miner_is_busy(self):
-        holder = socket.create_connection(("127.0.0.1", self.server.server_port))
+        # Its own server with a long idle limit: under a loaded full-suite run the default 3 s
+        # header_deadline could free the held slot before the second request arrives (a flake).
+        server = serving_server.make_server(
+            MINER_KEY,
+            "http://127.0.0.1:1",
+            [self.served],
+            allowed=lambda caller: caller == CALLER_KEY.ss58_address,
+            bind=("127.0.0.1", 0),
+            slots=1,
+            header_deadline=60.0,
+        )
+        threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        ).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        holder = socket.create_connection(("127.0.0.1", server.server_port))
         try:
-            deadline = time.monotonic() + 2
-            while not self.server.peers and time.monotonic() < deadline:
+            deadline = time.monotonic() + 30
+            while not server.peers and time.monotonic() < deadline:
                 time.sleep(0.005)  # until the server has given the only slot to `holder`
+            self.assertTrue(server.peers, "the server never gave the slot to the holder")
             with self.assertRaises(serving.MinerError) as caught:
-                call(self.miner)
+                call("http://127.0.0.1:%d" % server.server_port)
         finally:
             holder.close()
         self.assertEqual(caught.exception.reason, "busy")
