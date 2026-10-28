@@ -272,7 +272,7 @@ def announce_serving(args):
     keys = wallet(args)
     hotkey = keys.hotkey.ss58_address
     config = chain_config(args.netuid, args.network)
-    with testnet.connect(config) as sub:
+    with testnet.connect(config, raw_calls=True) as sub:  # the Policy refuses submit_call otherwise
         state = testnet.hotkey_state(config, sub, hotkey)
         if state["uid"] is None:
             raise ValueError(

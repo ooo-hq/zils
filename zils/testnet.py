@@ -47,7 +47,8 @@ def check_config(config):
 
 @contextmanager
 def connect(config, *, raw_calls=False):
-    """`raw_calls` admits the one raw extrinsic Zils sends, `Commitments.set_commitment`."""
+    """`raw_calls` admits the two raw extrinsics Zils sends, `Commitments.set_commitment` and
+    `SubtensorModule.serve_axon`; the Policy refuses every submit_call without it."""
     netuid = check_config(config)
     network = config["chain"]["network"]
     if version("bittensor") != "11.1.0":

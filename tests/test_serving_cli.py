@@ -77,9 +77,10 @@ class ServingCliTest(unittest.TestCase):
         @contextlib.contextmanager
         def connect(config, *, raw_calls=False):
             testnet.check_config(config)
-            assert not raw_calls
+            self.raw_calls.append(raw_calls)
             yield self.chain
 
+        self.raw_calls = []
         self.enterContext(patch("zils.testnet.connect", connect))
         self.enterContext(patch.dict("os.environ", {"ZILS_MINER_CONFIG": str(Path(tmp.name) / "m.json")}))
 
@@ -107,6 +108,7 @@ class ServingCliTest(unittest.TestCase):
         code, out = self.run_miner("announce-serving", "--yes")
         self.assertEqual(code, 0, out)
         self.assertEqual(len(self.chain.calls), 1)
+        self.assertEqual(self.raw_calls, [True])  # the Policy refuses submit_call otherwise
         self.assertIn(ENDPOINT, out)
 
     def test_announce_same_endpoint_is_a_no_op(self):
@@ -148,6 +150,7 @@ class ServingCliTest(unittest.TestCase):
                 "serve", "--checkpoint", "ckpt", "--gateway-hotkey", "gateway"
             )
         self.assertEqual(code, 0, out)
+        self.assertEqual(self.raw_calls[-2:], [False, False])  # serve only reads
         allowed = make.call_args.args[3]
         self.assertEqual(make.call_args.args[4], ("0.0.0.0", 8091))
         self.assertEqual(
@@ -166,7 +169,9 @@ class ServingCliTest(unittest.TestCase):
 
         allowed = miner.permit_checker(read, ("gateway",))
         self.assertTrue(allowed("a") and allowed("gateway"))
-        allowed.refresh()  # fails: keeps {"a"}
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            allowed.refresh()  # fails: keeps {"a"}
+        self.assertIn("chain down", out.getvalue())
         self.assertTrue(allowed("a"))
         allowed.refresh()
         self.assertTrue(allowed("b") and not allowed("a"))
