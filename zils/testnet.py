@@ -308,10 +308,18 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
             or serving_report["config"] != serving_share.validate(serving)
         ):
             raise ValueError("serving report differs from the configured serving_share config")
-        if "receipts" in serving:  # the report hash binds the window; the signature binds the rows
+        if "receipts" in serving:  # the signature binds the rows; the window must be this round's
             receipts_payload = serving_share.verify_receipts(
                 serving_report["receipts"], serving["receipts"]
             )
+            from datetime import datetime
+
+            until = datetime.fromisoformat(receipts_payload["until"].replace("Z", "+00:00"))
+            # Fetched for the whole UTC hour at or before the freeze; a later or odd window is not.
+            if until != until.replace(minute=0, second=0, microsecond=0) or (
+                until.timestamp() > serving_report["frozen"]["frozen_at"]
+            ):
+                raise ValueError("serving receipts window is not this round's")
         if pools is None:
             raise ValueError("serving_share requires base_pools, not legacy base_tier")
     for path in (receipt_path, attempt_path):

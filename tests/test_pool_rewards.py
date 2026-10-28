@@ -310,7 +310,7 @@ class ServingShareTest(unittest.TestCase):
 
 
 def receipts_fixture(hops=(), checks=(), switch_on=3):
-    from tests.test_serving_share import HK, KEY, receipt
+    from tests.test_serving_share import HK, KEY, UNTIL, receipt
     from zils import model_pools, serving_share
 
     scores = {HK[n]: {"m": {"score": 1.0}} for n in "ABC"}
@@ -330,7 +330,8 @@ def receipts_fixture(hops=(), checks=(), switch_on=3):
         "identities": {uid: m["hotkey"] for uid, m in members.items()},
         "serving_share": {
             "config": serving_share.validate(serving),
-            "frozen": report["serving_share"]["frozen"],
+            # Frozen after the receipts window closed, as attach_serving_scores does.
+            "frozen": {**report["serving_share"]["frozen"], "frozen_at": UNTIL.timestamp() + 60},
             "receipts": receipt(hops, checks),
         },
     }
@@ -402,6 +403,27 @@ class ServingReceiptsTest(unittest.TestCase):
     def test_burn_requires_owner_uid(self):
         with self.assertRaisesRegex(ValueError, "burn_uid"):
             publish(*receipts_fixture(), owner_uid=7)
+
+    def test_receipts_window_must_have_closed_before_the_scores_froze(self):
+        # A correctly signed window from the future (or one not on a whole hour) is not this round's.
+        from datetime import timedelta
+
+        from tests.test_serving_share import UNTIL, iso, receipt
+
+        config, report = receipts_fixture()
+        later = UNTIL + timedelta(hours=2)
+        report["serving_share"]["receipts"] = receipt(
+            since=iso(later - timedelta(hours=24)), until=iso(later)
+        )
+        with self.assertRaisesRegex(ValueError, "window"):
+            publish(config, report)
+        config, report = receipts_fixture()
+        odd = UNTIL - timedelta(minutes=30)
+        report["serving_share"]["receipts"] = receipt(
+            since=iso(odd - timedelta(hours=24)), until=iso(odd)
+        )
+        with self.assertRaisesRegex(ValueError, "window"):
+            publish(config, report)
 
     def test_receipts_must_verify_and_match_config(self):
         from bittensor_wallet import Keypair

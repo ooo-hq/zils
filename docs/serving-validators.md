@@ -194,7 +194,7 @@ miners from the grader's scores:
 
 - The gateway signs one receipts document per whole UTC hour window. It holds
   routing facts only: per miner hotkey, model and weights hash, the requests
-  answered, our own count of input tokens, and the failure reasons. No request
+  answered, the gateway's own count of input tokens (not the miner's), and the failure reasons. No request
   text, account or key is in it. The validator checks the signature against the
   pinned `signer` and the exact window.
 - A miner earns volume only when it has a grading score above 0 and no gateway
