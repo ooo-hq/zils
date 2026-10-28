@@ -163,12 +163,15 @@ miners from the grader's scores:
   normalized over the serving earners. Only registered hotkeys count.
 - The share burns at `base_pools.burn_uid` until `switch_on_miners` different
   miners have a score above 0, and whenever the scores file is missing, corrupt,
-  larger than 8 MiB or older than `max_age_seconds`.
+  larger than 8 MiB, older than `max_age_seconds`, or dated more than a minute in
+  the future. Only each model's `score` is frozen.
 - The validator freezes the scores file into the round (`serving-scores.json`
   in the round's work directory) the first time it publishes. The report embeds
   it, so the report hash binds it and a retry pays the same vector.
 - Chain attempts record `serving_share`, `adapter_share` and the serving track
   (raw score totals, earners, whether it switched on).
+- Edit `serving_share` only when no round is pending: a pending round embeds the
+  config installed when it first publishes.
 - Request volume is not paid yet; only grading scores are.
 
 ## Audit

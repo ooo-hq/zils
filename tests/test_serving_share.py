@@ -136,6 +136,16 @@ class FreezeTest(unittest.TestCase):
             self.write(text)
             self.assertEqual(serving_share.freeze(self.cfg, NOW)["scores"], {})
 
+    def test_nan_outside_score_is_dropped_and_freeze_is_json_safe(self):
+        self.write('{"a": {"m": {"score": 1.0, "pass_rate": NaN}}}')
+        frozen = serving_share.freeze(self.cfg, NOW)
+        self.assertEqual(frozen["scores"], {"a": {"m": {"score": 1.0}}})
+        json.dumps(frozen, allow_nan=False)
+
+    def test_future_mtime_is_not_fresh(self):
+        self.write({"a": {"m": entry(1)}}, age=-3600)
+        self.assertEqual(serving_share.freeze(self.cfg, NOW)["scores"], {})
+
     def test_stale(self):
         self.write({"a": {"m": entry(1)}}, age=3601)
         frozen = serving_share.freeze(self.cfg, NOW)

@@ -66,13 +66,13 @@ def freeze(config, now):
     if (
         isinstance(data, dict)
         and written is not None
-        and now - written <= config["max_age_seconds"]
+        and -60 <= now - written <= config["max_age_seconds"]  # a future mtime is a skewed clock
     ):
         for hotkey, models in data.items():
             if not isinstance(models, dict):
                 continue
-            kept = {
-                m: s
+            kept = {  # only what pays: other fields could carry NaN the frozen JSON refuses
+                m: {"score": float(s["score"])}
                 for m, s in models.items()
                 if isinstance(s, dict) and _number(s.get("score")) and s["score"] >= 0
             }
