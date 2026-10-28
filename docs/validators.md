@@ -266,3 +266,10 @@ data stays private, so other validators can audit the export but not re-score it
 The [first verified testnet round](testnet-round-001.md) demonstrates this closed
 path. It does not establish current validator uptime, open access, mainnet
 support, or queue training-to-chain integration.
+
+### 8. Pay the serving share
+
+Off by default. With a `serving_share` section the validator pays a share of the
+vector to miners that serve z3 checkpoints, from the scores its
+[serving grader](serving-validators.md#pay) writes. The share burns until enough
+miners earn it.

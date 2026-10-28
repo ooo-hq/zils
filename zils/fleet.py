@@ -231,6 +231,10 @@ def main(argv=None):
             from . import feature_tracks
 
             feature_tracks.validate_budget(config)
+        if "serving_share" in config:
+            from . import serving_share
+
+            serving_share.validate_budget(config)
         if "base_tier" in config:
             from . import base_round
 

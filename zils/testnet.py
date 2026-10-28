@@ -295,6 +295,19 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
         ):
             raise ValueError("feature report differs from the configured feature_tracks config")
         feature_tracks.weights(features, feature_report["decisions"], config["members"])
+    serving, serving_report = config.get("serving_share"), report.get("serving_share")
+    if serving is not None or serving_report is not None:
+        from . import serving_share
+
+        if (
+            serving is None
+            or not isinstance(serving_report, dict)
+            or set(serving_report) != {"config", "frozen"}
+            or serving_report["config"] != serving_share.validate(serving)
+        ):
+            raise ValueError("serving report differs from the configured serving_share config")
+        if pools is None:
+            raise ValueError("serving_share requires base_pools, not legacy base_tier")
     for path in (receipt_path, attempt_path):
         if path.exists():
             saved = json.loads(path.read_text())
@@ -362,15 +375,30 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
             feature_vector, feature_record = feature_tracks.weights(
                 features, feature_report["decisions"], config["members"]
             )
-        adapter_share = 1 - share - feature_share
+        vectors = {"base": base, "features": feature_vector}
+        shares = {"base": share, "features": feature_share}
+        serving_share_, serving_vector, serving_record = 0.0, {}, None
+        if serving is not None:
+            serving_share_ = serving["share"]
+            serving_vector, serving_record = serving_share.weights(
+                serving, serving_report["frozen"], config["members"]
+            )
+            # Raw summed scores; blend_weights takes each weight in [0, 1].
+            total = sum(serving_vector.values())
+            vectors["serving"] = {uid: w / total for uid, w in serving_vector.items()}
+            shares["serving"] = serving_share_
+        adapter_share = 1 - share - feature_share - serving_share_
+        if adapter_share < -1e-9:
+            raise ValueError("base, feature and serving shares exceed the reward budget")
+        adapter_share = max(0.0, adapter_share)  # a budget filled to exactly 1 can round below 0
         weights = zils.blend_weights(
-            {"base": base, "features": feature_vector, "adapter": adapter},
-            {"base": share, "features": feature_share, "adapter": adapter_share},
-            burn_uid=burn,
+            {**vectors, "adapter": adapter}, {**shares, "adapter": adapter_share}, burn_uid=burn
         )
         burned = share * pool_record["burned"] + (0 if adapter else adapter_share)
         if feature_record is not None:
             burned += feature_share * feature_record["burned"]
+        if serving_record is not None:
+            burned += serving_share_ if not serving_vector else 0
         if burned > 0 and burn != state["owner_uid"]:
             raise ValueError("base_pools.burn_uid must be the subnet owner hotkey's uid")
         tracks = {
@@ -386,6 +414,15 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
                     "features": feature_record,
                 }
                 if feature_record is not None
+                else {}
+            ),
+            **(
+                {
+                    "serving_share": serving_share_,
+                    "adapter_share": adapter_share,
+                    "serving": serving_record,
+                }
+                if serving_record is not None
                 else {}
             ),
         }

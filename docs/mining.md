@@ -176,6 +176,16 @@ paid to the subnet owner's hotkey and keeps the owner's own self-weight, so
 the validator refuses to publish a burn slice unless `burn_uid` is the subnet
 owner hotkey's uid at that block.
 
+With a `serving_share` section, serving is a third track: miners that serve
+z3 checkpoints and pass the validator's [serving grader](serving-validators.md)
+earn `serving_share.share` of the vector (for example **0.10**). To keep base
+and adapters in their old proportion, operators lower `base_pools.share` from
+0.7 to 0.63; adapters take what is left (0.27). A miner's serving weight is the
+sum of its per-model serving scores. The serving share burns, like any empty
+track, until `switch_on_miners` different miners earn it, and whenever the
+grader's scores are missing or older than `max_age_seconds`. Request volume is
+not paid yet: the serving share is paid on grading scores only.
+
 Anti-gaming: one adapter submission per hotkey per round and one base candidate
 commitment per hotkey on chain; a claim cannot change within a round; a candidate
 hash another hotkey committed at an earlier block is refused; every
