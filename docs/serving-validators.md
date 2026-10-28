@@ -2,8 +2,10 @@
 
 A validator can grade miners that serve z3 checkpoints ([serving miners](serving-miners.md)).
 The grader checks that each miner answers real requests, and that its answers match
-the validator's own run of the same pinned model. It reads the chain. It sets no
-weights and writes nothing to the chain; it only keeps scores and evidence on disk.
+the validator's own run of the same pinned model. It reads the chain. The grader
+itself sets no weights and writes nothing to the chain; it only keeps scores and
+evidence on disk. The validator pays from those scores when `serving_share` is
+configured (see [Pay](#pay)).
 
 ## What it does each round
 
@@ -139,6 +141,35 @@ All are in `state`.
   signed answers), `mean`, `worst`, `latency_s` and `outcome`. It holds miner
   answers and grows without limit. To rotate, rename it. The grader opens the file
   for each write, so a renamed file is safe and a new one starts.
+
+## Pay
+
+Add a `serving_share` section to the validator's fleet config to pay serving
+miners from the grader's scores:
+
+```json
+"serving_share": {
+  "share": 0.10,
+  "scores": "/path/to/state-dir/serving-scores.json",
+  "switch_on_miners": 3,
+  "max_age_seconds": 3600
+}
+```
+
+- It requires `base_pools`. `base_pools.share` + `feature_tracks.share` +
+  `serving_share.share` must not exceed 1; adapters take the rest. The fleet
+  refuses a config over budget.
+- A miner's serving weight is the sum of its `score` over the models it serves,
+  normalized over the serving earners. Only registered hotkeys count.
+- The share burns at `base_pools.burn_uid` until `switch_on_miners` different
+  miners have a score above 0, and whenever the scores file is missing, corrupt,
+  larger than 8 MiB or older than `max_age_seconds`.
+- The validator freezes the scores file into the round (`serving-scores.json`
+  in the round's work directory) the first time it publishes. The report embeds
+  it, so the report hash binds it and a retry pays the same vector.
+- Chain attempts record `serving_share`, `adapter_share` and the serving track
+  (raw score totals, earners, whether it switched on).
+- Request volume is not paid yet; only grading scores are.
 
 ## Audit
 
