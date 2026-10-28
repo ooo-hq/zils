@@ -94,14 +94,20 @@ def verify(message, kind, hotkey, now):
     return payload
 
 
+def public_endpoint(endpoint):
+    """Return `endpoint` if it is a globally routable IPv4 endpoint; nothing may connect to anything else."""
+    address, _ = protocol.endpoint_port(endpoint)
+    if not address.is_global or address.is_multicast:
+        raise ValueError("endpoint must be a public IPv4 address")
+    return endpoint
+
+
 def validate_manifest(payload):
     """Check a verified manifest payload and return its served models."""
     served = payload.get("models")
     if payload.get("version") != VERSION:
         raise ValueError("unsupported serving version")
-    address, _ = protocol.endpoint_port(payload.get("endpoint"))
-    if not address.is_global or address.is_multicast:
-        raise ValueError("endpoint must be a public IPv4 address")
+    public_endpoint(payload["endpoint"])
     family = models.d3_family()
     if not isinstance(served, list) or not 1 <= len(served) <= len(family):
         raise ValueError("manifest must list 1 to %d models" % len(family))
@@ -119,3 +125,29 @@ def validate_manifest(payload):
     if len({item["model"] for item in served}) != len(served):
         raise ValueError("duplicate model")
     return served
+
+
+def fetch_manifest(endpoint, timeout=5.0):
+    with protocol.opener().open(endpoint + "/v1/serving", timeout=timeout) as response:
+        data = response.read(MAX_MANIFEST_BYTES + 1)
+    if len(data) > MAX_MANIFEST_BYTES:
+        raise ValueError("manifest too large")
+    try:
+        return json.loads(data)
+    except ValueError:
+        raise ValueError("manifest is not JSON") from None
+
+
+def discover(axons, now, fetch=fetch_manifest):
+    """{uid: {"hotkey", "endpoint", "models"} or {"error"}}; one bad miner never raises."""
+    found = {}
+    for uid, (hotkey, endpoint) in axons.items():
+        try:
+            payload = verify(fetch(public_endpoint(endpoint)), "manifest", hotkey, now)
+            served = validate_manifest(payload)
+            if payload["endpoint"] != endpoint:
+                raise ValueError("manifest endpoint does not match the on-chain axon")
+            found[uid] = {"hotkey": hotkey, "endpoint": endpoint, "models": served}
+        except Exception as error:  # fetch can fail in many ways (OSError, http.client, JSON)
+            found[uid] = {"error": str(error) or type(error).__name__}
+    return found

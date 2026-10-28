@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import ipaddress
 import json
 from contextlib import contextmanager
 from importlib.metadata import version
@@ -124,6 +125,53 @@ def write_commitment(config, sub, wallet, text):
     if not result.success:
         raise ValueError(f"commitment not included: {result.error or 'unknown error'}")
     return result
+
+
+def read_axon(sub, netuid, hotkey, block):
+    """The hotkey's served IPv4 endpoint at `block`, or None."""
+    axon = sub.query(("SubtensorModule", "Axons"), [netuid, hotkey], block=block)
+    if not axon or axon["ip_type"] != 4 or not axon["ip"] or not axon["port"]:
+        return None
+    return f"http://{ipaddress.IPv4Address(axon['ip'])}:{axon['port']}"
+
+
+def write_axon(config, sub, wallet, endpoint):
+    """Sign `SubtensorModule.serve_axon` with the hotkey, announcing an IPv4 endpoint."""
+    import bittensor as bt
+
+    from . import protocol
+
+    netuid = check_config(config)
+    address, port = protocol.endpoint_port(endpoint)
+    call = bt.calls.SubtensorModule.serve_axon(
+        netuid=netuid,
+        version=1,
+        ip=int(address),
+        port=port,
+        ip_type=4,
+        protocol=4,
+        placeholder1=0,
+        placeholder2=0,
+    )
+    result = sub.submit_call(
+        call, wallet, signer="hotkey", wait_for_inclusion=True, wait_for_finalization=True
+    )
+    if not result.success:
+        raise ValueError(f"axon not included: {result.error or 'unknown error'}")
+    return result
+
+
+def serving_axons(config, sub):
+    """{uid: (hotkey, endpoint)} for every registered uid with an axon, read at one block."""
+    netuid = check_config(config)
+    block = sub.block
+    found = {}
+    for uid in range(int(sub.query(("SubtensorModule", "SubnetworkN"), [netuid], block=block) or 0)):
+        hotkey = sub.query(("SubtensorModule", "Keys"), [netuid, uid], block=block)
+        endpoint = hotkey and read_axon(sub, netuid, hotkey, block)
+        if endpoint:
+            found[uid] = (hotkey, endpoint)
+    return found
 
 
 def preflight(config, sub):

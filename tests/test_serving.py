@@ -111,5 +111,74 @@ class ServingProtocolTest(unittest.TestCase):
         self._rejects(self._signed(), now=879)
 
 
+@unittest.skipUnless(importlib.util.find_spec("bittensor_wallet"), "needs bittensor_wallet")
+class ServingDiscoveryTest(unittest.TestCase):
+    def setUp(self):
+        from bittensor_wallet import Keypair
+
+        self.miner = Keypair.create_from_seed("0x" + (bytes([1]) * 32).hex())
+        self.other = Keypair.create_from_seed("0x" + (bytes([2]) * 32).hex())
+        self.served = [{"model": "d3-mini-4.5b-v1", "weights_sha256": "a" * 64, "max_input_tokens": 1024}]
+
+    def _manifest(self, endpoint):
+        body = serving.manifest_body(self.miner.ss58_address, endpoint, self.served, now=100)
+        return serving.sign(self.miner, "manifest", body)
+
+    def test_discover_accepts_matching_manifest(self):
+        ep = "http://8.8.8.8:8091"
+        out = serving.discover({3: (self.miner.ss58_address, ep)}, now=100, fetch=lambda e: self._manifest(ep))
+        self.assertEqual(out[3], {"hotkey": self.miner.ss58_address, "endpoint": ep, "models": self.served})
+
+    def test_discover_rejects_copied_manifest_and_wrong_signer(self):
+        ep_a, ep_b = "http://8.8.8.8:8091", "http://9.9.9.9:8091"
+        m = self._manifest(ep_a)
+        out = serving.discover({3: (self.miner.ss58_address, ep_b), 4: (self.other.ss58_address, ep_a)}, now=100, fetch=lambda e: m)
+        self.assertIn("error", out[3])
+        self.assertIn("error", out[4])
+
+    def test_discover_turns_fetch_failure_into_error(self):
+        def boom(_):
+            raise OSError("refused")
+
+        out = serving.discover({3: (self.miner.ss58_address, "http://8.8.8.8:8091")}, now=1, fetch=boom)
+        self.assertIn("error", out[3])
+
+    def test_discover_never_fetches_non_public_endpoints(self):
+        calls = []
+        axons = {i: (self.miner.ss58_address, ep) for i, ep in enumerate(
+            ["http://127.0.0.1:8091", "http://10.0.0.5:8091", "http://169.254.169.254:80"])}
+        out = serving.discover(axons, now=1, fetch=calls.append)
+        self.assertEqual(calls, [])
+        self.assertTrue(all("error" in v for v in out.values()))
+        with self.assertRaises(ValueError):
+            serving.public_endpoint("http://192.168.1.1:8091")
+        self.assertEqual(serving.public_endpoint("http://8.8.8.8:8091"), "http://8.8.8.8:8091")
+
+    def test_fetch_manifest_reads_json_and_caps_size(self):
+        import json
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from threading import Thread
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = json.dumps({"x": "y" * serving.MAX_MANIFEST_BYTES} if self.path == "/big/v1/serving" else {"ok": 1}).encode()
+                if self.path == "/v1/serving" or self.path == "/big/v1/serving":
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        ep = "http://127.0.0.1:%d" % server.server_port
+        self.assertEqual(serving.fetch_manifest(ep), {"ok": 1})
+        with self.assertRaises(ValueError):
+            serving.fetch_manifest(ep + "/big")
+
+
 if __name__ == "__main__":
     unittest.main()
