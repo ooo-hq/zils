@@ -296,16 +296,30 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
             raise ValueError("feature report differs from the configured feature_tracks config")
         feature_tracks.weights(features, feature_report["decisions"], config["members"])
     serving, serving_report = config.get("serving_share"), report.get("serving_share")
+    receipts_payload = None
     if serving is not None or serving_report is not None:
         from . import serving_share
 
         if (
             serving is None
             or not isinstance(serving_report, dict)
-            or set(serving_report) != {"config", "frozen"}
+            or set(serving_report)
+            != {"config", "frozen"} | ({"receipts"} if "receipts" in serving else set())
             or serving_report["config"] != serving_share.validate(serving)
         ):
             raise ValueError("serving report differs from the configured serving_share config")
+        if "receipts" in serving:  # the signature binds the rows; the window must be this round's
+            receipts_payload = serving_share.verify_receipts(
+                serving_report["receipts"], serving["receipts"]
+            )
+            from datetime import datetime
+
+            until = datetime.fromisoformat(receipts_payload["until"].replace("Z", "+00:00"))
+            # Fetched for the whole UTC hour at or before the freeze; a later or odd window is not.
+            if until != until.replace(minute=0, second=0, microsecond=0) or (
+                until.timestamp() > serving_report["frozen"]["frozen_at"]
+            ):
+                raise ValueError("serving receipts window is not this round's")
         if pools is None:
             raise ValueError("serving_share requires base_pools, not legacy base_tier")
     for path in (receipt_path, attempt_path):
@@ -380,13 +394,18 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
         serving_share_, serving_vector, serving_record = 0.0, {}, None
         if serving is not None:
             serving_share_ = serving["share"]
-            serving_vector, serving_record = serving_share.weights(
-                serving, serving_report["frozen"], config["members"]
+            serving_vector, volume_vector, serving_record = serving_share.weights(
+                serving, serving_report["frozen"], config["members"], receipts_payload
             )
+            volume_share = serving["volume_share"] if receipts_payload else 0.0
             # Raw summed scores; blend_weights takes each weight in [0, 1].
             total = sum(serving_vector.values())
             vectors["serving"] = {uid: w / total for uid, w in serving_vector.items()}
-            shares["serving"] = serving_share_
+            shares["serving"] = serving_share_ * (1 - volume_share)
+            if receipts_payload:
+                total = sum(volume_vector.values())
+                vectors["serving_volume"] = {uid: w / total for uid, w in volume_vector.items()}
+                shares["serving_volume"] = serving_share_ * volume_share
         adapter_share = 1 - share - feature_share - serving_share_
         if adapter_share < -1e-9:
             raise ValueError("base, feature and serving shares exceed the reward budget")
@@ -398,7 +417,9 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
         if feature_record is not None:
             burned += feature_share * feature_record["burned"]
         if serving_record is not None:
-            burned += serving_share_ if not serving_vector else 0
+            burned += shares["serving"] if not serving_vector else 0
+            if receipts_payload:
+                burned += shares["serving_volume"] if not volume_vector else 0
         if burned > 0 and burn != state["owner_uid"]:
             raise ValueError("base_pools.burn_uid must be the subnet owner hotkey's uid")
         tracks = {
@@ -421,6 +442,11 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
                     "serving_share": serving_share_,
                     "adapter_share": adapter_share,
                     "serving": serving_record,
+                    **(
+                        {"serving_volume_share": shares["serving_volume"]}
+                        if receipts_payload
+                        else {}
+                    ),
                 }
                 if serving_record is not None
                 else {}

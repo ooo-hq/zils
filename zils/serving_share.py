@@ -3,7 +3,15 @@
 import json
 import math
 import os
+from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
+from .queue_evidence import HEX64, SS58, iso
+from .runtime import verified
+
+SCHEMA = "zils-serving-receipts/v1"
+HOP = {"hotkey", "model", "weights_sha256", "answered", "input_tokens", "failed"}
+CHECK = {"hotkey", "pass", "marginal", "fail", "mismatch"}
 MAX_SCORES_BYTES = 8 << 20
 
 
@@ -15,15 +23,31 @@ def _number(x):
 
 
 def validate(config):
-    if not isinstance(config, dict) or set(config) != {
-        "share",
-        "scores",
-        "switch_on_miners",
-        "max_age_seconds",
-    }:
+    base = {"share", "scores", "switch_on_miners", "max_age_seconds"}
+    if not isinstance(config, dict) or set(config) not in (
+        base,
+        base | {"receipts", "volume_share"},
+    ):
         raise ValueError(
-            "serving_share requires share, scores, switch_on_miners and max_age_seconds"
+            "serving_share requires share, scores, switch_on_miners and max_age_seconds, "
+            "and receipts only together with volume_share"
         )
+    if "receipts" in config:
+        receipts, volume = config["receipts"], config["volume_share"]
+        if not _number(volume) or not 0 <= volume <= 1:
+            raise ValueError("serving_share volume_share must be finite and in [0, 1]")
+        if not isinstance(receipts, dict) or set(receipts) != {"url", "signer", "window_hours"}:
+            raise ValueError("serving_share receipts needs exactly url, signer and window_hours")
+        if not isinstance(receipts["url"], str) or not (
+            receipts["url"].startswith("https://")
+            or receipts["url"].startswith("http://127.0.0.1:")
+        ):
+            raise ValueError("serving_share receipts url must be https")
+        if not isinstance(receipts["signer"], str) or not SS58.fullmatch(receipts["signer"]):
+            raise ValueError("serving_share receipts signer must be an ss58 hotkey")
+        hours = receipts["window_hours"]
+        if type(hours) is not int or not 1 <= hours <= 720:
+            raise ValueError("serving_share receipts window_hours must be an integer in 1..720")
     share, path = config["share"], config["scores"]
     if not _number(share) or not 0 <= share <= 1:
         raise ValueError("serving_share share must be finite and in [0, 1]")
@@ -81,17 +105,89 @@ def freeze(config, now):
     return {"written_at": written, "frozen_at": now, "scores": scores}
 
 
-def weights(config, frozen, members):
+def _count(x):
+    return type(x) is int and 0 <= x < 2**53  # exact as a float
+
+
+def verify_receipts(message, receipts, until=None):
+    """The pinned signer's receipts for exactly this window, or ValueError."""
+    payload = verified(message, receipts["signer"])
+    if payload.get("schema") != SCHEMA or payload.get("signer") != receipts["signer"]:
+        raise ValueError("serving receipts schema or signer differs")
+    try:
+        end = datetime.fromisoformat(payload["until"].replace("Z", "+00:00"))
+        start = datetime.fromisoformat(payload["since"].replace("Z", "+00:00"))
+    except (KeyError, AttributeError, ValueError):
+        raise ValueError("serving receipts window is invalid") from None
+    if (until is not None and end != until) or end - start != timedelta(
+        hours=receipts["window_hours"]
+    ):
+        raise ValueError("serving receipts are for another window")
+    hops, checks = payload.get("hops"), payload.get("checks")
+    if not isinstance(hops, list) or not isinstance(checks, list):
+        raise ValueError("serving receipts need hops and checks")
+    for row in hops:
+        if (
+            not isinstance(row, dict)
+            or set(row) != HOP
+            or not isinstance(row["hotkey"], str)
+            or not SS58.fullmatch(row["hotkey"])
+            or not isinstance(row["model"], str)
+            or not isinstance(row["weights_sha256"], str)
+            or not HEX64.fullmatch(row["weights_sha256"])
+            or not _count(row["answered"])
+            or not _count(row["input_tokens"])
+            or not isinstance(row["failed"], dict)
+            or not all(isinstance(k, str) and _count(v) for k, v in row["failed"].items())
+        ):
+            raise ValueError("serving receipts hop is invalid")
+    for row in checks:
+        if (
+            not isinstance(row, dict)
+            or set(row) != CHECK
+            or not isinstance(row["hotkey"], str)
+            or not SS58.fullmatch(row["hotkey"])
+            or not all(_count(row[k]) for k in CHECK - {"hotkey"})
+        ):
+            raise ValueError("serving receipts check is invalid")
+    return payload
+
+
+def fetch_receipts(receipts, until):
+    from .protocol import opener
+
+    query = urlencode({"until": iso(until), "hours": receipts["window_hours"]})
+    with opener().open(f"{receipts['url']}?{query}", timeout=30) as response:
+        body = response.read(MAX_SCORES_BYTES + 1)
+    if len(body) > MAX_SCORES_BYTES:
+        raise ValueError("serving receipts are too large")
+    message = json.loads(body)
+    verify_receipts(message, receipts, until)
+    return message
+
+
+def weights(config, frozen, members, receipts=None):
     config = validate(config)
     uids = {m["hotkey"]: int(uid) for uid, m in members.items()}
+    struck = sorted(
+        {r["hotkey"] for r in receipts["checks"] if r["fail"] + r["mismatch"] > 0}
+        if receipts
+        else ()
+    )
     totals = {}
     for hotkey, models in frozen["scores"].items():
         total = sum(float(s["score"]) for s in models.values())
-        if hotkey in uids and math.isfinite(total) and total > 0:
+        if hotkey in uids and hotkey not in struck and math.isfinite(total) and total > 0:
             totals[uids[hotkey]] = total
     on = len(totals) >= config["switch_on_miners"]
     vector = totals if on else {}
-    return vector, {
+    volume = {}
+    if on and receipts:
+        for hop in receipts["hops"]:
+            uid = uids.get(hop["hotkey"])
+            if uid in vector and hop["input_tokens"]:
+                volume[uid] = volume.get(uid, 0) + hop["input_tokens"]
+    record = {
         "share": config["share"],
         "switch_on_miners": config["switch_on_miners"],
         "earners": len(totals),
@@ -100,3 +196,10 @@ def weights(config, frozen, members):
         "frozen_at": frozen["frozen_at"],
         "weights": {str(uid): w for uid, w in vector.items()},
     }
+    if receipts:
+        record |= {
+            "volume_share": config["volume_share"],
+            "struck": struck,
+            "volume": {str(uid): t for uid, t in sorted(volume.items())},
+        }
+    return vector, volume, record

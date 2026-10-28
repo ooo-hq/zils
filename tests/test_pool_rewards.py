@@ -309,5 +309,136 @@ class ServingShareTest(unittest.TestCase):
             publish(legacy, legacy_report)
 
 
+def receipts_fixture(hops=(), checks=(), switch_on=3):
+    from tests.test_serving_share import HK, KEY, UNTIL, receipt
+    from zils import model_pools, serving_share
+
+    scores = {HK[n]: {"m": {"score": 1.0}} for n in "ABC"}
+    config, report = serving_fixture(scores, switch_on=switch_on)
+    members = {str(i + 1): {"hotkey": HK[n]} for i, n in enumerate("ABC")}
+    serving = {
+        **config["serving_share"],
+        "volume_share": 0.3,
+        "receipts": {"url": "https://gateway/r", "signer": KEY.ss58_address, "window_hours": 24},
+    }
+    config = {**config, "members": members, "serving_share": serving}
+    for pool, king in (("d3-mini", "B"), ("d3-lite", "A")):
+        config["base_pools"]["pools"][pool]["kings"] = [HK[king]]
+    report["base_pools"]["config"] = model_pools.validate(config["base_pools"])
+    report = {
+        **report,
+        "identities": {uid: m["hotkey"] for uid, m in members.items()},
+        "serving_share": {
+            "config": serving_share.validate(serving),
+            # Frozen after the receipts window closed, as attach_serving_scores does.
+            "frozen": {**report["serving_share"]["frozen"], "frozen_at": UNTIL.timestamp() + 60},
+            "receipts": receipt(hops, checks),
+        },
+    }
+    return config, report
+
+
+class ServingReceiptsTest(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(promoted_profile())
+
+    def test_plan_3b_config_without_receipts_is_unchanged(self):
+        s1 = {"a": {"m": {"score": 1.0}}, "b": {"m": {"score": 2.0}}}
+        s2 = {
+            "a": {"m": {"score": 1.0}},
+            "b": {"m": {"score": 1.0}, "n": {"score": 1.0}},
+            "c": {"m": {"score": 2.0}},
+        }
+        for scores, owner, want, sha in (
+            (
+                s1,
+                0,
+                {"0": 0.1, "1": 0.36, "2": 0.54},
+                "d8f3e0efaedb4e67141fdef5a3272b71f163b1260e7f424f55ad81198482067d",
+            ),
+            (
+                s2,
+                7,
+                {"1": 0.38, "2": 0.5800000000000001, "3": 0.04000000000000001},
+                "76f8dc78c7d754d3a012ea83df2598dbde9cd37cb74c131d14ccbf3e323e5200",
+            ),
+        ):
+            result = publish(*serving_fixture(scores), owner_uid=owner)
+            self.assertEqual(result["requested_weights"], want)
+            self.assertEqual(digest(result["tracks"]), sha)
+
+    def test_no_traffic_burns_the_volume_share(self):
+        result = publish(*receipts_fixture())
+        w, t = result["requested_weights"], result["tracks"]
+        self.assertAlmostEqual(w["0"], 0.03)
+        self.assertAlmostEqual(w["3"], 0.07 / 3)
+        self.assertAlmostEqual(w["1"], 0.36 + 0.07 / 3)
+        self.assertAlmostEqual(t["burned"], 0.03)
+        self.assertAlmostEqual(t["serving_volume_share"], 0.03)
+        self.assertEqual(t["serving"]["volume"], {})
+
+    def test_volume_splits_by_tokens(self):
+        from tests.test_serving_share import hop
+
+        result = publish(*receipts_fixture([hop("A", 100), hop("A", 100, "n"), hop("B", 600)]))
+        w, t = result["requested_weights"], result["tracks"]
+        self.assertAlmostEqual(w["1"], 0.36 + 0.07 / 3 + 0.0075)
+        self.assertAlmostEqual(w["2"], 0.54 + 0.07 / 3 + 0.0225)
+        self.assertAlmostEqual(w["3"], 0.07 / 3)
+        self.assertNotIn("0", w)
+        self.assertAlmostEqual(t["burned"], 0.0)
+        self.assertEqual(t["serving"]["volume"], {"1": 200, "2": 600})
+
+    def test_struck_miner_gets_nothing_from_either_track(self):
+        from tests.test_serving_share import check, hop
+
+        config, report = receipts_fixture(
+            [hop("A", 100), hop("B", 100)], [check("A", mismatch=1)], switch_on=2
+        )
+        w = publish(config, report)["requested_weights"]
+        self.assertAlmostEqual(w["1"], 0.36)  # base and adapter only
+        self.assertAlmostEqual(w["2"], 0.54 + 0.035 + 0.03)
+        self.assertAlmostEqual(w["3"], 0.035)
+
+    def test_burn_requires_owner_uid(self):
+        with self.assertRaisesRegex(ValueError, "burn_uid"):
+            publish(*receipts_fixture(), owner_uid=7)
+
+    def test_receipts_window_must_have_closed_before_the_scores_froze(self):
+        # A correctly signed window from the future (or one not on a whole hour) is not this round's.
+        from datetime import timedelta
+
+        from tests.test_serving_share import UNTIL, iso, receipt
+
+        config, report = receipts_fixture()
+        later = UNTIL + timedelta(hours=2)
+        report["serving_share"]["receipts"] = receipt(
+            since=iso(later - timedelta(hours=24)), until=iso(later)
+        )
+        with self.assertRaisesRegex(ValueError, "window"):
+            publish(config, report)
+        config, report = receipts_fixture()
+        odd = UNTIL - timedelta(minutes=30)
+        report["serving_share"]["receipts"] = receipt(
+            since=iso(odd - timedelta(hours=24)), until=iso(odd)
+        )
+        with self.assertRaisesRegex(ValueError, "window"):
+            publish(config, report)
+
+    def test_receipts_must_verify_and_match_config(self):
+        from bittensor_wallet import Keypair
+
+        from tests.test_serving_share import receipt
+
+        config, report = receipts_fixture()
+        report["serving_share"]["receipts"] = receipt(key=Keypair.create_from_uri("//Other"))
+        with self.assertRaises(ValueError):
+            publish(config, report)
+        config, report = receipts_fixture()
+        del report["serving_share"]["receipts"]
+        with self.assertRaisesRegex(ValueError, "serving"):
+            publish(config, report)
+
+
 if __name__ == "__main__":
     unittest.main()

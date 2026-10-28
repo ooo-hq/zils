@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -425,17 +426,21 @@ def attach_serving_scores(config, work, report, now=None):
         return report
     from . import serving_share
 
-    frozen = work / "serving-scores.json"
+    settings = serving_share.validate(config["serving_share"])
+    now = time.time() if now is None else now
+    frozen, receipts = work / "serving-scores.json", work / "serving-receipts.json"
+    # Receipts first: a failed fetch raises before anything is frozen, so the retry starts clean.
+    if "receipts" in settings and not receipts.exists():
+        from . import queue_evidence
+
+        until = queue_evidence.window_end(datetime.fromtimestamp(now, UTC))
+        wire.write_json(receipts, serving_share.fetch_receipts(settings["receipts"], until))
     if not frozen.exists():
-        now = time.time() if now is None else now
         wire.write_json(frozen, serving_share.freeze(config["serving_share"], now))
-    return {
-        **report,
-        "serving_share": {
-            "config": serving_share.validate(config["serving_share"]),
-            "frozen": json.loads(frozen.read_text()),
-        },
-    }
+    out = {"config": settings, "frozen": json.loads(frozen.read_text())}
+    if "receipts" in settings:
+        out["receipts"] = json.loads(receipts.read_text())
+    return {**report, "serving_share": out}
 
 
 def publication_report(config, directory, work):
@@ -451,6 +456,11 @@ def publication_report(config, directory, work):
     ):
         if key in config and not (work / filename).is_file():
             raise ValueError(f"publication requires frozen {filename}")
+    if (
+        "receipts" in config.get("serving_share", {})
+        and not (work / "serving-receipts.json").is_file()
+    ):
+        raise ValueError("publication requires frozen serving-receipts.json")
     report = json.loads((work / "report.json").read_text())
     report = attach_base_tier(config, directory, work, report)
     report = attach_base_pools(config, directory, work, report)
