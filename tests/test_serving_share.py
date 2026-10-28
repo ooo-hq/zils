@@ -199,3 +199,72 @@ class WeightsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AttachTest(unittest.TestCase):
+    def setUp(self):
+        from pathlib import Path
+
+        d = tempfile.TemporaryDirectory()
+        self.addCleanup(d.cleanup)
+        self.work = Path(d.name)
+        self.src = os.path.join(d.name, "src.json")
+        self.cfg = {"serving_share": {**CFG, "scores": self.src}}
+        self.report = {"miners": []}
+
+    def test_unchanged_without_config(self):
+        from zils import validator
+
+        self.assertEqual(validator.attach_serving_scores({}, self.work, self.report), self.report)
+        self.assertFalse((self.work / "serving-scores.json").exists())
+
+    def test_frozen_on_first_call(self):
+        from zils import validator
+
+        with open(self.src, "w") as f:
+            json.dump({"hk": {"m": entry(1.0)}}, f)
+        first = validator.attach_serving_scores(self.cfg, self.work, self.report, os.stat(self.src).st_mtime)
+        with open(self.src, "w") as f:
+            json.dump({"hk": {"m": entry(9.0)}}, f)
+        again = validator.attach_serving_scores(self.cfg, self.work, self.report, 5.0)
+        self.assertEqual(again, first)
+        self.assertEqual(first["serving_share"]["config"], self.cfg["serving_share"])
+        self.assertEqual(first["serving_share"]["frozen"]["scores"]["hk"]["m"]["score"], 1.0)
+        self.assertNotIn("serving_share", self.report)
+
+    def test_missing_source_attaches_empty(self):
+        from zils import validator
+
+        out = validator.attach_serving_scores(self.cfg, self.work, self.report, NOW)
+        self.assertEqual(out["serving_share"]["frozen"]["scores"], {})
+
+    def test_publication_requires_frozen_file(self):
+        from zils import validator
+
+        (self.work / "report.json").write_text("{}")
+        with self.assertRaisesRegex(ValueError, "serving-scores.json"):
+            validator.publication_report(self.cfg, self.work, self.work)
+
+
+class FleetBudgetTest(unittest.TestCase):
+    def test_fleet_refuses_bad_serving_budget(self):
+        import contextlib
+        import io
+        from pathlib import Path
+
+        from zils import fleet, models
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "config.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "base_revision": models.spec(models.KEV)["base_revision"],
+                        "serving_share": CFG,
+                    }
+                )
+            )
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(SystemExit):
+                fleet.main(["validator", "--config", str(config)])
+            self.assertIn("serving_share requires base_pools", err.getvalue())

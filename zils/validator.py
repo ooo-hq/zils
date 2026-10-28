@@ -419,6 +419,26 @@ def attach_adapter_evidence(config, work, report, now=None):
     return {**report, "adapter_evidence": json.loads(frozen.read_text())}
 
 
+def attach_serving_scores(config, work, report, now=None):
+    """Embed the grader's serving scores, frozen with the round so a publication retry pays the same."""
+    if "serving_share" not in config:
+        return report
+    frozen = work / "serving-scores.json"
+    if not frozen.exists():
+        from . import serving_share
+
+        wire.write_json(frozen, serving_share.freeze(config["serving_share"], time.time() if now is None else now))
+    from . import serving_share
+
+    return {
+        **report,
+        "serving_share": {
+            "config": serving_share.validate(config["serving_share"]),
+            "frozen": json.loads(frozen.read_text()),
+        },
+    }
+
+
 def publication_report(config, directory, work):
     """Reconstruct only already-frozen evidence for a manual publication retry."""
     from . import feature_round
@@ -428,6 +448,7 @@ def publication_report(config, directory, work):
         ("base_pools", "base-pools.json"),
         ("feature_tracks", "feature-tracks.json"),
         ("adapter_evidence", "adapter-evidence.json"),
+        ("serving_share", "serving-scores.json"),
     ):
         if key in config and not (work / filename).is_file():
             raise ValueError(f"publication requires frozen {filename}")
@@ -435,7 +456,8 @@ def publication_report(config, directory, work):
     report = attach_base_tier(config, directory, work, report)
     report = attach_base_pools(config, directory, work, report)
     report = feature_round.attach(config, directory, work, report)
-    return attach_adapter_evidence(config, work, report)
+    report = attach_adapter_evidence(config, work, report)
+    return attach_serving_scores(config, work, report)
 
 
 def base_draws(config, directory):
@@ -1061,6 +1083,7 @@ def validator(config, directory, args):
                 )
             report = feature_round.attach(settings_for_round, directory, work, report)
             report = attach_adapter_evidence(settings_for_round, work, report)
+            report = attach_serving_scores(settings_for_round, work, report)
             fields = (
                 "uid",
                 "status",
