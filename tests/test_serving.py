@@ -53,11 +53,16 @@ class ServingProtocolTest(unittest.TestCase):
         self.assertEqual(serving.verify(signed, "request", self.other.ss58_address, now=200), p)
         with self.assertRaises(ValueError):
             serving.verify(signed, "request", self.other.ss58_address, now=221)
-        a = serving.answer_payload(serving.request_digest(p), "d3-mini-4.5b-v1", "a" * 64, {"q": 0.5})
+        a = serving.answer_payload(self.miner.ss58_address, serving.request_digest(p), "d3-mini-4.5b-v1", "a" * 64, {"q": 0.5})
         signed = serving.sign(self.miner, "answer", a)
         self.assertEqual(serving.verify(signed, "answer", self.miner.ss58_address, now=10**9), a)
         with self.assertRaises(ValueError):
             serving.verify(signed, "answer", self.other.ss58_address, now=0)
+
+    def test_answer_names_its_miner(self):
+        # A miner's valid signature over an answer naming another miner is refused.
+        a = serving.answer_payload(self.other.ss58_address, "b" * 64, "d3-mini-4.5b-v1", "a" * 64, {})
+        self._rejects(serving.sign(self.miner, "answer", a), "answer", self.miner.ss58_address)
 
     def test_manifest_rejects_bad_endpoint_and_version(self):
         for body in (
@@ -126,13 +131,13 @@ class ServingDiscoveryTest(unittest.TestCase):
 
     def test_discover_accepts_matching_manifest(self):
         ep = "http://8.8.8.8:8091"
-        out = serving.discover({3: (self.miner.ss58_address, ep)}, now=100, fetch=lambda e: self._manifest(ep))
+        out = serving.discover({3: (self.miner.ss58_address, ep)}, clock=lambda: 100, fetch=lambda e: self._manifest(ep))
         self.assertEqual(out[3], {"hotkey": self.miner.ss58_address, "endpoint": ep, "models": self.served})
 
     def test_discover_rejects_copied_manifest_and_wrong_signer(self):
         ep_a, ep_b = "http://8.8.8.8:8091", "http://9.9.9.9:8091"
         m = self._manifest(ep_a)
-        out = serving.discover({3: (self.miner.ss58_address, ep_b), 4: (self.other.ss58_address, ep_a)}, now=100, fetch=lambda e: m)
+        out = serving.discover({3: (self.miner.ss58_address, ep_b), 4: (self.other.ss58_address, ep_a)}, clock=lambda: 100, fetch=lambda e: m)
         self.assertIn("error", out[3])
         self.assertIn("error", out[4])
 
@@ -140,19 +145,39 @@ class ServingDiscoveryTest(unittest.TestCase):
         def boom(_):
             raise OSError("refused")
 
-        out = serving.discover({3: (self.miner.ss58_address, "http://8.8.8.8:8091")}, now=1, fetch=boom)
+        out = serving.discover({3: (self.miner.ss58_address, "http://8.8.8.8:8091")}, clock=lambda: 1, fetch=boom)
         self.assertIn("error", out[3])
 
     def test_discover_never_fetches_non_public_endpoints(self):
         calls = []
         axons = {i: (self.miner.ss58_address, ep) for i, ep in enumerate(
             ["http://127.0.0.1:8091", "http://10.0.0.5:8091", "http://169.254.169.254:80"])}
-        out = serving.discover(axons, now=1, fetch=calls.append)
+        out = serving.discover(axons, clock=lambda: 1, fetch=calls.append)
         self.assertEqual(calls, [])
         self.assertTrue(all("error" in v for v in out.values()))
         with self.assertRaises(ValueError):
             serving.public_endpoint("http://192.168.1.1:8091")
         self.assertEqual(serving.public_endpoint("http://8.8.8.8:8091"), "http://8.8.8.8:8091")
+
+    def test_discover_reads_the_clock_per_miner(self):
+        # A slow scan: each fetch takes 100 s. One `now` for the whole scan would age out the last
+        # manifests; the clock is read after each fetch, so every fresh manifest passes.
+        clock = [100]
+        endpoints = ["http://8.8.8.%d:8091" % i for i in range(1, 6)]
+
+        def slow_fetch(endpoint):
+            clock[0] += 100
+            body = serving.manifest_body(self.miner.ss58_address, endpoint, self.served, now=clock[0])
+            return serving.sign(self.miner, "manifest", body)
+
+        axons = {i: (self.miner.ss58_address, ep) for i, ep in enumerate(endpoints)}
+        out = serving.discover(axons, clock=lambda: clock[0], fetch=slow_fetch)
+        self.assertEqual([v.get("endpoint") for v in out.values()], endpoints)
+
+    def test_fetch_manifest_refuses_non_public_endpoints_itself(self):
+        for endpoint in ("http://127.0.0.1:8091", "http://10.0.0.5:8091", "http://169.254.169.254:80"):
+            with self.assertRaisesRegex(ValueError, "public IPv4"):
+                serving.fetch_manifest(endpoint)
 
     def test_validate_manifest_missing_endpoint_is_value_error(self):
         with self.assertRaises(ValueError):
@@ -184,7 +209,7 @@ class ServingDiscoveryTest(unittest.TestCase):
         self.addCleanup(server.shutdown)
         started = time.monotonic()
         with self.assertRaises(ValueError):
-            serving.fetch_manifest("http://127.0.0.1:%d" % server.server_port, timeout=0.5)
+            serving._fetch_manifest("http://127.0.0.1:%d" % server.server_port, timeout=0.5)
         self.assertLess(time.monotonic() - started, 2)
 
     def test_fetch_manifest_enforces_total_deadline_against_header_drip(self):
@@ -212,7 +237,7 @@ class ServingDiscoveryTest(unittest.TestCase):
         self.addCleanup(server.shutdown)
         started = time.monotonic()
         with self.assertRaises(ValueError):
-            serving.fetch_manifest("http://127.0.0.1:%d" % server.server_port, timeout=0.5)
+            serving._fetch_manifest("http://127.0.0.1:%d" % server.server_port, timeout=0.5)
         self.assertLess(time.monotonic() - started, 2)
 
     def test_fetch_manifest_reads_json_and_caps_size(self):
@@ -221,9 +246,11 @@ class ServingDiscoveryTest(unittest.TestCase):
         from threading import Thread
 
         class Handler(BaseHTTPRequestHandler):
+            big = False
+
             def do_GET(self):
-                body = json.dumps({"x": "y" * serving.MAX_MANIFEST_BYTES} if self.path == "/big/v1/serving" else {"ok": 1}).encode()
-                if self.path == "/v1/serving" or self.path == "/big/v1/serving":
+                body = json.dumps({"x": "y" * serving.MAX_MANIFEST_BYTES} if self.big else {"ok": 1}).encode()
+                if self.path == "/v1/serving":
                     self.send_response(200)
                     self.end_headers()
                     self.wfile.write(body)
@@ -236,9 +263,10 @@ class ServingDiscoveryTest(unittest.TestCase):
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
         ep = "http://127.0.0.1:%d" % server.server_port
-        self.assertEqual(serving.fetch_manifest(ep), {"ok": 1})
-        with self.assertRaises(ValueError):
-            serving.fetch_manifest(ep + "/big")
+        self.assertEqual(serving._fetch_manifest(ep, 5.0), {"ok": 1})
+        Handler.big = True
+        with self.assertRaisesRegex(ValueError, "too large"):
+            serving._fetch_manifest(ep, 5.0)
 
 
 if __name__ == "__main__":

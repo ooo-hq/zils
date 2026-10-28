@@ -23,7 +23,7 @@ from pathlib import Path
 
 import zils
 
-from . import commitments, models, serving, serving_server, testnet
+from . import commitments, models, testnet
 
 NETUID = 579
 REQUIRED_MODULES = ("bittensor", "bittensor_wallet", "huggingface_hub", "kev", "torch")
@@ -264,6 +264,8 @@ def commit_candidate(args):
 
 def serving_endpoint(args):
     """The endpoint this miner announces; refuses anything but a public IPv4 before any chain call."""
+    from . import serving  # lazy: doctor and update must run where bittensor_wallet is broken
+
     return serving.public_endpoint(f"http://{args.public_ip}:{args.port}")
 
 
@@ -315,8 +317,23 @@ def permit_checker(read, gateways):
     return allowed
 
 
+def gateway_hotkeys(values):
+    from bittensor_wallet import Keypair
+
+    for value in values:
+        try:
+            Keypair(ss58_address=value)
+        except ValueError:
+            raise ValueError(f"--gateway-hotkey {value!r} is not an SS58 address") from None
+    return set(values)
+
+
 def serve(args, interval=600.0):
+    """Exits (non-zero, through main) when the inference worker dies, so a supervisor restarts it."""
+    from . import serving_server
+
     endpoint = serving_endpoint(args)
+    gateways = gateway_hotkeys(args.gateway_hotkey or ())
     key = wallet(args).hotkey  # the coldkey is never read
     hotkey = key.ss58_address
     config = chain_config(args.netuid, args.network)
@@ -340,8 +357,8 @@ def serve(args, interval=600.0):
             f"the chain shows axon {announced or 'none'} for {hotkey}, not {endpoint}; run"
             f" zils announce-serving --public-ip {args.public_ip} --port {args.port} --yes first"
         )
-    loaded = [serving_server.load_served(path, "cuda") for path in args.checkpoint]
-    allowed = permit_checker(read_permits, set(args.gateway_hotkey or ()))
+    loaded = serving_server.start_worker(args.checkpoint, d3_python())
+    allowed = permit_checker(read_permits, gateways)
 
     def keep_fresh():
         while True:
@@ -350,8 +367,11 @@ def serve(args, interval=600.0):
 
     threading.Thread(target=keep_fresh, daemon=True).start()
     server = serving_server.make_server(key, endpoint, loaded, allowed, ("0.0.0.0", args.port), args.slots)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f"serving {', '.join(s.model for s in loaded)} at {endpoint}", flush=True)
-    server.serve_forever()
+    loaded[0].worker.exited.wait()
+    server.shutdown()
+    raise RuntimeError("the inference worker exited; restart zils serve")
 
 
 def doctor(args):

@@ -1,4 +1,9 @@
-"""Signed messages for miner-served inference: endpoint manifest, request and answer."""
+"""Signed messages for miner-served inference: endpoint manifest, request and answer.
+
+A manifest's `weights_sha256` is `checkpoint_hash(dir)` of the served checkpoint: for a base
+(`kind: "base"`) that covers only its model.json, because a base's weights are the pinned release
+(the worker refuses to start when a candidate-base override would swap them); for a candidate it
+covers the full weights."""
 
 import hashlib
 import http.client
@@ -20,10 +25,10 @@ MAX_MANIFEST_BYTES = 65536
 _FIELDS = {
     "manifest": {"version", "hotkey", "endpoint", "issued_at", "models"},
     "request": {"caller", "audience", "timestamp", "nonce", "model", "weights_sha256", "body"},
-    "answer": {"request_sha256", "model", "weights_sha256", "predictions"},
+    "answer": {"miner", "request_sha256", "model", "weights_sha256", "predictions"},
 }
-# Payload field naming the signer, and the timestamp checked for freshness (answers have neither time nor signer field).
-_SIGNER = {"manifest": "hotkey", "request": "caller"}
+# Payload field naming the signer, and the timestamp checked for freshness (answers carry no time).
+_SIGNER = {"manifest": "hotkey", "request": "caller", "answer": "miner"}
 _CLOCK = {"manifest": "issued_at", "request": "timestamp"}
 _HEX64 = re.compile(r"[a-f0-9]{64}")
 _SIG = re.compile(r"[a-f0-9]{128}")
@@ -62,8 +67,9 @@ def request_digest(payload):
     return hashlib.sha256(canonical("request", payload)).hexdigest()
 
 
-def answer_payload(request_sha256, model, weights_sha256, predictions):
+def answer_payload(miner, request_sha256, model, weights_sha256, predictions):
     return {
+        "miner": miner,
         "request_sha256": request_sha256,
         "model": model,
         "weights_sha256": weights_sha256,
@@ -132,7 +138,12 @@ def validate_manifest(payload):
 
 
 def fetch_manifest(endpoint, timeout=5.0):
-    """GET the manifest; `timeout` bounds the whole fetch (connect, headers, body), not each socket read."""
+    """GET the manifest from a public endpoint; `timeout` bounds the whole fetch (connect, headers, body)."""
+    return _fetch_manifest(public_endpoint(endpoint), timeout)
+
+
+def _fetch_manifest(endpoint, timeout):
+    """`fetch_manifest` without the public-address check; tests reach 127.0.0.1 through this."""
     address, port = protocol.endpoint_port(endpoint)  # numeric host: no DNS, no proxy, no redirects
     deadline = time.monotonic() + timeout
     conn = http.client.HTTPConnection(str(address), port, timeout=timeout)
@@ -180,12 +191,14 @@ def fetch_manifest(endpoint, timeout=5.0):
         raise ValueError("manifest is not JSON") from None
 
 
-def discover(axons, now, fetch=fetch_manifest):
-    """{uid: {"hotkey", "endpoint", "models"} or {"error"}}; one bad miner never raises."""
+def discover(axons, clock=time.time, fetch=fetch_manifest):
+    """{uid: {"hotkey", "endpoint", "models"} or {"error"}}; one bad miner never raises. The clock is
+    read after each fetch, so a slow scan never ages out the manifests fetched last."""
     found = {}
     for uid, (hotkey, endpoint) in axons.items():
         try:
-            payload = verify(fetch(public_endpoint(endpoint)), "manifest", hotkey, now)
+            message = fetch(public_endpoint(endpoint))
+            payload = verify(message, "manifest", hotkey, int(clock()))
             served = validate_manifest(payload)
             if payload["endpoint"] != endpoint:
                 raise ValueError("manifest endpoint does not match the on-chain axon")

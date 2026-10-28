@@ -1,51 +1,128 @@
-"""HTTP endpoint a miner runs: signed manifest on GET, hotkey-authenticated signed inference on POST."""
+"""HTTP endpoint a miner runs: signed manifest on GET, hotkey-authenticated signed inference on POST.
 
+This coordinator holds the hotkey and runs HTTP, auth, nonces, signing and deadlines in the miner's
+interpreter. Inference runs in a child process under the pinned d3 interpreter (zils/serving_worker.py),
+spoken to over JSON lines; `start_worker` starts it and returns one `Served` per checkpoint."""
+
+import itertools
 import json
+import queue
 import socket
+import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from . import decisions, models, serving
+from . import ROOT, decisions, serving
+
+MAX_QUESTIONS = 32
+PER_IP = 2  # concurrent connections one source address may hold
+
+
+def log(text):
+    """Operator log on stderr: exception classes and fixed text only, never request content."""
+    print(f"zils serve: {text}", file=sys.stderr, flush=True)
+
+
+class WorkerError(Exception):
+    """The worker refused one request: kind is "too_long", "invalid" or "runtime"."""
+
+    def __init__(self, kind):
+        super().__init__(kind)
+        self.kind = kind
+
+
+class Worker:
+    """The child process. Callers serialize requests (the server's inference lock); any timeout, broken
+    pipe or garbled reply kills the child, and every later call raises OSError."""
+
+    def __init__(self, process, timeout):
+        self.process, self.timeout = process, timeout
+        self.lines, self.ids, self.exited = queue.Queue(), itertools.count(), threading.Event()
+        threading.Thread(target=self._read, daemon=True).start()
+
+    def _read(self):
+        for line in self.process.stdout:
+            self.lines.put(line)
+        self.lines.put(None)
+        self.process.wait()
+        self.exited.set()
+
+    def stop(self):
+        self.process.kill()
+
+    def close(self):
+        """Stop the child and release its pipes."""
+        self.stop()
+        self.exited.wait()
+        for pipe in (self.process.stdin, self.process.stdout):
+            try:
+                pipe.close()
+            except OSError:  # a request left unflushed in a broken pipe
+                pass
+
+    def receive(self, timeout=None):
+        try:
+            line = self.lines.get(timeout=timeout)
+        except queue.Empty:
+            self.stop()
+            raise OSError("serving worker timed out") from None
+        if line is None:
+            self.lines.put(None)  # stays dead for the next caller
+            raise OSError("serving worker exited")
+        try:
+            return json.loads(line)
+        except ValueError:
+            self.stop()
+            raise OSError("serving worker wrote a malformed line") from None
+
+    def call(self, model, state, questions):
+        rid = next(self.ids)
+        try:
+            self.process.stdin.write(json.dumps({"id": rid, "model": model, "questions": questions, "state": state}) + "\n")
+            self.process.stdin.flush()
+        except (OSError, ValueError):  # broken pipe, or stdin already closed
+            raise OSError("serving worker exited") from None
+        reply = self.receive(self.timeout)
+        if not isinstance(reply, dict) or reply.get("id") != rid:
+            self.stop()
+            raise OSError("serving worker answered out of order")
+        return reply
 
 
 class Served:
-    """One loaded checkpoint: model, weights_sha256, max_input_tokens, count_tokens(), predict()."""
+    """One checkpoint the worker loaded: model, weights_sha256, max_input_tokens, predict()."""
 
-    def __init__(self, checkpoint, device):
-        from . import checkpoint_hash, d3
+    def __init__(self, worker, model, weights_sha256, max_input_tokens):
+        self.worker, self.model = worker, model
+        self.weights_sha256, self.max_input_tokens = weights_sha256, max_input_tokens
 
-        self.decision = d3.DecisionModel(checkpoint, device)
-        self.model = self.decision.meta["model"]
-        self.weights_sha256 = checkpoint_hash(checkpoint)
-        self.max_input_tokens = models.spec(self.model).get("max_input_tokens", 2048)
-        self._cache = {}
-
-    def _encode(self, state, question):
-        key = json.dumps([state, question], sort_keys=True)
-        if key not in self._cache:
-            if len(self._cache) >= 64:  # a rejected request leaves entries behind; bound them
-                self._cache.clear()
-            self._cache[key] = self.decision.encoder.inputs(state, question)
-        return self._cache[key]
-
-    def count_tokens(self, state, question):
-        return len(self._encode(state, question)[0])
-
-    def predict(self, state, question):
-        ids, keys = self._encode(state, question)
-        self._cache.pop(json.dumps([state, question], sort_keys=True))  # runs under the inference lock
-        probs = self.decision.probabilities(ids, keys, question, self.decision.meta["temperature"])
-        return probs, len(ids)
+    def predict(self, state, questions):
+        """{qid: {"probabilities", "input_tokens"}}; WorkerError on a refusal, OSError if the worker is gone."""
+        reply = self.worker.call(self.model, state, questions)
+        if "error" in reply:
+            raise WorkerError(reply["error"].get("kind") if isinstance(reply["error"], dict) else None)
+        return reply["predictions"]
 
 
-def load_served(checkpoint, device="cuda"):
-    checkpoint = Path(checkpoint)
-    meta = models.metadata(checkpoint)
-    if models.artifact_kind(checkpoint) == "adapter" or meta is None or meta["model"] not in models.d3_family():
-        raise ValueError("serving needs a public d3-family checkpoint, not an adapter")
-    return Served(checkpoint, device)
+def start_worker(checkpoints, python, args=("-m", "zils.serving_worker"), timeout=120.0):
+    """Start the worker under `python` (the d3 interpreter), wait while it loads, return its `Served`.
+    `timeout` bounds each request's inference, not the load."""
+    flags = [flag for path in checkpoints for flag in ("--checkpoint", str(Path(path).resolve()))]
+    process = subprocess.Popen(
+        [str(python), *args, *flags], cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+    )
+    worker = Worker(process, timeout)
+    try:
+        ready = worker.receive()
+        if ready.get("ready") is not True:
+            raise OSError("serving worker did not report ready")
+        return [Served(worker, **item) for item in ready["served"]]
+    except (OSError, AttributeError, KeyError, TypeError):
+        worker.close()
+        raise ValueError(f"serving worker failed to start (exit {process.wait()}); see its error above") from None
 
 
 class Refusal(Exception):
@@ -53,8 +130,21 @@ class Refusal(Exception):
         self.status, self.code, self.message = status, code, message
 
 
-def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time, deadline=15.0):
+# A worker refusal's HTTP answer; "runtime" and a lost worker are 503 (the node, not the caller).
+REFUSALS = {
+    "too_long": (413, "input_too_long", "Input exceeds the served token limit."),
+    "invalid": (422, "invalid_request", "Request could not be encoded."),
+}
+UNAVAILABLE = (503, "unavailable", "Inference is unavailable; retry later.")
+
+
+def make_server(
+    key, endpoint, served, allowed, bind, slots=8, clock=time.time, deadline=15.0, header_deadline=3.0
+):
+    """`deadline` bounds reading the whole request, `header_deadline` the request line and headers."""
     by_model = {s.model: s for s in served}
+    if len(by_model) != len(served):
+        raise ValueError("two served checkpoints have the same model")
     manifest = [
         {"model": s.model, "weights_sha256": s.weights_sha256, "max_input_tokens": s.max_input_tokens}
         for s in served
@@ -108,18 +198,22 @@ def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time, 
         except decisions.DecisionError as error:
             raise Refusal(error.status, error.code, str(error)) from None
         questions = body["questions"]
+        if len(questions) > MAX_QUESTIONS:
+            raise Refusal(413, "too_many_questions", "Request has more than %d questions." % MAX_QUESTIONS)
         with infer_lock:  # one request on the GPU at a time
             try:
-                if any(model.count_tokens(body["state"], q) > model.max_input_tokens for q in questions.values()):
-                    raise Refusal(413, "input_too_long", "Input exceeds the served token limit.")
-                predictions = {}
-                for qid, q in questions.items():
-                    probs, tokens = model.predict(body["state"], q)
-                    predictions[qid] = {"probabilities": probs, "input_tokens": tokens}
-            except ValueError:
-                raise Refusal(422, "invalid_request", "Request could not be encoded.") from None
+                predictions = model.predict(body["state"], questions)
+            except WorkerError as failure:
+                if failure.kind in REFUSALS:
+                    raise Refusal(*REFUSALS[failure.kind]) from None
+                log(f"inference failed (worker reported {failure.kind})")
+                raise Refusal(*UNAVAILABLE) from None
+            except OSError as failure:
+                log(f"inference failed ({type(failure).__name__}: {failure})")
+                raise Refusal(*UNAVAILABLE) from None
         digest = serving.request_digest(payload)
-        return serving.sign(key, "answer", serving.answer_payload(digest, model.model, model.weights_sha256, predictions))
+        signed = serving.answer_payload(key.ss58_address, digest, model.model, model.weights_sha256, predictions)
+        return serving.sign(key, "answer", signed)
 
     class Handler(BaseHTTPRequestHandler):
         timeout = 10  # per-read timeout; `deadline` below bounds the total
@@ -128,8 +222,14 @@ def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time, 
             super().setup()
             self.sent = False
             self.watchdog = threading.Timer(deadline, self.expire)  # total read deadline, trickle-proof
-            self.watchdog.daemon = True
-            self.watchdog.start()
+            self.headers_due = threading.Timer(header_deadline, self.expire)  # idle connections free fast
+            for timer in (self.watchdog, self.headers_due):
+                timer.daemon = True
+                timer.start()
+
+        def parse_request(self):
+            self.headers_due.cancel()
+            return super().parse_request()
 
         def expire(self):
             try:
@@ -139,6 +239,7 @@ def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time, 
 
         def finish(self):
             self.watchdog.cancel()
+            self.headers_due.cancel()
             try:
                 super().finish()
             except OSError:
@@ -166,8 +267,9 @@ def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time, 
                 super().handle_one_request()
             except OSError:  # client vanished mid-write
                 self.close_connection = True
-            except Exception:
+            except Exception as error:
                 self.close_connection = True
+                log(f"internal error ({type(error).__name__})")
                 if not self.sent:
                     try:
                         self.refuse(500, "internal_error", "Internal error.")
@@ -184,7 +286,7 @@ def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time, 
             if self.path != "/v1/systemone":
                 return self.refuse(404, "not_found", "Not found.")
             length = self.headers.get("Content-Length", "")
-            if not length.isdigit():
+            if not (length.isascii() and length.isdigit()):
                 self.close_connection = True
                 return self.refuse(411, "length_required", "Content-Length is required.")
             if int(length) > decisions.MAX_BODY:
@@ -207,12 +309,28 @@ def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time, 
     class Server(ThreadingHTTPServer):
         daemon_threads = True
         gate = threading.BoundedSemaphore(slots)
+        peers, peers_lock = {}, threading.Lock()  # open connections per source address
+        nonces = seen
 
         def handle_error(self, request, client_address):
             pass
 
+        def take(self, address):
+            with self.peers_lock:
+                if self.peers.get(address, 0) >= PER_IP or not self.gate.acquire(blocking=False):
+                    return False
+                self.peers[address] = self.peers.get(address, 0) + 1
+                return True
+
+        def give_back(self, address):
+            with self.peers_lock:
+                self.peers[address] -= 1
+                if not self.peers[address]:
+                    del self.peers[address]
+                self.gate.release()
+
         def process_request(self, request, client_address):
-            if not self.gate.acquire(blocking=False):
+            if not self.take(client_address[0]):
                 try:
                     request.sendall(
                         b"HTTP/1.0 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\n\r\n"
@@ -224,13 +342,13 @@ def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time, 
             try:
                 super().process_request(request, client_address)
             except BaseException:
-                self.gate.release()
+                self.give_back(client_address[0])
                 raise
 
         def process_request_thread(self, request, client_address):
             try:
                 super().process_request_thread(request, client_address)
             finally:
-                self.gate.release()
+                self.give_back(client_address[0])
 
     return Server(bind, Handler)

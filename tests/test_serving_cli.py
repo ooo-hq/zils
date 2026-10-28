@@ -133,30 +133,46 @@ class ServingCliTest(unittest.TestCase):
         self.assertEqual(self.chain.calls, [])
 
     def test_serve_refuses_when_axon_does_not_match(self):
-        with patch("zils.serving_server.load_served", Mock(return_value=Mock(model="z3-mini"))), patch(
-            "zils.serving_server.make_server"
-        ) as make:
+        with patch("zils.serving_server.start_worker") as start, patch("zils.serving_server.make_server") as make:
             code, out = self.run_miner("serve", "--checkpoint", "ckpt")
         self.assertEqual(code, 1)
         self.assertIn("announce-serving", out)
+        start.assert_not_called()
         make.assert_not_called()
 
-    def test_serve_allows_permit_holders_and_gateway(self):
+    def test_serve_allows_permit_holders_and_gateway_and_exits_with_its_worker(self):
+        from bittensor_wallet import Keypair
+
+        gateway = Keypair.create_from_seed("0x" + (bytes([10]) * 32).hex()).ss58_address
         self.run_miner("announce-serving", "--yes")
-        with patch("zils.serving_server.load_served", Mock(return_value=Mock(model="z3-mini"))), patch(
+        served = Mock(model="z3-mini")
+        with patch("zils.serving_server.start_worker", return_value=[served]) as start, patch(
             "zils.serving_server.make_server"
         ) as make:
-            code, out = self.run_miner(
-                "serve", "--checkpoint", "ckpt", "--gateway-hotkey", "gateway"
-            )
-        self.assertEqual(code, 0, out)
+            code, out = self.run_miner("serve", "--checkpoint", "ckpt", "--gateway-hotkey", gateway)
+        self.assertEqual(start.call_args.args, (["ckpt"], miner.d3_python()))
         self.assertEqual(self.raw_calls[-2:], [False, False])  # serve only reads
         allowed = make.call_args.args[3]
         self.assertEqual(make.call_args.args[4], ("0.0.0.0", 8091))
         self.assertEqual(
-            [allowed(self.validator), allowed("gateway"), allowed(self.stranger)],
+            [allowed(self.validator), allowed(gateway), allowed(self.stranger)],
             [True, True, False],
         )
+        # The (mock) worker has exited: serve stops its server and exits non-zero for its supervisor.
+        served.worker.exited.wait.assert_called_once_with()
+        make.return_value.shutdown.assert_called_once_with()
+        self.assertEqual(code, 1)
+        self.assertIn("inference worker exited", out)
+
+    def test_serve_refuses_a_malformed_gateway_hotkey_before_any_chain_call(self):
+        self.run_miner("announce-serving", "--yes")
+        reads = len(self.raw_calls)
+        with patch("zils.serving_server.start_worker") as start:
+            code, out = self.run_miner("serve", "--checkpoint", "ckpt", "--gateway-hotkey", "gateway")
+        self.assertEqual(code, 1)
+        self.assertIn("not an SS58 address", out)
+        self.assertEqual(len(self.raw_calls), reads)
+        start.assert_not_called()
 
     def test_permit_set_survives_a_failed_refresh(self):
         reads = [{"a"}, RuntimeError("chain down"), {"b"}]
@@ -175,6 +191,21 @@ class ServingCliTest(unittest.TestCase):
         self.assertTrue(allowed("a"))
         allowed.refresh()
         self.assertTrue(allowed("b") and not allowed("a"))
+
+
+class LazyServingImportTest(unittest.TestCase):
+    def test_miner_imports_without_serving_modules(self):
+        import subprocess
+        import sys
+
+        import zils
+
+        probe = (
+            "import sys, zils.miner\n"
+            "print(sorted(m for m in ('zils.serving', 'zils.serving_server') if m in sys.modules))"
+        )
+        done = subprocess.run([sys.executable, "-c", probe], cwd=zils.ROOT, capture_output=True, text=True)
+        self.assertEqual((done.returncode, done.stdout.strip()), (0, "[]"), done.stderr)
 
 
 if __name__ == "__main__":
