@@ -56,10 +56,12 @@ def answer(questions, behaviour):
 
 
 class FakeWorker:
-    def __init__(self):
-        self.closed = False
+    def __init__(self, on_close=None):
+        self.closed, self.on_close = False, on_close
 
     def close(self):
+        if self.on_close:
+            self.on_close()
         self.closed = True
 
 
@@ -156,9 +158,12 @@ class GraderTestBase(unittest.TestCase):
 
     def worker(self):
         self.starts += 1
+        self.events.append("start" if lock_is_free(self.lock) else "start-locked")
         if self.start_error:
             raise self.start_error
-        self.fake_worker = FakeWorker()
+        self.fake_worker = FakeWorker(
+            lambda: self.events.append("close" if lock_is_free(self.lock) else "close-locked")
+        )
         self.served = FakeServed(
             self.fake_worker, sha=self.served_sha, on_predict=self.predict_hook
         )
@@ -188,7 +193,6 @@ class GraderTestBase(unittest.TestCase):
         g = self.sg.Grader(
             self.config(**extra), self.catalog_read, self.worker, REQUEST_KEY, ask=self.ask
         )
-        self.addCleanup(g.close)
         return g
 
     def evidence(self):
@@ -260,7 +264,7 @@ class OutcomeTests(GraderTestBase):
         summary = self.scores_file()[hk][MODEL]
         self.assertEqual((summary["rounds"], summary["availability"]), (1, 0))
         self.assertEqual((summary["struck_until"], summary["score"]), (0, 0))
-        self.assertNotIn("predict", self.events)
+        self.assertEqual(self.starts, 0)  # nobody answered: the model is never loaded
 
     def test_first_miner_error_ends_that_miners_round(self):
         self.add_miner(0, "pass")
@@ -295,7 +299,9 @@ class SecretSubsetTests(GraderTestBase):
     def test_subset_chosen_after_all_answers_and_only_it_is_computed(self):
         hk = self.add_miner(0)
         self.grader().run_round("r1")
-        self.assertEqual(self.events, ["ask"] * 8 + ["predict"] * 3)
+        self.assertEqual(
+            self.events, ["ask"] * 8 + ["start-locked"] + ["predict"] * 3 + ["close-locked"]
+        )
         # the seed is secret because production round_ids are fresh uuid4s
         seed = serving_items.round_seed(VALIDATOR, "r1", hk, MODEL)
         bodies = serving_items.items(seed, 8)
@@ -337,62 +343,111 @@ class SecretSubsetTests(GraderTestBase):
 
 
 class LockAndReferenceTests(GraderTestBase):
-    def test_lock_held_only_while_computing_reference(self):
+    def hold_lock(self):
+        fd = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        self.addCleanup(os.close, fd)
+        return fd
+
+    def test_model_loads_and_unloads_inside_the_lock_every_round(self):
         self.add_miner(0)
         self.add_miner(1)
         self.on_ask = lambda _: self.assertTrue(lock_is_free(self.lock))
         self.on_predict = lambda: self.assertFalse(lock_is_free(self.lock))
-        self.grader().run_round("r1")
-        self.assertEqual([r["outcome"] for r in self.evidence()], ["pass", "pass"])
+        g = self.grader()
+        for r in ("r1", "r2"):
+            self.events.clear()
+            g.run_round(r)
+            self.assertEqual(
+                self.events,
+                ["ask"] * 16 + ["start-locked"] + ["predict"] * 6 + ["close-locked"],
+            )
+            self.assertTrue(self.fake_worker.closed)
+        self.assertEqual(self.starts, 2)
+        self.assertEqual([r["outcome"] for r in self.evidence()], ["pass"] * 4)
         self.assertTrue(lock_is_free(self.lock))
 
-    def test_lock_timeout_never_touches_scores(self):
+    def test_busy_lock_skips_the_round_without_asking(self):
+        hk = self.add_miner(0)
+        g = self.grader()
+        g.run_round("r1")
+        before = self.evidence()
+        fd = self.hold_lock()
+        self.asked.clear()
+        self.assertEqual(g.run_round("r2"), {"skipped": 1})
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        self.assertEqual(self.asked, [])
+        self.assertEqual(self.evidence(), before)
+        self.assertEqual(self.starts, 1)
+        self.assertEqual(self.scores_file()[hk][MODEL]["rounds"], 1)  # still rewritten
+
+    def test_unopenable_lock_skips_the_round_without_asking(self):
+        self.add_miner(0)
+        with patch.dict(os.environ, {"ZILS_COMPUTE_LOCK": str(self.tmp / "missing" / "x.lock")}):
+            self.assertEqual(self.grader().run_round("r1"), {"skipped": 1})
+        self.assertEqual((self.asked, self.evidence(), self.scores_file()), ([], [], {}))
+
+    def test_lock_timeout_after_asks_never_touches_scores(self):
         a, b = self.add_miner(0), self.add_miner(1)
-        fd = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        try:
-            self.grader(lock_wait_seconds=0).run_round("r1")
-        finally:
-            os.close(fd)
+        held = []
+        self.on_ask = lambda _: len(self.asked) == 16 and held.append(self.hold_lock())
+        self.grader(lock_wait_seconds=0).run_round("r1")
         self.assertEqual(
             {r["hotkey"]: r["outcome"] for r in self.evidence()},
             {a: "lock_timeout", b: "lock_timeout"},
         )
         self.assertEqual(self.scores_file(), {})
-        self.assertNotIn("predict", self.events)
+        self.assertEqual(self.starts, 0)
 
-    def test_worker_crash_never_touches_scores_and_restarts_next_round(self):
-        hk = self.add_miner(0)
+    def test_lock_open_error_after_asks_is_lock_timeout(self):
+        a, b = self.add_miner(0), self.add_miner(1)
+        missing = str(self.tmp / "missing" / "x.lock")
+        self.on_ask = lambda _: (
+            len(self.asked) == 16 and os.environ.update(ZILS_COMPUTE_LOCK=missing)
+        )
+        self.grader().run_round("r1")
+        self.assertEqual(
+            {r["hotkey"]: r["outcome"] for r in self.evidence()},
+            {a: "lock_timeout", b: "lock_timeout"},
+        )
+        self.assertEqual(self.scores_file(), {})
 
-        def crash():
-            raise OSError("serving worker exited")
+    def test_worker_crash_keeps_earlier_verdicts_and_never_scores_the_rest(self):
+        self.add_miner(0)
+        self.add_miner(1)
+        self.add_miner(2)
+        calls = []
 
-        self.on_predict = crash
+        def crash_on_second_miner():
+            calls.append(1)
+            if len(calls) == 4:
+                raise OSError("serving worker exited")
+
+        self.on_predict = crash_on_second_miner
         g = self.grader()
         g.run_round("r1")
-        self.assertEqual(self.evidence()[0]["outcome"], "reference_unavailable")
+        outcomes = [r["outcome"] for r in self.evidence()]
+        self.assertEqual(outcomes, ["pass", "reference_unavailable", "reference_unavailable"])
         self.assertTrue(self.fake_worker.closed)
-        self.assertEqual(self.scores_file(), {})
+        self.assertEqual(len(self.scores_file()), 1)
         self.on_predict = None
         g.run_round("r2")
         self.assertEqual(self.starts, 2)
-        self.assertEqual(self.evidence()[1]["outcome"], "pass")
-        self.assertEqual(self.scores_file()[hk][MODEL]["rounds"], 1)
+        self.assertEqual([r["outcome"] for r in self.evidence()][3:], ["pass"] * 3)
 
     def test_worker_refusal_is_reference_unavailable(self):
-
         def refuse():
             raise serving_server.WorkerError("runtime")
 
         a, b = self.add_miner(0), self.add_miner(1)
-        self.on_predict = lambda: refuse() if self.asked[-1][0] == first[0] else None
         first = []
         self.on_ask = lambda miner: first or first.append(miner)
+        calls = []
+        self.on_predict = lambda: (calls.append(1), len(calls) == 1 and refuse())
         self.grader().run_round("r1")
         outcomes = {r["hotkey"]: r["outcome"] for r in self.evidence()}
         other = ({a, b} - set(first)).pop()
         self.assertEqual(outcomes, {first[0]: "reference_unavailable", other: "pass"})
-        self.assertFalse(self.fake_worker.closed)
         self.assertEqual(self.starts, 1)
         self.assertEqual(set(self.scores_file()), {other})
 
@@ -403,19 +458,11 @@ class LockAndReferenceTests(GraderTestBase):
         g.run_round("r1")
         self.assertEqual(self.evidence()[0]["outcome"], "reference_unavailable")
         self.assertEqual(self.scores_file(), {})
+        self.assertTrue(lock_is_free(self.lock))
         self.start_error = None
         g.run_round("r2")
         self.assertEqual(self.starts, 2)
         self.assertEqual(self.evidence()[1]["outcome"], "pass")
-
-    def test_worker_started_once_and_closed(self):
-        self.add_miner(0)
-        g = self.grader()
-        g.run_round("r1")
-        g.run_round("r2")
-        self.assertEqual(self.starts, 1)
-        g.close()
-        self.assertTrue(self.fake_worker.closed)
 
     def test_refuses_worker_with_other_weights_or_missing_model(self):
         self.add_miner(0)
@@ -423,6 +470,7 @@ class LockAndReferenceTests(GraderTestBase):
         with self.assertRaises(self.sg.ReferenceMismatch):
             self.grader().run_round("r1")
         self.assertTrue(self.fake_worker.closed)
+        self.assertTrue(lock_is_free(self.lock))
         self.served_sha = SHA
         extra = {
             MODEL: {"reference": "x", "weights_sha256": SHA},
@@ -439,15 +487,22 @@ class LockAndReferenceTests(GraderTestBase):
         with self.assertRaises(self.sg.ReferenceMismatch):
             g.run_round("r1")
 
-    def test_lock_file_error_is_lock_timeout(self):
-        a, b = self.add_miner(0), self.add_miner(1)
-        with patch.dict(os.environ, {"ZILS_COMPUTE_LOCK": str(self.tmp / "missing" / "x.lock")}):
-            self.grader().run_round("r1")
-        self.assertEqual(
-            {r["hotkey"]: r["outcome"] for r in self.evidence()},
-            {a: "lock_timeout", b: "lock_timeout"},
-        )
-        self.assertEqual(self.scores_file(), {})
+
+class LockPathTests(unittest.TestCase):
+    def test_lock_path_uses_settings(self):
+        from zils import serving_grader
+
+        with patch.object(serving_grader.settings, "get", return_value="/x/lock") as get:
+            self.assertEqual(serving_grader.lock_path(), "/x/lock")
+        self.assertEqual(get.call_args.args[0], "ZILS_COMPUTE_LOCK")
+        self.assertTrue(get.call_args.args[1].endswith(f"fez-compute-{os.getuid()}-cuda.lock"))
+
+    def test_lock_path_honours_legacy_name(self):
+        from zils import serving_grader
+
+        env = {k: v for k, v in os.environ.items() if k != "ZILS_COMPUTE_LOCK"}
+        with patch.dict(os.environ, {**env, "FEZ_COMPUTE_LOCK": "/legacy/lock"}, clear=True):
+            self.assertEqual(serving_grader.lock_path(), "/legacy/lock")
 
 
 class RoundTests(GraderTestBase):
@@ -622,7 +677,6 @@ class RealServerTests(unittest.TestCase):
                 ask=functools.partial(serving.ask, check=lambda e: e),
             )
             g.run_round("real")
-            g.close()
         [row] = [
             json.loads(line)
             for line in (tmp / "state" / "serving-evidence.jsonl").read_text().splitlines()
@@ -632,6 +686,12 @@ class RealServerTests(unittest.TestCase):
             serving.verify(message, "answer", miner.ss58_address, int(time.time()))
         scores = json.loads((tmp / "state" / "serving-scores.json").read_text())
         self.assertEqual(scores[miner.ss58_address][MODEL]["score"], 1.0)
+
+
+def serving_grader_mismatch():
+    from zils import serving_grader
+
+    return serving_grader.ReferenceMismatch()
 
 
 class Stop(BaseException):
@@ -669,27 +729,50 @@ class MainTests(unittest.TestCase):
             "state": str(tmp / "state"),
         }
         (tmp / "config.json").write_text(json.dumps(self.base))
+        self.lock = str(tmp / "compute.lock")
+        env = patch.dict(os.environ, {"ZILS_COMPUTE_LOCK": self.lock})
+        env.start()
+        self.addCleanup(env.stop)
 
-    def run_main(self, served_sha=SHA, rounds=()):
+    def run_main(self, served_sha=SHA, rounds=(), expect=None):
         from zils import serving_grader
 
-        worker = FakeWorker()
+        closes, starts = [], []
+        worker = FakeWorker(lambda: closes.append(lock_is_free(self.lock)))
+
+        def start_worker(*a, **k):
+            starts.append(lock_is_free(self.lock))
+            return [FakeServed(worker, sha=served_sha)]
+
         with (
-            patch.object(
-                serving_server, "start_worker", lambda *a, **k: [FakeServed(worker, sha=served_sha)]
-            ),
+            patch.object(serving_server, "start_worker", start_worker),
             patch.object(serving_grader.Grader, "run_round", side_effect=[*rounds, Stop()]) as run,
             patch.object(serving_grader.time, "sleep", lambda s: None),
             patch.object(serving_grader, "log", lambda text: None),
-            self.assertRaises(serving_grader.ReferenceMismatch),
+            self.assertRaises(expect or serving_grader.ReferenceMismatch),
         ):
             serving_grader.main(["--config", str(self.tmp / "config.json")])
-        self.assertTrue(worker.closed)
+        self.starts, self.closes = starts, closes
         return run
+
+    def test_main_startup_check_loads_and_unloads_under_the_lock(self):
+        run = self.run_main(rounds=[serving_grader_mismatch()])
+        self.assertEqual((self.starts, self.closes), ([False], [False]))
+        self.assertEqual(run.call_count, 1)
+
+    def test_main_runs_anyway_when_lock_busy_at_startup(self):
+        fd = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        self.addCleanup(os.close, fd)
+        (self.tmp / "config.json").write_text(json.dumps({**self.base, "lock_wait_seconds": 0}))
+        run = self.run_main(served_sha="cd" * 32, expect=Stop)
+        self.assertEqual(self.starts, [])
+        self.assertEqual(run.call_count, 1)
 
     def test_main_stops_on_reference_mismatch_at_startup(self):
         run = self.run_main(served_sha="cd" * 32)
         self.assertEqual(run.call_count, 0)
+        self.assertEqual(self.closes, [False])
 
     def test_main_logs_other_errors_and_continues(self):
         from zils import serving_grader

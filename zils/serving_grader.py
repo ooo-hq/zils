@@ -18,7 +18,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import answer_check, serving, serving_items, serving_server
+from . import answer_check, serving, serving_items, serving_server, settings
 
 ASK_TIMEOUT = 30.0
 DEFAULTS = {
@@ -62,8 +62,10 @@ def write_atomic(path, value):
 
 
 def lock_path():
-    return os.environ.get("ZILS_COMPUTE_LOCK") or str(
-        Path(tempfile.gettempdir()) / f"fez-compute-{os.getuid()}-cuda.lock"
+    """The lookup zils.runtime uses, so the grader shares the validator's and training's lock."""
+    return settings.get(
+        "ZILS_COMPUTE_LOCK",
+        str(Path(tempfile.gettempdir()) / f"fez-compute-{os.getuid()}-cuda.lock"),
     )
 
 
@@ -149,8 +151,15 @@ class Scores:
         }
 
 
+def unload(served):
+    """Close the worker behind a {model: Served} (all share one process)."""
+    if served:
+        next(iter(served.values())).worker.close()
+
+
 class Grader:
-    """`catalog_read()` -> {uid: (hotkey, endpoint)}; `worker()` -> list of `Served` (started lazily)."""
+    """`catalog_read()` -> {uid: (hotkey, endpoint)}; `worker()` -> list of `Served`. The reference model
+    is loaded only while holding the compute lock and unloaded before releasing it, every round."""
 
     def __init__(self, config, catalog_read, worker, key, clock=time.time, ask=serving.ask):
         self.config = {**DEFAULTS, **config}
@@ -164,31 +173,30 @@ class Grader:
         self.scores = Scores(
             self.state / "serving-rounds.json", self.config["window_hours"], self.config["floor"]
         )
-        self.served = None
-
-    def close(self):
-        if self.served:
-            self.served[next(iter(self.served))].worker.close()
-            self.served = None
 
     def start(self):
-        """{model: Served}; None if the worker would not start (retried next round)."""
+        """{model: Served}, or None if the worker would not start. Call it holding the lock and close
+        the result with `unload`; a worker at other weights is closed and raises ReferenceMismatch."""
         try:
-            served = self.worker()
+            served = {s.model: s for s in self.worker()}
         except (OSError, ValueError, serving_server.WorkerError) as error:
             log(f"reference worker failed to start ({type(error).__name__})")
             return None
-        self.served = {s.model: s for s in served}
         for model, spec in self.models.items():
-            if (
-                model not in self.served
-                or self.served[model].weights_sha256 != spec["weights_sha256"]
-            ):
-                self.close()
+            if model not in served or served[model].weights_sha256 != spec["weights_sha256"]:
+                unload(served)
                 raise ReferenceMismatch(
                     f"reference worker does not serve {model} at the configured weights"
                 )
-        return self.served
+        return served
+
+    def check(self):
+        """Startup check: load, compare weights, unload, under the lock; skipped if the lock is busy."""
+        with compute_lock(self.config["lock_wait_seconds"]) as held:
+            if not held:
+                log("compute lock busy at startup; weights are checked in the first round")
+                return
+            unload(self.start() or {})
 
     def targets(self):
         found = serving.discover(self.catalog_read(), clock=self.clock)
@@ -207,51 +215,41 @@ class Grader:
 
     def run_round(self, round_id):
         began = time.monotonic()
-        stopped = None  # our own failure ends the round for every remaining miner
         outcomes = {}
-        targets = self.targets()
-        random.Random(round_id).shuffle(targets)  # the budget must not always starve the same uids
-        for hotkey, endpoint, model in targets:
-            if stopped is None and time.monotonic() - began >= self.config["round_seconds"]:
-                break  # over budget: later miners get no record this round
-            sha = self.models[model]["weights_sha256"]
-            seed = serving_items.round_seed(
-                self.config["validator_hotkey"], round_id, hotkey, model
-            )
-            row = {"seed": seed, "verified": None, "messages": None, "mean": None, "worst": None}
-            row["latency_s"] = None
-            if stopped:
-                row["outcome"] = stopped
-            else:
-                row.update(self.grade(hotkey, endpoint, model, sha, seed))
-                if row.pop("stop", False):
-                    stopped = row["outcome"]
-            outcomes[row["outcome"]] = outcomes.get(row["outcome"], 0) + 1
-            at = self.clock()
-            self.write_evidence(
-                {
-                    "kind": "validator",
-                    "at": at,
-                    "round_id": round_id,
-                    "hotkey": hotkey,
-                    "model": model,
-                    **row,
-                }
-            )
-            if row["outcome"] not in OURS:
-                self.scores.record(
-                    hotkey,
-                    model,
-                    {key: row[key] for key in ("outcome", "mean", "worst", "latency_s")}
-                    | {"at": at},
+        with compute_lock(0) as free:  # probe: a busy GPU means no requests at all this round
+            pass
+        if not free:
+            outcomes = {"skipped": 1}
+        else:
+            targets = self.targets()
+            random.Random(round_id).shuffle(targets)  # the budget must not starve the same uids
+            answered = []
+            for hotkey, endpoint, model in targets:
+                if time.monotonic() - began >= self.config["round_seconds"]:
+                    break  # over budget: later miners get no record this round
+                seed = serving_items.round_seed(
+                    self.config["validator_hotkey"], round_id, hotkey, model
                 )
+                row = {"hotkey": hotkey, "model": model, "seed": seed}
+                row.update(self.collect(hotkey, endpoint, model, seed))
+                if row["outcome"] is None:
+                    answered.append(row)
+                else:
+                    self.finish(round_id, row, outcomes)
+            if answered:
+                self.reference(answered)
+                for row in answered:
+                    self.finish(round_id, row, outcomes)
         now = self.clock()
         self.scores.prune(now)
         write_atomic(self.state / "serving-scores.json", self.scores.summaries(now))
         return outcomes
 
-    def grade(self, hotkey, endpoint, model, sha, seed):
+    def collect(self, hotkey, endpoint, model, seed):
+        """Ask one miner every question, one signed request each; outcome None once all answered
+        (graded later under the lock), else the first MinerError's reason."""
         questions, count = self.config["questions"], self.config["verified"]
+        sha = self.models[model]["weights_sha256"]
         bodies = serving_items.items(seed, questions)
         messages, began = [], time.monotonic()
         for body in bodies:
@@ -263,33 +261,65 @@ class Grader:
                     "latency_s": time.monotonic() - began,
                     "messages": messages or None,
                 }
-        latency = time.monotonic() - began
-        verified = sorted(random.Random(seed ^ 1).sample(range(questions), count))
-        done = {"latency_s": latency, "messages": messages, "verified": verified}
-        if self.served is None and self.start() is None:
-            return {**done, "outcome": "reference_unavailable", "stop": True}
-        ours, theirs = {}, {}
+        return {
+            "outcome": None,
+            "latency_s": time.monotonic() - began,
+            "messages": messages,
+            "bodies": bodies,
+            # chosen only now that every answer is in
+            "verified": sorted(random.Random(seed ^ 1).sample(range(questions), count)),
+        }
+
+    def reference(self, answered):
+        """One lock hold: load, grade every answered miner's verified subset, unload. Sets each outcome."""
         with compute_lock(self.config["lock_wait_seconds"]) as held:
             if not held:
-                return {**done, "outcome": "lock_timeout", "stop": True}
+                for row in answered:
+                    row["outcome"] = "lock_timeout"
+                return
+            served = self.start()
             try:
-                for i in verified:
-                    reference = self.served[model].predict(
-                        bodies[i]["state"], bodies[i]["questions"]
-                    )
-                    predictions = messages[i]["payload"]["predictions"]
-                    for qid in bodies[i]["questions"]:
-                        ours[f"{i}:{qid}"] = reference[qid]["probabilities"]
-                        theirs[f"{i}:{qid}"] = predictions[qid]["probabilities"]
-            except serving_server.WorkerError as error:  # one refused request; the worker lives
-                log(f"reference worker refused a request ({error.kind})")
-                return {**done, "outcome": "reference_unavailable"}
-            except OSError as error:
-                log(f"reference worker failed ({type(error).__name__}); restarting next round")
-                self.close()
-                return {**done, "outcome": "reference_unavailable", "stop": True}
+                for row in answered:
+                    if served is None:
+                        row["outcome"] = "reference_unavailable"
+                        continue
+                    try:
+                        row.update(self.compare(served[row["model"]], row))
+                    except serving_server.WorkerError as error:  # one refusal; the worker lives
+                        log(f"reference worker refused a request ({error.kind})")
+                        row["outcome"] = "reference_unavailable"
+                    except OSError as error:
+                        log(f"reference worker failed ({type(error).__name__})")
+                        row["outcome"] = "reference_unavailable"
+                        unload(served)
+                        served = None
+            finally:
+                unload(served or {})
+
+    def compare(self, served, row):
+        bodies, messages, ours, theirs = row.pop("bodies"), row["messages"], {}, {}
+        for i in row["verified"]:
+            reference = served.predict(bodies[i]["state"], bodies[i]["questions"])
+            predictions = messages[i]["payload"]["predictions"]
+            for qid in bodies[i]["questions"]:
+                ours[f"{i}:{qid}"] = reference[qid]["probabilities"]
+                theirs[f"{i}:{qid}"] = predictions[qid]["probabilities"]
         verdict = answer_check.compare(ours, theirs)
-        return {**done, "outcome": verdict.outcome, "mean": verdict.mean, "worst": verdict.worst}
+        return {"outcome": verdict.outcome, "mean": verdict.mean, "worst": verdict.worst}
+
+    def finish(self, round_id, row, outcomes):
+        """Evidence first, then Scores (never for our own failures)."""
+        row.pop("bodies", None)
+        row = {"verified": None, "messages": None, "mean": None, "worst": None, **row}
+        outcomes[row["outcome"]] = outcomes.get(row["outcome"], 0) + 1
+        at = self.clock()
+        self.write_evidence({"kind": "validator", "at": at, "round_id": round_id, **row})
+        if row["outcome"] not in OURS:
+            self.scores.record(
+                row["hotkey"],
+                row["model"],
+                {key: row[key] for key in ("outcome", "mean", "worst", "latency_s")} | {"at": at},
+            )
 
     def write_evidence(self, row):
         row = {k: finite(v) if isinstance(v, float) else v for k, v in row.items()}
@@ -339,21 +369,18 @@ def main(argv=None):
         key,
     )
     seconds = grader.config["round_seconds"]
-    try:
-        grader.start()  # wrong weights stop startup; a failed start is retried at the first miner
-        while True:
-            began = time.monotonic()
-            try:
-                outcomes = grader.run_round(uuid.uuid4().hex)
-                counts = " ".join(f"{k}={v}" for k, v in sorted(outcomes.items())) or "no miners"
-                log(f"round {counts} in {time.monotonic() - began:.1f}s")
-            except ReferenceMismatch:
-                raise
-            except Exception as error:  # a chain read or disk hiccup: try again next round
-                log(f"round failed ({type(error).__name__})")
-            time.sleep(seconds * random.uniform(0.8, 1.2))
-    finally:
-        grader.close()
+    grader.check()  # wrong weights stop startup
+    while True:
+        began = time.monotonic()
+        try:
+            outcomes = grader.run_round(uuid.uuid4().hex)
+            counts = " ".join(f"{k}={v}" for k, v in sorted(outcomes.items())) or "no miners"
+            log(f"round {counts} in {time.monotonic() - began:.1f}s")
+        except ReferenceMismatch:
+            raise
+        except Exception as error:  # a chain read or disk hiccup: try again next round
+            log(f"round failed ({type(error).__name__})")
+        time.sleep(seconds * random.uniform(0.8, 1.2))
 
 
 if __name__ == "__main__":

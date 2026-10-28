@@ -7,17 +7,19 @@ weights and writes nothing to the chain; it only keeps scores and evidence on di
 
 ## What it does each round
 
-1. Read the chain for miners that announce a serving endpoint, and fetch each one's
+1. Check that the host's GPU lock is free. If it is busy, skip the round: no
+   requests are sent and no evidence or score rows are written.
+2. Read the chain for miners that announce a serving endpoint, and fetch each one's
    signed manifest. Only a miner that lists a configured model at the configured
    `weights_sha256` is graded, once per model.
-2. For each miner and model, make fresh questions from a seed derived from the
+3. For each miner and model, make fresh questions from a seed derived from the
    validator hotkey, the round id, the miner hotkey and the model. Send one signed
    request per question.
-3. After all answers are in, pick a secret subset of the questions to verify. The
+4. After all of a miner's answers are in, pick a secret subset of the questions to verify. The
    miner cannot know which ones.
-4. Run those questions on a local reference worker that serves the same pinned
-   model, while holding the host's GPU lock.
-5. Compare the miner's probabilities with the reference and record the outcome.
+5. Take the host's GPU lock once, load the reference model, run every answered
+   miner's subset on it, unload it, and release the lock.
+6. Compare each miner's probabilities with the reference and record the outcome.
 
 A round is over after `round_seconds` of work: miners not reached get no record that
 round. The order is shuffled each round. The grader then waits about `round_seconds`
@@ -36,7 +38,8 @@ key file, and each reference checkpoint directory (see
 [serving miners](serving-miners.md#make-a-checkpoint-directory)). It refuses to
 start if one is missing, if the reference worker serves a model at weights other
 than `weights_sha256`, or if `serving-rounds.json` is corrupt (it never resets
-scores silently). If the worker fails to start, it is retried at the next miner.
+scores silently). It checks the weights at startup only if it gets the GPU lock in time;
+otherwise it starts anyway, and every round checks the weights again and stops the grader on a mismatch.
 
 ```json
 {
@@ -84,11 +87,21 @@ SS58 address) when running `zils serve`; without that, the miner refuses it.
 
 ## GPU lock
 
-The reference worker shares the host's GPU, so the grader takes an exclusive file
-lock only while it computes reference answers. The path is `ZILS_COMPUTE_LOCK` if
-set, otherwise `fez-compute-<uid>-cuda.lock` in the system temporary directory. It
-waits up to `lock_wait_seconds`. If it cannot get the lock, that miner's round is
-recorded as `lock_timeout` in the evidence for it and every miner left in the round, and nobody is scored.
+The reference model shares the host's GPU with validation and training, so it is
+loaded only while the grader holds the host's exclusive compute lock, and unloaded
+before the grader releases it. Every round pays the model's load time, and no GPU
+memory is held between rounds.
+
+Before sending any request, the grader checks the lock without waiting. If it is
+busy, the round is skipped: no requests are sent and no evidence or score rows are written.
+After asking the miners, it waits up to `lock_wait_seconds` for the lock. If it
+cannot get it, every answered miner gets `lock_timeout` in the evidence, and nobody is scored.
+
+The path is `ZILS_COMPUTE_LOCK` (or the older `FEZ_COMPUTE_LOCK`) if set, otherwise
+`fez-compute-<uid>-cuda.lock` in the system temporary directory, which is the same lookup the
+validator and training use. Set `ZILS_COMPUTE_LOCK` to the same path as your validator
+and training services, for example by loading the same env file. Otherwise the grader
+does not share their lock.
 
 ## Score rule
 
@@ -106,8 +119,9 @@ Each miner and model gets a rolling summary over the last `window_hours`.
   it is `pass_rate * availability`.
 
 Our own failures never count against a miner. `reference_unavailable` (the worker
-would not start or failed) and `lock_timeout` go to the evidence file only, and
-the remaining miners that round get the same evidence row.
+would not start, failed, or refused one request) and `lock_timeout` go to the
+evidence file only. If the worker fails partway through, miners already compared
+keep their outcome and the rest get `reference_unavailable`.
 
 ## Output files
 
