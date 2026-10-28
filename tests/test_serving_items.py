@@ -39,6 +39,14 @@ class ServingItemsTest(unittest.TestCase):
             self.assertIn(marker, text)
         self.assertEqual(len(benchmark.ORACLES), 4)
 
+    def test_golden_digest(self):
+        # Auditors regenerate items from the seed; zils/benchmark.py is part of that contract.
+        import hashlib
+        import json
+
+        got = hashlib.sha256(json.dumps(items(0, 20), sort_keys=True).encode()).hexdigest()
+        self.assertEqual(got, "8e58a826fa853b029368fbf1e17333ab11b775e06b70c099839c615ff91689ad")
+
 
 if __name__ == "__main__":
     unittest.main()
