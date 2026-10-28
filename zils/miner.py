@@ -6,7 +6,9 @@ reads the commitments and pulls that revision. No validator URL is needed.
 defaults to the saved value. `doctor` checks the setup step by step and prints the one command
 that fixes the first failing step. `commit-candidate` validates a candidate, uploads it (or takes
 an uploaded revision), prints the commitment and, with --yes, writes it with the hotkey. `update`
-reinstalls at the stable release, the commit release/stable on main names."""
+reinstalls at the stable release, the commit release/stable on main names. `announce-serving`
+writes the miner's public endpoint on chain and `serve` answers signed requests for public z3
+checkpoints there (docs/serving-miners.md)."""
 
 import argparse
 import hashlib
@@ -14,12 +16,14 @@ import importlib
 import json
 import os
 import subprocess
+import threading
+import time
 import urllib.request
 from pathlib import Path
 
 import zils
 
-from . import commitments, models, testnet
+from . import commitments, models, serving, serving_server, testnet
 
 NETUID = 579
 REQUIRED_MODULES = ("bittensor", "bittensor_wallet", "huggingface_hub", "kev", "torch")
@@ -258,6 +262,98 @@ def commit_candidate(args):
     return after
 
 
+def serving_endpoint(args):
+    """The endpoint this miner announces; refuses anything but a public IPv4 before any chain call."""
+    return serving.public_endpoint(f"http://{args.public_ip}:{args.port}")
+
+
+def announce_serving(args):
+    endpoint = serving_endpoint(args)
+    keys = wallet(args)
+    hotkey = keys.hotkey.ss58_address
+    config = chain_config(args.netuid, args.network)
+    with testnet.connect(config) as sub:
+        state = testnet.hotkey_state(config, sub, hotkey)
+        if state["uid"] is None:
+            raise ValueError(
+                f"hotkey {hotkey} is not registered on {testnet.NAMES[args.network]} subnet {args.netuid}"
+            )
+        current = testnet.read_axon(sub, args.netuid, hotkey, state["block"])
+        print(
+            f"miner {state['uid']}: current axon {current or 'none'}\n  new endpoint {endpoint}",
+            flush=True,
+        )
+        if current == endpoint:
+            print("already announced; nothing to do")
+            return current
+        if not args.yes:
+            print("dry run: nothing written; run again with --yes", flush=True)
+            return None
+        testnet.write_axon(config, sub, keys, endpoint)
+        after = testnet.read_axon(sub, args.netuid, hotkey, sub.block)
+    if after != endpoint:
+        raise ValueError("the chain does not show the new axon; read it again before retrying")
+    print(f"announced {endpoint}; validators find it at their next refresh", flush=True)
+    return after
+
+
+def permit_checker(read, gateways):
+    """`allowed(hotkey)`: a gateway hotkey or a current permit holder. `read()` returns the permit
+    hotkeys (the first call must succeed); `allowed.refresh()` re-reads, keeping the last set on error."""
+    holders = [read()]
+
+    def allowed(hotkey):
+        return hotkey in gateways or hotkey in holders[0]
+
+    def refresh():
+        try:
+            holders[0] = read()
+        except Exception as error:  # any chain failure keeps the last known set
+            print(f"permit refresh failed, keeping the last set: {error}", flush=True)
+
+    allowed.refresh = refresh
+    return allowed
+
+
+def serve(args, interval=600.0):
+    endpoint = serving_endpoint(args)
+    key = wallet(args).hotkey  # the coldkey is never read
+    hotkey = key.ss58_address
+    config = chain_config(args.netuid, args.network)
+
+    def read_permits():
+        with testnet.connect(config) as sub:
+            block = sub.block
+            permits = sub.query(("SubtensorModule", "ValidatorPermit"), [args.netuid], block=block)
+            return {
+                holder
+                for uid, permit in enumerate(permits)
+                if permit
+                for holder in [sub.query(("SubtensorModule", "Keys"), [args.netuid, uid], block=block)]
+                if holder
+            }
+
+    with testnet.connect(config) as sub:
+        announced = testnet.read_axon(sub, args.netuid, hotkey, sub.block)
+    if announced != endpoint:
+        raise ValueError(
+            f"the chain shows axon {announced or 'none'} for {hotkey}, not {endpoint}; run"
+            f" zils announce-serving --public-ip {args.public_ip} --port {args.port} --yes first"
+        )
+    loaded = [serving_server.load_served(path, "cuda") for path in args.checkpoint]
+    allowed = permit_checker(read_permits, set(args.gateway_hotkey or ()))
+
+    def keep_fresh():
+        while True:
+            time.sleep(interval)
+            allowed.refresh()
+
+    threading.Thread(target=keep_fresh, daemon=True).start()
+    server = serving_server.make_server(key, endpoint, loaded, allowed, ("0.0.0.0", args.port), args.slots)
+    print(f"serving {', '.join(s.model for s in loaded)} at {endpoint}", flush=True)
+    server.serve_forever()
+
+
 def doctor(args):
     """Run the outsider's checklist in order; stop at the first failing step with its fix."""
     from importlib.metadata import PackageNotFoundError, version
@@ -469,7 +565,16 @@ def main(argv=None):
     commit = commands.add_parser(
         "commit-candidate", help="upload a base candidate and commit it on chain"
     )
-    for command in (start, check, commit):
+    announce = commands.add_parser("announce-serving", help="write your public endpoint on chain")
+    host = commands.add_parser("serve", help="serve z3 checkpoints to validators")
+    for command in (announce, host):
+        command.add_argument("--public-ip", required=True, help="public IPv4 of this machine")
+        command.add_argument("--port", type=int, required=True)
+    announce.add_argument("--yes", action="store_true", help="write the axon; without it, a dry run")
+    host.add_argument("--checkpoint", action="append", required=True, help="z3 checkpoint dir; repeatable")
+    host.add_argument("--gateway-hotkey", action="append", help="extra hotkey allowed to call; repeatable")
+    host.add_argument("--slots", type=int, default=8)
+    for command in (start, check, commit, announce, host):
         command.add_argument(
             "--network",
             choices=tuple(testnet.ENDPOINTS),
@@ -477,15 +582,17 @@ def main(argv=None):
             help="finney is mainnet and needs an explicit --netuid",
         )
         command.add_argument("--netuid", type=int)
-        command.add_argument(
-            "--model",
-            choices=models.d3_family(),
-            help="base profile to beat in your tier; saved by setup or read from the candidate",
-        )
-    for command in (check, commit):
+        if command in (start, check, commit):
+            command.add_argument(
+                "--model",
+                choices=models.d3_family(),
+                help="base profile to beat in your tier; saved by setup or read from the candidate",
+            )
+    for command in (check, commit, announce, host):
         command.add_argument("--wallet-name")
         command.add_argument("--wallet-hotkey", help="hotkey name; the coldkey is never read")
         command.add_argument("--wallet-path")
+    for command in (check, commit):
         command.add_argument("--candidate", help="directory written by `zils.d3 candidate`")
         command.add_argument("--repo", help="your public Hugging Face model repo")
         command.add_argument("--revision", help="40-hex commit sha of an upload already in --repo")
@@ -507,11 +614,14 @@ def main(argv=None):
         if args.command == "commit-candidate":
             config.pop("revision", None)  # a fresh upload must not reuse the last one
         for key in SAVED:
-            if getattr(args, key) is None:
+            if getattr(args, key, None) is None:
                 setattr(args, key, config.get(key))
         args.wallet_path = args.wallet_path or WALLET_PATH
         if args.wallet_name is None or args.wallet_hotkey is None:
             raise ValueError("no wallet configured; run zils setup (or pass --wallet-name)")
+        if args.command in ("announce-serving", "serve"):
+            {"announce-serving": announce_serving, "serve": serve}[args.command](args)
+            return
         args.model = selected_model(args.model, args.candidate)
         if args.command == "doctor":
             if not doctor(args):
