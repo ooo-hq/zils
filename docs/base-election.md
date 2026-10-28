@@ -64,11 +64,14 @@ only agreements. Known families draw on held-out validation/test splits of datas
 Decision Index and JevBench; new-domain families use held-out tasks, three per category per draw,
 never reused. The tasks listed in the script are spent, and anyone can read them, so later draws take
 new-domain tasks from a private file passed with `--private-sources` (JSON: `{category: {key: [repo,
-parquet path, revision]}}`). Keep that file with the private `--work` directory. Public seeds for the 15 known families are published at
+parquet path, revision]}}`). Keep that file with the private `--work` directory. Public seeds for the known families are published at
 `zils-ai/base-exam-seed-v1` (@`e737b87`), `zils-ai/base-exam-seed-v2` (@`168ce9a`) and
 `zils-ai/base-exam-seed-v3` (@`0593c78`). The current known families are the nine `-k2` language,
 retrieval and tools families (seed v2) and the six `-k3` reasoning and arts families (seed v3), which
-replaced `-k2` families whose held-out sources ran out. Install `requirements/exam.txt`, set
+replaced `-k2` families whose held-out sources ran out. On 27 Oct 2026 two `-k5` families replaced
+`language-known-score-k2` (STS-B) and `arts-known-noul-k3` (TweetEval irony) for the same reason:
+`language-known-score-k5` (Crisscrossed Captions) and `arts-known-noul-k5` (Sarcasm Headlines). Their
+public seed must be published, with receipts in the history, before a sealed draw uses them. Install `requirements/exam.txt`, set
 `ANTHROPIC_API_KEY`, keep `--work` private, then (`--batch` uses the Message Batches API at half price
 and resumes the same batch after a restart):
 
