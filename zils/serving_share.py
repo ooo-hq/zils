@@ -4,8 +4,9 @@ import json
 import math
 import os
 from datetime import datetime, timedelta
+from urllib.parse import urlencode
 
-from .queue_evidence import HEX64, SS58
+from .queue_evidence import HEX64, SS58, iso
 from .runtime import verified
 
 SCHEMA = "zils-serving-receipts/v1"
@@ -105,7 +106,7 @@ def freeze(config, now):
 
 
 def _count(x):
-    return type(x) is int and x >= 0
+    return type(x) is int and 0 <= x < 2**53  # exact as a float
 
 
 def verify_receipts(message, receipts, until=None):
@@ -150,6 +151,19 @@ def verify_receipts(message, receipts, until=None):
         ):
             raise ValueError("serving receipts check is invalid")
     return payload
+
+
+def fetch_receipts(receipts, until):
+    from .protocol import opener
+
+    query = urlencode({"until": iso(until), "hours": receipts["window_hours"]})
+    with opener().open(f"{receipts['url']}?{query}", timeout=30) as response:
+        body = response.read(MAX_SCORES_BYTES + 1)
+    if len(body) > MAX_SCORES_BYTES:
+        raise ValueError("serving receipts are too large")
+    message = json.loads(body)
+    verify_receipts(message, receipts, until)
+    return message
 
 
 def weights(config, frozen, members, receipts=None):

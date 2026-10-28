@@ -3,6 +3,7 @@ import math
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 from zils import serving_share
 
@@ -364,6 +365,78 @@ class VolumeWeightsTest(unittest.TestCase):
         self.assertEqual(vol, {})
         self.assertNotIn("volume", rec)
         self.assertEqual(sorted(ready), [1, 2, 3])
+
+
+class FreezeReceiptsTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.work = __import__("pathlib").Path(self.tmp.name)
+        src = os.path.join(self.tmp.name, "scores.json")
+        with open(src, "w") as f:
+            json.dump({"hk": {"m": entry(1)}}, f)
+        self.cfg = {"serving_share": {**RCFG, "scores": src}}
+        self.now = UNTIL.timestamp() + 100
+        os.utime(src, (self.now, self.now))
+
+    def attach(self, config=None):
+        from zils import validator
+
+        return validator.attach_serving_scores(config or self.cfg, self.work, {}, self.now)
+
+    def test_frozen_once_and_embedded(self):
+        message = receipt([hop("A", 5)])
+        with mock.patch.object(serving_share, "fetch_receipts", return_value=message) as fetch:
+            first = self.attach()
+            second = self.attach()
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.args[1], UNTIL)
+        self.assertEqual(first["serving_share"]["receipts"], message)
+        self.assertEqual(second, first)
+        self.assertTrue((self.work / "serving-receipts.json").is_file())
+
+    def test_fetch_error_writes_nothing(self):
+        with mock.patch.object(serving_share, "fetch_receipts", side_effect=OSError("down")):
+            with self.assertRaises(OSError):
+                self.attach()
+        self.assertEqual(os.listdir(self.work), ["scores.json"])
+
+    def test_without_receipts_unchanged(self):
+        out = self.attach({"serving_share": {**CFG, "scores": self.cfg["serving_share"]["scores"]}})
+        self.assertEqual(set(out["serving_share"]), {"config", "frozen"})
+        self.assertFalse((self.work / "serving-receipts.json").exists())
+
+    def test_publication_requires_frozen_receipts(self):
+        from zils import validator
+
+        (self.work / "report.json").write_text("{}")
+        (self.work / "serving-scores.json").write_text("{}")
+        with self.assertRaisesRegex(ValueError, "serving-receipts.json"):
+            validator.publication_report(self.cfg, self.work, self.work)
+
+    def test_fetch_receipts_verifies(self):
+        import io
+
+        def opened(message):
+            op = mock.Mock()
+            op.open.return_value.__enter__ = lambda s: io.BytesIO(json.dumps(message).encode())
+            op.open.return_value.__exit__ = lambda *a: None
+            return op
+
+        R = RCFG["receipts"]
+        with mock.patch("zils.protocol.opener", return_value=opened(receipt())) as o:
+            self.assertEqual(
+                serving_share.fetch_receipts(R, UNTIL)["payload"]["signer"], R["signer"]
+            )
+            url = o.return_value.open.call_args.args[0]
+        self.assertIn("until=2026-10-28T12%3A00%3A00Z&hours=24", url)
+        with mock.patch("zils.protocol.opener", return_value=opened(receipt(key=KEY, schema="x"))):
+            with self.assertRaises(ValueError):
+                serving_share.fetch_receipts(R, UNTIL)
+
+    def test_counts_stay_exact_as_floats(self):
+        with self.assertRaises(ValueError):
+            serving_share.verify_receipts(receipt([hop("A", 2**53)]), RCFG["receipts"], UNTIL)
 
 
 if __name__ == "__main__":
