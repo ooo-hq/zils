@@ -47,8 +47,7 @@ def check_config(config):
 
 @contextmanager
 def connect(config, *, raw_calls=False):
-    """`raw_calls` admits the two raw extrinsics Zils sends, `Commitments.set_commitment` and
-    `SubtensorModule.serve_axon`; the Policy refuses every submit_call without it."""
+    """`raw_calls` admits the one raw extrinsic Zils sends, `Commitments.set_commitment`."""
     netuid = check_config(config)
     network = config["chain"]["network"]
     if version("bittensor") != "11.1.0":
@@ -143,25 +142,19 @@ def read_axon(sub, netuid, hotkey, block):
 
 
 def write_axon(config, sub, wallet, endpoint):
-    """Sign `SubtensorModule.serve_axon` with the hotkey, announcing an IPv4 endpoint."""
-    import bittensor as bt
+    """Announce an IPv4 endpoint with the hotkey through the SDK's `ServeAxon` intent, which the
+    Policy checks (subnet allowlist) without admitting raw calls."""
+    from bittensor import intents
 
     from . import protocol
 
     netuid = check_config(config)
     address, port = protocol.endpoint_port(endpoint)
-    call = bt.calls.SubtensorModule.serve_axon(
-        netuid=netuid,
-        version=1,
-        ip=int(address),
-        port=port,
-        ip_type=4,
-        protocol=4,
-        placeholder1=0,
-        placeholder2=0,
-    )
-    result = sub.submit_call(
-        call, wallet, signer="hotkey", wait_for_inclusion=True, wait_for_finalization=True
+    result = sub.execute(
+        intents.ServeAxon(netuid=netuid, ip=str(address), port=port),
+        wallet,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
     )
     if not result.success:
         raise ValueError(f"axon not included: {result.error or 'unknown error'}")

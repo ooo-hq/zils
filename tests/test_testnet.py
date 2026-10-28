@@ -634,25 +634,22 @@ class AxonTest(unittest.TestCase):
             axon.value = bad
             self.assertIsNone(t.read_axon(sub, 579, "hk", 10))
 
-    def test_write_axon_submits_serve_axon_with_hotkey(self):
-        from ipaddress import IPv4Address
-
+    def test_write_axon_executes_the_serve_axon_intent(self):
+        from bittensor import intents
         from bittensor.result import ExtrinsicResult
 
         from zils import testnet as t
 
         sub = Mock()
-        sub.submit_call.return_value = ExtrinsicResult(True)
+        sub.execute.return_value = ExtrinsicResult(True)
         t.write_axon(self.config, sub, "wallet", "http://8.8.8.8:8091")
-        call = sub.submit_call.call_args[0][0]
-        self.assertEqual((call.module, call.function), ("SubtensorModule", "serve_axon"))
-        self.assertEqual(
-            (call.params["ip"], call.params["port"], call.params["ip_type"], call.params["netuid"]),
-            (int(IPv4Address("8.8.8.8")), 8091, 4, 579),
-        )
-        kwargs = sub.submit_call.call_args[1]
-        self.assertEqual(kwargs["signer"], "hotkey")
-        sub.submit_call.return_value = ExtrinsicResult(False, error="nope")
+        intent, wallet = sub.execute.call_args[0]
+        self.assertIsInstance(intent, intents.ServeAxon)
+        self.assertEqual((intent.netuid, intent.ip, intent.port), (579, "8.8.8.8", 8091))
+        self.assertEqual(wallet, "wallet")
+        self.assertTrue(sub.execute.call_args[1]["wait_for_finalization"])
+        sub.submit_call.assert_not_called()
+        sub.execute.return_value = ExtrinsicResult(False, error="nope")
         with self.assertRaises(ValueError):
             t.write_axon(self.config, sub, "wallet", "http://8.8.8.8:8091")
         with self.assertRaises(ValueError):

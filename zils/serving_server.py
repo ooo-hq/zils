@@ -262,8 +262,9 @@ def make_server(
                 timer.start()
 
         def parse_request(self):
+            ok = super().parse_request()  # reads the headers; cancel only once they are in
             self.headers_due.cancel()
-            return super().parse_request()
+            return ok
 
         def expire(self):
             try:

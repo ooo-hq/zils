@@ -5,6 +5,7 @@ import io
 import json
 import socket
 import threading
+import time
 import unittest
 
 from zils import serving, serving_server
@@ -334,6 +335,20 @@ class ServingServerTest(unittest.TestCase):
             self.assertEqual(sock.recv(1), b"")
         except ConnectionResetError:
             pass
+        sock.close()
+
+    def test_trickled_headers_are_dropped_at_the_header_deadline(self):
+        server = self.start(header_deadline=0.3)  # total deadline stays 15 s
+        sock = socket.create_connection(("127.0.0.1", server.server_address[1]))
+        sock.sendall(b"POST /v1/systemone HTTP/1.0\r\n")
+        started = time.monotonic()
+        try:
+            for _ in range(20):  # one header line every 0.2 s would last 4 s
+                sock.sendall(b"X-Slow: 1\r\n")
+                time.sleep(0.2)
+        except OSError:
+            pass
+        self.assertLess(time.monotonic() - started, 2.0)
         sock.close()
 
     def test_old_nonces_are_pruned_and_fresh_replays_still_refused(self):

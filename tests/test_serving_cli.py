@@ -39,15 +39,19 @@ class Chain:
             return self.permits
         return None
 
-    def submit_call(self, call, wallet, *, signer, **kwargs):
+    def execute(self, intent, wallet, **kwargs):
+        from ipaddress import IPv4Address
+
+        from bittensor import intents
         from bittensor.result import ExtrinsicResult
 
-        assert (call.module, call.function, signer) == ("SubtensorModule", "serve_axon", "hotkey")
-        self.calls.append(call)
+        assert isinstance(intent, intents.ServeAxon) and intent.netuid == 579
+        assert kwargs["wait_for_finalization"]
+        self.calls.append(intent)
         self.block += 1
         self.axons[wallet.hotkey.ss58_address] = {
-            "ip": call.params["ip"],
-            "port": call.params["port"],
+            "ip": int(IPv4Address(intent.ip)),
+            "port": intent.port,
             "ip_type": 4,
         }
         return ExtrinsicResult(True)
@@ -126,7 +130,7 @@ class ServingCliTest(unittest.TestCase):
         code, out = self.run_miner("announce-serving", "--yes")
         self.assertEqual(code, 0, out)
         self.assertEqual(len(self.chain.calls), 1)
-        self.assertEqual(self.raw_calls, [True])  # the Policy refuses submit_call otherwise
+        self.assertEqual(self.raw_calls, [False])  # the ServeAxon intent needs no raw calls
         self.assertIn(ENDPOINT, out)
 
     def test_announce_same_endpoint_is_a_no_op(self):
