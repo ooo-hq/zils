@@ -5,8 +5,14 @@ import math
 import os
 
 
+MAX_SCORES_BYTES = 8 << 20
+
+
 def _number(x):
-    return type(x) in (int, float) and math.isfinite(x)
+    try:
+        return type(x) in (int, float) and math.isfinite(float(x))
+    except (OverflowError, ValueError):
+        return False
 
 
 def validate(config):
@@ -48,10 +54,13 @@ def freeze(config, now):
     config = validate(config)
     written, scores = None, {}
     try:
-        written = os.stat(config["scores"]).st_mtime
+        stat = os.stat(config["scores"])
+        written = stat.st_mtime
+        if stat.st_size > MAX_SCORES_BYTES:
+            raise ValueError("serving scores file too large")
         with open(config["scores"]) as f:
             data = json.load(f)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError, MemoryError):
         data = {}
     if isinstance(data, dict) and written is not None and now - written <= config["max_age_seconds"]:
         for hotkey, models in data.items():
@@ -72,8 +81,8 @@ def weights(config, frozen, members):
     uids = {m["hotkey"]: int(uid) for uid, m in members.items()}
     totals = {}
     for hotkey, models in frozen["scores"].items():
-        total = sum(s["score"] for s in models.values())
-        if hotkey in uids and total > 0:
+        total = sum(float(s["score"]) for s in models.values())
+        if hotkey in uids and math.isfinite(total) and total > 0:
             totals[uids[hotkey]] = total
     on = len(totals) >= config["switch_on_miners"]
     vector = totals if on else {}

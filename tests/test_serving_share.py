@@ -79,6 +79,27 @@ class BudgetTest(unittest.TestCase):
         self.check(self.config(0.63))
 
 
+class RealBudgetTest(unittest.TestCase):
+    def setUp(self):
+        from tests.promoted_profile import promoted_profile
+
+        self.enterContext(promoted_profile())
+
+    def config(self, base, feature, serving):
+        from tests.test_feature_rewards import feature_config, fixture
+
+        config = fixture()[0]
+        config["base_pools"] = {**config["base_pools"], "share": base}
+        config["feature_tracks"] = {**feature_config(), "share": feature}
+        config["serving_share"] = {**CFG, "share": serving}
+        return config
+
+    def test_real_validators(self):
+        serving_share.validate_budget(self.config(0.63, 0, 0.10))
+        with self.assertRaises(ValueError):
+            serving_share.validate_budget(self.config(0.63, 0.30, 0.10))
+
+
 class FreezeTest(unittest.TestCase):
     def setUp(self):
         d = tempfile.TemporaryDirectory()
@@ -117,6 +138,28 @@ class FreezeTest(unittest.TestCase):
         self.assertEqual(frozen["scores"], {"a": {"ok": {"score": 1.5}}})
 
 
+class HostileFileTest(FreezeTest):
+    def test_huge_int_score_dropped(self):
+        self.write('{"a": {"big": {"score": 1' + "0" * 500 + '}, "ok": {"score": 1}}}')
+        self.assertEqual(serving_share.freeze(self.cfg, NOW)["scores"], {"a": {"ok": {"score": 1}}})
+
+    def test_bool_score_dropped(self):
+        self.write({"a": {"t": {"score": True}}})
+        self.assertEqual(serving_share.freeze(self.cfg, NOW)["scores"], {})
+
+    def test_deep_nesting_freezes_empty(self):
+        self.write("[" * 100000)
+        self.assertEqual(serving_share.freeze(self.cfg, NOW)["scores"], {})
+
+    def test_oversize_freezes_empty_but_keeps_mtime(self):
+        from unittest import mock
+
+        self.write({"a": {"m": entry(1)}})
+        with mock.patch.object(serving_share, "MAX_SCORES_BYTES", 10):
+            frozen = serving_share.freeze(self.cfg, NOW)
+        self.assertEqual((frozen["scores"], frozen["written_at"]), ({}, NOW))
+
+
 class WeightsTest(unittest.TestCase):
     members = {"1": {"hotkey": "a"}, "2": {"hotkey": "b"}, "3": {"hotkey": "c"}, "4": {"hotkey": "d"}}
 
@@ -139,6 +182,13 @@ class WeightsTest(unittest.TestCase):
         self.assertEqual(record["earners"], 3)
         self.assertEqual(record["weights"], {"1": 3.5, "2": 3.5, "3": 3.5})
         self.assertEqual((record["share"], record["written_at"], record["frozen_at"]), (0.1, 1.0, 2.0))
+
+    def test_non_finite_total_skipped(self):
+        scores = {h: {"x": entry(1)} for h in "abc"}
+        scores["d"] = {"x": entry(1e308), "y": entry(1e308)}
+        vector, record = serving_share.weights(CFG, self.frozen(scores), self.members)
+        self.assertEqual(sorted(vector), [1, 2, 3])
+        self.assertEqual(record["earners"], 3)
 
     def test_zero_score_not_earner(self):
         scores = {"a": {"x": entry(1)}, "b": {"x": entry(1)}, "c": {"x": entry(0)}}
