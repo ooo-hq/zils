@@ -67,6 +67,49 @@ class ServingProtocolTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 serving.validate_manifest(body)
 
+    def _signed(self):
+        body = serving.manifest_body(self.miner.ss58_address, "http://8.8.8.8:8091", self.served, now=1000)
+        return serving.sign(self.miner, "manifest", body)
+
+    def _rejects(self, message, kind="manifest", hotkey=None, now=1000):
+        with self.assertRaises(ValueError):
+            serving.verify(message, kind, hotkey or self.miner.ss58_address, now=now)
+
+    def test_rejects_non_public_endpoints(self):
+        for host in ("127.0.0.1", "10.0.0.1", "169.254.1.1", "0.0.0.0", "224.0.0.1"):
+            body = serving.manifest_body(self.miner.ss58_address, f"http://{host}:8091", self.served, now=1)
+            with self.assertRaises(ValueError, msg=host):
+                serving.validate_manifest(body)
+
+    def test_rejects_tampered_payload(self):
+        signed = self._signed()
+        self._rejects({**signed, "payload": {**signed["payload"], "issued_at": 1001}})
+        models = [{**self.served[0], "weights_sha256": "b" * 64}]
+        self._rejects({**signed, "payload": {**signed["payload"], "models": models}})
+
+    def test_rejects_malformed_signatures(self):
+        signed = self._signed()
+        sig = signed["signature"]
+        for bad in (sig[:-2], sig + "00", "z" * 128, sig[:10] + " " + sig[10:], sig.upper(), None, 5, bytes.fromhex(sig)):
+            self._rejects({**signed, "signature": bad})
+
+    def test_rejects_extra_or_missing_fields(self):
+        signed = self._signed()
+        self._rejects({**signed, "payload": {**signed["payload"], "extra": 1}})
+        self._rejects({**signed, "payload": {k: v for k, v in signed["payload"].items() if k != "models"}})
+        self._rejects({**signed, "extra": 1})
+
+    def test_request_caller_must_match_hotkey(self):
+        p = serving.request_payload(self.other.ss58_address, self.miner.ss58_address, "d3-mini-4.5b-v1", "a" * 64, {}, now=100)
+        signed = serving.sign(self.other, "request", p)
+        self._rejects(signed, "request", self.miner.ss58_address, now=100)
+
+    def test_rejects_bad_timestamps(self):
+        for stamp in (1000.0, True):
+            body = serving.manifest_body(self.miner.ss58_address, "http://8.8.8.8:8091", self.served, now=stamp)
+            self._rejects(serving.sign(self.miner, "manifest", body))
+        self._rejects(self._signed(), now=879)
+
 
 if __name__ == "__main__":
     unittest.main()

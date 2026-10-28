@@ -22,6 +22,7 @@ _FIELDS = {
 _SIGNER = {"manifest": "hotkey", "request": "caller"}
 _CLOCK = {"manifest": "issued_at", "request": "timestamp"}
 _HEX64 = re.compile(r"[a-f0-9]{64}")
+_SIG = re.compile(r"[a-f0-9]{128}")
 
 
 def canonical(kind, payload):
@@ -83,10 +84,10 @@ def verify(message, kind, hotkey, now):
             stamp = payload[_CLOCK[kind]]
             if type(stamp) is not int or abs(now - stamp) > FRESH_SECONDS:
                 raise ValueError()
-        signature = bytes.fromhex(message["signature"])
-        if len(signature) != 64 or not Keypair(ss58_address=hotkey).verify(
-            canonical(kind, payload), signature
-        ):
+        sig = message["signature"]
+        if not isinstance(sig, str) or not _SIG.fullmatch(sig):
+            raise ValueError()
+        if not Keypair(ss58_address=hotkey).verify(canonical(kind, payload), bytes.fromhex(sig)):
             raise ValueError()
     except (ValueError, TypeError, KeyError, AttributeError):
         raise ValueError("invalid serving message") from None
@@ -98,7 +99,9 @@ def validate_manifest(payload):
     served = payload.get("models")
     if payload.get("version") != VERSION:
         raise ValueError("unsupported serving version")
-    protocol.endpoint_port(payload.get("endpoint"))
+    address, _ = protocol.endpoint_port(payload.get("endpoint"))
+    if not address.is_global or address.is_multicast:
+        raise ValueError("endpoint must be a public IPv4 address")
     family = models.d3_family()
     if not isinstance(served, list) or not 1 <= len(served) <= len(family):
         raise ValueError("manifest must list 1 to %d models" % len(family))
