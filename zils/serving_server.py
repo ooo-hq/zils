@@ -1,6 +1,7 @@
 """HTTP endpoint a miner runs: signed manifest on GET, hotkey-authenticated signed inference on POST."""
 
 import json
+import socket
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -52,7 +53,7 @@ class Refusal(Exception):
         self.status, self.code, self.message = status, code, message
 
 
-def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time):
+def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time, deadline=15.0):
     by_model = {s.model: s for s in served}
     manifest = [
         {"model": s.model, "weights_sha256": s.weights_sha256, "max_input_tokens": s.max_input_tokens}
@@ -89,13 +90,18 @@ def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time):
             raise Refusal(403, "forbidden", "Caller is not permitted.")
         if not isinstance(payload["nonce"], str) or not fresh(caller, payload["nonce"], now):
             raise Refusal(401, "unauthorized", "Nonce already used.")
+        if not (isinstance(payload["model"], str) and isinstance(payload["weights_sha256"], str)
+                and isinstance(payload["body"], dict)):
+            raise Refusal(400, "invalid_request", "Request fields have the wrong type.")
         model = by_model.get(payload["model"])
         if model is None:
             raise Refusal(404, "model_not_found", "Model is not served here.")
         if payload["weights_sha256"] != model.weights_sha256:
             raise Refusal(409, "weights_mismatch", "Weights do not match.")
         body = payload["body"]
-        if isinstance(body, dict) and ("images" in body or "videos" in body):
+        if body.get("model") != payload["model"]:
+            raise Refusal(400, "model_mismatch", "Body model differs from the signed model.")
+        if ("images" in body or "videos" in body):
             raise Refusal(422, "unsupported_media", "This endpoint serves text only.")
         try:
             decisions.validate_request(body)
@@ -103,23 +109,47 @@ def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time):
             raise Refusal(error.status, error.code, str(error)) from None
         questions = body["questions"]
         with infer_lock:  # one request on the GPU at a time
-            if any(model.count_tokens(body["state"], q) > model.max_input_tokens for q in questions.values()):
-                raise Refusal(413, "input_too_long", "Input exceeds the served token limit.")
-            predictions = {}
-            for qid, q in questions.items():
-                probs, tokens = model.predict(body["state"], q)
-                predictions[qid] = {"probabilities": probs, "input_tokens": tokens}
+            try:
+                if any(model.count_tokens(body["state"], q) > model.max_input_tokens for q in questions.values()):
+                    raise Refusal(413, "input_too_long", "Input exceeds the served token limit.")
+                predictions = {}
+                for qid, q in questions.items():
+                    probs, tokens = model.predict(body["state"], q)
+                    predictions[qid] = {"probabilities": probs, "input_tokens": tokens}
+            except ValueError:
+                raise Refusal(422, "invalid_request", "Request could not be encoded.") from None
         digest = serving.request_digest(payload)
         return serving.sign(key, "answer", serving.answer_payload(digest, model.model, model.weights_sha256, predictions))
 
     class Handler(BaseHTTPRequestHandler):
-        timeout = 10  # per-connection socket timeout: a stalled client cannot hold a slot
+        timeout = 10  # per-read timeout; `deadline` below bounds the total
+
+        def setup(self):
+            super().setup()
+            self.sent = False
+            self.watchdog = threading.Timer(deadline, self.expire)  # total read deadline, trickle-proof
+            self.watchdog.daemon = True
+            self.watchdog.start()
+
+        def expire(self):
+            try:
+                self.request.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+
+        def finish(self):
+            self.watchdog.cancel()
+            try:
+                super().finish()
+            except OSError:
+                pass
 
         def log_message(self, *args):
             pass
 
         def send_json(self, status, value, headers=()):
             data = json.dumps(value).encode()
+            self.sent = True
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
@@ -130,6 +160,19 @@ def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time):
 
         def refuse(self, status, code, message):
             self.send_json(status, {"error": {"code": code, "message": message}})
+
+        def handle_one_request(self):
+            try:
+                super().handle_one_request()
+            except OSError:  # client vanished mid-write
+                self.close_connection = True
+            except Exception:
+                self.close_connection = True
+                if not self.sent:
+                    try:
+                        self.refuse(500, "internal_error", "Internal error.")
+                    except OSError:
+                        pass
 
         def do_GET(self):
             if self.path != "/v1/serving":
@@ -154,6 +197,7 @@ def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time):
             except OSError:  # timeout or reset: drop the client
                 self.close_connection = True
                 return
+            self.watchdog.cancel()  # fully read: slow inference must not be killed
             try:
                 result = answer(raw)
             except Refusal as error:
@@ -163,6 +207,9 @@ def make_server(key, endpoint, served, allowed, bind, slots=8, clock=time.time):
     class Server(ThreadingHTTPServer):
         daemon_threads = True
         gate = threading.BoundedSemaphore(slots)
+
+        def handle_error(self, request, client_address):
+            pass
 
         def process_request(self, request, client_address):
             if not self.gate.acquire(blocking=False):

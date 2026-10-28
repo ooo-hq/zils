@@ -1,4 +1,6 @@
+import contextlib
 import http.client
+import io
 import importlib.util
 import json
 import socket
@@ -48,9 +50,9 @@ class ServingServerTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
-    def start(self, served=None, allowed=lambda hotkey: True, slots=8):
+    def start(self, served=None, allowed=lambda hotkey: True, slots=8, deadline=15.0):
         server = serving_server.make_server(
-            self.miner, ENDPOINT, [served or self.fake], allowed, ("127.0.0.1", 0), slots, clock=lambda: NOW
+            self.miner, ENDPOINT, [served or self.fake], allowed, ("127.0.0.1", 0), slots, clock=lambda: NOW, deadline=deadline
         )
         threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
         self.servers.append(server)
@@ -62,7 +64,7 @@ class ServingServerTest(unittest.TestCase):
 
     def message(self, body=None, **fields):
         payload = serving.request_payload(
-            self.caller.ss58_address, self.miner.ss58_address, MODEL, WEIGHTS, body or self.body(), NOW
+            self.caller.ss58_address, self.miner.ss58_address, MODEL, WEIGHTS, self.body() if body is None else body, NOW
         )
         payload.update(fields)
         return serving.sign(self.caller, "request", payload)
@@ -173,3 +175,45 @@ class ServingServerTest(unittest.TestCase):
         conn.putrequest("POST", "/v1/systemone")
         conn.endheaders()
         self.assertEqual(conn.getresponse().status, 411)
+
+    def test_trickling_client_hits_total_deadline_and_frees_the_slot(self):
+        server = self.start(slots=1, deadline=0.5)
+        sock = socket.create_connection(("127.0.0.1", server.server_address[1]))
+        sock.settimeout(5)
+        try:
+            for _ in range(10):  # one byte every 0.2 s would outlast any per-read timeout
+                sock.sendall(b"P")
+                threading.Event().wait(0.2)
+        except OSError:
+            pass
+        try:
+            self.assertEqual(sock.recv(1), b"")
+        except ConnectionResetError:
+            pass  # dropped with unread bytes: also a drop
+        sock.close()
+        self.assertEqual(self.post(server, self.message())[0].status, 200)
+
+    def test_encoding_error_and_malformed_types_are_clean_errors(self):
+        class Bad(FakeServed):
+            def count_tokens(self, state, question):
+                raise ValueError("SECRET-STATE")
+
+        bad = Bad()
+        server = self.start(bad, slots=1)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            response, data = self.post(server, self.message())
+            self.assertEqual(response.status, 422)
+            self.assertNotIn("SECRET", json.dumps(data))
+            for field in ({"model": ["x"]}, {"weights_sha256": {}}, {"body": []}):
+                self.assertEqual(self.post(server, self.message(**field))[0].status, 400)
+            self.assertEqual(self.post(server, self.message(self.body() | {"model": "other"}))[0].status, 400)
+            bad.count_tokens = lambda s, q: 1  # lock and slot were released: it serves again
+            self.assertEqual(self.post(server, self.message())[0].status, 200)
+        self.assertEqual(err.getvalue(), "")
+
+    def test_body_model_must_match_signed_model(self):
+        server = self.start()
+        response, data = self.post(server, self.message(self.body() | {"model": "other"}))
+        self.assertEqual((response.status, data["error"]["code"]), (400, "model_mismatch"))
+        self.assertEqual(self.fake.calls, 0)
