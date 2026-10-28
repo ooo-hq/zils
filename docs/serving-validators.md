@@ -26,10 +26,12 @@ round. The order is shuffled each round. The grader then waits about `round_seco
 ## Run it
 
 ```bash
-.venv-d3/bin/python -m zils.serving_grader --config serving-grader.json
+python -m zils.serving_grader --config serving-grader.json
 ```
 
-The grader needs the d3 runtime, a state directory that already exists, the request
+Run it with the same Python that runs `zils serve`. Like `zils serve`, it computes
+reference answers in a child process under the pinned d3 runtime (`.venv-d3`, or
+`ZILS_D3_RUNTIME_PYTHON` when it is set). The grader needs that runtime, a state directory that already exists, the request
 key file, and each reference checkpoint directory (see
 [serving miners](serving-miners.md#make-a-checkpoint-directory)). It refuses to
 start if one is missing, if the reference worker serves a model at weights other
