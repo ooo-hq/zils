@@ -398,7 +398,6 @@ class FakeMiner:
     """Signs answers for the pinned serving protocol; `opts` bends one thing at a time."""
 
     def __init__(self, **opts):
-        self.opts = opts
         opts_ = opts
 
         class Handler(BaseHTTPRequestHandler):
@@ -633,7 +632,6 @@ class PinnedServerTests(unittest.TestCase):
             target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
         ).start()
         self.miner = "http://127.0.0.1:%d" % self.server.server_port
-        self.asks = []
 
     def tearDown(self):
         self.server.shutdown()

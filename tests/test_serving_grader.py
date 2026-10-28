@@ -451,6 +451,18 @@ class LockAndReferenceTests(GraderTestBase):
         self.assertEqual(self.starts, 1)
         self.assertEqual(set(self.scores_file()), {other})
 
+    def test_unexpected_reference_error_unloads_and_records_evidence(self):
+        def boom():
+            raise RuntimeError("bug on our side")
+
+        self.add_miner(0)
+        self.on_predict = boom
+        self.grader().run_round("r1")
+        self.assertEqual(self.evidence()[0]["outcome"], "reference_unavailable")
+        self.assertEqual(self.scores_file(), {})
+        self.assertTrue(self.fake_worker.closed)
+        self.assertTrue(lock_is_free(self.lock))
+
     def test_start_failure_is_reference_unavailable_and_retried(self):
         self.add_miner(0)
         self.start_error = ValueError("serving worker failed to start")

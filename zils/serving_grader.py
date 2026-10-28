@@ -288,7 +288,7 @@ class Grader:
                     except serving_server.WorkerError as error:  # one refusal; the worker lives
                         log(f"reference worker refused a request ({error.kind})")
                         row["outcome"] = "reference_unavailable"
-                    except OSError as error:
+                    except Exception as error:  # crash or our own bug: never the miner's fault
                         log(f"reference worker failed ({type(error).__name__})")
                         row["outcome"] = "reference_unavailable"
                         unload(served)
