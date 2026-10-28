@@ -6,12 +6,24 @@ import unittest
 
 from zils import serving_share
 
-CFG = {"share": 0.1, "scores": "serving-scores.json", "switch_on_miners": 3, "max_age_seconds": 3600}
+CFG = {
+    "share": 0.1,
+    "scores": "serving-scores.json",
+    "switch_on_miners": 3,
+    "max_age_seconds": 3600,
+}
 NOW = 1_000_000.0
 
 
 def entry(score):
-    return {"rounds": 1, "pass_rate": 1, "availability": 1, "median_latency_s": 1, "struck_until": 0, "score": score}
+    return {
+        "rounds": 1,
+        "pass_rate": 1,
+        "availability": 1,
+        "median_latency_s": 1,
+        "struck_until": 0,
+        "score": score,
+    }
 
 
 class ValidateTest(unittest.TestCase):
@@ -53,8 +65,9 @@ class BudgetTest(unittest.TestCase):
     def check(self, config):
         from unittest import mock
 
-        with mock.patch("zils.model_pools.validate", lambda c: c), mock.patch(
-            "zils.feature_tracks.validate", lambda c: c
+        with (
+            mock.patch("zils.model_pools.validate", lambda c: c),
+            mock.patch("zils.feature_tracks.validate", lambda c: c),
         ):
             serving_share.validate_budget(config)
 
@@ -114,7 +127,8 @@ class FreezeTest(unittest.TestCase):
 
     def test_missing(self):
         self.assertEqual(
-            serving_share.freeze(self.cfg, NOW), {"written_at": None, "frozen_at": NOW, "scores": {}}
+            serving_share.freeze(self.cfg, NOW),
+            {"written_at": None, "frozen_at": NOW, "scores": {}},
         )
 
     def test_corrupt_and_non_dict(self):
@@ -161,7 +175,12 @@ class HostileFileTest(FreezeTest):
 
 
 class WeightsTest(unittest.TestCase):
-    members = {"1": {"hotkey": "a"}, "2": {"hotkey": "b"}, "3": {"hotkey": "c"}, "4": {"hotkey": "d"}}
+    members = {
+        "1": {"hotkey": "a"},
+        "2": {"hotkey": "b"},
+        "3": {"hotkey": "c"},
+        "4": {"hotkey": "d"},
+    }
 
     def frozen(self, scores):
         return {"written_at": 1.0, "frozen_at": 2.0, "scores": scores}
@@ -181,7 +200,9 @@ class WeightsTest(unittest.TestCase):
         self.assertTrue(record["switched_on"])
         self.assertEqual(record["earners"], 3)
         self.assertEqual(record["weights"], {"1": 3.5, "2": 3.5, "3": 3.5})
-        self.assertEqual((record["share"], record["written_at"], record["frozen_at"]), (0.1, 1.0, 2.0))
+        self.assertEqual(
+            (record["share"], record["written_at"], record["frozen_at"]), (0.1, 1.0, 2.0)
+        )
 
     def test_non_finite_total_skipped(self):
         scores = {h: {"x": entry(1)} for h in "abc"}
@@ -223,7 +244,9 @@ class AttachTest(unittest.TestCase):
 
         with open(self.src, "w") as f:
             json.dump({"hk": {"m": entry(1.0)}}, f)
-        first = validator.attach_serving_scores(self.cfg, self.work, self.report, os.stat(self.src).st_mtime)
+        first = validator.attach_serving_scores(
+            self.cfg, self.work, self.report, os.stat(self.src).st_mtime
+        )
         with open(self.src, "w") as f:
             json.dump({"hk": {"m": entry(9.0)}}, f)
         again = validator.attach_serving_scores(self.cfg, self.work, self.report, 5.0)

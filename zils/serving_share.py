@@ -4,7 +4,6 @@ import json
 import math
 import os
 
-
 MAX_SCORES_BYTES = 8 << 20
 
 
@@ -22,7 +21,9 @@ def validate(config):
         "switch_on_miners",
         "max_age_seconds",
     }:
-        raise ValueError("serving_share requires share, scores, switch_on_miners and max_age_seconds")
+        raise ValueError(
+            "serving_share requires share, scores, switch_on_miners and max_age_seconds"
+        )
     share, path = config["share"], config["scores"]
     if not _number(share) or not 0 <= share <= 1:
         raise ValueError("serving_share share must be finite and in [0, 1]")
@@ -62,7 +63,11 @@ def freeze(config, now):
             data = json.load(f)
     except (OSError, ValueError, RecursionError, MemoryError):
         data = {}
-    if isinstance(data, dict) and written is not None and now - written <= config["max_age_seconds"]:
+    if (
+        isinstance(data, dict)
+        and written is not None
+        and now - written <= config["max_age_seconds"]
+    ):
         for hotkey, models in data.items():
             if not isinstance(models, dict):
                 continue

@@ -423,13 +423,12 @@ def attach_serving_scores(config, work, report, now=None):
     """Embed the grader's serving scores, frozen with the round so a publication retry pays the same."""
     if "serving_share" not in config:
         return report
-    frozen = work / "serving-scores.json"
-    if not frozen.exists():
-        from . import serving_share
-
-        wire.write_json(frozen, serving_share.freeze(config["serving_share"], time.time() if now is None else now))
     from . import serving_share
 
+    frozen = work / "serving-scores.json"
+    if not frozen.exists():
+        now = time.time() if now is None else now
+        wire.write_json(frozen, serving_share.freeze(config["serving_share"], now))
     return {
         **report,
         "serving_share": {
