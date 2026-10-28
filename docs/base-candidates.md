@@ -266,7 +266,7 @@ starting point to beat, not a winning recipe.
 ## How it is scored
 
 All five text pools use the [decision-quality election](base-election.md).
-A candidate needs a +1 point gain, positive paired lower 95% bound and no more
+A candidate needs at least a +2 point gain, positive paired lower 95% bound and no more
 than 0.005 Brier regression on each of two independent draws. Confirmation starts
 at least 12 hours after that candidate and the incumbent finish the first draw.
 Every eligible candidate can qualify; the best score is only a display summary.

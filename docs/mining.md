@@ -139,7 +139,7 @@ earn on two tracks, paid from one weight vector on the configured subnet:
 - **Base tier (primary, continuous).** Beat the pinned incumbent in your
   [model tier](model-pools.md). Submit a full-weight candidate under the
   [base candidate contract](base-candidates.md). The validator's base-tier
-  scorer follows the [decision-quality election](base-election.md): +1 point,
+  scorer follows the [decision-quality election](base-election.md): at least +2 points,
   a positive paired lower 95% bound and Brier regression at most 0.005, followed
   by candidate-specific confirmation, the three-seed adapter suite and a common
   release-window closing exam. Only crowned kings are paid.
