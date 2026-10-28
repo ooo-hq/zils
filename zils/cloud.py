@@ -14,7 +14,7 @@ import requests
 
 DATA_BUCKET = "fez-training-data"
 MODEL_BUCKET = "fez-training-models"
-MAX_DATA_BYTES = 128 * 1024 * 1024
+MAX_DATA_BYTES = 384 * 1024 * 1024
 
 
 class APIError(Exception):
