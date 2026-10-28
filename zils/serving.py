@@ -16,11 +16,12 @@ import uuid
 
 from bittensor_wallet import Keypair
 
-from . import models, protocol
+from . import decisions, models, protocol
 
 VERSION = "zils-serving/v1"
 FRESH_SECONDS = 120
 MAX_MANIFEST_BYTES = 65536
+MAX_ANSWER_BYTES = 1 << 20
 
 _FIELDS = {
     "manifest": {"version", "hotkey", "endpoint", "issued_at", "models"},
@@ -212,3 +213,141 @@ def discover(axons, clock=time.time, fetch=fetch_manifest):
         except Exception as error:  # fetch can fail in many ways (OSError, http.client, JSON)
             found[uid] = {"error": str(error) or type(error).__name__}
     return found
+
+
+class MinerError(Exception):
+    """`reason` is one of busy (HTTP 503/429), unavailable (503 worker failure),
+    contradicts_manifest (404 model_not_found / 409 weights_mismatch), refused (401/403),
+    rejected (other 4xx), timeout, http, invalid, unverified; never carries request or answer contents."""
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _error_code(response):
+    """The `error.code` of a JSON error body (read to an 8 KiB cap), else None."""
+    try:
+        return json.loads(response.read(8192))["error"]["code"]
+    except (ValueError, KeyError, TypeError, OSError, http.client.HTTPException):
+        return None
+
+
+def _post(endpoint, data, timeout):
+    """POST `data` to the miner's /v1/systemone under a hard total deadline; return the body bytes."""
+    address, port = protocol.endpoint_port(endpoint)  # numeric host: no DNS, no proxy, no redirects
+    deadline = time.monotonic() + timeout
+    conn = http.client.HTTPConnection(str(address), port, timeout=timeout)
+    conn._http_vsn, conn._http_vsn_str = 10, "HTTP/1.0"
+    fired = threading.Event()
+    sock = None
+
+    def expire():
+        fired.set()
+        if sock is not None:
+            try:  # shutdown wakes a blocked read; the response may have taken conn.sock
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            sock.close()
+
+    watchdog = threading.Timer(max(timeout, 0), expire)
+    watchdog.start()
+    body = bytearray()
+    try:
+        conn.connect()
+        sock = conn.sock
+        if fired.is_set():
+            raise OSError()
+        conn.request(
+            "POST",
+            "/v1/systemone",
+            body=data,
+            headers={"Content-Type": "application/json", "Content-Length": str(len(data))},
+        )
+        response = conn.getresponse()
+        if response.status in (429, 503, 404, 409):
+            code = _error_code(response)
+            if fired.is_set() or time.monotonic() >= deadline:
+                raise MinerError("timeout")
+            if response.status == 503 and code == "unavailable":
+                raise MinerError("unavailable")  # the miner's worker failed
+            if (response.status, code) in (
+                (404, "model_not_found"),
+                (409, "weights_mismatch"),
+            ):
+                raise MinerError("contradicts_manifest")  # contradicts its own signed manifest
+            raise MinerError("busy" if response.status in (429, 503) else "rejected")
+        if response.status in (401, 403):
+            raise MinerError("refused")
+        if 400 <= response.status < 500:
+            raise MinerError("rejected")
+        if response.status != 200:
+            raise MinerError("http")
+        while len(body) <= MAX_ANSWER_BYTES:
+            chunk = response.read1(min(4096, MAX_ANSWER_BYTES + 1 - len(body)))
+            if not chunk:
+                break
+            body += chunk
+    except (OSError, http.client.HTTPException):
+        late = fired.is_set() or time.monotonic() >= deadline
+        raise MinerError("timeout" if late else "http") from None
+    finally:
+        watchdog.cancel()
+        conn.close()
+    if fired.is_set() or time.monotonic() >= deadline:
+        raise MinerError("timeout")
+    if len(body) > MAX_ANSWER_BYTES:
+        raise MinerError("invalid")
+    return bytes(body)
+
+
+def ask(
+    endpoint,
+    miner_hotkey,
+    key,
+    model,
+    weights_sha256,
+    body,
+    timeout,
+    *,
+    clock=time.time,
+    check=public_endpoint,
+):
+    """Send one signed request to a miner; return its verified signed answer message or raise MinerError."""
+    try:
+        try:
+            check(endpoint)
+        except ValueError:
+            raise MinerError("invalid") from None
+        miner_body = {**body, "model": model}  # the miner checks body model == signed model
+        payload = request_payload(
+            key.ss58_address,
+            miner_hotkey,
+            model,
+            weights_sha256,
+            miner_body,
+            int(clock()),
+        )
+        data = json.dumps(sign(key, "request", payload)).encode()
+        raw = _post(endpoint, data, timeout)
+        try:
+            message = json.loads(raw)
+            answer = verify(message, "answer", miner_hotkey, int(clock()))
+        except ValueError:  # includes bad JSON
+            raise MinerError("unverified") from None
+        if (
+            answer["request_sha256"] != request_digest(payload)
+            or answer["model"] != model
+            or answer["weights_sha256"] != weights_sha256
+        ):
+            raise MinerError("invalid")
+        try:  # the exact check the gateway applies to the answer before the customer sees it
+            decisions.make_response(model, miner_body, answer["predictions"])
+        except decisions.DecisionError:
+            raise MinerError("invalid") from None
+        return message
+    except MinerError:
+        raise
+    except Exception:  # a miner payload must never crash the caller with another type
+        raise MinerError("invalid") from None
