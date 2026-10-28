@@ -3,9 +3,12 @@
 import hashlib
 import random
 
-from zils.benchmark import ORACLES, scenario
+from zils.benchmark import scenario
 
 QIDS = ("decision", "answer", "q")
+# Severity is left out: every model size answers it >= 0.99 sure (28 Oct 2026 calibration), so it never
+# tells a model from a smaller substitute.
+FAMILIES = ("policy", "routing", "evidence")
 
 
 def round_seed(validator_hotkey, round_id, miner_hotkey, model):
@@ -18,7 +21,7 @@ def items(seed, count):
     rng = random.Random(seed)
     out = []
     for _ in range(count):
-        family = rng.choice(list(ORACLES))
+        family = rng.choice(FAMILIES)
         rows = list(scenario(family, rng.randrange(10), rng))
         record, question, _args = rng.choice(rows)
         if question["type"] == "choice":

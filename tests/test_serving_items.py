@@ -33,10 +33,16 @@ class ServingItemsTest(unittest.TestCase):
             (q,) = item["questions"].values()
             seen.add(q["type"] + ("-" + q["instructions"][:6]))
         types = {s.split("-")[0] for s in seen}
-        self.assertEqual(types, {"noul", "choice", "score"})
+        self.assertEqual(types, {"noul", "choice"})  # score questions came only from severity
         text = " ".join(next(iter(i["questions"].values()))["instructions"] for i in items(3, 200))
-        for marker in ("approve exactly", "Select the team", "supports or contradicts", "level"):
+        for marker in ("approve exactly", "Select the team", "supports or contradicts"):
             self.assertIn(marker, text)
+
+    def test_severity_family_is_never_served(self):
+        # 28 Oct 2026 calibration: every model size answers severity items >= 0.99 sure, so they carry no signal.
+        for item in items(3, 400):
+            (q,) = item["questions"].values()
+            self.assertNotIn("level using these exact rules", q["instructions"])
         self.assertEqual(len(benchmark.ORACLES), 4)
 
     def test_golden_digest(self):
@@ -45,7 +51,7 @@ class ServingItemsTest(unittest.TestCase):
         import json
 
         got = hashlib.sha256(json.dumps(items(0, 20), sort_keys=True).encode()).hexdigest()
-        self.assertEqual(got, "8e58a826fa853b029368fbf1e17333ab11b775e06b70c099839c615ff91689ad")
+        self.assertEqual(got, "1d14f1e94185feb57492a9404581a5bce1b6fe623ac3054e69c24157f1a54d8e")
 
 
 if __name__ == "__main__":

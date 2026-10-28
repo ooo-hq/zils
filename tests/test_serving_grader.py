@@ -47,7 +47,7 @@ def answer(questions, behaviour):
     preds = reference(questions)
     for row in preds.values():
         if behaviour == "marginal":
-            row["probabilities"] = tilt(row["probabilities"], 0.6)
+            row["probabilities"] = tilt(row["probabilities"], 0.24)  # inside (mean_pass, mean_fail)
         elif behaviour == "fail":
             row["probabilities"] = tilt(row["probabilities"], 5.0)
         elif behaviour == "mismatch":
