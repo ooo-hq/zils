@@ -173,7 +173,9 @@ def serving_axons(config, sub):
     netuid = check_config(config)
     block = sub.block
     found = {}
-    for uid in range(int(sub.query(("SubtensorModule", "SubnetworkN"), [netuid], block=block) or 0)):
+    for uid in range(
+        int(sub.query(("SubtensorModule", "SubnetworkN"), [netuid], block=block) or 0)
+    ):
         hotkey = sub.query(("SubtensorModule", "Keys"), [netuid, uid], block=block)
         endpoint = hotkey and read_axon(sub, netuid, hotkey, block)
         if endpoint:

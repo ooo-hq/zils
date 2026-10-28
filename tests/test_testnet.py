@@ -621,8 +621,15 @@ class AxonTest(unittest.TestCase):
             axon.call_args, ((("SubtensorModule", "Axons"), [579, "hk"]), {"block": 10})
         )
         for bad in (
-            {**good, "ip": 0}, {**good, "port": 0}, {**good, "ip_type": 6}, None, "x",
-            {"port": 1}, {**good, "ip": 2**32}, {**good, "ip": "8.8.8.8"}, {**good, "port": None},
+            {**good, "ip": 0},
+            {**good, "port": 0},
+            {**good, "ip_type": 6},
+            None,
+            "x",
+            {"port": 1},
+            {**good, "ip": 2**32},
+            {**good, "ip": "8.8.8.8"},
+            {**good, "port": None},
         ):
             axon.value = bad
             self.assertIsNone(t.read_axon(sub, 579, "hk", 10))

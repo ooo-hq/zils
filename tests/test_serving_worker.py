@@ -15,7 +15,7 @@ from zils import ROOT, checkpoint_hash, models, serving_server, serving_worker
 MODEL = models.D3
 QUESTION = {"type": "noul", "instructions": None, "criteria": None}
 # The fake encodes one token per state character and fails over 10 the way d3.Encoder.inputs does.
-FAKE = '''
+FAKE = """
 class Encoder:
     def inputs(self, state, question):
         if state == "hang":
@@ -39,11 +39,14 @@ class FakeModel:
         if ids == [0, 1, 2, 3]:
             raise OSError("CUDA lost SECRET")
         return {"true": 0.25, "false": 0.75}
-'''
+"""
 scope = {}
 exec(FAKE, scope)
 FakeModel = scope["FakeModel"]
-SCRIPT = FAKE + "\nimport sys\nfrom zils import serving_worker\nserving_worker.main(sys.argv[1:], factory=FakeModel)\n"
+SCRIPT = (
+    FAKE
+    + "\nimport sys\nfrom zils import serving_worker\nserving_worker.main(sys.argv[1:], factory=FakeModel)\n"
+)
 
 
 def checkpoint(root, name, kind="base", model=MODEL):
@@ -63,14 +66,17 @@ class WorkerTest(unittest.TestCase):
         self.loaded = serving_worker.load([checkpoint(self.root, "stock")], FakeModel)[0]
 
     def ask(self, state, **extra):
-        line = json.dumps({"id": 7, "model": MODEL, "questions": {"q1": QUESTION}, "state": state, **extra})
+        line = json.dumps(
+            {"id": 7, "model": MODEL, "questions": {"q1": QUESTION}, "state": state, **extra}
+        )
         return serving_worker.answer(self.loaded, line)
 
     def test_load_describes_a_base_by_its_checkpoint_hash(self):
         path = checkpoint(self.root, "base")
         loaded, served = serving_worker.load([path], FakeModel)
         self.assertEqual(
-            served, [{"model": MODEL, "weights_sha256": checkpoint_hash(path), "max_input_tokens": 8192}]
+            served,
+            [{"model": MODEL, "weights_sha256": checkpoint_hash(path), "max_input_tokens": 8192}],
         )
         self.assertEqual(loaded[MODEL].checkpoint, path)
 
@@ -93,7 +99,12 @@ class WorkerTest(unittest.TestCase):
     def test_answer_predicts_every_question(self):
         self.assertEqual(
             self.ask("abc"),
-            {"id": 7, "predictions": {"q1": {"probabilities": {"true": 0.25, "false": 0.75}, "input_tokens": 3}}},
+            {
+                "id": 7,
+                "predictions": {
+                    "q1": {"probabilities": {"true": 0.25, "false": 0.75}, "input_tokens": 3}
+                },
+            },
         )
 
     def test_encoder_length_error_is_too_long(self):
@@ -101,7 +112,9 @@ class WorkerTest(unittest.TestCase):
 
     def test_other_errors_are_fixed_messages(self):
         bad = self.ask("bad")
-        self.assertEqual(bad["error"], {"kind": "invalid", "message": serving_worker.MESSAGES["invalid"]})
+        self.assertEqual(
+            bad["error"], {"kind": "invalid", "message": serving_worker.MESSAGES["invalid"]}
+        )
         self.assertEqual(self.ask("abc", model="other")["error"]["kind"], "invalid")
         self.assertEqual(serving_worker.answer(self.loaded, "not json")["error"]["kind"], "invalid")
         err = io.StringIO()
@@ -112,7 +125,10 @@ class WorkerTest(unittest.TestCase):
         self.assertNotIn("SECRET", json.dumps([bad, runtime]))
 
     def test_run_speaks_json_lines(self):
-        stdin = io.StringIO(json.dumps({"id": 1, "model": MODEL, "questions": {"q": QUESTION}, "state": "ab"}) + "\n")
+        stdin = io.StringIO(
+            json.dumps({"id": 1, "model": MODEL, "questions": {"q": QUESTION}, "state": "ab"})
+            + "\n"
+        )
         stdout = io.StringIO()
         serving_worker.run([checkpoint(self.root, "base")], FakeModel, stdin, stdout)
         ready, reply = map(json.loads, stdout.getvalue().splitlines())
@@ -130,21 +146,28 @@ class WorkerProcessTest(unittest.TestCase):
         self.enterContext(patch.dict(os.environ, {models.candidate_base_env(MODEL): ""}))
 
     def start(self, timeout=10.0):
-        served = serving_server.start_worker([self.path], sys.executable, args=("-c", SCRIPT), timeout=timeout)
+        served = serving_server.start_worker(
+            [self.path], sys.executable, args=("-c", SCRIPT), timeout=timeout
+        )
         self.addCleanup(served[0].worker.close)
         return served[0]
 
     def test_protocol_end_to_end(self):
         served = self.start()
         self.assertEqual(
-            (served.model, served.weights_sha256, served.max_input_tokens), (MODEL, checkpoint_hash(self.path), 8192)
+            (served.model, served.weights_sha256, served.max_input_tokens),
+            (MODEL, checkpoint_hash(self.path), 8192),
         )
         predictions = served.predict("abc", {"q1": QUESTION, "q2": QUESTION})
-        self.assertEqual(predictions["q2"], {"probabilities": {"true": 0.25, "false": 0.75}, "input_tokens": 3})
+        self.assertEqual(
+            predictions["q2"], {"probabilities": {"true": 0.25, "false": 0.75}, "input_tokens": 3}
+        )
         with self.assertRaises(serving_server.WorkerError) as refused:
             served.predict("x" * 11, {"q1": QUESTION})
         self.assertEqual(refused.exception.kind, "too_long")
-        self.assertEqual(served.predict("ab", {"q": QUESTION})["q"]["input_tokens"], 2)  # still in step
+        self.assertEqual(
+            served.predict("ab", {"q": QUESTION})["q"]["input_tokens"], 2
+        )  # still in step
 
     def test_dead_worker_raises_oserror_and_signals_exit(self):
         served = self.start()
@@ -162,7 +185,9 @@ class WorkerProcessTest(unittest.TestCase):
 
     def test_worker_that_exits_before_ready_fails_to_start(self):
         with self.assertRaisesRegex(ValueError, r"failed to start \(exit 3\)"):
-            serving_server.start_worker([self.path], sys.executable, args=("-c", "raise SystemExit(3)"))
+            serving_server.start_worker(
+                [self.path], sys.executable, args=("-c", "raise SystemExit(3)")
+            )
 
     def test_worker_imports_no_chain_or_signing_code(self):
         import subprocess
@@ -171,7 +196,9 @@ class WorkerProcessTest(unittest.TestCase):
             "import sys, zils.serving_worker\n"
             "print(sorted(m for m in ('bittensor', 'bittensor_wallet', 'zils.serving') if m in sys.modules))"
         )
-        done = subprocess.run([sys.executable, "-c", probe], cwd=ROOT, capture_output=True, text=True, check=True)
+        done = subprocess.run(
+            [sys.executable, "-c", probe], cwd=ROOT, capture_output=True, text=True, check=True
+        )
         self.assertEqual(done.stdout.strip(), "[]")
 
 

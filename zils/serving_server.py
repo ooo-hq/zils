@@ -81,7 +81,10 @@ class Worker:
     def call(self, model, state, questions):
         rid = next(self.ids)
         try:
-            self.process.stdin.write(json.dumps({"id": rid, "model": model, "questions": questions, "state": state}) + "\n")
+            self.process.stdin.write(
+                json.dumps({"id": rid, "model": model, "questions": questions, "state": state})
+                + "\n"
+            )
             self.process.stdin.flush()
         except (OSError, ValueError):  # broken pipe, or stdin already closed
             raise OSError("serving worker exited") from None
@@ -103,7 +106,9 @@ class Served:
         """{qid: {"probabilities", "input_tokens"}}; WorkerError on a refusal, OSError if the worker is gone."""
         reply = self.worker.call(self.model, state, questions)
         if "error" in reply:
-            raise WorkerError(reply["error"].get("kind") if isinstance(reply["error"], dict) else None)
+            raise WorkerError(
+                reply["error"].get("kind") if isinstance(reply["error"], dict) else None
+            )
         return reply["predictions"]
 
 
@@ -112,7 +117,11 @@ def start_worker(checkpoints, python, args=("-m", "zils.serving_worker"), timeou
     `timeout` bounds each request's inference, not the load."""
     flags = [flag for path in checkpoints for flag in ("--checkpoint", str(Path(path).resolve()))]
     process = subprocess.Popen(
-        [str(python), *args, *flags], cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
+        [str(python), *args, *flags],
+        cwd=ROOT,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
     )
     worker = Worker(process, timeout)
     try:
@@ -122,7 +131,9 @@ def start_worker(checkpoints, python, args=("-m", "zils.serving_worker"), timeou
         return [Served(worker, **item) for item in ready["served"]]
     except (OSError, AttributeError, KeyError, TypeError):
         worker.close()
-        raise ValueError(f"serving worker failed to start (exit {process.wait()}); see its error above") from None
+        raise ValueError(
+            f"serving worker failed to start (exit {process.wait()}); see its error above"
+        ) from None
 
 
 class Refusal(Exception):
@@ -139,14 +150,26 @@ UNAVAILABLE = (503, "unavailable", "Inference is unavailable; retry later.")
 
 
 def make_server(
-    key, endpoint, served, allowed, bind, slots=8, clock=time.time, deadline=15.0, header_deadline=3.0
+    key,
+    endpoint,
+    served,
+    allowed,
+    bind,
+    slots=8,
+    clock=time.time,
+    deadline=15.0,
+    header_deadline=3.0,
 ):
     """`deadline` bounds reading the whole request, `header_deadline` the request line and headers."""
     by_model = {s.model: s for s in served}
     if len(by_model) != len(served):
         raise ValueError("two served checkpoints have the same model")
     manifest = [
-        {"model": s.model, "weights_sha256": s.weights_sha256, "max_input_tokens": s.max_input_tokens}
+        {
+            "model": s.model,
+            "weights_sha256": s.weights_sha256,
+            "max_input_tokens": s.max_input_tokens,
+        }
         for s in served
     ]
     seen, seen_lock, infer_lock = {}, threading.Lock(), threading.Lock()
@@ -180,8 +203,11 @@ def make_server(
             raise Refusal(403, "forbidden", "Caller is not permitted.")
         if not isinstance(payload["nonce"], str) or not fresh(caller, payload["nonce"], now):
             raise Refusal(401, "unauthorized", "Nonce already used.")
-        if not (isinstance(payload["model"], str) and isinstance(payload["weights_sha256"], str)
-                and isinstance(payload["body"], dict)):
+        if not (
+            isinstance(payload["model"], str)
+            and isinstance(payload["weights_sha256"], str)
+            and isinstance(payload["body"], dict)
+        ):
             raise Refusal(400, "invalid_request", "Request fields have the wrong type.")
         model = by_model.get(payload["model"])
         if model is None:
@@ -191,7 +217,7 @@ def make_server(
         body = payload["body"]
         if body.get("model") != payload["model"]:
             raise Refusal(400, "model_mismatch", "Body model differs from the signed model.")
-        if ("images" in body or "videos" in body):
+        if "images" in body or "videos" in body:
             raise Refusal(422, "unsupported_media", "This endpoint serves text only.")
         try:
             decisions.validate_request(body)
@@ -199,7 +225,9 @@ def make_server(
             raise Refusal(error.status, error.code, str(error)) from None
         questions = body["questions"]
         if len(questions) > MAX_QUESTIONS:
-            raise Refusal(413, "too_many_questions", "Request has more than %d questions." % MAX_QUESTIONS)
+            raise Refusal(
+                413, "too_many_questions", "Request has more than %d questions." % MAX_QUESTIONS
+            )
         with infer_lock:  # one request on the GPU at a time
             try:
                 predictions = model.predict(body["state"], questions)
@@ -212,7 +240,9 @@ def make_server(
                 log(f"inference failed ({type(failure).__name__}: {failure})")
                 raise Refusal(*UNAVAILABLE) from None
         digest = serving.request_digest(payload)
-        signed = serving.answer_payload(key.ss58_address, digest, model.model, model.weights_sha256, predictions)
+        signed = serving.answer_payload(
+            key.ss58_address, digest, model.model, model.weights_sha256, predictions
+        )
         return serving.sign(key, "answer", signed)
 
     class Handler(BaseHTTPRequestHandler):
@@ -221,8 +251,12 @@ def make_server(
         def setup(self):
             super().setup()
             self.sent = False
-            self.watchdog = threading.Timer(deadline, self.expire)  # total read deadline, trickle-proof
-            self.headers_due = threading.Timer(header_deadline, self.expire)  # idle connections free fast
+            self.watchdog = threading.Timer(
+                deadline, self.expire
+            )  # total read deadline, trickle-proof
+            self.headers_due = threading.Timer(
+                header_deadline, self.expire
+            )  # idle connections free fast
             for timer in (self.watchdog, self.headers_due):
                 timer.daemon = True
                 timer.start()

@@ -346,7 +346,9 @@ def serve(args, interval=600.0):
                 holder
                 for uid, permit in enumerate(permits)
                 if permit
-                for holder in [sub.query(("SubtensorModule", "Keys"), [args.netuid, uid], block=block)]
+                for holder in [
+                    sub.query(("SubtensorModule", "Keys"), [args.netuid, uid], block=block)
+                ]
                 if holder
             }
 
@@ -366,7 +368,9 @@ def serve(args, interval=600.0):
             allowed.refresh()
 
     threading.Thread(target=keep_fresh, daemon=True).start()
-    server = serving_server.make_server(key, endpoint, loaded, allowed, ("0.0.0.0", args.port), args.slots)
+    server = serving_server.make_server(
+        key, endpoint, loaded, allowed, ("0.0.0.0", args.port), args.slots
+    )
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f"serving {', '.join(s.model for s in loaded)} at {endpoint}", flush=True)
     loaded[0].worker.exited.wait()
@@ -590,9 +594,15 @@ def main(argv=None):
     for command in (announce, host):
         command.add_argument("--public-ip", required=True, help="public IPv4 of this machine")
         command.add_argument("--port", type=int, required=True)
-    announce.add_argument("--yes", action="store_true", help="write the axon; without it, a dry run")
-    host.add_argument("--checkpoint", action="append", required=True, help="z3 checkpoint dir; repeatable")
-    host.add_argument("--gateway-hotkey", action="append", help="extra hotkey allowed to call; repeatable")
+    announce.add_argument(
+        "--yes", action="store_true", help="write the axon; without it, a dry run"
+    )
+    host.add_argument(
+        "--checkpoint", action="append", required=True, help="z3 checkpoint dir; repeatable"
+    )
+    host.add_argument(
+        "--gateway-hotkey", action="append", help="extra hotkey allowed to call; repeatable"
+    )
     host.add_argument("--slots", type=int, default=8)
     for command in (start, check, commit, announce, host):
         command.add_argument(

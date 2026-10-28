@@ -33,7 +33,10 @@ class FakeServed:
             self.gate.wait(5)
         if self.fail:
             raise self.fail
-        return {qid: {"probabilities": {"true": 0.25, "false": 0.75}, "input_tokens": 10} for qid in questions}
+        return {
+            qid: {"probabilities": {"true": 0.25, "false": 0.75}, "input_tokens": 10}
+            for qid in questions
+        }
 
 
 @unittest.skipUnless(importlib.util.find_spec("bittensor_wallet"), "needs bittensor_wallet")
@@ -51,12 +54,29 @@ class ServingServerTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
-    def start(self, served=None, allowed=lambda hotkey: True, slots=8, deadline=15.0, clock=lambda: NOW, **extra):
+    def start(
+        self,
+        served=None,
+        allowed=lambda hotkey: True,
+        slots=8,
+        deadline=15.0,
+        clock=lambda: NOW,
+        **extra,
+    ):
         server = serving_server.make_server(
-            self.miner, ENDPOINT, [served or self.fake], allowed, ("127.0.0.1", 0), slots, clock=clock,
-            deadline=deadline, **extra,
+            self.miner,
+            ENDPOINT,
+            [served or self.fake],
+            allowed,
+            ("127.0.0.1", 0),
+            slots,
+            clock=clock,
+            deadline=deadline,
+            **extra,
         )
-        threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True).start()
+        threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        ).start()
         self.servers.append(server)
         return server
 
@@ -66,7 +86,12 @@ class ServingServerTest(unittest.TestCase):
 
     def message(self, body=None, now=NOW, **fields):
         payload = serving.request_payload(
-            self.caller.ss58_address, self.miner.ss58_address, MODEL, WEIGHTS, self.body() if body is None else body, now
+            self.caller.ss58_address,
+            self.miner.ss58_address,
+            MODEL,
+            WEIGHTS,
+            self.body() if body is None else body,
+            now,
         )
         payload.update(fields)
         return serving.sign(self.caller, "request", payload)
@@ -218,7 +243,9 @@ class ServingServerTest(unittest.TestCase):
             self.assertNotIn("SECRET", json.dumps(data))
             for field in ({"model": ["x"]}, {"weights_sha256": {}}, {"body": []}):
                 self.assertEqual(self.post(server, self.message(**field))[0].status, 400)
-            self.assertEqual(self.post(server, self.message(self.body() | {"model": "other"}))[0].status, 400)
+            self.assertEqual(
+                self.post(server, self.message(self.body() | {"model": "other"}))[0].status, 400
+            )
             bad.fail = None  # lock and slot were released: it serves again
             self.assertEqual(self.post_soon(server, self.message())[0].status, 200)
         self.assertEqual(err.getvalue(), "")
@@ -246,7 +273,9 @@ class ServingServerTest(unittest.TestCase):
             server = self.start(FakeServed(fail=failure))
             err = io.StringIO()
             with contextlib.redirect_stderr(err):
-                response, data = self.post(server, self.message(self.body() | {"state": "SECRET-STATE"}))
+                response, data = self.post(
+                    server, self.message(self.body() | {"state": "SECRET-STATE"})
+                )
             self.assertEqual((response.status, data["error"]["code"]), (503, "unavailable"))
             self.assertIn(logged, err.getvalue())
             self.assertNotIn("SECRET", err.getvalue() + json.dumps(data))
@@ -262,11 +291,15 @@ class ServingServerTest(unittest.TestCase):
     def test_too_many_questions_is_refused_before_inference(self):
         question = {"type": "noul", "instructions": None, "criteria": None}
         server = self.start()
-        many = self.body() | {"questions": {f"q{i}": question for i in range(serving_server.MAX_QUESTIONS + 1)}}
+        many = self.body() | {
+            "questions": {f"q{i}": question for i in range(serving_server.MAX_QUESTIONS + 1)}
+        }
         response, data = self.post(server, self.message(many))
         self.assertEqual((response.status, data["error"]["code"]), (413, "too_many_questions"))
         self.assertEqual(self.fake.calls, 0)
-        exact = self.body() | {"questions": {f"q{i}": question for i in range(serving_server.MAX_QUESTIONS)}}
+        exact = self.body() | {
+            "questions": {f"q{i}": question for i in range(serving_server.MAX_QUESTIONS)}
+        }
         self.assertEqual(self.post(server, self.message(exact))[0].status, 200)
 
     def test_non_ascii_digit_content_length_is_refused(self):
@@ -279,7 +312,10 @@ class ServingServerTest(unittest.TestCase):
 
     def test_one_address_holds_at_most_two_connections(self):
         server = self.start(slots=8)
-        idle = [socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=5) for _ in range(2)]
+        idle = [
+            socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=5)
+            for _ in range(2)
+        ]
         third = socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=5)
         reply = third.recv(4096)  # refused on accept, before any bytes are read
         third.close()
@@ -310,7 +346,9 @@ class ServingServerTest(unittest.TestCase):
         now[0] = NOW + 2 * serving.FRESH_SECONDS + 1
         later = self.message(now=now[0])
         self.assertEqual(self.post(server, later)[0].status, 200)
-        self.assertEqual(list(server.nonces), [(self.caller.ss58_address, later["payload"]["nonce"])])
+        self.assertEqual(
+            list(server.nonces), [(self.caller.ss58_address, later["payload"]["nonce"])]
+        )
         self.assertEqual(self.post(server, later)[0].status, 401)
 
     def test_two_served_checkpoints_of_one_model_are_refused(self):

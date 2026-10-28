@@ -62,13 +62,21 @@ class ServingCliTest(unittest.TestCase):
 
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.wallet = {"path": str(Path(tmp.name) / "wallets"), "name": "fixture", "hotkey": "miner"}
+        self.wallet = {
+            "path": str(Path(tmp.name) / "wallets"),
+            "name": "fixture",
+            "hotkey": "miner",
+        }
 
         def hotkey(name, seed):
-            return Wallet(path=self.wallet["path"], name="fixture", hotkey=name).regenerate_hotkey(
-                seed="0x" + (bytes([seed]) * 32).hex(),
-                suppress=True,
-            ).hotkey.ss58_address
+            return (
+                Wallet(path=self.wallet["path"], name="fixture", hotkey=name)
+                .regenerate_hotkey(
+                    seed="0x" + (bytes([seed]) * 32).hex(),
+                    suppress=True,
+                )
+                .hotkey.ss58_address
+            )
 
         self.hotkey = hotkey("miner", 7)
         self.validator, self.stranger = hotkey("validator", 8), hotkey("stranger", 9)
@@ -82,12 +90,22 @@ class ServingCliTest(unittest.TestCase):
 
         self.raw_calls = []
         self.enterContext(patch("zils.testnet.connect", connect))
-        self.enterContext(patch.dict("os.environ", {"ZILS_MINER_CONFIG": str(Path(tmp.name) / "m.json")}))
+        self.enterContext(
+            patch.dict("os.environ", {"ZILS_MINER_CONFIG": str(Path(tmp.name) / "m.json")})
+        )
 
     def run_miner(self, *argv, public_ip="8.8.8.8"):
         flags = [
-            "--wallet-name", self.wallet["name"], "--wallet-hotkey", self.wallet["hotkey"],
-            "--wallet-path", self.wallet["path"], "--public-ip", public_ip, "--port", "8091",
+            "--wallet-name",
+            self.wallet["name"],
+            "--wallet-hotkey",
+            self.wallet["hotkey"],
+            "--wallet-path",
+            self.wallet["path"],
+            "--public-ip",
+            public_ip,
+            "--port",
+            "8091",
         ]
         output = io.StringIO()
         with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
@@ -133,7 +151,10 @@ class ServingCliTest(unittest.TestCase):
         self.assertEqual(self.chain.calls, [])
 
     def test_serve_refuses_when_axon_does_not_match(self):
-        with patch("zils.serving_server.start_worker") as start, patch("zils.serving_server.make_server") as make:
+        with (
+            patch("zils.serving_server.start_worker") as start,
+            patch("zils.serving_server.make_server") as make,
+        ):
             code, out = self.run_miner("serve", "--checkpoint", "ckpt")
         self.assertEqual(code, 1)
         self.assertIn("announce-serving", out)
@@ -146,9 +167,10 @@ class ServingCliTest(unittest.TestCase):
         gateway = Keypair.create_from_seed("0x" + (bytes([10]) * 32).hex()).ss58_address
         self.run_miner("announce-serving", "--yes")
         served = Mock(model="z3-mini")
-        with patch("zils.serving_server.start_worker", return_value=[served]) as start, patch(
-            "zils.serving_server.make_server"
-        ) as make:
+        with (
+            patch("zils.serving_server.start_worker", return_value=[served]) as start,
+            patch("zils.serving_server.make_server") as make,
+        ):
             code, out = self.run_miner("serve", "--checkpoint", "ckpt", "--gateway-hotkey", gateway)
         self.assertEqual(start.call_args.args, (["ckpt"], miner.d3_python()))
         self.assertEqual(self.raw_calls[-2:], [False, False])  # serve only reads
@@ -168,7 +190,9 @@ class ServingCliTest(unittest.TestCase):
         self.run_miner("announce-serving", "--yes")
         reads = len(self.raw_calls)
         with patch("zils.serving_server.start_worker") as start:
-            code, out = self.run_miner("serve", "--checkpoint", "ckpt", "--gateway-hotkey", "gateway")
+            code, out = self.run_miner(
+                "serve", "--checkpoint", "ckpt", "--gateway-hotkey", "gateway"
+            )
         self.assertEqual(code, 1)
         self.assertIn("not an SS58 address", out)
         self.assertEqual(len(self.raw_calls), reads)
@@ -204,7 +228,9 @@ class LazyServingImportTest(unittest.TestCase):
             "import sys, zils.miner\n"
             "print(sorted(m for m in ('zils.serving', 'zils.serving_server') if m in sys.modules))"
         )
-        done = subprocess.run([sys.executable, "-c", probe], cwd=zils.ROOT, capture_output=True, text=True)
+        done = subprocess.run(
+            [sys.executable, "-c", probe], cwd=zils.ROOT, capture_output=True, text=True
+        )
         self.assertEqual((done.returncode, done.stdout.strip()), (0, "[]"), done.stderr)
 
 

@@ -122,11 +122,17 @@ def validate_manifest(payload):
     if not isinstance(served, list) or not 1 <= len(served) <= len(family):
         raise ValueError("manifest must list 1 to %d models" % len(family))
     for item in served:
-        if not isinstance(item, dict) or set(item) != {"model", "weights_sha256", "max_input_tokens"}:
+        if not isinstance(item, dict) or set(item) != {
+            "model",
+            "weights_sha256",
+            "max_input_tokens",
+        }:
             raise ValueError("invalid manifest model entry")
         if item["model"] not in family:
             raise ValueError("unsupported model")
-        if not isinstance(item["weights_sha256"], str) or not _HEX64.fullmatch(item["weights_sha256"]):
+        if not isinstance(item["weights_sha256"], str) or not _HEX64.fullmatch(
+            item["weights_sha256"]
+        ):
             raise ValueError("weights_sha256 must be 64 hex characters")
         limit = models.spec(item["model"]).get("max_input_tokens", 2048)
         tokens = item["max_input_tokens"]

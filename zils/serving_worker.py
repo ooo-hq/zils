@@ -37,10 +37,18 @@ def describe(checkpoint):
     release), over the full weights for a candidate."""
     checkpoint = Path(checkpoint)
     meta = models.metadata(checkpoint)
-    if meta is None or meta["kind"] not in ("base", "candidate") or meta["model"] not in models.d3_family():
-        raise ValueError(f"{checkpoint}: serving needs a public d3-family checkpoint, not an adapter")
+    if (
+        meta is None
+        or meta["kind"] not in ("base", "candidate")
+        or meta["model"] not in models.d3_family()
+    ):
+        raise ValueError(
+            f"{checkpoint}: serving needs a public d3-family checkpoint, not an adapter"
+        )
     override = models.candidate_base_env(meta["model"])
-    if settings.get(override):  # d3.base_path would load these unpinned weights under the base's hash
+    if settings.get(
+        override
+    ):  # d3.base_path would load these unpinned weights under the base's hash
         raise ValueError(f"unset {override}: served weights must be the pinned release")
     return {
         "model": meta["model"],
@@ -80,7 +88,11 @@ def answer(loaded, line):
     except (TypeError, KeyError, AttributeError):
         return error(rid, "invalid")
     except Exception as failure:  # OSError, CUDA RuntimeError: the node, not the caller
-        print(f"serving worker: inference failed ({type(failure).__name__})", file=sys.stderr, flush=True)
+        print(
+            f"serving worker: inference failed ({type(failure).__name__})",
+            file=sys.stderr,
+            flush=True,
+        )
         return error(rid, "runtime")
     return {"id": rid, "predictions": predictions}
 
