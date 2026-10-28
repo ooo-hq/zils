@@ -114,6 +114,19 @@ SOURCES = {
         "irony/validation-00000-of-00001.parquet",
         "b3a375baf0f409c77e6bc7aa35102b7b3534f8be",
     ),
+    # k5 sources (27 Oct 2026): STS-B validation and TweetEval irony validation had 342 and 311
+    # unused rows, two draws each. Crisscrossed Captions (Google, "freely used for any purpose") and
+    # Sarcasm Headlines (CC BY 4.0, Kaggle rmisra) are outside S1MB, the Decision Index and JevBench.
+    "cxc-sts-test": lambda: hf_parquet(
+        "DolphyWind/cxc-sts-sentences",
+        "aggregated/test/0000.parquet",
+        "28ee4b6425878563770ba2421a33c0bc0925565a",
+    ),
+    "sarcasm-headlines": lambda: hf_parquet(
+        "raquiba/Sarcasm_News_Headline",
+        "default/test/0000.parquet",
+        "cd9dba22bb10fa4a90721e0bb5004ecbf16a2e75",
+    ),
 }
 # Small held-out sets run out after a few draws; pair each with a same-task source.
 SOURCES["entail-val"] = lambda: SOURCES["rte-val"]() + SOURCES["mnli-val-matched"]()
@@ -248,7 +261,8 @@ NEW_DOMAIN = {
         "ds-coqa": ("stanfordnlp/coqa", "default/validation/0000.parquet", CONVERTED),
     },
     "arts": {
-        # Sarcasm headlines left this pool: arts-known-noul-k3 is irony (24 Oct 2026).
+        # Sarcasm headlines left this pool: it is the same task as irony (24 Oct 2026) and now backs
+        # arts-known-noul-k5.
         "ds-humor": ("CreativeLang/ColBERT_Humor_Detection", "default/train/0000.parquet", CONVERTED),
         "ds-sst5": ("SetFit/sst5", "default/validation/0000.parquet", CONVERTED),
         "ds-formality": ("osyvokon/pavlick-formality-scores", "default/test/0000.parquet", CONVERTED),
@@ -284,7 +298,8 @@ def load_private_sources(path):
 
 
 # Known families: names match the published seeds (zils-ai/base-exam-seed-v2 for k2, v3 for k3) and the
-# history receipts.
+# history receipts. k5 (27 Oct 2026) replaces the k2 language score and k3 arts yes/no families, whose
+# held-out sources ran out; its public seed must be published before a sealed draw uses it.
 KNOWN = {
     # k3 (24 Oct 2026) replaces the k2 reasoning and arts families, whose held-out sources ran out.
     "reasoning-known-choice-k3": ("reasoning", "choice", "siqa-val", "Social commonsense: what a person most likely wants, feels or does next, among close options (Social IQa style)."),
@@ -292,7 +307,7 @@ KNOWN = {
     "reasoning-known-score-k3": ("reasoning", "score", "asdiv-val", "Arithmetic word problems with distracting numbers; the answer is a small count."),
     "language-known-choice-k2": ("language", "choice", "mnli-val", "Premise/hypothesis inference across genres: entailment, neutral or contradiction."),
     "language-known-noul-k2": ("language", "noul", "entail-val", "Does the passage entail the hypothesis?"),
-    "language-known-score-k2": ("language", "score", "stsb-val", "Rate the semantic similarity of two sentences."),
+    "language-known-score-k5": ("language", "score", "cxc-sts-test", "Rate the semantic similarity of two short image captions."),
     "retrieval-known-choice-k2": ("retrieval", "choice", "newsgroups-test", "Which of several close topic categories does a post belong to (20 Newsgroups style)?"),
     "retrieval-known-noul-k2": ("retrieval", "noul", "qnli-val", "Does the sentence contain the answer to the question?"),
     "retrieval-known-score-k2": ("retrieval", "score", "qnli-val", "How completely does a passage answer a question (none to fully)?"),
@@ -300,7 +315,7 @@ KNOWN = {
     "tools-known-noul-k2": ("tools", "noul", "glaive", "Should the assistant call a function now, given the conversation and schemas?"),
     "tools-known-score-k2": ("tools", "score", "glaive", "How many required arguments can be filled from the conversation so far?"),
     "arts-known-choice-k3": ("arts", "choice", "emotion-test", "Which emotion does a short personal message express: sadness, joy, love, anger, fear or surprise?"),
-    "arts-known-noul-k3": ("arts", "noul", "tweet-irony-val", "Is this short post ironic?"),
+    "arts-known-noul-k5": ("arts", "noul", "sarcasm-headlines", "Is this news headline sarcastic?"),
     "arts-known-score-k3": ("arts", "score", "tweet-sentiment-test", "Rate how positive a short post is, from very negative to very positive."),
 }  # fmt: skip
 
