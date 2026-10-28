@@ -603,5 +603,97 @@ class TestnetTest(unittest.TestCase):
                     runtime.signing_key(cfg)
 
 
+@unittest.skipUnless(importlib.util.find_spec("bittensor"), "install requirements/testnet.txt")
+class AxonTest(unittest.TestCase):
+    config = {"chain": {"network": "test", "netuid": 579}}
+
+    def test_read_axon_formats_ipv4_and_ignores_empty(self):
+        from ipaddress import IPv4Address
+
+        from zils import testnet as t
+
+        good = {"ip": int(IPv4Address("8.8.8.8")), "port": 8091, "ip_type": 4}
+        axon = Mock(side_effect=lambda *a, **k: axon.value)
+        sub = SimpleNamespace(query=axon)
+        axon.value = good
+        self.assertEqual(t.read_axon(sub, 579, "hk", 10), "http://8.8.8.8:8091")
+        self.assertEqual(
+            axon.call_args, ((("SubtensorModule", "Axons"), [579, "hk"]), {"block": 10})
+        )
+        for bad in (
+            {**good, "ip": 0},
+            {**good, "port": 0},
+            {**good, "ip_type": 6},
+            None,
+            "x",
+            {"port": 1},
+            {**good, "ip": 2**32},
+            {**good, "ip": "8.8.8.8"},
+            {**good, "port": None},
+        ):
+            axon.value = bad
+            self.assertIsNone(t.read_axon(sub, 579, "hk", 10))
+
+    def test_write_axon_executes_the_serve_axon_intent(self):
+        from bittensor import intents
+        from bittensor.result import ExtrinsicResult
+
+        from zils import testnet as t
+
+        sub = Mock()
+        sub.execute.return_value = ExtrinsicResult(True)
+        t.write_axon(self.config, sub, "wallet", "http://8.8.8.8:8091")
+        intent, wallet = sub.execute.call_args[0]
+        self.assertIsInstance(intent, intents.ServeAxon)
+        self.assertEqual((intent.netuid, intent.ip, intent.port), (579, "8.8.8.8", 8091))
+        self.assertEqual(wallet, "wallet")
+        self.assertTrue(sub.execute.call_args[1]["wait_for_finalization"])
+        sub.submit_call.assert_not_called()
+        sub.execute.return_value = ExtrinsicResult(False, error="nope")
+        with self.assertRaises(ValueError):
+            t.write_axon(self.config, sub, "wallet", "http://8.8.8.8:8091")
+        with self.assertRaises(ValueError):
+            t.write_axon(self.config, sub, "wallet", "http://example.com:8091")
+
+    def test_serving_axons_survives_one_malformed_axon(self):
+        from ipaddress import IPv4Address
+
+        from zils import testnet as t
+
+        good = {"ip": int(IPv4Address("8.8.8.8")), "port": 1, "ip_type": 4}
+
+        def query(item, params, *, block=None):
+            if item[1] == "SubnetworkN":
+                return 3
+            if item[1] == "Keys":
+                return "hk%d" % params[1]
+            return {"hk0": {**good, "ip": 2**40}, "hk1": good, "hk2": "junk"}[params[0 + 1]]
+
+        sub = SimpleNamespace(block=1, query=query)
+        self.assertEqual(t.serving_axons(self.config, sub), {1: ("hk1", "http://8.8.8.8:1")})
+
+    def test_serving_axons_reads_every_uid_at_one_block(self):
+        from ipaddress import IPv4Address
+
+        from zils import testnet as t
+
+        seen = []
+
+        def query(item, params, *, block=None):
+            seen.append(block)
+            name = item[1]
+            if name == "SubnetworkN":
+                return 3
+            if name == "Keys":
+                return {0: "a", 1: "b", 2: None}[params[1]]
+            if params[1] == "a":
+                return {"ip": int(IPv4Address("8.8.8.8")), "port": 1, "ip_type": 4}
+            return None
+
+        sub = SimpleNamespace(block=77, query=query)
+        self.assertEqual(t.serving_axons(self.config, sub), {0: ("a", "http://8.8.8.8:1")})
+        self.assertEqual(set(seen), {77})
+
+
 if __name__ == "__main__":
     unittest.main()

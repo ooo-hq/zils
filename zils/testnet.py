@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import ipaddress
 import json
 from contextlib import contextmanager
 from importlib.metadata import version
@@ -124,6 +125,55 @@ def write_commitment(config, sub, wallet, text):
     if not result.success:
         raise ValueError(f"commitment not included: {result.error or 'unknown error'}")
     return result
+
+
+def read_axon(sub, netuid, hotkey, block):
+    """The hotkey's served IPv4 endpoint at `block`, or None."""
+    axon = sub.query(("SubtensorModule", "Axons"), [netuid, hotkey], block=block)
+    if not isinstance(axon, dict):
+        return None
+    ip, port = axon.get("ip"), axon.get("port")
+    # Miners control these values: anything malformed means no axon, never an exception.
+    if axon.get("ip_type") != 4 or type(ip) is not int or type(port) is not int:
+        return None
+    if not 1 <= ip < 2**32 or not 1 <= port <= 65535:
+        return None
+    return f"http://{ipaddress.IPv4Address(ip)}:{port}"
+
+
+def write_axon(config, sub, wallet, endpoint):
+    """Announce an IPv4 endpoint with the hotkey through the SDK's `ServeAxon` intent, which the
+    Policy checks (subnet allowlist) without admitting raw calls."""
+    from bittensor import intents
+
+    from . import protocol
+
+    netuid = check_config(config)
+    address, port = protocol.endpoint_port(endpoint)
+    result = sub.execute(
+        intents.ServeAxon(netuid=netuid, ip=str(address), port=port),
+        wallet,
+        wait_for_inclusion=True,
+        wait_for_finalization=True,
+    )
+    if not result.success:
+        raise ValueError(f"axon not included: {result.error or 'unknown error'}")
+    return result
+
+
+def serving_axons(config, sub):
+    """{uid: (hotkey, endpoint)} for every registered uid with an axon, read at one block."""
+    netuid = check_config(config)
+    block = sub.block
+    found = {}
+    for uid in range(
+        int(sub.query(("SubtensorModule", "SubnetworkN"), [netuid], block=block) or 0)
+    ):
+        hotkey = sub.query(("SubtensorModule", "Keys"), [netuid, uid], block=block)
+        endpoint = hotkey and read_axon(sub, netuid, hotkey, block)
+        if endpoint:
+            found[uid] = (hotkey, endpoint)
+    return found
 
 
 def preflight(config, sub):

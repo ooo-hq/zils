@@ -7,6 +7,7 @@ longer run. d3 image jobs run in the [hosted queue](queue-miners.md), where a d3
 miner downloads a job's frozen training photos itself. For workers that claim different customer jobs,
 use the [queue miner guide](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md).
 Queue and fleet miners use the same trainers but different credentials and startup commands.
+To serve public z3 checkpoints to validators, see [serving miners](serving-miners.md).
 
 For the synthetic bounding-box adapter pilot, see the
 [feature competition guide](feature-tracks.md). It covers public training data,

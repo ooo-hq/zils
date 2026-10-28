@@ -8,6 +8,7 @@ job history only; one model is pinned per job. Start with the guide matching you
 | Task | Guide |
 | --- | --- |
 | Operate a miner | [Queued miners](queue-miners.md), [closed fleet](mining.md) |
+| Serve z3 checkpoints as a miner | [Serving miners](serving-miners.md) |
 | Operate a validator | [Validator setup](validators.md), [evaluation contract](evaluation.md) |
 | Join the testnet | [Registration](bittensor-registration.md), [testnet operation](testnet.md) |
 | Prepare models or training data | [d3 reference](queue-miners.md#2-install-and-verify-the-reference), [customer data contract](customer-jobs.md), [version selection](version-selection.md) |
