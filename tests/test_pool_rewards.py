@@ -147,10 +147,10 @@ class PoolRewardsTest(unittest.TestCase):
 SERVING_MEMBERS = {"1": {"hotkey": "a"}, "2": {"hotkey": "b"}, "3": {"hotkey": "c"}}
 
 
-def serving_fixture(scores, switch_on=3):
+def serving_fixture(scores, switch_on=3, base_share=0.63):
     from zils import model_pools, serving_share
 
-    cfg = {**pools(), "share": 0.63}
+    cfg = {**pools(), "share": base_share}
     serving = {
         "share": 0.10,
         "scores": "/nonexistent/serving-scores.json",
@@ -258,6 +258,16 @@ class ServingShareTest(unittest.TestCase):
         self.assertEqual(tracks["serving"]["earners"], 2)
         self.assertEqual(tracks["serving"]["weights"], {})
         self.assertNotIn("feature_share", tracks)
+
+    def test_budget_filled_exactly_to_one_still_publishes(self):
+        # 1 - 0.9 - 0.1 is -2.8e-17 in floats; the adapter share must clamp to 0, not refuse the round.
+        result = publish(*serving_fixture({}, base_share=0.9))
+        self.assertEqual(result["tracks"]["adapter_share"], 0.0)
+        self.assertAlmostEqual(result["requested_weights"]["0"], 0.10)
+
+    def test_stale_config_over_budget_is_refused_clearly(self):
+        with self.assertRaisesRegex(ValueError, "exceed the reward budget"):
+            publish(*serving_fixture({}, base_share=0.95))
 
     def test_switched_on_serving_earners_split_the_share_by_summed_score(self):
         scores = {

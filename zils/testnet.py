@@ -388,6 +388,9 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
             vectors["serving"] = {uid: w / total for uid, w in serving_vector.items()}
             shares["serving"] = serving_share_
         adapter_share = 1 - share - feature_share - serving_share_
+        if adapter_share < -1e-9:
+            raise ValueError("base, feature and serving shares exceed the reward budget")
+        adapter_share = max(0.0, adapter_share)  # a budget filled to exactly 1 can round below 0
         weights = zils.blend_weights(
             {**vectors, "adapter": adapter}, {**shares, "adapter": adapter_share}, burn_uid=burn
         )
