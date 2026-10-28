@@ -18,6 +18,8 @@ platform installation or database credential.
 d3-mini serves both text and image jobs, so one d3 reference covers both. The
 retired H2O and Imajev profiles are no longer evaluated.
 
+To grade miners that serve z3 checkpoints, see [grading serving miners](serving-validators.md).
+
 ## Open admission (base tier)
 
 Off by default. The default validator admits only the static `members` allowlist and pins each
