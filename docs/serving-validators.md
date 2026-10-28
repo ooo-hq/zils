@@ -172,7 +172,42 @@ miners from the grader's scores:
   (raw score totals, earners, whether it switched on).
 - Edit `serving_share` only when no round is pending: a pending round embeds the
   config installed when it first publishes.
-- Request volume is not paid yet; only grading scores are.
+- Volume pay is optional. Add `receipts` and `volume_share` and the share splits:
+  `1 - volume_share` (70% at 0.3) pays by grading score as above, and
+  `volume_share` (30%) pays by request volume. Both keys come together or not at
+  all; without them the whole share pays by score.
+
+```json
+"serving_share": {
+  "share": 0.10,
+  "scores": "/path/to/state-dir/serving-scores.json",
+  "switch_on_miners": 3,
+  "max_age_seconds": 3600,
+  "volume_share": 0.3,
+  "receipts": {
+    "url": "https://GATEWAY/v1/network/serving-receipts",
+    "signer": "<gateway evidence ss58 hotkey>",
+    "window_hours": 24
+  }
+}
+```
+
+- The gateway signs one receipts document per whole UTC hour window. It holds
+  routing facts only: per miner hotkey, model and weights hash, the requests
+  answered, our own count of input tokens, and the failure reasons. No request
+  text, account or key is in it. The validator checks the signature against the
+  pinned `signer` and the exact window.
+- A miner earns volume only when it has a grading score above 0 and no gateway
+  strike. Its volume weight is its input tokens summed over all models it served
+  in the window, normalized over the volume earners. Only real routed traffic
+  counts; hidden test questions never produce receipts.
+- A gateway strike is per miner hotkey: any failed or mismatched gateway check in
+  the window strikes the miner on every model. A struck miner earns nothing from
+  either part and does not count toward `switch_on_miners`.
+- With no volume earners the volume part burns at `base_pools.burn_uid`.
+- The validator freezes the receipts into the round (`serving-receipts.json`)
+  with the scores. If the fetch fails the round raises and retries after a
+  restart; it does not burn the share.
 
 ## Audit
 

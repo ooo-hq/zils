@@ -183,8 +183,11 @@ and adapters in their old proportion, operators lower `base_pools.share` from
 0.7 to 0.63; adapters take what is left (0.27). A miner's serving weight is the
 sum of its per-model serving scores. The serving share burns, like any empty
 track, until `switch_on_miners` different miners earn it, and whenever the
-grader's scores are missing or older than `max_age_seconds`. Request volume is
-not paid yet: the serving share is paid on grading scores only.
+grader's scores are missing or older than `max_age_seconds`. With `receipts`
+configured, 30% of the serving share (`volume_share`) pays by the input tokens a
+miner answered through the gateway, and the rest by grading score. A miner the
+gateway catches failing or mismatching a check in the window is struck: it earns
+nothing from either part.
 
 Anti-gaming: one adapter submission per hotkey per round and one base candidate
 commitment per hotkey on chain; a claim cannot change within a round; a candidate
