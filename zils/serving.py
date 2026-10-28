@@ -1,8 +1,11 @@
 """Signed messages for miner-served inference: endpoint manifest, request and answer."""
 
 import hashlib
+import http.client
 import json
 import re
+import socket
+import threading
 import time
 import uuid
 
@@ -129,17 +132,46 @@ def validate_manifest(payload):
 
 
 def fetch_manifest(endpoint, timeout=5.0):
-    """GET the manifest; `timeout` is the budget for the whole fetch, not per socket operation."""
+    """GET the manifest; `timeout` bounds the whole fetch (connect, headers, body), not each socket read."""
+    address, port = protocol.endpoint_port(endpoint)  # numeric host: no DNS, no proxy, no redirects
     deadline = time.monotonic() + timeout
-    data = b""
-    with protocol.opener().open(endpoint + "/v1/serving", timeout=timeout) as response:
+    conn = http.client.HTTPConnection(str(address), port, timeout=timeout)
+    fired = threading.Event()
+
+    def expire():
+        fired.set()
+        try:  # shutdown wakes a blocked read; the response may have taken conn.sock, so keep our own reference
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        sock.close()
+
+    watchdog = None
+    try:
+        conn.connect()  # bounded by the same budget
+        sock = conn.sock
+        watchdog = threading.Timer(max(deadline - time.monotonic(), 0), expire)
+        watchdog.start()
+        data = b""
+        conn.request("GET", "/v1/serving")
+        response = conn.getresponse()
+        if response.status != 200:
+            raise ValueError("manifest fetch failed: HTTP %d" % response.status)
         while len(data) <= MAX_MANIFEST_BYTES:
-            if time.monotonic() > deadline:
-                raise ValueError("manifest fetch timed out")
             chunk = response.read1(min(4096, MAX_MANIFEST_BYTES + 1 - len(data)))
             if not chunk:
                 break
             data += chunk
+    except (OSError, http.client.HTTPException) as error:
+        if fired.is_set():
+            raise ValueError("manifest fetch exceeded its deadline") from None
+        raise ValueError("manifest fetch failed: %s" % (error or type(error).__name__)) from None
+    finally:
+        if watchdog:
+            watchdog.cancel()
+        conn.close()
+    if fired.is_set() or time.monotonic() > deadline:
+        raise ValueError("manifest fetch exceeded its deadline")
     if len(data) > MAX_MANIFEST_BYTES:
         raise ValueError("manifest too large")
     try:

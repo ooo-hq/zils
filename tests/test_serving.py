@@ -187,6 +187,34 @@ class ServingDiscoveryTest(unittest.TestCase):
             serving.fetch_manifest("http://127.0.0.1:%d" % server.server_port, timeout=0.5)
         self.assertLess(time.monotonic() - started, 2)
 
+    def test_fetch_manifest_enforces_total_deadline_against_header_drip(self):
+        import time
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from threading import Thread
+
+        class HeaderDrip(BaseHTTPRequestHandler):
+            def do_GET(self):
+                try:
+                    self.wfile.write(b"HTTP/1.0 200 OK\r\n")
+                    for _ in range(100):
+                        self.wfile.write(b"X")
+                        self.wfile.flush()
+                        time.sleep(0.2)
+                except OSError:
+                    pass
+
+            def log_message(self, *a):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), HeaderDrip)
+        Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        started = time.monotonic()
+        with self.assertRaises(ValueError):
+            serving.fetch_manifest("http://127.0.0.1:%d" % server.server_port, timeout=0.5)
+        self.assertLess(time.monotonic() - started, 2)
+
     def test_fetch_manifest_reads_json_and_caps_size(self):
         import json
         from http.server import BaseHTTPRequestHandler, HTTPServer
