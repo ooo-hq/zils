@@ -1,0 +1,636 @@
+import ast
+import fcntl
+import functools
+import json
+import math
+import os
+import random
+import socket
+import stat
+import tempfile
+import threading
+import time
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from bittensor_wallet import Keypair
+
+from zils import decisions, serving, serving_items, serving_server
+
+MODEL = "d3-mini-4.5b-v1"
+SHA = "ab" * 32
+REQUEST_KEY = Keypair.create_from_seed("0x" + "44" * 32)
+VALIDATOR = Keypair.create_from_seed("0x" + "66" * 32).ss58_address
+MINERS = [Keypair.create_from_seed("0x" + f"{70 + i:02x}" * 32) for i in range(5)]
+HOUR = 3600
+
+
+def uniform(question):
+    keys = list(decisions.option_descriptions(question))
+    return {k: 1 / len(keys) for k in keys}
+
+
+def reference(questions):
+    return {qid: {"probabilities": uniform(q), "input_tokens": 3} for qid, q in questions.items()}
+
+
+def tilt(probs, d):
+    """Shift the first option by `d` in log space: centred-log gap d*(1-1/n)."""
+    first = next(iter(probs))
+    raw = {k: p * (math.exp(d) if k == first else 1) for k, p in probs.items()}
+    total = sum(raw.values())
+    return {k: v / total for k, v in raw.items()}
+
+
+def answer(questions, behaviour):
+    preds = reference(questions)
+    for row in preds.values():
+        if behaviour == "marginal":
+            row["probabilities"] = tilt(row["probabilities"], 0.6)
+        elif behaviour == "fail":
+            row["probabilities"] = tilt(row["probabilities"], 5.0)
+        elif behaviour == "mismatch":
+            row["probabilities"] = {"bogus": 1.0}
+    return {"payload": {"predictions": preds}, "signature": "00" * 64}
+
+
+class FakeWorker:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class FakeServed:
+    def __init__(self, worker, model=MODEL, sha=SHA, on_predict=None):
+        self.worker, self.model, self.weights_sha256, self.max_input_tokens = (
+            worker,
+            model,
+            sha,
+            8192,
+        )
+        self.calls, self.on_predict = [], on_predict
+
+    def predict(self, state, questions):
+        if self.on_predict:
+            self.on_predict()
+        self.calls.append((state, questions))
+        return reference(questions)
+
+
+def lock_is_free(path):
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return True
+    except BlockingIOError:
+        return False
+    finally:
+        os.close(fd)
+
+
+class GraderTestBase(unittest.TestCase):
+    def setUp(self):
+        from zils import serving_grader
+
+        self.sg = serving_grader
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(__import__("shutil").rmtree, self.tmp, True)
+        (self.tmp / "state").mkdir()
+        self.lock = str(self.tmp / "compute.lock")
+        env = patch.dict(os.environ, {"ZILS_COMPUTE_LOCK": self.lock})
+        env.start()
+        self.addCleanup(env.stop)
+        self.behaviour = {}  # hotkey -> "pass" | "marginal" | "fail" | "mismatch" | MinerError
+        self.catalog = {}  # uid -> (hotkey, endpoint, manifest models or {"error"})
+        self.asked, self.events, self.starts = [], [], 0
+        self.on_predict, self.on_ask, self.start_error = None, None, None
+        self.served_sha = SHA
+        quiet = patch.object(serving_grader, "log", lambda text: None)
+        quiet.start()
+        self.addCleanup(quiet.stop)
+        discover = patch.object(serving, "discover", self.discover)
+        discover.start()
+        self.addCleanup(discover.stop)
+
+    def config(self, **extra):
+        return {
+            "chain": {"network": "test", "netuid": 579},
+            "validator_hotkey": VALIDATOR,
+            "request_key_file": str(self.tmp / "key.json"),
+            "models": {MODEL: {"reference": str(self.tmp / "ckpt"), "weights_sha256": SHA}},
+            "state": str(self.tmp / "state"),
+            "questions": 8,
+            "verified": 3,
+            "lock_wait_seconds": 1,
+            **extra,
+        }
+
+    def add_miner(self, i, behaviour="pass", served=None):
+        hotkey = MINERS[i].ss58_address
+        models = (
+            served
+            if served is not None
+            else [{"model": MODEL, "weights_sha256": SHA, "max_input_tokens": 8192}]
+        )
+        self.catalog[i] = (hotkey, f"http://1.2.3.{i + 4}:8091", models)
+        self.behaviour[hotkey] = behaviour
+        return hotkey
+
+    def catalog_read(self):
+        return {uid: (hk, ep) for uid, (hk, ep, _) in self.catalog.items()}
+
+    def discover(self, axons, clock=time.time, **_):
+        out = {}
+        for uid, (hk, ep) in axons.items():
+            models = self.catalog[uid][2]
+            out[uid] = (
+                dict(models)
+                if isinstance(models, dict)
+                else {"hotkey": hk, "endpoint": ep, "models": models}
+            )
+        return out
+
+    def worker(self):
+        self.starts += 1
+        if self.start_error:
+            raise self.start_error
+        self.fake_worker = FakeWorker()
+        self.served = FakeServed(
+            self.fake_worker, sha=self.served_sha, on_predict=self.predict_hook
+        )
+        return [self.served]
+
+    def predict_hook(self):
+        self.events.append("predict")
+        if self.on_predict:
+            self.on_predict()
+
+    def ask(self, endpoint, miner_hotkey, key, model, weights_sha256, body, timeout):
+        self.assertIs(key, REQUEST_KEY)
+        self.assertEqual((model, weights_sha256, timeout), (MODEL, SHA, self.sg.ASK_TIMEOUT))
+        self.asked.append((miner_hotkey, body))
+        self.events.append("ask")
+        if self.on_ask:
+            self.on_ask(miner_hotkey)
+        behaviour = self.behaviour[miner_hotkey]
+        if isinstance(behaviour, serving.MinerError):
+            raise behaviour
+        return answer(body["questions"], behaviour)
+
+    def grader(self, **extra):
+        g = self.sg.Grader(
+            self.config(**extra), self.catalog_read, self.worker, REQUEST_KEY, ask=self.ask
+        )
+        self.addCleanup(g.close)
+        return g
+
+    def evidence(self):
+        path = self.tmp / "state" / "serving-evidence.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(line) for line in path.read_text().splitlines()]
+
+    def scores_file(self):
+        return json.loads((self.tmp / "state" / "serving-scores.json").read_text())
+
+
+class OutcomeTests(GraderTestBase):
+    def test_pass_marginal_fail_mismatch_are_scored(self):
+        keys = {
+            b: self.add_miner(i, b) for i, b in enumerate(["pass", "marginal", "fail", "mismatch"])
+        }
+        before = time.time()
+        self.grader().run_round("r1")
+        rows = {r["hotkey"]: r for r in self.evidence()}
+        for b, hk in keys.items():
+            self.assertEqual(rows[hk]["outcome"], b)
+        scores = self.scores_file()
+        self.assertEqual(scores[keys["pass"]][MODEL]["score"], 1.0)
+        self.assertEqual(scores[keys["pass"]][MODEL]["struck_until"], 0)
+        self.assertEqual(scores[keys["marginal"]][MODEL]["score"], 0)
+        self.assertEqual(scores[keys["marginal"]][MODEL]["struck_until"], 0)
+        for b in ("fail", "mismatch"):
+            summary = scores[keys[b]][MODEL]
+            self.assertEqual(summary["score"], 0)
+            self.assertGreaterEqual(summary["struck_until"], before + 24 * HOUR)
+
+    def test_evidence_row_shape_and_non_finite_as_null(self):
+        hk = self.add_miner(0, "mismatch")
+        self.grader().run_round("r1")
+        path = self.tmp / "state" / "serving-evidence.jsonl"
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        [row] = self.evidence()
+        self.assertEqual(
+            set(row),
+            {
+                "v",
+                "kind",
+                "at",
+                "round_id",
+                "seed",
+                "hotkey",
+                "model",
+                "outcome",
+                "mean",
+                "worst",
+                "latency_s",
+                "verified",
+                "messages",
+            },
+        )
+        self.assertEqual((row["v"], row["kind"], row["round_id"]), (1, "validator", "r1"))
+        self.assertEqual(row["seed"], serving_items.round_seed(VALIDATOR, "r1", hk, MODEL))
+        self.assertIsNone(row["mean"])
+        self.assertIsNone(row["worst"])
+        self.assertEqual(len(row["messages"]), 8)
+
+    def test_miner_error_counts_against_availability_not_a_strike(self):
+        hk = self.add_miner(0, serving.MinerError("busy"))
+        self.grader().run_round("r1")
+        [row] = self.evidence()
+        self.assertEqual(row["outcome"], "busy")
+        self.assertIsNone(row["verified"])
+        summary = self.scores_file()[hk][MODEL]
+        self.assertEqual((summary["rounds"], summary["availability"]), (1, 0))
+        self.assertEqual((summary["struck_until"], summary["score"]), (0, 0))
+        self.assertNotIn("predict", self.events)
+
+    def test_first_miner_error_ends_that_miners_round(self):
+        self.add_miner(0, "pass")
+        calls = []
+
+        def flaky(miner):
+            calls.append(miner)
+            if len(calls) == 3:
+                raise serving.MinerError("timeout")
+
+        self.on_ask = flaky
+        self.grader().run_round("r1")
+        self.assertEqual(len(self.asked), 3)
+        self.assertEqual(self.evidence()[0]["outcome"], "timeout")
+
+    def test_only_configured_model_and_weights_are_graded(self):
+        good = self.add_miner(0)
+        self.add_miner(
+            1, served=[{"model": MODEL, "weights_sha256": "cd" * 32, "max_input_tokens": 8192}]
+        )
+        self.add_miner(
+            2,
+            served=[{"model": "d3-lite-0.8b-v1", "weights_sha256": SHA, "max_input_tokens": 4096}],
+        )
+        self.add_miner(3, served={"error": "manifest fetch failed"})
+        self.grader().run_round("r1")
+        self.assertEqual({hk for hk, _ in self.asked}, {good})
+        self.assertEqual([r["hotkey"] for r in self.evidence()], [good])
+
+
+class SecretSubsetTests(GraderTestBase):
+    def test_subset_chosen_after_all_answers_and_only_it_is_computed(self):
+        hk = self.add_miner(0)
+        self.grader().run_round("r1")
+        self.assertEqual(self.events, ["ask"] * 8 + ["predict"] * 3)
+        seed = serving_items.round_seed(VALIDATOR, "r1", hk, MODEL)
+        bodies = serving_items.items(seed, 8)
+        self.assertEqual([b for _, b in self.asked], bodies)
+        verified = sorted(random.Random(seed ^ 1).sample(range(8), 3))
+        self.assertEqual(self.evidence()[0]["verified"], verified)
+        self.assertEqual(
+            self.served.calls, [(bodies[i]["state"], bodies[i]["questions"]) for i in verified]
+        )
+
+    def test_compare_sees_only_verified_items(self):
+        self.add_miner(0)
+        seen = []
+        real = self.sg.answer_check.compare
+
+        def spy(ours, theirs):
+            seen.append((set(ours), set(theirs)))
+            return real(ours, theirs)
+
+        with patch.object(self.sg.answer_check, "compare", spy):
+            self.grader().run_round("r1")
+        [(ours, theirs)] = seen
+        verified = self.evidence()[0]["verified"]
+        self.assertEqual(ours, theirs)
+        self.assertEqual({int(k.split(":")[0]) for k in ours}, set(verified))
+
+    def test_same_seed_regenerates_same_questions(self):
+        hk = self.add_miner(0)
+        self.grader().run_round("r1")
+        first = [b for _, b in self.asked]
+        self.asked.clear()
+        self.grader().run_round("r1")
+        self.assertEqual([b for _, b in self.asked], first)
+        self.asked.clear()
+        self.grader().run_round("r2")
+        self.assertNotEqual([b for _, b in self.asked], first)
+        seed = serving_items.round_seed(VALIDATOR, "r1", hk, MODEL)
+        self.assertEqual(first, serving_items.items(seed, 8))
+
+
+class LockAndReferenceTests(GraderTestBase):
+    def test_lock_held_only_while_computing_reference(self):
+        self.add_miner(0)
+        self.add_miner(1)
+        self.on_ask = lambda _: self.assertTrue(lock_is_free(self.lock))
+        self.on_predict = lambda: self.assertFalse(lock_is_free(self.lock))
+        self.grader().run_round("r1")
+        self.assertEqual([r["outcome"] for r in self.evidence()], ["pass", "pass"])
+        self.assertTrue(lock_is_free(self.lock))
+
+    def test_lock_timeout_never_touches_scores(self):
+        a, b = self.add_miner(0), self.add_miner(1)
+        fd = os.open(self.lock, os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            self.grader(lock_wait_seconds=0).run_round("r1")
+        finally:
+            os.close(fd)
+        self.assertEqual(
+            {r["hotkey"]: r["outcome"] for r in self.evidence()},
+            {a: "lock_timeout", b: "lock_timeout"},
+        )
+        self.assertEqual(self.scores_file(), {})
+        self.assertNotIn("predict", self.events)
+
+    def test_worker_crash_never_touches_scores_and_restarts_next_round(self):
+        hk = self.add_miner(0)
+
+        def crash():
+            raise OSError("serving worker exited")
+
+        self.on_predict = crash
+        g = self.grader()
+        g.run_round("r1")
+        self.assertEqual(self.evidence()[0]["outcome"], "reference_unavailable")
+        self.assertTrue(self.fake_worker.closed)
+        self.assertEqual(self.scores_file(), {})
+        self.on_predict = None
+        g.run_round("r2")
+        self.assertEqual(self.starts, 2)
+        self.assertEqual(self.evidence()[1]["outcome"], "pass")
+        self.assertEqual(self.scores_file()[hk][MODEL]["rounds"], 1)
+
+    def test_worker_refusal_is_reference_unavailable(self):
+        self.add_miner(0)
+
+        def refuse():
+            raise serving_server.WorkerError("runtime")
+
+        self.on_predict = refuse
+        self.grader().run_round("r1")
+        self.assertEqual(self.evidence()[0]["outcome"], "reference_unavailable")
+        self.assertTrue(self.fake_worker.closed)
+
+    def test_start_failure_is_reference_unavailable_and_retried(self):
+        self.add_miner(0)
+        self.start_error = ValueError("serving worker failed to start")
+        g = self.grader()
+        g.run_round("r1")
+        self.assertEqual(self.evidence()[0]["outcome"], "reference_unavailable")
+        self.assertEqual(self.scores_file(), {})
+        self.start_error = None
+        g.run_round("r2")
+        self.assertEqual(self.starts, 2)
+        self.assertEqual(self.evidence()[1]["outcome"], "pass")
+
+    def test_worker_started_once_and_closed(self):
+        self.add_miner(0)
+        g = self.grader()
+        g.run_round("r1")
+        g.run_round("r2")
+        self.assertEqual(self.starts, 1)
+        g.close()
+        self.assertTrue(self.fake_worker.closed)
+
+    def test_refuses_worker_with_other_weights_or_missing_model(self):
+        self.add_miner(0)
+        self.served_sha = "cd" * 32
+        with self.assertRaises(ValueError):
+            self.grader().run_round("r1")
+        self.assertTrue(self.fake_worker.closed)
+        self.served_sha = SHA
+        extra = {
+            MODEL: {"reference": "x", "weights_sha256": SHA},
+            "d3-lite-0.8b-v1": {"reference": "y", "weights_sha256": SHA},
+        }
+        with self.assertRaises(ValueError):
+            self.grader(models=extra).run_round("r1")
+
+
+class RoundTests(GraderTestBase):
+    def test_round_budget_skips_later_miners(self):
+        a = self.add_miner(0)
+        self.add_miner(1)
+        self.on_ask = lambda miner: time.sleep(0.15) if miner == a else None
+        self.grader(round_seconds=1).run_round("r1")
+        self.assertEqual({hk for hk, _ in self.asked}, {a})
+        self.assertEqual([r["hotkey"] for r in self.evidence()], [a])
+
+    def test_evidence_written_before_scores(self):
+        hk = self.add_miner(0)
+        real = self.sg.Scores.record
+
+        def record(scores, hotkey, model, result):
+            self.assertIn(hotkey, [r["hotkey"] for r in self.evidence()])
+            return real(scores, hotkey, model, result)
+
+        with patch.object(self.sg.Scores, "record", record):
+            self.grader().run_round("r1")
+        self.assertIn(hk, self.scores_file())
+
+    def test_score_file_write_is_atomic(self):
+        hk = self.add_miner(0)
+        self.grader().run_round("r1")
+        before = (self.tmp / "state" / "serving-scores.json").read_text()
+        with patch.object(self.sg.os, "replace", side_effect=OSError("disk")):
+            with self.assertRaises(OSError):
+                self.grader().run_round("r2")
+        self.assertEqual((self.tmp / "state" / "serving-scores.json").read_text(), before)
+        self.assertIn(hk, json.loads(before))
+        leftovers = [p.name for p in (self.tmp / "state").iterdir()]
+        self.assertEqual(
+            sorted(n for n in leftovers if not n.startswith("serving-")), [], leftovers
+        )
+
+
+class ScoresTests(unittest.TestCase):
+    def setUp(self):
+        from zils import serving_grader
+
+        self.sg = serving_grader
+        self.path = Path(tempfile.mkdtemp()) / "rounds.json"
+
+    def result(self, at, outcome, latency=0.5):
+        return {"at": at, "outcome": outcome, "mean": 0.0, "worst": 0.0, "latency_s": latency}
+
+    def test_strike_zeroes_score_for_window_then_recovers(self):
+        s = self.sg.Scores(self.path, window_hours=24, floor=0.9)
+        t0 = 1_000_000
+        s.record("hk", MODEL, self.result(t0, "fail"))
+        for h in range(1, 24):
+            s.record("hk", MODEL, self.result(t0 + h * HOUR, "pass"))
+        early = s.summary("hk", MODEL, now=t0 + 23 * HOUR)
+        self.assertEqual(early["struck_until"], t0 + 24 * HOUR)
+        self.assertEqual(early["score"], 0)
+        s.record("hk", MODEL, self.result(t0 + 25 * HOUR, "pass"))
+        later = s.summary("hk", MODEL, now=t0 + 25 * HOUR)
+        self.assertEqual(later["pass_rate"], 1.0)
+        self.assertEqual(later["score"], 1.0)
+
+    def test_availability_counts_busy_timeout_unavailable(self):
+        s = self.sg.Scores(self.path, window_hours=24, floor=0.9)
+        for i, outcome in enumerate(["pass", "busy", "timeout", "unavailable", "http"]):
+            s.record("hk", MODEL, self.result(100 + i, outcome, latency=i))
+        summary = s.summary("hk", MODEL, now=200)
+        self.assertEqual(summary["rounds"], 5)
+        self.assertAlmostEqual(summary["availability"], 0.2)
+        self.assertEqual(summary["pass_rate"], 1.0)
+        self.assertAlmostEqual(summary["score"], 0.2)
+        self.assertEqual(summary["median_latency_s"], 0)
+
+    def test_marginal_lowers_pass_rate_below_floor_without_strike(self):
+        s = self.sg.Scores(self.path, window_hours=24, floor=0.9)
+        for i in range(9):
+            s.record("hk", MODEL, self.result(100 + i, "pass"))
+        s.record("hk", MODEL, self.result(110, "marginal"))
+        summary = s.summary("hk", MODEL, now=200)
+        self.assertEqual((summary["pass_rate"], summary["struck_until"]), (0.9, 0))
+        self.assertAlmostEqual(summary["score"], 0.9)
+        s.record("hk", MODEL, self.result(111, "marginal"))
+        self.assertEqual(s.summary("hk", MODEL, now=200)["score"], 0)
+
+    def test_persists_and_prunes(self):
+        s = self.sg.Scores(self.path, window_hours=1, floor=0.9)
+        s.record("hk", MODEL, self.result(0, "pass"))
+        s.record("hk", MODEL, self.result(2 * HOUR, "pass"))
+        again = self.sg.Scores(self.path, window_hours=1, floor=0.9)
+        self.assertEqual(again.summary("hk", MODEL, now=2 * HOUR)["rounds"], 1)
+
+    def test_refuses_our_own_failures(self):
+        s = self.sg.Scores(self.path, window_hours=24, floor=0.9)
+        for outcome in ("reference_unavailable", "lock_timeout"):
+            with self.assertRaises(ValueError):
+                s.record("hk", MODEL, self.result(1, outcome))
+
+
+class StubServed:
+    model, weights_sha256, max_input_tokens = MODEL, SHA, 8192
+
+    def __init__(self):
+        self.worker = FakeWorker()
+
+    def predict(self, state, questions):
+        return reference(questions)
+
+
+class RealServerTests(unittest.TestCase):
+    def test_round_against_the_pinned_miner_server(self):
+        from zils import serving_grader
+
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "state").mkdir()
+        miner = MINERS[0]
+        with socket.socket() as probe:  # the manifest signs its endpoint, so pick the port first
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        endpoint = "http://127.0.0.1:%d" % port
+        server = serving_server.make_server(
+            miner,
+            endpoint,
+            [StubServed()],
+            allowed=lambda caller: caller == REQUEST_KEY.ss58_address,
+            bind=("127.0.0.1", port),
+        )
+        threading.Thread(
+            target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        ).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        config = {
+            "chain": {"network": "test", "netuid": 579},
+            "validator_hotkey": VALIDATOR,
+            "request_key_file": str(tmp / "key.json"),
+            "models": {MODEL: {"reference": str(tmp), "weights_sha256": SHA}},
+            "state": str(tmp / "state"),
+        }
+        with (
+            patch.dict(os.environ, {"ZILS_COMPUTE_LOCK": str(tmp / "lock")}),
+            patch.object(serving, "public_endpoint", lambda e: e),
+        ):
+            g = serving_grader.Grader(
+                config,
+                lambda: {0: (miner.ss58_address, endpoint)},
+                lambda: [StubServed()],
+                REQUEST_KEY,
+                ask=functools.partial(serving.ask, check=lambda e: e),
+            )
+            g.run_round("real")
+            g.close()
+        [row] = [
+            json.loads(line)
+            for line in (tmp / "state" / "serving-evidence.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(row["outcome"], "pass")
+        for message in row["messages"]:
+            serving.verify(message, "answer", miner.ss58_address, int(time.time()))
+        scores = json.loads((tmp / "state" / "serving-scores.json").read_text())
+        self.assertEqual(scores[miner.ss58_address][MODEL]["score"], 1.0)
+
+
+class MainTests(unittest.TestCase):
+    def test_imports_no_chain_writes(self):
+        from zils import serving_grader
+
+        tree = ast.parse(Path(serving_grader.__file__).read_text())
+        used = {
+            n.attr
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name)
+            and n.value.id == "testnet"
+        }
+        self.assertLessEqual(used, {"connect", "serving_axons", "check_config"})
+        names = {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) for a in n.names}
+        self.assertFalse(names & {"write_axon", "write_commitment", "publish_round", "set_weights"})
+        for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+            self.assertNotIn("raw_calls", [k.arg for k in call.keywords])
+
+    def test_main_refuses_missing_paths(self):
+        from zils import serving_grader
+
+        tmp = Path(tempfile.mkdtemp())
+        (tmp / "state").mkdir()
+        (tmp / "ckpt").mkdir()
+        (tmp / "key.json").write_text(json.dumps({"secretSeed": "0x" + "44" * 32}))
+        base = {
+            "chain": {"network": "test", "netuid": 579},
+            "validator_hotkey": VALIDATOR,
+            "request_key_file": str(tmp / "key.json"),
+            "models": {MODEL: {"reference": str(tmp / "ckpt"), "weights_sha256": SHA}},
+            "state": str(tmp / "state"),
+        }
+        for broken in (
+            {"request_key_file": str(tmp / "nokey.json")},
+            {"models": {MODEL: {"reference": str(tmp / "nockpt"), "weights_sha256": SHA}}},
+            {"state": str(tmp / "nostate")},
+        ):
+            path = tmp / "config.json"
+            path.write_text(json.dumps({**base, **broken}))
+            with self.assertRaises(SystemExit):
+                serving_grader.main(["--config", str(path)])
+
+    def test_load_key_matches_platform_format(self):
+        from zils import serving_grader
+
+        path = Path(tempfile.mkdtemp()) / "key.json"
+        path.write_text(json.dumps({"secretSeed": "0x" + "44" * 32}))
+        self.assertEqual(serving_grader.load_key(path).ss58_address, REQUEST_KEY.ss58_address)
+
+
+if __name__ == "__main__":
+    unittest.main()
