@@ -144,5 +144,160 @@ class PoolRewardsTest(unittest.TestCase):
                 testnet.publish_round(config, tmp, report, chain, wallet)
 
 
+SERVING_MEMBERS = {"1": {"hotkey": "a"}, "2": {"hotkey": "b"}, "3": {"hotkey": "c"}}
+
+
+def serving_fixture(scores, switch_on=3):
+    from zils import model_pools, serving_share
+
+    cfg = {**pools(), "share": 0.63}
+    serving = {
+        "share": 0.10,
+        "scores": "/nonexistent/serving-scores.json",
+        "switch_on_miners": switch_on,
+        "max_age_seconds": 3600,
+    }
+    config = {
+        "chain": {"network": "test", "netuid": 579},
+        "validator_hotkey": "validator",
+        "members": SERVING_MEMBERS,
+        "base_pools": cfg,
+        "serving_share": serving,
+    }
+    report = {
+        "chain": config["chain"],
+        "identities": {"1": "a", "2": "b", "3": "c"},
+        "miners": [
+            {"uid": 1, "status": "evaluated", "skill": 0.75},
+            {"uid": 2, "status": "evaluated", "skill": 0.25},
+        ],
+        "base_pools": {"config": model_pools.validate(cfg), "decisions": {}},
+        "serving_share": {
+            "config": serving_share.validate(serving),
+            "frozen": {"written_at": 90.0, "frozen_at": 100.0, "scores": scores},
+        },
+    }
+    return config, report
+
+
+def publish(config, report, owner_uid=0):
+    state = {
+        "members": report["identities"],
+        "owner_uid": owner_uid,
+        "validator_uid": 0,
+        "block": 10,
+        "required_version": 1,
+        "retry_after_block": 10,
+    }
+    chain = SimpleNamespace(plan=lambda intent, wallet: SimpleNamespace(to_dict=dict))
+    wallet = SimpleNamespace(hotkey=SimpleNamespace(ss58_address="validator"))
+    with tempfile.TemporaryDirectory() as tmp, patch("zils.testnet.preflight", return_value=state):
+        return testnet.publish_round(config, tmp, report, chain, wallet)
+
+
+def digest(value):
+    import hashlib
+    import json
+
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+class ServingShareTest(unittest.TestCase):
+    def setUp(self):
+        self.enterContext(promoted_profile())
+
+    def test_absent_config_vector_and_record_are_unchanged(self):
+        from tests import test_feature_rewards
+        from zils import model_pools
+
+        cfg = pools()
+        config = {
+            "chain": {"network": "test", "netuid": 579},
+            "validator_hotkey": "validator",
+            "members": MEMBERS,
+            "base_pools": cfg,
+        }
+        report = {
+            "chain": config["chain"],
+            "identities": {"1": "a", "2": "b"},
+            "miners": [
+                {"uid": 1, "status": "evaluated", "skill": 0.75},
+                {"uid": 2, "status": "evaluated", "skill": 0.25},
+            ],
+            "base_pools": {"config": model_pools.validate(cfg), "decisions": {}},
+        }
+        # Snapshots taken from the unmodified publish_round before the serving track existed.
+        result = publish(config, report)
+        self.assertEqual(result["requested_weights"], {"1": 0.4000000000000001, "2": 0.6})
+        self.assertEqual(
+            digest(result["tracks"]),
+            "8790345371322e10ed237506f67d6816dfca527b2db00bfe4484600b0826081f",
+        )
+        result = test_feature_rewards.publish(*test_feature_rewards.fixture())
+        self.assertEqual(
+            result["requested_weights"],
+            {"1": 0.4, "2": 0.1, "3": 0.16000000000000003, "4": 0.04000000000000001, "5": 0.3},
+        )
+        self.assertEqual(
+            digest(result["tracks"]),
+            "9c5daddf71c51453793f35baa73884e0fb93858b8eda51b1b6eb95ad3352493b",
+        )
+
+    def test_serving_share_burns_until_switched_on(self):
+        scores = {"a": {"m": {"score": 1.0}}, "b": {"m": {"score": 2.0}}}
+        result = publish(*serving_fixture(scores))
+        weights, tracks = result["requested_weights"], result["tracks"]
+        self.assertEqual(set(weights), {"0", "1", "2"})
+        self.assertAlmostEqual(weights["0"], 0.10)
+        self.assertAlmostEqual(weights["1"], 0.63 * 0.25 + 0.27 * 0.75)
+        self.assertAlmostEqual(weights["2"], 0.63 * 0.75 + 0.27 * 0.25)
+        self.assertAlmostEqual(tracks["burned"], 0.10)
+        self.assertEqual(tracks["serving_share"], 0.10)
+        self.assertAlmostEqual(tracks["adapter_share"], 0.27)
+        self.assertFalse(tracks["serving"]["switched_on"])
+        self.assertEqual(tracks["serving"]["earners"], 2)
+        self.assertEqual(tracks["serving"]["weights"], {})
+        self.assertNotIn("feature_share", tracks)
+
+    def test_switched_on_serving_earners_split_the_share_by_summed_score(self):
+        scores = {
+            "a": {"m": {"score": 1.0}},
+            "b": {"m": {"score": 1.0}, "n": {"score": 1.0}},
+            "c": {"m": {"score": 2.0}},
+        }
+        # Nothing burns, so a non-owner burn uid is fine.
+        result = publish(*serving_fixture(scores), owner_uid=7)
+        weights, tracks = result["requested_weights"], result["tracks"]
+        self.assertEqual(set(weights), {"1", "2", "3"})
+        self.assertAlmostEqual(weights["1"], 0.63 * 0.25 + 0.27 * 0.75 + 0.02)
+        self.assertAlmostEqual(weights["2"], 0.63 * 0.75 + 0.27 * 0.25 + 0.04)
+        self.assertAlmostEqual(weights["3"], 0.04)
+        self.assertAlmostEqual(tracks["burned"], 0.0)
+        self.assertAlmostEqual(tracks["adapter_share"], 0.27)
+        self.assertTrue(tracks["serving"]["switched_on"])
+        self.assertEqual(tracks["serving"]["weights"], {"1": 1.0, "2": 2.0, "3": 2.0})
+
+    def test_serving_burn_requires_the_owner_burn_uid(self):
+        with self.assertRaisesRegex(ValueError, "burn_uid"):
+            publish(*serving_fixture({}), owner_uid=7)
+
+    def test_report_and_config_must_agree_on_serving_share(self):
+        config, report = serving_fixture({})
+        missing = {k: v for k, v in report.items() if k != "serving_share"}
+        with self.assertRaisesRegex(ValueError, "serving"):
+            publish(config, missing)
+        unconfigured = {k: v for k, v in config.items() if k != "serving_share"}
+        with self.assertRaisesRegex(ValueError, "serving"):
+            publish(unconfigured, report)
+        changed = copy.deepcopy(config)
+        changed["serving_share"]["share"] = 0.2
+        with self.assertRaisesRegex(ValueError, "serving"):
+            publish(changed, report)
+        legacy = {k: v for k, v in config.items() if k != "base_pools"}
+        legacy_report = {k: v for k, v in report.items() if k != "base_pools"}
+        with self.assertRaisesRegex(ValueError, "serving_share requires base_pools"):
+            publish(legacy, legacy_report)
+
+
 if __name__ == "__main__":
     unittest.main()
