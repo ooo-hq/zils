@@ -9,10 +9,11 @@ CONSIDER = 0.01
 
 @dataclass(frozen=True)
 class Thresholds:
-    # Starting values from REAX's calibration (reax-subnet s1validator.py:54-67).
-    mean_pass: float = 0.20
-    mean_fail: float = 0.50
-    item_fail: float = 2.0
+    # 28 Oct 2026 calibration: honest d3-mini on an H100 vs the RTX 4000 Ada reference drifted at most
+    # 0.166 on one item (p99 0.044) over 1,000 serving items; these keep a >=3x margin.
+    mean_pass: float = 0.10
+    mean_fail: float = 0.25
+    item_fail: float = 0.5
 
 
 @dataclass(frozen=True)

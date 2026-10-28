@@ -21,9 +21,13 @@ class AnswerCheckTests(unittest.TestCase):
         self.assertEqual(v.outcome, "pass")
         self.assertLess(v.worst, 1e-3)
 
-    def test_fp8_like_drift_is_marginal(self):
-        v = compare(OURS, one(0.88, 0.12))
-        self.assertTrue(0.20 < v.mean < 0.50, v.mean)
+    def test_defaults_follow_the_28_oct_calibration(self):
+        # Honest H100 vs RTX 4000 Ada drift: worst item 0.166 over 1,000 items; these keep >=3x margin.
+        self.assertEqual(Thresholds(), Thresholds(mean_pass=0.10, mean_fail=0.25, item_fail=0.5))
+
+    def test_small_drift_is_marginal(self):
+        v = compare(OURS, one(0.84, 0.16))
+        self.assertTrue(Thresholds().mean_pass < v.mean < Thresholds().mean_fail, v.mean)
         self.assertEqual(v.outcome, "marginal")
 
     def test_swapped_model_fails(self):
@@ -42,7 +46,7 @@ class AnswerCheckTests(unittest.TestCase):
         ours = {f"q{i}": {"a": 0.5, "b": 0.5} for i in range(20)}
         theirs = dict(ours, q0={"a": 0.001, "b": 0.999})
         v = compare(ours, theirs)
-        self.assertLess(v.mean, 0.50)
+        self.assertLess(v.mean, Thresholds().mean_fail)
         self.assertEqual(v.outcome, "fail")
 
     def test_different_keys(self):
@@ -91,7 +95,9 @@ class AnswerCheckTests(unittest.TestCase):
     def test_boundaries(self):
         d = distance(OURS["q"], one(0.88, 0.12)["q"])
         edge = one(0.88, 0.12)
-        self.assertEqual(compare(OURS, edge, Thresholds(mean_pass=d)).outcome, "pass")
+        self.assertEqual(
+            compare(OURS, edge, Thresholds(mean_pass=d, mean_fail=9, item_fail=9)).outcome, "pass"
+        )
         self.assertEqual(
             compare(OURS, edge, Thresholds(mean_pass=0.0, mean_fail=d)).outcome,
             "marginal",
