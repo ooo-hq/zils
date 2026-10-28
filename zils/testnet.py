@@ -380,7 +380,7 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
         serving_share_, serving_vector, serving_record = 0.0, {}, None
         if serving is not None:
             serving_share_ = serving["share"]
-            serving_vector, serving_record = serving_share.weights(
+            serving_vector, _, serving_record = serving_share.weights(
                 serving, serving_report["frozen"], config["members"]
             )
             # Raw summed scores; blend_weights takes each weight in [0, 1].

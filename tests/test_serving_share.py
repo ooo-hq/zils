@@ -197,7 +197,7 @@ class WeightsTest(unittest.TestCase):
 
     def test_below_switch_on(self):
         scores = {h: {m: entry(1) for m in "xyz"} for h in "ab"}
-        vector, record = serving_share.weights(CFG, self.frozen(scores), self.members)
+        vector, _, record = serving_share.weights(CFG, self.frozen(scores), self.members)
         self.assertEqual(vector, {})
         self.assertFalse(record["switched_on"])
         self.assertEqual(record["earners"], 2)
@@ -205,7 +205,7 @@ class WeightsTest(unittest.TestCase):
     def test_switched_on_sums_and_ignores_unregistered(self):
         scores = {h: {"x": entry(1), "y": entry(2), "z": entry(0.5)} for h in "abc"}
         scores["ghost"] = {"x": entry(9)}
-        vector, record = serving_share.weights(CFG, self.frozen(scores), self.members)
+        vector, _, record = serving_share.weights(CFG, self.frozen(scores), self.members)
         self.assertEqual(vector, {1: 3.5, 2: 3.5, 3: 3.5})
         self.assertTrue(record["switched_on"])
         self.assertEqual(record["earners"], 3)
@@ -217,15 +217,153 @@ class WeightsTest(unittest.TestCase):
     def test_non_finite_total_skipped(self):
         scores = {h: {"x": entry(1)} for h in "abc"}
         scores["d"] = {"x": entry(1e308), "y": entry(1e308)}
-        vector, record = serving_share.weights(CFG, self.frozen(scores), self.members)
+        vector, _, record = serving_share.weights(CFG, self.frozen(scores), self.members)
         self.assertEqual(sorted(vector), [1, 2, 3])
         self.assertEqual(record["earners"], 3)
 
     def test_zero_score_not_earner(self):
         scores = {"a": {"x": entry(1)}, "b": {"x": entry(1)}, "c": {"x": entry(0)}}
-        vector, record = serving_share.weights(CFG, self.frozen(scores), self.members)
+        vector, _, record = serving_share.weights(CFG, self.frozen(scores), self.members)
         self.assertEqual(vector, {})
         self.assertEqual(record["earners"], 2)
+
+
+from datetime import UTC, datetime, timedelta  # noqa: E402
+
+from bittensor_wallet import Keypair  # noqa: E402
+
+from zils.runtime import signed  # noqa: E402
+
+KEY = Keypair.create_from_uri("//Evidence")
+HK = {n: Keypair.create_from_uri(f"//{n}").ss58_address for n in "ABCDE"}
+RCFG = {
+    **CFG,
+    "volume_share": 0.3,
+    "receipts": {"url": "https://g.example/r", "signer": KEY.ss58_address, "window_hours": 24},
+}
+UNTIL = datetime(2026, 10, 28, 12, tzinfo=UTC)
+
+
+def iso(t):
+    return t.isoformat().replace("+00:00", "Z")
+
+
+def receipt(hops=(), checks=(), **over):
+    key = over.pop("key", KEY)
+    payload = {
+        "schema": "zils-serving-receipts/v1",
+        "signer": KEY.ss58_address,
+        "since": iso(UNTIL - timedelta(hours=24)),
+        "until": iso(UNTIL),
+        "hops": list(hops),
+        "checks": list(checks),
+        **over,
+    }
+    return signed(payload, key)
+
+
+def hop(hk, tokens, model="m"):
+    return {
+        "hotkey": HK[hk],
+        "model": model,
+        "weights_sha256": "a" * 64,
+        "answered": 1,
+        "input_tokens": tokens,
+        "failed": {},
+    }
+
+
+def check(hk, **kw):
+    return {"hotkey": HK[hk], **{"pass": 0, "marginal": 0, "fail": 0, "mismatch": 0, **kw}}
+
+
+class ReceiptsConfigTest(unittest.TestCase):
+    def test_valid_and_pairing(self):
+        self.assertEqual(serving_share.validate(dict(RCFG)), RCFG)
+        no_vs = {k: v for k, v in RCFG.items() if k != "volume_share"}
+        no_rc = {k: v for k, v in RCFG.items() if k != "receipts"}
+        bad_rc = {**RCFG, "receipts": {**RCFG["receipts"], "window_hours": 721}}
+        http = {**RCFG, "receipts": {**RCFG["receipts"], "url": "http://x"}}
+        for config in (no_vs, no_rc, bad_rc, http, {**RCFG, "volume_share": 1.5}):
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                serving_share.validate(config)
+
+
+class VerifyReceiptsTest(unittest.TestCase):
+    R = RCFG["receipts"]
+
+    def test_ok(self):
+        m = receipt([hop("A", 5)], [check("A", **{"pass": 2})])
+        self.assertEqual(
+            serving_share.verify_receipts(m, self.R, UNTIL)["hops"][0]["input_tokens"], 5
+        )
+
+    def test_refusals(self):
+        other = Keypair.create_from_uri("//Other")
+        extra = hop("A", 5)
+        extra["x"] = 1
+        bad = [
+            receipt(key=other),
+            receipt(schema="nope"),
+            receipt(since=iso(UNTIL - timedelta(hours=23))),
+            receipt([extra]),
+            receipt([hop("A", -1)]),
+            receipt([{**hop("A", 1), "weights_sha256": "zz"}]),
+            receipt([{**hop("A", 1), "hotkey": "bad"}]),
+            receipt([{**hop("A", 1), "failed": {"x": "1"}}]),
+            receipt([{**hop("A", 1), "failed": {1: 1}}]),
+            receipt(checks=[check("A", fail=-1)]),
+            receipt(checks=[{**check("A"), "extra": 1}]),
+        ]
+        for m in bad:
+            with self.subTest(m=m), self.assertRaises(ValueError):
+                serving_share.verify_receipts(m, self.R, UNTIL)
+        with self.assertRaises(ValueError):
+            serving_share.verify_receipts(receipt(), self.R, UNTIL + timedelta(hours=1))
+
+
+class VolumeWeightsTest(unittest.TestCase):
+    members = {str(i + 1): {"hotkey": HK[n]} for i, n in enumerate("ABCD")}
+
+    def run_(self, scores, hops=(), checks=()):
+        frozen = {"written_at": 1.0, "frozen_at": 2.0, "scores": scores}
+        payload = serving_share.verify_receipts(receipt(hops, checks), RCFG["receipts"], UNTIL)
+        return serving_share.weights(RCFG, frozen, self.members, payload)
+
+    def scores(self, names="ABC"):
+        return {HK[n]: {"x": entry(1)} for n in names}
+
+    def test_split_by_tokens_across_hops(self):
+        _, vol, rec = self.run_(self.scores(), [hop("A", 100), hop("A", 50, "n"), hop("B", 30)])
+        self.assertEqual(vol, {1: 150, 2: 30})
+        self.assertEqual(rec["volume"], {"1": 150, "2": 30})
+        self.assertEqual((rec["volume_share"], rec["struck"]), (0.3, []))
+
+    def test_struck_zero_and_not_counted(self):
+        ready, vol, rec = self.run_(
+            self.scores(), [hop("A", 9), hop("B", 9)], [check("A", mismatch=1)]
+        )
+        self.assertEqual((ready, vol), ({}, {}))  # only 2 left, switch-on is 3
+        self.assertEqual(rec["struck"], [HK["A"]])
+        ready, vol, _ = self.run_(
+            self.scores("ABCD"), [hop("A", 9), hop("B", 9)], [check("A", fail=1)]
+        )
+        self.assertEqual((sorted(ready), vol), ([2, 3, 4], {2: 9}))
+
+    def test_zero_readiness_unregistered_and_no_traffic(self):
+        scores = {**self.scores(), HK["D"]: {"x": entry(0)}}
+        _, vol, _ = self.run_(scores, [hop("D", 9), hop("E", 9), hop("A", 4)])
+        self.assertEqual(vol, {1: 4})
+        _, vol, rec = self.run_(self.scores())
+        self.assertEqual((vol, rec["volume"]), ({}, {}))
+
+    def test_no_receipts_unchanged(self):
+        ready, vol, rec = serving_share.weights(
+            CFG, {"written_at": 1.0, "frozen_at": 2.0, "scores": self.scores()}, self.members
+        )
+        self.assertEqual(vol, {})
+        self.assertNotIn("volume", rec)
+        self.assertEqual(sorted(ready), [1, 2, 3])
 
 
 if __name__ == "__main__":
