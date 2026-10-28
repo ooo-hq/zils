@@ -1,8 +1,26 @@
+import contextlib
 import importlib.util
+import io
+import itertools
+import json
+import socket
+import threading
+import time
 import unittest
 import uuid
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from unittest.mock import patch
 
-from zils import serving
+from bittensor_wallet import Keypair
+
+from zils import serving, serving_server
+
+SHA = "ab" * 32
+MODEL = "d3-mini-4.5b-v1"
+MINER_KEY = Keypair.create_from_seed("0x" + "11" * 32)
+CALLER_KEY = Keypair.create_from_seed("0x" + "22" * 32)
+OTHER_KEY = Keypair.create_from_seed("0x" + "33" * 32)
+HOTKEY = MINER_KEY.ss58_address
 
 
 @unittest.skipUnless(importlib.util.find_spec("bittensor_wallet"), "needs bittensor_wallet")
@@ -356,6 +374,318 @@ class ServingDiscoveryTest(unittest.TestCase):
         Handler.big = True
         with self.assertRaisesRegex(ValueError, "too large"):
             serving._fetch_manifest(ep, 5.0)
+
+
+BODY = {
+    "state": "A ticket",
+    "model": "zils-shared-r1",
+    "questions": {
+        "q1": {"type": "noul"},
+        "q2": {"type": "choice", "criteria": {"a": "A", "b": "B"}},
+    },
+}
+GOOD = {
+    "q1": {"probabilities": {"true": 0.75, "false": 0.25}, "input_tokens": 7},
+    "q2": {"probabilities": {"a": 0.5, "b": 0.5}, "input_tokens": 7},
+}
+
+
+def allow_all(endpoint):
+    return endpoint
+
+
+class FakeMiner:
+    """Signs answers for the pinned serving protocol; `opts` bends one thing at a time."""
+
+    def __init__(self, **opts):
+        opts_ = opts
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.0"
+
+            def log_message(self, *args):
+                pass
+
+            def do_POST(self):
+                request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                payload = request["payload"]
+                if opts_.get("reset"):
+                    self.close_connection = True
+                    return
+                if opts_.get("drip"):
+                    try:
+                        for byte in b"HTTP/1.0 200 OK\r\nX: " + b"y" * 50:
+                            self.wfile.write(bytes([byte]))
+                            self.wfile.flush()
+                            time.sleep(0.05)
+                    except OSError:
+                        pass
+                    return
+                if "drip_body" in opts_:
+                    self.send_response(opts_["status"])
+                    self.send_header("Content-Length", "100")
+                    self.end_headers()
+                    try:
+                        for _ in range(100):
+                            self.wfile.write(b" ")
+                            self.wfile.flush()
+                            time.sleep(0.05)
+                    except OSError:
+                        pass
+                    return
+                if "status" in opts_:
+                    return self.reply(opts_["status"], opts_.get("body", b"{}"))
+                if "oversize" in opts_:
+                    return self.reply(200, b" " * (1 << 20) + b"{}")
+                predictions = dict(opts_.get("predictions", GOOD))
+                if opts_.get("missing"):
+                    predictions.pop("q2")
+                digest = opts_.get("digest") or serving.request_digest(payload)
+                answer = serving.answer_payload(
+                    MINER_KEY.ss58_address,
+                    digest,
+                    opts_.get("model", payload["model"]),
+                    opts_.get("weights", payload["weights_sha256"]),
+                    predictions,
+                )
+                signed = serving.sign(opts_.get("signer", MINER_KEY), "answer", answer)
+                self.reply(200, json.dumps(signed).encode())
+
+            def reply(self, status, data):
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                try:
+                    self.wfile.write(data)
+                except OSError:
+                    pass
+
+        class Server(ThreadingHTTPServer):
+            daemon_threads = True
+
+            def handle_error(self, request, client_address):
+                pass
+
+        self.server = Server(("127.0.0.1", 0), Handler)
+        threading.Thread(
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        ).start()
+        self.miner = "http://127.0.0.1:%d" % self.server.server_port
+
+    def __enter__(self):
+        return self.miner
+
+    def __exit__(self, *exc):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def call(endpoint, timeout=2.0):
+    return serving.ask(endpoint, HOTKEY, CALLER_KEY, MODEL, SHA, BODY, timeout, check=allow_all)
+
+
+class AskTests(unittest.TestCase):
+    def test_ask_returns_verified_predictions_and_signed_message(self):
+        with FakeMiner() as miner:
+            message = call(miner)
+        self.assertEqual(message["payload"]["predictions"], GOOD)
+        self.assertEqual(message["payload"]["miner"], MINER_KEY.ss58_address)
+        self.assertIn("signature", message)
+        serving.verify(
+            message, "answer", MINER_KEY.ss58_address, int(time.time())
+        )  # still signed as sent
+
+    def test_ask_rejects_wrong_signer_digest_model_weights_and_missing_question(self):
+        bad_probs = {
+            **GOOD,
+            "q1": {"probabilities": {"true": 0.9, "false": 0.9}, "input_tokens": 7},
+        }
+        # sums to 1 within 1e-6 but p > 1: make_response would answer 502
+        above_one = {
+            **GOOD,
+            "q1": {"probabilities": {"true": 1.0000005, "false": 0.0}, "input_tokens": 7},
+        }
+        cases = {
+            "signer": ({"signer": OTHER_KEY}, "unverified"),
+            "digest": ({"digest": "0" * 64}, "invalid"),
+            "model": ({"model": "other"}, "invalid"),
+            "weights": ({"weights": "cd" * 32}, "invalid"),
+            "missing": ({"missing": True}, "invalid"),
+            "sum": ({"predictions": bad_probs}, "invalid"),
+            "above_one": ({"predictions": above_one}, "invalid"),
+        }
+        for name, (opts, reason) in cases.items():
+            with self.subTest(name), FakeMiner(**opts) as miner:
+                with self.assertRaises(serving.MinerError) as caught:
+                    call(miner)
+                self.assertEqual(caught.exception.reason, reason)
+
+    def test_ask_times_out_on_dripping_headers_within_budget(self):
+        with FakeMiner(drip=True) as miner:
+            start = time.monotonic()
+            with self.assertRaises(serving.MinerError) as caught:
+                call(miner, timeout=0.5)
+            self.assertEqual(caught.exception.reason, "timeout")
+            self.assertLess(time.monotonic() - start, 2.0)
+
+    def test_ask_rejects_non_200_and_oversize(self):
+        for name, opts in {"500": {"status": 500}, "oversize": {"oversize": True}}.items():
+            with self.subTest(name), FakeMiner(**opts) as miner:
+                with self.assertRaises(serving.MinerError) as caught:
+                    call(miner)
+                self.assertEqual(caught.exception.reason, "http" if name == "500" else "invalid")
+
+    def test_ask_classifies_http_status(self):
+        cases = {503: "busy", 429: "busy", 401: "refused", 403: "refused", 413: "rejected"}
+        cases.update({404: "rejected", 409: "rejected", 502: "http"})
+        for status, reason in cases.items():
+            with self.subTest(status), FakeMiner(status=status) as miner:
+                with self.assertRaises(serving.MinerError) as caught:
+                    call(miner)
+                self.assertEqual(caught.exception.reason, reason)
+
+    def test_ask_classifies_error_codes_in_json_bodies(self):
+        def err(code):
+            return json.dumps({"error": {"code": code}}).encode()
+
+        cases = [
+            (503, err("unavailable"), "unavailable"),
+            (503, err("other"), "busy"),
+            (503, b"", "busy"),
+            (503, b"not json", "busy"),
+            (429, err("unavailable"), "busy"),
+            (404, err("model_not_found"), "contradicts_manifest"),
+            (409, err("weights_mismatch"), "contradicts_manifest"),
+            (404, err("other"), "rejected"),
+            (409, b"{}", "rejected"),
+            (404, b"", "rejected"),
+            (409, err("model_not_found"), "rejected"),
+        ]
+        for status, body, reason in cases:
+            with self.subTest(status=status, body=body), FakeMiner(status=status, body=body) as m:
+                with self.assertRaises(serving.MinerError) as caught:
+                    call(m)
+                self.assertEqual(caught.exception.reason, reason)
+
+    def test_dripped_error_body_is_a_timeout(self):
+        for status in (503, 429):
+            with self.subTest(status), FakeMiner(status=status, drip_body=True) as miner:
+                start = time.monotonic()
+                with self.assertRaises(serving.MinerError) as caught:
+                    call(miner, timeout=0.5)
+                self.assertEqual(caught.exception.reason, "timeout")
+                self.assertLess(time.monotonic() - start, 1.0)
+
+    def test_connection_error_past_deadline_is_a_timeout(self):
+        with FakeMiner(reset=True) as miner:
+            with self.assertRaises(serving.MinerError) as caught:
+                call(miner)
+            self.assertEqual(caught.exception.reason, "http")
+            clock = itertools.chain([0.0], itertools.repeat(1000.0))
+            with (
+                patch("time.monotonic", lambda: next(clock)),
+                self.assertRaises(serving.MinerError) as late,
+            ):
+                call(miner)
+            self.assertEqual(late.exception.reason, "timeout")
+
+    def test_ask_refuses_non_public_endpoint_by_default(self):
+        with FakeMiner() as miner:
+            with self.assertRaises(serving.MinerError):
+                serving.ask(miner, HOTKEY, CALLER_KEY, MODEL, SHA, BODY, 1.0)
+
+
+class BrokenServed:
+    model, weights_sha256, max_input_tokens = MODEL, SHA, 8192
+
+    def predict(self, state, questions):
+        raise OSError("worker gone")
+
+
+class StubServed:
+    """The served-object interface `zils.serving_server.make_server` uses."""
+
+    model, weights_sha256, max_input_tokens = MODEL, SHA, 8192
+
+    def __init__(self):
+        self.calls = 0
+
+    def predict(self, state, questions):
+        self.calls += 1
+        return {qid: GOOD[qid] for qid in questions}
+
+
+class PinnedServerTests(unittest.TestCase):
+    """The gateway against the pinned miner server, not a fake."""
+
+    def setUp(self):
+        self.served = StubServed()
+        self.server = serving_server.make_server(
+            MINER_KEY,
+            "http://127.0.0.1:1",
+            [self.served],
+            allowed=lambda caller: caller == CALLER_KEY.ss58_address,
+            bind=("127.0.0.1", 0),
+            slots=1,
+        )
+        threading.Thread(
+            target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        ).start()
+        self.miner = "http://127.0.0.1:%d" % self.server.server_port
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def test_good_answer(self):
+        message = call(self.miner)
+        self.assertEqual(message["payload"]["predictions"], GOOD)
+        self.assertEqual(message["payload"]["miner"], MINER_KEY.ss58_address)
+
+    def test_unadmitted_caller_is_refused(self):
+        with self.assertRaises(serving.MinerError) as caught:
+            serving.ask(self.miner, HOTKEY, OTHER_KEY, MODEL, SHA, BODY, 2.0, check=allow_all)
+        self.assertEqual(caught.exception.reason, "refused")
+
+    def test_busy_miner_is_busy(self):
+        holder = socket.create_connection(("127.0.0.1", self.server.server_port))
+        try:
+            deadline = time.monotonic() + 2
+            while not self.server.peers and time.monotonic() < deadline:
+                time.sleep(0.005)  # until the server has given the only slot to `holder`
+            with self.assertRaises(serving.MinerError) as caught:
+                call(self.miner)
+        finally:
+            holder.close()
+        self.assertEqual(caught.exception.reason, "busy")
+        self.assertEqual(self.served.calls, 0)
+
+    def test_crashed_worker_is_unavailable(self):
+        broken = serving_server.make_server(
+            MINER_KEY,
+            "http://127.0.0.1:1",
+            [BrokenServed()],
+            allowed=lambda caller: True,
+            bind=("127.0.0.1", 0),
+        )
+        threading.Thread(
+            target=broken.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+        ).start()
+        self.addCleanup(broken.server_close)
+        self.addCleanup(broken.shutdown)
+        endpoint = "http://127.0.0.1:%d" % broken.server_port
+        with (
+            contextlib.redirect_stderr(io.StringIO()),
+            self.assertRaises(serving.MinerError) as caught,
+        ):
+            call(endpoint)
+        self.assertEqual(caught.exception.reason, "unavailable")
+
+    def test_unserved_model_and_wrong_weights_contradict_the_manifest(self):
+        for model, sha in (("other-model", SHA), (MODEL, "cd" * 32)):
+            with self.assertRaises(serving.MinerError) as caught:
+                serving.ask(self.miner, HOTKEY, CALLER_KEY, model, sha, BODY, 2.0, check=allow_all)
+            self.assertEqual(caught.exception.reason, "contradicts_manifest")
 
 
 if __name__ == "__main__":
