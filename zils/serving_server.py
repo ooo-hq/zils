@@ -126,8 +126,8 @@ def start_worker(checkpoints, python, args=("-m", "zils.serving_worker"), timeou
     worker = Worker(process, timeout)
     try:
         ready = worker.receive()
-        if ready.get("ready") is not True:
-            raise OSError("serving worker did not report ready")
+        if ready.get("ready") is not True or not ready["served"]:
+            raise OSError("serving worker did not report ready with a checkpoint")
         return [Served(worker, **item) for item in ready["served"]]
     except (OSError, AttributeError, KeyError, TypeError):
         worker.close()

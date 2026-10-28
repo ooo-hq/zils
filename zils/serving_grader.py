@@ -34,6 +34,10 @@ STRIKES = {"fail", "mismatch"}
 OURS = {"reference_unavailable", "lock_timeout"}
 
 
+class ReferenceMismatch(Exception):
+    """The reference worker does not serve the configured models at the configured weights."""
+
+
 def log(text):
     print(f"zils serving-grader: {text}", file=sys.stderr, flush=True)
 
@@ -66,7 +70,12 @@ def lock_path():
 @contextmanager
 def compute_lock(wait_seconds):
     """Yield True holding the shared compute lock, or False if it stayed busy for `wait_seconds`."""
-    fd = os.open(lock_path(), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fd = os.open(lock_path(), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    except OSError as error:  # missing directory, EACCES, a symlink: treat as busy
+        log(f"compute lock unavailable ({type(error).__name__})")
+        yield False
+        return
     try:
         deadline = time.monotonic() + wait_seconds
         while True:
@@ -176,7 +185,7 @@ class Grader:
                 or self.served[model].weights_sha256 != spec["weights_sha256"]
             ):
                 self.close()
-                raise ValueError(
+                raise ReferenceMismatch(
                     f"reference worker does not serve {model} at the configured weights"
                 )
         return self.served
@@ -200,7 +209,9 @@ class Grader:
         began = time.monotonic()
         stopped = None  # our own failure ends the round for every remaining miner
         outcomes = {}
-        for hotkey, endpoint, model in self.targets():
+        targets = self.targets()
+        random.Random(round_id).shuffle(targets)  # the budget must not always starve the same uids
+        for hotkey, endpoint, model in targets:
             if stopped is None and time.monotonic() - began >= self.config["round_seconds"]:
                 break  # over budget: later miners get no record this round
             sha = self.models[model]["weights_sha256"]
@@ -213,7 +224,7 @@ class Grader:
                 row["outcome"] = stopped
             else:
                 row.update(self.grade(hotkey, endpoint, model, sha, seed))
-                if row["outcome"] in OURS:
+                if row.pop("stop", False):
                     stopped = row["outcome"]
             outcomes[row["outcome"]] = outcomes.get(row["outcome"], 0) + 1
             at = self.clock()
@@ -256,11 +267,11 @@ class Grader:
         verified = sorted(random.Random(seed ^ 1).sample(range(questions), count))
         done = {"latency_s": latency, "messages": messages, "verified": verified}
         if self.served is None and self.start() is None:
-            return {**done, "outcome": "reference_unavailable"}
+            return {**done, "outcome": "reference_unavailable", "stop": True}
         ours, theirs = {}, {}
         with compute_lock(self.config["lock_wait_seconds"]) as held:
             if not held:
-                return {**done, "outcome": "lock_timeout"}
+                return {**done, "outcome": "lock_timeout", "stop": True}
             try:
                 for i in verified:
                     reference = self.served[model].predict(
@@ -270,10 +281,13 @@ class Grader:
                     for qid in bodies[i]["questions"]:
                         ours[f"{i}:{qid}"] = reference[qid]["probabilities"]
                         theirs[f"{i}:{qid}"] = predictions[qid]["probabilities"]
-            except (OSError, serving_server.WorkerError) as error:
+            except serving_server.WorkerError as error:  # one refused request; the worker lives
+                log(f"reference worker refused a request ({error.kind})")
+                return {**done, "outcome": "reference_unavailable"}
+            except OSError as error:
                 log(f"reference worker failed ({type(error).__name__}); restarting next round")
                 self.close()
-                return {**done, "outcome": "reference_unavailable"}
+                return {**done, "outcome": "reference_unavailable", "stop": True}
         verdict = answer_check.compare(ours, theirs)
         return {**done, "outcome": verdict.outcome, "mean": verdict.mean, "worst": verdict.worst}
 
@@ -301,9 +315,9 @@ def main(argv=None):
     parser.add_argument("--config", required=True, type=Path)
     args = parser.parse_args(argv)
     config = json.loads(args.config.read_text())
-    missing = [config["request_key_file"], config["state"]]
-    missing += [spec["reference"] for spec in config["models"].values()]
-    for path in missing:
+    if not Path(config["state"]).is_dir():
+        raise SystemExit(f"missing state directory {config['state']}")
+    for path in [config["request_key_file"], *(m["reference"] for m in config["models"].values())]:
         if not Path(path).exists():
             raise SystemExit(f"missing {path}")
     key = load_key(config["request_key_file"])
@@ -326,13 +340,14 @@ def main(argv=None):
     )
     seconds = grader.config["round_seconds"]
     try:
+        grader.start()  # wrong weights stop startup; a failed start is retried at the first miner
         while True:
             began = time.monotonic()
             try:
                 outcomes = grader.run_round(uuid.uuid4().hex)
                 counts = " ".join(f"{k}={v}" for k, v in sorted(outcomes.items())) or "no miners"
                 log(f"round {counts} in {time.monotonic() - began:.1f}s")
-            except ValueError:
+            except ReferenceMismatch:
                 raise
             except Exception as error:  # a chain read or disk hiccup: try again next round
                 log(f"round failed ({type(error).__name__})")
