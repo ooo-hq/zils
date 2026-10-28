@@ -130,9 +130,15 @@ def write_commitment(config, sub, wallet, text):
 def read_axon(sub, netuid, hotkey, block):
     """The hotkey's served IPv4 endpoint at `block`, or None."""
     axon = sub.query(("SubtensorModule", "Axons"), [netuid, hotkey], block=block)
-    if not axon or axon["ip_type"] != 4 or not axon["ip"] or not axon["port"]:
+    if not isinstance(axon, dict):
         return None
-    return f"http://{ipaddress.IPv4Address(axon['ip'])}:{axon['port']}"
+    ip, port = axon.get("ip"), axon.get("port")
+    # Miners control these values: anything malformed means no axon, never an exception.
+    if axon.get("ip_type") != 4 or type(ip) is not int or type(port) is not int:
+        return None
+    if not 1 <= ip < 2**32 or not 1 <= port <= 65535:
+        return None
+    return f"http://{ipaddress.IPv4Address(ip)}:{port}"
 
 
 def write_axon(config, sub, wallet, endpoint):

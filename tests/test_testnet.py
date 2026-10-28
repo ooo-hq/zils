@@ -620,7 +620,10 @@ class AxonTest(unittest.TestCase):
         self.assertEqual(
             axon.call_args, ((("SubtensorModule", "Axons"), [579, "hk"]), {"block": 10})
         )
-        for bad in ({**good, "ip": 0}, {**good, "port": 0}, {**good, "ip_type": 6}, None):
+        for bad in (
+            {**good, "ip": 0}, {**good, "port": 0}, {**good, "ip_type": 6}, None, "x",
+            {"port": 1}, {**good, "ip": 2**32}, {**good, "ip": "8.8.8.8"}, {**good, "port": None},
+        ):
             axon.value = bad
             self.assertIsNone(t.read_axon(sub, 579, "hk", 10))
 
@@ -647,6 +650,23 @@ class AxonTest(unittest.TestCase):
             t.write_axon(self.config, sub, "wallet", "http://8.8.8.8:8091")
         with self.assertRaises(ValueError):
             t.write_axon(self.config, sub, "wallet", "http://example.com:8091")
+
+    def test_serving_axons_survives_one_malformed_axon(self):
+        from ipaddress import IPv4Address
+
+        from zils import testnet as t
+
+        good = {"ip": int(IPv4Address("8.8.8.8")), "port": 1, "ip_type": 4}
+
+        def query(item, params, *, block=None):
+            if item[1] == "SubnetworkN":
+                return 3
+            if item[1] == "Keys":
+                return "hk%d" % params[1]
+            return {"hk0": {**good, "ip": 2**40}, "hk1": good, "hk2": "junk"}[params[0 + 1]]
+
+        sub = SimpleNamespace(block=1, query=query)
+        self.assertEqual(t.serving_axons(self.config, sub), {1: ("hk1", "http://8.8.8.8:1")})
 
     def test_serving_axons_reads_every_uid_at_one_block(self):
         from ipaddress import IPv4Address

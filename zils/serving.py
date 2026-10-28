@@ -3,6 +3,7 @@
 import hashlib
 import json
 import re
+import time
 import uuid
 
 from bittensor_wallet import Keypair
@@ -107,7 +108,7 @@ def validate_manifest(payload):
     served = payload.get("models")
     if payload.get("version") != VERSION:
         raise ValueError("unsupported serving version")
-    public_endpoint(payload["endpoint"])
+    public_endpoint(payload.get("endpoint"))
     family = models.d3_family()
     if not isinstance(served, list) or not 1 <= len(served) <= len(family):
         raise ValueError("manifest must list 1 to %d models" % len(family))
@@ -128,8 +129,17 @@ def validate_manifest(payload):
 
 
 def fetch_manifest(endpoint, timeout=5.0):
+    """GET the manifest; `timeout` is the budget for the whole fetch, not per socket operation."""
+    deadline = time.monotonic() + timeout
+    data = b""
     with protocol.opener().open(endpoint + "/v1/serving", timeout=timeout) as response:
-        data = response.read(MAX_MANIFEST_BYTES + 1)
+        while len(data) <= MAX_MANIFEST_BYTES:
+            if time.monotonic() > deadline:
+                raise ValueError("manifest fetch timed out")
+            chunk = response.read1(min(4096, MAX_MANIFEST_BYTES + 1 - len(data)))
+            if not chunk:
+                break
+            data += chunk
     if len(data) > MAX_MANIFEST_BYTES:
         raise ValueError("manifest too large")
     try:

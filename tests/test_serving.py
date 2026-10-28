@@ -154,6 +154,39 @@ class ServingDiscoveryTest(unittest.TestCase):
             serving.public_endpoint("http://192.168.1.1:8091")
         self.assertEqual(serving.public_endpoint("http://8.8.8.8:8091"), "http://8.8.8.8:8091")
 
+    def test_validate_manifest_missing_endpoint_is_value_error(self):
+        with self.assertRaises(ValueError):
+            serving.validate_manifest({"version": serving.VERSION, "models": self.served})
+
+    def test_fetch_manifest_enforces_total_deadline_against_drip_feed(self):
+        import time
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from threading import Thread
+
+        class Drip(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.end_headers()
+                try:
+                    for _ in range(100):
+                        self.wfile.write(b" ")
+                        self.wfile.flush()
+                        time.sleep(0.2)
+                except OSError:
+                    pass
+
+            def log_message(self, *a):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Drip)
+        Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        started = time.monotonic()
+        with self.assertRaises(ValueError):
+            serving.fetch_manifest("http://127.0.0.1:%d" % server.server_port, timeout=0.5)
+        self.assertLess(time.monotonic() - started, 2)
+
     def test_fetch_manifest_reads_json_and_caps_size(self):
         import json
         from http.server import BaseHTTPRequestHandler, HTTPServer
