@@ -307,6 +307,44 @@ class CommitCandidateTest(unittest.TestCase):
         self.assertNotIn("revision", json.loads(self.config.read_text()))
         self.assertIn("✗ hugging face\n  not uploaded yet", out)
 
+    def test_doctor_checks_a_serving_runtime_only_when_asked(self):
+        from tests.test_serving_runtime import TOKEN, FakeRuntime, health
+
+        runtime = FakeRuntime()
+        url = self.enterContext(wire.local_server(runtime.handler))
+        self.enterContext(patch.dict(os.environ, {"ZILS_RUNTIME_TOKEN": TOKEN}))
+        code, out = self.run_miner("doctor", "--model", models.D3)
+        self.assertNotIn("serving runtime", out)
+        self.assertEqual(runtime.requests, [])
+
+        code, out = self.run_miner("doctor", "--model", models.D3, "--runtime", url)
+        self.assertIn("✓ serving runtime", out)
+        self.assertIn("✗ candidate", out)  # the rest of the checklist still runs
+        self.assertEqual([r[:2] for r in runtime.requests], [("GET", "/health")])
+
+        runtime.health = health(runtime_sha256="f" * 64)
+        code, out = self.run_miner("doctor", "--model", models.D3, "--runtime", url)
+        self.assertEqual(code, 1)
+        self.assertIn("✗ serving runtime\n  the runtime's runtime_sha256 differs", out)
+
+        code, out = self.run_miner("doctor", "--model", models.D3, "--runtime", "http://10.0.0.5:1")
+        self.assertIn("✗ serving runtime\n  --runtime must be", out)
+
+        from tests.test_serving_runtime import malformed_handler
+
+        for mode in ("garbage", "truncated"):
+            broken = self.enterContext(wire.local_server(malformed_handler(mode)))
+            code, out = self.run_miner("doctor", "--model", models.D3, "--runtime", broken)
+            self.assertEqual(code, 1, out)
+            self.assertIn("✗ serving runtime\n  the runtime", out)
+            self.assertNotIn("Traceback", out)
+
+        with patch.dict(os.environ, {"ZILS_RUNTIME_TOKEN": ""}):
+            code, out = self.run_miner("doctor", "--model", models.D3, "--runtime", url)
+        self.assertIn("✗ serving runtime", out)
+        self.assertIn("ZILS_RUNTIME_TOKEN", out)
+        self.assertNotIn(TOKEN, out)
+
     def test_doctor_requires_a_profile_or_candidate_and_prints_each_tiers_recipe(self):
         code, out = self.run_miner("doctor")
         self.assertEqual(code, 1, out)

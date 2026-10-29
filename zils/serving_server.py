@@ -27,7 +27,8 @@ def log(text):
 
 
 class WorkerError(Exception):
-    """The worker refused one request: kind is "too_long", "invalid" or "runtime"."""
+    """The worker refused one request: kind is "too_long", "invalid", "runtime" or (from a shared
+    adapter runtime, zils/serving_runtime.py) "busy"."""
 
     def __init__(self, kind):
         super().__init__(kind)
@@ -142,9 +143,11 @@ class Refusal(Exception):
 
 
 # A worker refusal's HTTP answer; "runtime" and a lost worker are 503 (the node, not the caller).
+# "busy" is a shared runtime's full queue: callers read 503 with any code but "unavailable" as busy.
 REFUSALS = {
     "too_long": (413, "input_too_long", "Input exceeds the served token limit."),
     "invalid": (422, "invalid_request", "Request could not be encoded."),
+    "busy": (503, "busy", "Inference is busy; retry shortly."),
 }
 UNAVAILABLE = (503, "unavailable", "Inference is unavailable; retry later.")
 
