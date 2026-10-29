@@ -87,7 +87,9 @@ its own complete evidence and reviewed deployment.
 
 For a new native/code-owned recipe, copy human dataset labels or compute answers
 from frozen executable facts. Models may reword or review inputs but must not create
-gold labels. Pin source revisions, parent-group reservations, transformations and
+gold labels. Reword source-derived public inputs and independently check preserved
+meaning before sealing; raw public cases remain development comparators. Keep
+code-generated facts exact. Pin source revisions, parent-group reservations, transformations and
 format ranges before inference. Recurring task definitions can generate fresh
 instances; a renamed task does not make a previously used question fresh. Keep all
 observed development/qualification cases out of new confirmation draws. Record
