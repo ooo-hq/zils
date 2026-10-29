@@ -140,6 +140,7 @@ class SharedImageBackbone(torch.nn.Module):
 
 class D3ModuleTest(unittest.TestCase):
     def test_pins_and_constants(self):
+        self.assertEqual(d3.MAX_TOKENS, 4096)
         self.assertEqual(d3.PINS["revision"], models.spec(models.D3)["base_revision"])
         self.assertEqual(len(d3.TARGETS), 9)
 
