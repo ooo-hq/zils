@@ -216,6 +216,15 @@ class RuntimeServed:
         return thread
 
 
+def check(runtime_url, token, model, timeout=10.0):
+    """`zils doctor --runtime`: the runtime is on loopback, reachable, ready and serves `model`'s
+    pinned base; ValueError with the reason otherwise."""
+    url = loopback(runtime_url)
+    if not isinstance(token, str) or not token:
+        raise ValueError("the runtime token is empty; export it in --runtime-token-env")
+    RuntimeServed(url, token, model, None, None, timeout).check()
+
+
 def connect(runtime_url, token, checkpoint, timeout=120.0):
     """[RuntimeServed] for the base `checkpoint` (the reference the runtime loaded), after checking
     the URL, the checkpoint, its temperature and the runtime's identity; ValueError otherwise."""

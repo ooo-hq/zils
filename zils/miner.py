@@ -8,7 +8,8 @@ that fixes the first failing step. `commit-candidate` validates a candidate, upl
 an uploaded revision), prints the commitment and, with --yes, writes it with the hotkey. `update`
 reinstalls at the stable release, the commit release/stable on main names. `announce-serving`
 writes the miner's public endpoint on chain and `serve` answers signed requests for public z3
-checkpoints there (docs/serving-miners.md)."""
+checkpoints there, from its own worker or, with --runtime, from the box's adapter runtime
+(docs/serving-miners.md)."""
 
 import argparse
 import hashlib
@@ -30,6 +31,7 @@ REQUIRED_MODULES = ("bittensor", "bittensor_wallet", "huggingface_hub", "kev", "
 PINNED_BITTENSOR = "11.1.0"
 WALLET_PATH = "~/.bittensor/wallets"
 SAVED = ("wallet_name", "wallet_hotkey", "wallet_path", "model", "candidate", "repo", "revision")
+RUNTIME_TOKEN_ENV = "ZILS_RUNTIME_TOKEN"
 INSTALL = "curl -fsSL https://zils.ai/install.sh | sh"
 STABLE_URL = "https://raw.githubusercontent.com/ooo-hq/zils/main/release/stable"
 
@@ -328,11 +330,24 @@ def gateway_hotkeys(values):
     return set(values)
 
 
+def runtime_token(args):
+    """The adapter runtime's bearer token from --runtime-token-env; never printed."""
+    token = os.environ.get(args.runtime_token_env, "")
+    if not token:
+        raise ValueError(f"set {args.runtime_token_env} to the adapter runtime's token")
+    return token
+
+
 def serve(args, interval=600.0):
-    """Exits (non-zero, through main) when the inference worker dies, so a supervisor restarts it."""
+    """Exits (non-zero, through main) when the inference worker dies, or with --runtime when the
+    runtime's identity changes, so a supervisor restarts it."""
     from . import serving_server
 
     endpoint = serving_endpoint(args)
+    if args.runtime:
+        if len(args.checkpoint) != 1:
+            raise ValueError("--runtime serves one --checkpoint: the runtime's base reference")
+        token = runtime_token(args)
     gateways = gateway_hotkeys(args.gateway_hotkey or ())
     key = wallet(args).hotkey  # the coldkey is never read
     hotkey = key.ss58_address
@@ -359,7 +374,12 @@ def serve(args, interval=600.0):
             f"the chain shows axon {announced or 'none'} for {hotkey}, not {endpoint}; run"
             f" zils announce-serving --public-ip {args.public_ip} --port {args.port} --yes first"
         )
-    loaded = serving_server.start_worker(args.checkpoint, d3_python())
+    if args.runtime:
+        from . import serving_runtime
+
+        loaded = serving_runtime.connect(args.runtime, token, args.checkpoint[0])
+    else:
+        loaded = serving_server.start_worker(args.checkpoint, d3_python())
     allowed = permit_checker(read_permits, gateways)
 
     def keep_fresh():
@@ -373,6 +393,14 @@ def serve(args, interval=600.0):
     )
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f"serving {', '.join(s.model for s in loaded)} at {endpoint}", flush=True)
+    if args.runtime:
+        stop = threading.Event()  # set by the health check when the runtime's identity changes
+        loaded[0].watch(stop)
+        stop.wait()
+        server.shutdown()
+        raise RuntimeError(
+            f"the adapter runtime's identity changed ({loaded[0].changed}); restart zils serve"
+        )
     loaded[0].worker.exited.wait()
     server.shutdown()
     raise RuntimeError("the inference worker exited; restart zils serve")
@@ -422,6 +450,14 @@ def doctor(args):
             reason = (done.stderr.strip().splitlines() or ["the check failed"])[-1]
             return f"{python}: {reason}; rerun the installer\n  {INSTALL}"
         state["d3"] = python
+
+    def serving_runtime():
+        from . import serving_runtime
+
+        try:
+            serving_runtime.check(args.runtime, runtime_token(args), args.model)
+        except ValueError as error:
+            return str(error)
 
     def wallet_hotkey():
         key = wallet(args)
@@ -491,6 +527,7 @@ def doctor(args):
 
     steps = [
         ("requirements", requirements),
+        *([("serving runtime", serving_runtime)] if getattr(args, "runtime", None) else []),
         ("d3 runtime", d3_runtime),
         ("wallet hotkey", wallet_hotkey),
         ("registration", registration),
@@ -604,6 +641,17 @@ def main(argv=None):
         "--gateway-hotkey", action="append", help="extra hotkey allowed to call; repeatable"
     )
     host.add_argument("--slots", type=int, default=8)
+    for command in (check, host):
+        command.add_argument(
+            "--runtime",
+            help="answer from this box's adapter runtime at http://127.0.0.1:<port> (serves the"
+            " base only, on its bulk lane) instead of loading a second model copy",
+        )
+        command.add_argument(
+            "--runtime-token-env",
+            default=RUNTIME_TOKEN_ENV,
+            help="environment variable holding the runtime's token (default %(default)s)",
+        )
     for command in (start, check, commit, announce, host):
         command.add_argument(
             "--network",

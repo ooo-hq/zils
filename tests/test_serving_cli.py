@@ -190,6 +190,99 @@ class ServingCliTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("inference worker exited", out)
 
+    def test_serve_without_runtime_never_touches_the_runtime_backend(self):
+        self.run_miner("announce-serving", "--yes")
+        served = Mock(model="z3-mini")
+        with (
+            patch("zils.serving_server.start_worker", return_value=[served]) as start,
+            patch("zils.serving_server.make_server"),
+            patch("zils.serving_runtime.connect") as connect,
+        ):
+            code, _ = self.run_miner("serve", "--checkpoint", "ckpt")
+        start.assert_called_once_with(["ckpt"], miner.d3_python())
+        connect.assert_not_called()
+        self.assertEqual(code, 1)
+
+    def runtime_served(self, reason="the runtime's runtime_sha256 differs"):
+        """A RuntimeServed stand-in whose watch() reports an identity change at once."""
+        served = Mock(model="z3-mini", changed=None, spec=["model", "changed", "watch"])
+
+        def watch(stop, *args, **kwargs):
+            served.changed = reason
+            stop.set()
+
+        served.watch.side_effect = watch
+        return served
+
+    def test_serve_with_runtime_starts_no_worker_and_exits_when_the_identity_changes(self):
+        self.run_miner("announce-serving", "--yes")
+        served = self.runtime_served()
+        url = "http://127.0.0.1:8935"
+        token = "SECRET-RUNTIME-TOKEN-" + "x" * 24
+        with (
+            patch.dict("os.environ", {"ZILS_RUNTIME_TOKEN": token}),
+            patch("zils.serving_server.start_worker") as start,
+            patch("zils.serving_server.make_server") as make,
+            patch("zils.serving_runtime.connect", return_value=[served]) as connect,
+        ):
+            code, out = self.run_miner("serve", "--checkpoint", "ref", "--runtime", url)
+        start.assert_not_called()
+        connect.assert_called_once_with(url, token, "ref")
+        self.assertEqual(make.call_args.args[2], [served])
+        self.assertEqual(make.call_args.args[4], ("0.0.0.0", 8091))
+        served.watch.assert_called_once()
+        make.return_value.shutdown.assert_called_once_with()
+        self.assertEqual(code, 1)
+        self.assertIn("identity changed", out)
+        self.assertIn("runtime_sha256 differs", out)
+        self.assertNotIn(token, out)
+
+    def test_serve_with_runtime_reads_the_named_token_env(self):
+        self.run_miner("announce-serving", "--yes")
+        with (
+            patch.dict("os.environ", {"NODE_TOKEN": "t" * 40}),
+            patch("zils.serving_server.make_server"),
+            patch("zils.serving_runtime.connect", return_value=[self.runtime_served()]) as connect,
+        ):
+            self.run_miner(
+                "serve",
+                "--checkpoint",
+                "ref",
+                "--runtime",
+                "http://127.0.0.1:8935",
+                "--runtime-token-env",
+                "NODE_TOKEN",
+            )
+        self.assertEqual(connect.call_args.args[1], "t" * 40)
+
+    def test_serve_with_runtime_refuses_a_missing_token_or_two_checkpoints(self):
+        self.run_miner("announce-serving", "--yes")
+        environ = {k: v for k, v in __import__("os").environ.items() if k != "ZILS_RUNTIME_TOKEN"}
+        with (
+            patch.dict("os.environ", environ, clear=True),
+            patch("zils.serving_server.make_server") as make,
+            patch("zils.serving_runtime.connect") as connect,
+        ):
+            code, out = self.run_miner(
+                "serve", "--checkpoint", "ref", "--runtime", "http://127.0.0.1:8935"
+            )
+            self.assertEqual(code, 1)
+            self.assertIn("ZILS_RUNTIME_TOKEN", out)
+            with patch.dict("os.environ", {"ZILS_RUNTIME_TOKEN": "t" * 40}):
+                code, out = self.run_miner(
+                    "serve",
+                    "--checkpoint",
+                    "ref",
+                    "--checkpoint",
+                    "other",
+                    "--runtime",
+                    "http://127.0.0.1:8935",
+                )
+            self.assertEqual(code, 1)
+            self.assertIn("one --checkpoint", out)
+        connect.assert_not_called()
+        make.assert_not_called()
+
     def test_serve_refuses_a_malformed_gateway_hotkey_before_any_chain_call(self):
         self.run_miner("announce-serving", "--yes")
         reads = len(self.raw_calls)
@@ -230,7 +323,8 @@ class LazyServingImportTest(unittest.TestCase):
 
         probe = (
             "import sys, zils.miner\n"
-            "print(sorted(m for m in ('zils.serving', 'zils.serving_server') if m in sys.modules))"
+            "print(sorted(m for m in ('zils.serving', 'zils.serving_server', 'zils.serving_runtime')"
+            " if m in sys.modules))"
         )
         done = subprocess.run(
             [sys.executable, "-c", probe], cwd=zils.ROOT, capture_output=True, text=True
