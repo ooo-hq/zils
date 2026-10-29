@@ -261,6 +261,7 @@ class ServingServerTest(unittest.TestCase):
         for failure, status, code in (
             (serving_server.WorkerError("too_long"), 413, "input_too_long"),
             (serving_server.WorkerError("invalid"), 422, "invalid_request"),
+            (serving_server.WorkerError("busy"), 503, "busy"),  # a shared runtime's full queue
         ):
             server = self.start(FakeServed(fail=failure))
             response, data = self.post(server, self.message())
