@@ -330,6 +330,15 @@ class CommitCandidateTest(unittest.TestCase):
         code, out = self.run_miner("doctor", "--model", models.D3, "--runtime", "http://10.0.0.5:1")
         self.assertIn("✗ serving runtime\n  --runtime must be", out)
 
+        from tests.test_serving_runtime import malformed_handler
+
+        for mode in ("garbage", "truncated"):
+            broken = self.enterContext(wire.local_server(malformed_handler(mode)))
+            code, out = self.run_miner("doctor", "--model", models.D3, "--runtime", broken)
+            self.assertEqual(code, 1, out)
+            self.assertIn("✗ serving runtime\n  the runtime", out)
+            self.assertNotIn("Traceback", out)
+
         with patch.dict(os.environ, {"ZILS_RUNTIME_TOKEN": ""}):
             code, out = self.run_miner("doctor", "--model", models.D3, "--runtime", url)
         self.assertIn("✗ serving runtime", out)

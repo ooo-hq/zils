@@ -81,6 +81,15 @@ zils serve --public-ip 203.0.113.10 --port 8091 \
 - **Paid traffic first.** Requests use the runtime's bulk lane, so the
   runtime's own real-time traffic runs ahead of them. When the bulk queue is
   full the runtime answers 529 and `serve` answers 503 `busy`.
+- **Adapter swaps.** The runtime has one adapter slot. A miner call activates
+  the base, so the next customer-adapter request on that runtime first
+  re-verifies and reloads its adapter, which adds latency to that request. Use
+  `--runtime` only on a runtime whose customer adapters get little or no
+  traffic. Paid base traffic causes no swap.
+- **No preemption.** A miner call that is already running is not interrupted.
+  One call can reserve up to 8 × 8,192 tokens, and real-time requests that
+  arrive meanwhile wait behind it. Under load the bulk lane gets about one call
+  in five.
 - **Pauses.** While the runtime is stopped or not ready, each request gets 503
   `unavailable` and `serve` keeps running. It checks `/health` every 60 seconds
   and logs changes. If the runtime comes back with a different identity, `serve`

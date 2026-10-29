@@ -14,9 +14,14 @@ place of `serving_server.Served`. The contract is the runtime's loopback HTTP AP
                       504, 529 overloaded)
 
 Every request names the base release only, never a customer adapter, and uses the bulk lane so the
-runtime's paid traffic goes first. The runtime must be on loopback; its token is never logged."""
+runtime's paid traffic goes first. The runtime must be on loopback; its token is never logged.
+
+The identity checks bind the pinned profile and runtime files, not the runtime process's environment:
+a runtime started with ZILS_D3_CANDIDATE_BASE (unpinned base weights) would still pass them. That is
+accepted because the same operator runs both processes, and validators recompute answers anyway."""
 
 import hashlib
+import http.client
 import json
 import re
 import sys
@@ -105,13 +110,16 @@ class RuntimeServed:
             },
         )
         try:
-            response = protocol.opener().open(request, timeout=self.timeout)
-        except urllib.error.HTTPError as error:
-            response = error
+            try:
+                response = protocol.opener().open(request, timeout=self.timeout)
+            except urllib.error.HTTPError as error:
+                response = error
+            with response:
+                status, raw = response.status, response.read(MAX_REPLY + 1)
         except ValueError:  # a redirect, refused by the opener
             raise OSError("the runtime redirected") from None
-        with response:
-            status, raw = response.status, response.read(MAX_REPLY + 1)
+        except http.client.HTTPException as error:  # BadStatusLine, IncompleteRead: not OSErrors
+            raise OSError(f"the runtime sent a malformed reply ({type(error).__name__})") from None
         if len(raw) > MAX_REPLY:
             raise OSError("the runtime's reply is too large")
         try:
@@ -122,8 +130,10 @@ class RuntimeServed:
     def health(self):
         """The runtime's /health object; ValueError naming the status, OSError if unreachable."""
         status, value = self._call("GET", "/health")
-        if status != 200 or not isinstance(value, dict):
+        if status != 200:
             raise ValueError(f"the runtime's /health answered HTTP {status}")
+        if not isinstance(value, dict):
+            raise ValueError("the runtime's /health reply is not a JSON object")
         return value
 
     def check(self):
@@ -190,23 +200,31 @@ class RuntimeServed:
         is logged and serving goes on (each request answers unavailable); an identity change sets
         `self.changed` and `stop` so `zils serve` exits for its supervisor."""
 
+        def probe():
+            """The runtime's state as fixed text, or None after an identity change (stop is set)."""
+            try:
+                value = self.health()
+            except OSError as error:
+                return f"runtime is unreachable ({type(error).__name__})"
+            except ValueError as error:  # an HTTP status: fixed text, no token
+                return f"runtime is unreachable ({error})"
+            reason = identity_error(self.model, value)
+            if reason:
+                self.changed = reason
+                log(f"runtime identity changed: {reason}; stopping")
+                stop.set()
+                return None
+            return "ok" if value.get("ready") is True else "runtime is not ready"
+
         def run():
             last = None
             while not stop.wait(interval):
                 try:
-                    value = self.health()
-                except OSError as error:
-                    state = f"runtime is unreachable ({type(error).__name__})"
-                except ValueError as error:  # an HTTP status: fixed text, no token
-                    state = f"runtime is unreachable ({error})"
-                else:
-                    reason = identity_error(self.model, value)
-                    if reason:
-                        self.changed = reason
-                        log(f"runtime identity changed: {reason}; stopping")
-                        stop.set()
-                        return
-                    state = "ok" if value.get("ready") is True else "runtime is not ready"
+                    state = probe()
+                except Exception as error:  # the check must outlive any surprise; class name only
+                    state = f"runtime health check failed ({type(error).__name__})"
+                if state is None:
+                    return
                 if state != last and not (last is None and state == "ok"):
                     log(state if state != "ok" else "runtime is ready again")
                 last = state

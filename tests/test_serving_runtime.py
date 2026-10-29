@@ -317,6 +317,95 @@ class RuntimeServedTest(unittest.TestCase):
         self.assertNotIn(TOKEN, err.getvalue() + "".join(texts))
 
 
+def malformed_handler(mode):
+    """A runtime that answers every request with a broken HTTP reply: `garbage` (no status line) or
+    `truncated` (a body cut short of its Content-Length)."""
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def reply(self):
+            if self.command == "POST":
+                self.rfile.read(int(self.headers["Content-Length"]))
+            if mode == "garbage":
+                self.wfile.write(b"garbage\r\n\r\n")
+            else:
+                self.wfile.write(
+                    b"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\n"
+                    b'Content-Length: 1000\r\n\r\n{"release_id"'
+                )
+            self.wfile.flush()
+            self.close_connection = True
+
+        do_GET = do_POST = reply
+
+    return Handler
+
+
+class MalformedRuntimeTest(unittest.TestCase):
+    """http.client.HTTPException (BadStatusLine, IncompleteRead) is not an OSError; none may escape."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.enterContext(patch.dict(os.environ, {models.candidate_base_env(MODEL): ""}))
+        self.err = self.enterContext(contextlib.redirect_stderr(io.StringIO()))
+        self.reference = checkpoint(tmp.name)
+        good = self.enterContext(protocol.local_server(FakeRuntime().handler))
+        [self.served] = serving_runtime.connect(good, TOKEN, self.reference, timeout=5.0)
+        self.broken = {
+            mode: self.enterContext(protocol.local_server(malformed_handler(mode)))
+            for mode in ("garbage", "truncated")
+        }
+
+    def test_predict_turns_a_broken_reply_into_a_runtime_error(self):
+        for mode, url in self.broken.items():
+            with self.subTest(mode=mode):
+                self.served.url = url
+                with self.assertRaises(serving_server.WorkerError) as caught:
+                    self.served.predict("s", {"q1": QUESTION})
+                self.assertEqual(caught.exception.kind, "runtime")
+
+    def test_connect_and_check_refuse_a_broken_runtime_with_a_value_error(self):
+        for mode, url in self.broken.items():
+            with self.subTest(mode=mode):
+                with self.assertRaises(ValueError):
+                    serving_runtime.connect(url, TOKEN, self.reference, timeout=5.0)
+                with self.assertRaises(ValueError):
+                    serving_runtime.check(url, TOKEN, MODEL, timeout=5.0)
+
+    def test_watch_survives_a_broken_reply(self):
+        for mode, url in self.broken.items():
+            with self.subTest(mode=mode):
+                self.served.url = url
+                stop, err = threading.Event(), io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    thread = self.served.watch(stop, interval=0.01)
+                    stopped = stop.wait(0.3)
+                    alive = thread.is_alive()
+                    stop.set()
+                    thread.join(5)
+                self.assertFalse(stopped)
+                self.assertTrue(alive, err.getvalue())
+                self.assertIn("runtime is unreachable", err.getvalue())
+
+    def test_watch_survives_any_exception_and_logs_its_class_only(self):
+        stop, err = threading.Event(), io.StringIO()
+        with (
+            patch.object(self.served, "health", side_effect=RuntimeError("SECRET detail")),
+            contextlib.redirect_stderr(err),
+        ):
+            thread = self.served.watch(stop, interval=0.01)
+            stop.wait(0.3)
+            alive = thread.is_alive()
+            stop.set()
+            thread.join(5)
+        self.assertTrue(alive)
+        self.assertIn("RuntimeError", err.getvalue())
+        self.assertNotIn("SECRET", err.getvalue())
+
+
 class RuntimeWatchTest(unittest.TestCase):
     """The background /health check: pauses are logged, an identity change stops serving."""
 
