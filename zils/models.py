@@ -79,6 +79,8 @@ SPECS[D3] = {
     "calibration": "native-then-heldout-temperature/v1",
     "inputs": {"images": 4, "video": True},
 }
+# Earlier pinned versions of active profiles: job history only; job_model still rejects them.
+EARLIER_SPECS = {D3: ({**SPECS[D3], "max_input_tokens": 4096},)}
 D3_POOL_MODELS = {
     "d3-lite": "d3-lite-0.8b-v1",
     "d3-nano": "d3-nano-2.2b-v1",
@@ -225,13 +227,16 @@ def job_model(job):
 
 
 def job_history_profile(job):
-    """Read a pinned job profile without making retired models operational."""
+    """Read a pinned job profile without making retired or earlier profiles operational."""
     frozen = (job.get("manifest") or {}).get("model")
     profile = job.get("model_profile")
     value = profile if profile is not None else frozen
-    if not isinstance(value, dict) or value.get("id") not in RETIRED_SPECS:
+    if isinstance(value, dict) and value in EARLIER_SPECS.get(value.get("id"), ()):
+        expected = value
+    elif not isinstance(value, dict) or value.get("id") not in RETIRED_SPECS:
         return spec(job_model(job))
-    expected = RETIRED_SPECS[value["id"]]
+    else:
+        expected = RETIRED_SPECS[value["id"]]
     if value != expected:
         raise ValueError("model specification differs from its pinned version")
     if profile is not None and frozen is not None and frozen != profile:

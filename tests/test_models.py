@@ -46,6 +46,25 @@ class ModelTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "unsupported model identity"):
                     models.job_model({"model_profile": frozen})
 
+    def test_job_history_reads_earlier_d3_mini_profile_without_enabling_it(self):
+        # Jobs trained before the 8,192 cap stored 4,096; their history must still list (ZIL-32).
+        earlier = {**models.spec(models.D3), "max_input_tokens": 4096}
+        for job in (
+            {"model_profile": earlier},
+            {"manifest": {"model": earlier}},
+            {"model_profile": earlier, "manifest": {"model": earlier}},
+        ):
+            with self.subTest(job=job):
+                self.assertEqual(models.job_history_profile(job), earlier)
+                with self.assertRaisesRegex(ValueError, "differs from its pinned version"):
+                    models.job_model(job)
+        for profile in (
+            {**earlier, "max_input_tokens": 2048},
+            {**earlier, "base_revision": "0" * 40},
+        ):
+            with self.subTest(profile=profile), self.assertRaises(ValueError):
+                models.job_history_profile({"model_profile": profile})
+
     def test_job_history_rejects_changed_or_inconsistent_archived_profiles(self):
         archived = {
             "id": "jevk5-4b-v0.3",
