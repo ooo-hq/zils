@@ -56,7 +56,47 @@ metrics and evidence hashes; private files retain predictions and family details
 Winning an exam pays nothing. Only the existing crowned kings receive the existing
 base allocation until an approved promotion changes the incumbent/history.
 
-## Prepare public history and private exams
+## Choose pool admission explicitly
+
+A pool can use either its existing independently qualified pilot or an operator-selected
+incumbent-challenge contract, version `zils-base-incumbent-challenge/v1`. The latter
+starts competition from a pinned base without requiring reproduction of an external
+leaderboard's complete ordering. External rankings remain diagnostic; this contract
+is not a passing qualification report and does not change historical pilot outcomes.
+
+Both policies retain audited private exams, source/gold provenance, current public
+history and the fixed challenger decision and confirmation rules above. Incumbent
+admission additionally binds the actual reference checkpoint, runtime contract,
+measured capacity, exact two-or-more independent draws and their common blueprint.
+A losing or inconclusive candidate leaves the incumbent unchanged.
+
+The existing `base_pool_rounds.<pool>.pilot_report` path is retained for configuration
+compatibility; it points to either kind of admission document. Validators, queued
+intake and release preparation verify the same document. Other pools keep their
+existing policy unless the operator explicitly installs a different contract.
+
+After preparing a per-pool settings object, audited `(identity, directory)` draw
+pairs and a measured capacity record, build the incumbent document with
+`base_pilot.incumbent_admission(settings, directory, draws, capacity=capacity)`.
+The capacity record requires matching `model_sha256` and `runtime_sha256`, a valid
+`settings_sha256`, device, positive `peak_gpu_mib` within `available_gpu_mib`,
+`completed_at`, and `probability_export_reviewed: true`. Persist the returned JSON
+at the configured admission path. It contains no `passed` flag. Reissue it after
+changing the incumbent, runtime, policy or installed draws; promotion still requires
+its own complete evidence and reviewed deployment.
+
+For a new native/code-owned recipe, copy human dataset labels or compute answers
+from frozen executable facts. Models may reword or review inputs but must not create
+gold labels. Reword source-derived public inputs and independently check preserved
+meaning before sealing; raw public cases remain development comparators. Keep
+code-generated facts exact. Pin source revisions, parent-group reservations, transformations and
+format ranges before inference. Recurring task definitions can generate fresh
+instances; a renamed task does not make a previously used question fresh. Keep all
+observed development/qualification cases out of new confirmation draws. Record
+source and format changes explicitly instead of applying the earlier mini recipe's
+qualification to a different bank.
+
+## Existing mini authoring recipe
 
 `scripts/author_exam.py` is the qualified mini authoring recipe (22 Oct 2026). Claude Opus 5.5
 writes each item new from one public row used only as a style example, and a blind second pass keeps
@@ -88,7 +128,7 @@ pilot's frozen blueprint (it stops and names any family that fell short; author 
 costs about $55 (direct; half with `--batch`) and keeps 3,000 test items. Training splits are not used: on 22 Oct a draw
 seeded from them saturated the 4B references near 88% and failed the ranking gate.
 
-Use teacher-authored cases. Public decision datasets may seed newly rewritten
+For this mini recipe, use teacher-authored cases. Public decision datasets may seed newly rewritten
 cases; never copy their public cases into the sealed exam or seed from S1MB,
 Decision Index or JevBench test sets. Never use customer examples. Audit semantic
 relatedness as well as exact duplicates. `source_id` identifies an independent
@@ -96,7 +136,9 @@ source case, not a broad dataset. The audit checks IDs, normalized prompt copies
 reordered Choice copies, source lineage and repeated new-domain families across
 draws. It cannot discover semantic copies with falsely unrelated source IDs.
 
-Author hard-label case JSONL files and `registry.json`, mapping each family to
+## Prepare public history and seal private exams
+
+For either admission policy, prepare hard-label case JSONL files and `registry.json`, mapping each family to
 `type` and `category`; Score families additionally declare
 `"ordered_equally_spaced": true`. Start a shared history file with
 `{"version":"zils-base-family-history/v1","families":{},"cases":[]}`.
@@ -197,7 +239,8 @@ requires a new untouched validation draw after any retuning. A pilot never crown
    `python -m scripts.migrate_model_pools --config CONFIG --out STAGED_CONFIG`
    preserves mini's incumbent, kings and allocation,
    installs the fixed policy, and leaves every pool disabled with no active draws.
-2. Supply passing per-pool evidence before enabling intake. Each enabled
+2. Supply the pool's explicit admission evidence before enabling intake: a passing
+   pilot or the versioned incumbent contract described above. Each enabled
    `base_pool_rounds[pool]` requires `base_reference`, `base_round_dir`,
    `family_history`, `suite_manifest`, `pilot_report`, resolved relative to config.
    Pin the suite using `regression_suite.suite_manifest(path)`. The public pool
@@ -208,7 +251,7 @@ requires a new untouched validation draw after any retuning. A pilot never crown
    candidates. Run `zils commit-candidate` as a dry run, inspect it, and submit with
    `--yes` only when operational submission is authorized. Capture commitment
    readback, discovery, copy rejection, inference and qualification evidence.
-4. Install the reviewed config only after GPU qualification and rollout approval;
+4. Install the reviewed config only after its admission, runtime-capacity and rollout checks;
    observe a full cycle. Keep a rollback copy of the prior binary/config/store,
    but never resume old-policy crowns or replay an uncertain chain transaction.
    A protocol rehearsal can succeed without a winning candidate.

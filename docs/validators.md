@@ -67,7 +67,8 @@ itself (section 6 below). So, in order:
    stores retain checkpoint bytes and actual evaluation times across epochs.
 3. **Preparation and rollout.** Follow the [base-election runbook](base-election.md).
    New intake requires v2 private exams, public family history, a pinned adapter
-   suite and a passing independent pilot. The old single-base Brier configuration
+   suite and a pool-specific admission document (a passing independent pilot or an
+   explicit incumbent-challenge contract). The old single-base Brier configuration
    is archival and cannot start new-policy intake.
 
 ### Network and operator setup
@@ -187,7 +188,7 @@ See [testnet outcomes](testnet.md#read-the-outcome) for restart behavior.
 
 New text-base elections use `base_pools` and the
 [decision-quality runbook](base-election.md). Stage old configurations using
-`migrate_model_pools`; every pool remains disabled until its own exam pilot,
+`migrate_model_pools`; every pool remains disabled until its own admission document,
 private paths and v2 draws are installed. The previous single-base Brier policy
 and untimed caches cannot qualify new candidates. Settle pending old-publication
 attempts with the old release before cutover; retain uncertain chain receipts.
@@ -204,7 +205,7 @@ worker. Pending candidate work does not replace the existing king history.
 
 Each pool's private `base_pool_rounds` entry names `base_reference`,
 `base_round_dir`, `family_history`, `suite_manifest` and `pilot_report`. The
-validator audits current history, score policy, pool pilot and draw independence
+validator audits current history, score policy, pool admission and draw independence
 before inference. Candidate and incumbent cache files retain their actual start
 and completion times. A second draw cannot begin for a candidate until its own
 first evidence and the incumbent's evidence are at least 12 hours old.

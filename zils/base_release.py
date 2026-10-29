@@ -89,7 +89,7 @@ def active_context(config, pool_id, *, directory):
     }
     draws = validator.base_draws(settings, Path(directory))
     if len(draws) < 2:
-        raise ValueError("active pool requires two qualification draws")
+        raise ValueError("active pool requires two independent election draws")
     structures = [read(path / "blueprint.json") for _, path in draws]
     if any(value != structures[0] for value in structures):
         raise ValueError("all pool draws must use the frozen blueprint")
@@ -574,6 +574,7 @@ def main():
                 registry,
                 SimpleNamespace(device=args.device, runtime_python=args.runtime_python, poll=1),
                 [(identity, Path(args.closing_round))],
+                closing_admission=active["settings"],
             )
             receipt = close(
                 frozen,
