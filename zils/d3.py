@@ -17,7 +17,6 @@ from types import ModuleType
 from . import ROOT, models, options, settings
 from .jevk5 import asset_bytes, load_adapter_weights
 
-MAX_TOKENS = 4096
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 TARGETS = (
     "q_proj",

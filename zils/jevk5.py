@@ -174,7 +174,6 @@ def train(args, *, model_id):
                 "epochs": 1,
                 "learning_rate": 2e-5,
                 "seed": args.seed,
-                "max_tokens": engine.MAX_TOKENS,
                 "mean_loss": sum(losses) / len(losses),
                 "training_seconds": time.perf_counter() - started,
                 "device": args.device,
