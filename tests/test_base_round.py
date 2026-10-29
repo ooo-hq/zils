@@ -355,6 +355,18 @@ class DecisionElectionTest(unittest.TestCase):
                 cases, 0, rows["calibration"], rows["test"], draw_identity=draw, commitments=claims
             )
             self.assertIsNone(decision["pending_winner"])
+            # The crown bar is +1 point (29 Oct 2026): exactly +1 qualifies, just below does not.
+            for improvement, eligible in ((1.0, True), (0.999, False)):
+                paired.return_value.update(improvement=improvement, lower_95=0.01)
+                decision = base_round.decide(
+                    cases,
+                    0,
+                    rows["calibration"],
+                    rows["test"],
+                    draw_identity=draw,
+                    commitments=claims,
+                )
+                self.assertEqual(decision["pending_winner"] is not None, eligible, improvement)
         for policy in (
             {"min_brier_improvement": 0.01},
             {"score_version": 2},
