@@ -200,6 +200,62 @@ class ServingServerTest(unittest.TestCase):
         gate.set()
         first.join(5)
 
+    def refused_reply(self, server, body):
+        """Send a whole request to a full server, let it arrive, then read to the end of the stream."""
+        sock = socket.create_connection(("127.0.0.1", server.server_address[1]), timeout=5)
+        try:
+            head = b"POST /v1/systemone HTTP/1.1\r\nHost: x\r\nContent-Length: %d\r\n\r\n" % len(
+                body
+            )
+            sock.sendall(head + body)
+            threading.Event().wait(0.3)  # the request is in the server's buffer before we read
+            reply = b""
+            while chunk := sock.recv(4096):
+                reply += chunk
+            return reply
+        finally:
+            sock.close()
+
+    def test_refused_request_reads_503_then_a_clean_close_not_a_reset(self):
+        gate = threading.Event()
+        fake = FakeServed(gate=gate)
+        server = self.start(fake, slots=1)
+        first = threading.Thread(target=self.post, args=(server, self.message()))
+        first.start()
+        self.assertTrue(fake.entered.wait(5))
+        try:
+            for size in (100, 60_000):  # a small request, and one larger than a socket buffer slice
+                with self.subTest(size=size):
+                    reply = self.refused_reply(server, b"x" * size)  # a reset raises here
+                    self.assertIn(b"503", reply.split(b"\r\n")[0])
+                    self.assertIn(b"Retry-After: 1", reply)
+        finally:
+            gate.set()
+            first.join(5)
+
+    def test_silent_refused_connections_never_stall_accepting(self):
+        gate = threading.Event()
+        fake = FakeServed(gate=gate)
+        server = self.start(fake, slots=1)
+        first = threading.Thread(target=self.post, args=(server, self.message()))
+        first.start()
+        self.assertTrue(fake.entered.wait(5))
+        port = server.server_address[1]
+        held = [socket.create_connection(("127.0.0.1", port), timeout=5) for _ in range(40)]
+        try:
+            for sock in held:  # each is refused, then sends nothing and never closes
+                self.assertIn(b"503", sock.recv(4096))
+            start = time.monotonic()
+            late = socket.create_connection(("127.0.0.1", port), timeout=5)
+            self.assertIn(b"503", late.recv(4096))
+            late.close()
+            self.assertLess(time.monotonic() - start, 1.0)
+        finally:
+            for sock in held:
+                sock.close()
+            gate.set()
+            first.join(5)
+
     def test_stalled_client_is_dropped_and_frees_the_slot(self):
         server = self.start(slots=1, header_deadline=15.0)
         server.RequestHandlerClass.timeout = 0.2
