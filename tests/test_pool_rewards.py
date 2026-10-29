@@ -231,7 +231,7 @@ class ServingShareTest(unittest.TestCase):
         self.assertEqual(result["requested_weights"], {"1": 0.4000000000000001, "2": 0.6})
         self.assertEqual(
             digest(result["tracks"]),
-            "8790345371322e10ed237506f67d6816dfca527b2db00bfe4484600b0826081f",
+            "40d0a761782310735161e4731aeb87857493bb95b35761f63bcd16ccac87f2e2",
         )
         result = test_feature_rewards.publish(*test_feature_rewards.fixture())
         self.assertEqual(
@@ -240,7 +240,7 @@ class ServingShareTest(unittest.TestCase):
         )
         self.assertEqual(
             digest(result["tracks"]),
-            "9c5daddf71c51453793f35baa73884e0fb93858b8eda51b1b6eb95ad3352493b",
+            "bd626303ee4269cb79e055b5e378f99909b494554ac7ac81eeeba0529f430a5f",
         )
 
     def test_serving_share_burns_until_switched_on(self):
@@ -354,13 +354,13 @@ class ServingReceiptsTest(unittest.TestCase):
                 s1,
                 0,
                 {"0": 0.1, "1": 0.36, "2": 0.54},
-                "d8f3e0efaedb4e67141fdef5a3272b71f163b1260e7f424f55ad81198482067d",
+                "b282284f1edd5cab2631a27909b494d5acc986ed29d83d7818e622afb471df1e",
             ),
             (
                 s2,
                 7,
                 {"1": 0.38, "2": 0.5800000000000001, "3": 0.04000000000000001},
-                "76f8dc78c7d754d3a012ea83df2598dbde9cd37cb74c131d14ccbf3e323e5200",
+                "6d64fba3e72d4375e12192105f55b6d1a8e5be0c47e0b001b061039f8606d277",
             ),
         ):
             result = publish(*serving_fixture(scores), owner_uid=owner)
