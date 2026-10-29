@@ -34,12 +34,15 @@ baselines, soft labels and incomplete coverage are rejected before inference.
 The fixed production policy is:
 
 ```json
-{"score_version": 1, "min_score_improvement": 2.0,
+{"score_version": 1, "min_score_improvement": 1.0,
  "max_brier_increase": 0.005, "bootstrap_resamples": 2000}
 ```
 
-Each candidate needs at least +2 points, a strictly positive paired bootstrap
+Each candidate needs at least +1 point, a strictly positive paired bootstrap
 lower 95% bound, and calibrated full-vector Brier no more than 0.005 worse.
+At about 100 test items per family the lower-bound rule binds first (an
+effective bar near +1.2), so a candidate that is not better has roughly a 1 in
+1,600 chance of passing both independent draws. The bar was +2 until 29 October 2026.
 Temperature is fitted only on calibration. Resampling is paired within families,
 stratified by class for yes/no, with original baselines held fixed. All candidates
 use the same manifest-derived seed. Score ties prefer the earlier commitment,
