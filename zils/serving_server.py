@@ -19,6 +19,11 @@ from . import ROOT, decisions, serving
 
 MAX_QUESTIONS = 32
 PER_IP = 2  # concurrent connections one source address may hold
+# A refused connection is drained before it is closed: closing with the client's request unread resets
+# the connection, and the reset can destroy the 503 before the client reads it, so busy looks like a
+# failure. Draining runs off the accept loop, bounded in connections, time and bytes.
+DRAIN_CONNECTIONS = 16
+DRAIN_SECONDS = 2.0
 
 
 def log(text):
@@ -367,15 +372,46 @@ def make_server(
                     del self.peers[address]
                 self.gate.release()
 
+        draining = threading.BoundedSemaphore(DRAIN_CONNECTIONS)
+
+        def busy(self, request):
+            try:
+                request.sendall(
+                    b"HTTP/1.0 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\n\r\n"
+                )
+                request.shutdown(
+                    socket.SHUT_WR
+                )  # the client reads the 503, then the end of the stream
+            except OSError:
+                self.shutdown_request(request)
+                return
+            if not self.draining.acquire(blocking=False):
+                self.shutdown_request(
+                    request
+                )  # too many draining already: close at once, as before
+                return
+            threading.Thread(target=self.drain, args=(request,), daemon=True).start()
+
+        def drain(self, request):
+            """Read and drop what the client sent until it closes, the time is up or the size limit is
+            reached, then close."""
+            try:
+                deadline, left = time.monotonic() + DRAIN_SECONDS, decisions.MAX_BODY + 65536
+                while left > 0 and (wait := deadline - time.monotonic()) > 0:
+                    request.settimeout(wait)
+                    chunk = request.recv(min(65536, left))
+                    if not chunk:
+                        break
+                    left -= len(chunk)
+            except OSError:
+                pass
+            finally:
+                self.close_request(request)
+                self.draining.release()
+
         def process_request(self, request, client_address):
             if not self.take(client_address[0]):
-                try:
-                    request.sendall(
-                        b"HTTP/1.0 503 Service Unavailable\r\nRetry-After: 1\r\nContent-Length: 0\r\n\r\n"
-                    )
-                except OSError:
-                    pass
-                self.shutdown_request(request)
+                self.busy(request)
                 return
             try:
                 super().process_request(request, client_address)
