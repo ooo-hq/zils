@@ -341,6 +341,10 @@ class BaseReleaseTest(unittest.TestCase):
                     base_release.main()
                 self.assertEqual(base_release.read(out), base_release.read(internal))
                 self.assertEqual(evaluate.call_count, 0 if command == "freeze" else 1)
+                if command == "close":
+                    self.assertEqual(
+                        evaluate.call_args.kwargs["closing_admission"], active["settings"]
+                    )
 
     def test_requalification_and_uid_movement_keep_one_ready_checkpoint(self):
         original = self.ready[1]

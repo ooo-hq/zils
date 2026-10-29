@@ -71,8 +71,8 @@ result and king history remain intact. Exam challengers earn nothing until crown
 The [decision-quality election runbook](base-election.md) defines the fixed score,
 independent exam qualification, candidate-specific 12-hour confirmation delay,
 three-seed adapter gate and common closing draw. Every eligible candidate can
-qualify. Each pool needs its own passing pilot receipt; a mini receipt cannot
-enable lite, nano, flash or d3. A weight-only release preserves the execution
+qualify. Each pool needs its own admission document: a passing pilot receipt or an explicit
+incumbent-challenge contract. A mini document cannot enable lite, nano, flash or d3. A weight-only release preserves the execution
 contract, while changed runtime, blueprint or score semantics require requalification.
 
 Promotion uses `promote_base.py --config ... --pool ... --window-report ...`.

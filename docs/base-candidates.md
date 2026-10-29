@@ -16,7 +16,9 @@ however they like; validators score it on a sealed holdout against the current
 base and, for a pending winner, retrain a fixed suite of reference adapters on
 both. The 17/18 October rehearsal exercised the earlier Brier election and
 is historical evidence only. The current [decision-quality election](base-election.md)
-requires independent exam qualification before a pool can accept candidates.
+requires pool-specific admission before accepting candidates: an independently
+qualified pilot or an explicit pinned-incumbent challenge contract. Both retain
+private exam audits and the same candidate promotion safeguards.
 Candidates enter through a public Hugging Face revision and a chain commitment;
 qualified validators discover those commitments and score the pinned artifacts.
 The channel setting on the platform

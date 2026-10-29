@@ -510,7 +510,16 @@ def base_draws(config, directory):
 
 
 def base_tier_epoch(
-    config, directory, work, registry, args, draws, *, wait_for_capacity=False, lease=None
+    config,
+    directory,
+    work,
+    registry,
+    args,
+    draws,
+    *,
+    wait_for_capacity=False,
+    lease=None,
+    closing_admission=None,
 ):
     """Evaluate immutable checkpoints; preserve original timing and private evidence on reuse."""
     from . import base_exam, base_round, benchmark, commitments
@@ -521,7 +530,26 @@ def base_tier_epoch(
         )
     from . import base_pilot
 
-    base_pilot.admit(config, directory, draws)
+    if closing_admission is None:
+        base_pilot.admit(config, directory, draws)
+    else:
+        expected = {
+            **closing_admission,
+            "base_tier": {**closing_admission["base_tier"], "draws": [i for i, _ in draws]},
+        }
+        if len(draws) != 1 or config != expected:
+            raise ValueError("closing evaluation differs from installed admission settings")
+        installed = base_draws(closing_admission, directory)
+        base_pilot.admit(closing_admission, directory, installed)
+        history = json.loads((Path(directory) / config["family_history"]).read_text())
+        audits = [base_exam.audit(p, history=history) for _, p in [*installed, *draws]]
+        base_exam.disjoint(audits)
+        if (
+            base_round.draw(draws[0][1]) != draws[0][0]
+            or audits[-1][0]["pool_id"] != config["pool_id"]
+            or base_exam.blueprint(audits[-1][1]) != base_exam.blueprint(audits[0][1])
+        ):
+            raise ValueError("closing draw differs from admitted pool or blueprint")
     track = base_round.validate_track(config["base_tier"])
     model = models.validate_spec(config["model"])
     history = json.loads((Path(directory) / config["family_history"]).read_text())

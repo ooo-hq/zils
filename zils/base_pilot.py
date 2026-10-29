@@ -5,12 +5,14 @@ import itertools
 import json
 import math
 import statistics
+import time
 from datetime import date
 from pathlib import Path
 
 from . import base_exam, base_metrics, base_round, benchmark, models
 
 VERSION = "zils-base-pilot/v1"
+INCUMBENT_VERSION = "zils-base-incumbent-challenge/v1"
 
 
 def ranks(values):
@@ -338,6 +340,70 @@ def verify_qualification(report, *, pool_id, policy, blueprint, runtime_identity
         raise ValueError("pilot qualification differs from pinned raw evidence")
 
 
+def incumbent_admission(config, directory, draws, *, capacity):
+    """Bind an operator-selected incumbent to audited elections, not a leaderboard verdict.
+
+    Reissue the contract when the incumbent, runtime or election draws change. A
+    contract is not a passing pilot and never makes a challenger eligible.
+    """
+    import zils
+
+    directory = Path(directory)
+    model = models.validate_spec(config["model"])
+    pool = config.get("pool_id")
+    if models.pool_id(model) != pool or len(draws) < 2:
+        raise ValueError("incumbent admission requires its own pool and two independent draws")
+    track = config["base_tier"]
+    policy = base_round.validate_policy(track.get("policy"))
+    reference = directory / config["base_reference"]
+    incumbent = zils.checkpoint_hash(reference)
+    if models.checkpoint_model(reference) != model or incumbent != track["incumbent_sha256"]:
+        raise ValueError("incumbent admission reference differs from the pinned base")
+    history = json.loads(base_exam._regular(directory / config["family_history"]).read_text())
+    audited, identities, structures = [], [], []
+    for identity, path in draws:
+        manifest, cases = base_exam.audit(path, history=history, as_of=time.time())
+        if manifest["pool_id"] != pool or base_round.draw(path) != identity:
+            raise ValueError("incumbent admission draw identity or pool changed")
+        for rows in cases.values():
+            base_metrics.baselines(rows)
+        audited.append((manifest, cases))
+        identities.append(identity)
+        structures.append(base_exam.blueprint(cases))
+    base_exam.disjoint(audited)
+    if identities != track["draws"] or any(s != structures[0] for s in structures):
+        raise ValueError("incumbent admission differs from configured draws or blueprint")
+    runtime = runtime_contract(model)
+    if (
+        not isinstance(capacity, dict)
+        or capacity.get("model_sha256") != incumbent
+        or capacity.get("runtime_sha256") != base_round.dataset_hash(runtime)
+        or capacity.get("probability_export_reviewed") is not True
+        or not isinstance(capacity.get("device"), str)
+        or not capacity["device"]
+    ):
+        raise ValueError("incumbent admission requires matching measured runtime capacity")
+    base_exam._hash(capacity.get("settings_sha256"))
+    _finite(
+        capacity.get("peak_gpu_mib"),
+        0.000001,
+        _finite(capacity.get("available_gpu_mib"), 0.000001, 1e9),
+    )
+    if base_exam._time(capacity.get("completed_at")) > time.time():
+        raise ValueError("incumbent capacity measurement is in the future")
+    return {
+        "version": INCUMBENT_VERSION,
+        "pool_id": pool,
+        "model": models.spec(model),
+        "incumbent_sha256": incumbent,
+        "policy": policy,
+        "runtime_identity": runtime,
+        "blueprint": structures[0],
+        "draws": identities,
+        "capacity": capacity,
+    }
+
+
 def admit(config, directory, draws):
     if not config.get("pool_id") or not config.get("pilot_report") or not draws:
         raise ValueError("pool inference requires its own passing pilot_report")
@@ -350,6 +416,11 @@ def admit(config, directory, draws):
     if any(value != blueprints[0] for value in blueprints):
         raise ValueError("pool draws differ from frozen pilot blueprint")
     report = json.loads(base_exam._regular(Path(directory) / config["pilot_report"]).read_text())
+    if report.get("version") == INCUMBENT_VERSION:
+        expected = incumbent_admission(config, directory, draws, capacity=report.get("capacity"))
+        if report != expected:
+            raise ValueError("incumbent admission contract is stale or changed")
+        return
     verify_qualification(
         report,
         pool_id=config["pool_id"],
