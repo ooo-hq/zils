@@ -55,6 +55,46 @@ that address and port. Run `announce-serving` again after any change. If the
 inference process dies, `serve` exits non-zero; run it under a supervisor such as
 systemd with `Restart=always`.
 
+## Serve from an existing runtime
+
+A box that already runs the Zils adapter runtime with `--serve-base` holds the
+pinned base in GPU memory and answers it as `<profile>-base`. On that box,
+`zils serve` can send its requests to the runtime instead of starting its own
+worker, so the model is loaded once:
+
+```bash
+export ZILS_RUNTIME_TOKEN=...   # the token the runtime was started with
+zils serve --public-ip 203.0.113.10 --port 8091 \
+  --checkpoint models/d3-reference \
+  --runtime http://127.0.0.1:8935 [--runtime-token-env ZILS_RUNTIME_TOKEN]
+```
+
+- **Base only.** `--checkpoint` must be the stock reference the runtime loaded
+  (`kind` `base`, `temperature` 1.0 in its `model.json`), and exactly one. Every
+  request names `<profile>-base`, never an adapter the runtime also holds.
+  Merged candidates cannot be served this way.
+- **Identity check.** Before serving, `serve` reads the runtime's `GET /health`
+  and refuses to start unless the runtime is ready, its `profile_sha256` and
+  `runtime_sha256` match the checkpoint's pinned profile, and it lists
+  `<profile>-base` with the matching fingerprint. The manifest's
+  `weights_sha256` is still the checkpoint hash of `--checkpoint`.
+- **Paid traffic first.** Requests use the runtime's bulk lane, so the
+  runtime's own real-time traffic runs ahead of them. When the bulk queue is
+  full the runtime answers 529 and `serve` answers 503 `busy`.
+- **Pauses.** While the runtime is stopped or not ready, each request gets 503
+  `unavailable` and `serve` keeps running. It checks `/health` every 60 seconds
+  and logs changes. If the runtime comes back with a different identity, `serve`
+  exits non-zero so its supervisor restarts it.
+- **Loopback only.** `--runtime` must be `http://127.0.0.1:<port>` or
+  `http://localhost:<port>`; anything else is refused, so the token never leaves
+  the box.
+- **Token.** The runtime's bearer token is read from the variable named by
+  `--runtime-token-env` (default `ZILS_RUNTIME_TOKEN`). It is never logged or
+  printed.
+
+`zils doctor --model <profile> --runtime http://127.0.0.1:<port>` adds the same
+identity check to its checklist.
+
 ## How callers find you
 
 Validators and gateways read your axon from the chain, then fetch a signed
