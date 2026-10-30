@@ -795,8 +795,20 @@ def run(
         return scores[members]
 
     # The crown bar: the current (previous round's) soup on this round's subset, if one exists.
+    # If it cannot be graded the crown burns this round; only a GPU or disk fault fails the round.
     current = tuple(sorted(s for s in state["members"] if s in known))
-    soup_bar = evaluate(current) if current and (len(current) > 1 or current[0] in solo) else None
+    soup_bar, bar_missing = None, False
+    if current:
+        try:
+            soup_bar = evaluate(current)
+        except Exception as error:
+            if _round_fault(error):
+                raise
+            print(
+                f"soup round: the current soup cannot be graded ({type(error).__name__})",
+                flush=True,
+            )
+            bar_missing = True
     members, trace = greedy(solo, evaluate, order_key=order)
     baseline = None
     if len(members) == 1:
@@ -807,7 +819,11 @@ def run(
     contributions = leave_one_out(members, evaluate, baseline=baseline)
     rate_map = {sha: rates(sha, known[sha], house) for sha in pool}
     seats = seat_weights(members, contributions, rate_map)
-    crown = crown_weight(solo, rate_map, house, soup_score=soup_bar, order_key=order)
+    crown = (
+        {}
+        if bar_missing
+        else crown_weight(solo, rate_map, house, soup_score=soup_bar, order_key=order)
+    )
 
     final = round_dir / "soup"
     if not final.exists():

@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -360,6 +361,29 @@ class SoupRunTest(unittest.TestCase):
         # The seated soup scores 100 on the new subset; no single body beats it by the margin.
         self.assertGreater(again["soup_bar"], max(again["solo"].values()))
         self.assertIsNone(again["crown"])
+
+    def test_a_current_soup_that_cannot_grade_burns_the_crown_not_the_round(self):
+        self.r.run()
+        shutil.rmtree(self.r.state / "cache")  # regrade everything in the next round
+        t1, t2 = self.r.sha["t1"], self.r.sha["t2"]
+        current = "soup-" + hashlib.sha256("+".join(sorted((t1, t2))).encode()).hexdigest()[:32]
+        fake = self.r.runner
+
+        def runner_for(folder):
+            name = Path(folder).name
+            if name.startswith(t2[:32]) or name.startswith(current):
+
+                def fail(cases):
+                    raise ValueError("bad output")
+
+                return fail
+            return fake(folder)
+
+        self.r.runner = runner_for
+        record = self.r.run(round_id="d3-mini-2026-11-04")
+        self.assertIsNone(record["soup_bar"])
+        self.assertIsNone(record["crown"])
+        self.assertTrue(record["members"])
 
     def test_rates_hook_sets_seat_and_crown_pay(self):
         def rates(sha, info, house):
