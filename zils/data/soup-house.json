@@ -3,25 +3,25 @@
     "name": "d3-mini",
     "repo": "vllm-sr/d3-mini",
     "revision": "df99bf4ca4418bc6908ee68e9b7479af1f3b8800",
-    "body_sha256": null
+    "body_sha256": "e005aef8a4467722bae9b23d40aa8f14779b0baaf595e70bcfad7044b92ce720"
   },
   {
     "name": "pplx-decider-flash-v1.2",
     "repo": "perplexity-ai/pplx-decider-flash-v1.2",
     "revision": "9ff7cf9838e59df461c276b7699d56b244d2af58",
-    "body_sha256": null
+    "body_sha256": "8549bf29aac077e130c75fc3056fc4f285a61848133c4f4b63ef7cac5110e2aa"
   },
   {
     "name": "torchcast-decision-4b",
     "repo": "torchcast-ai/torchcast-decision-4b",
     "revision": "492bfb19662f3c6e601cc9c4bd2911ac95609ed4",
-    "body_sha256": null
+    "body_sha256": "38530b80f86f60c3125a2a80a3a05b40cb7abf8376f65ca8dfc33a024af356b7"
   },
   {
     "name": "Matilda-Decision-v1-Mini",
     "repo": "Maincode/Matilda-Decision-v1-Mini",
     "revision": "39479a8a372987bf81ec867e8fc3b2cc364ff343",
-    "body_sha256": null
+    "body_sha256": "77b2399a49cf7ed7010d442d7afcb982f7cb034cc416537440ad8736dc0607ba"
   },
   {
     "name": "KnowLine-4B-Gen5",
