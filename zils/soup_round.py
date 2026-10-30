@@ -278,10 +278,10 @@ def _intake(state, snapshot, *, chassis, base, download, copies, folder, max_new
         if len(new) >= max_new:
             refused[uid] = "the round's new-body cap is reached; retried next round"
             continue
-        earlier = {
+        earlier = {  # house bodies count for everyone: a house re-upload is a copy
             s: folder(s)
             for s, info in [*known.items(), *new.items()]
-            if not info["house"] and info["hotkey"] != claim["hotkey"]
+            if info["house"] or info["hotkey"] != claim["hotkey"]
         }
         # Checked in a partial folder, so a failed claim never leaves files under the hash's name.
         partial = folder(sha).with_name(f".{sha}.partial")
@@ -462,9 +462,8 @@ def run(
 
             def rates(sha, info, house):
                 return soup_rates.rate(
-                    sha, sketch(sha), house=house, known=house_known, hotkey=info["hotkey"],
-                    repo=info["repo"],
-                )  # fmt: skip
+                    sha, sketch(sha), house=house, known=house_known, hotkey=info["hotkey"]
+                )
 
     twins = soup_copies.is_twin if twins is None else twins
     rates = rates or default_rate

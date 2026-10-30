@@ -93,13 +93,17 @@ class RateTest(unittest.TestCase):
         self.assertEqual(self.rate(BODY_HASH, self.fresh), 1.0)
         self.assertEqual(self.rate(BODY_HASH, self.known_sketch, known=[]), 1.0)
 
-    def test_own_repo_and_hotkey_are_not_known(self):
+    def test_only_the_submitters_own_earlier_bodies_are_not_known(self):
         own_hotkey = [{**self.known[0], "hotkey": HOTKEY}]
         self.assertEqual(self.rate(BODY_HASH, self.known_sketch, known=own_hotkey), 1.0)
         other_hotkey = [{**self.known[0], "hotkey": OTHER}]
         self.assertEqual(self.rate(BODY_HASH, self.known_sketch, known=other_hotkey), 0.25)
-        self.assertEqual(self.rate(BODY_HASH, self.known_sketch, repo="public/model"), 1.0)
-        self.assertEqual(self.rate(BODY_HASH, self.known_sketch, repo="someone/else"), 0.25)
+
+    def test_a_house_re_upload_is_a_scout_whatever_its_repo(self):
+        # The house model's own repo (or anyone able to push to it) earns no trainer rate.
+        with self.assertRaises(TypeError):
+            self.rate(BODY_HASH, self.known_sketch, repo="public/model")
+        self.assertEqual(self.rate(BODY_HASH, self.known_sketch), 0.25)
 
     def test_threshold_boundary(self):
         near = self.known_sketch + 0.5 * self.fresh
