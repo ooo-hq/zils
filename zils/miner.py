@@ -6,7 +6,10 @@ reads the commitments and pulls that revision. No validator URL is needed.
 defaults to the saved value. `doctor` checks the setup step by step and prints the one command
 that fixes the first failing step. `commit-candidate` validates a candidate, uploads it (or takes
 an uploaded revision), prints the commitment and, with --yes, writes it with the hotkey. `update`
-reinstalls at the stable release, the commit release/stable on main names. `announce-serving`
+reinstalls at the stable release, the commit release/stable on main names. `commit-body` checks a
+soup-pool body (a full Qwen3.5-4B fine-tune in the chassis layout) already uploaded to Hugging Face,
+prints its body hash and `zilsb2` commitment and, with --yes, writes it with the hotkey (docs/mining.md,
+"Soup pool"). A hotkey has one commitment slot, shared by `zils1` and `zilsb2`. `announce-serving`
 writes the miner's public endpoint on chain and `serve` answers signed requests for public z3
 checkpoints there, from its own worker or, with --runtime, from the box's adapter runtime
 (docs/serving-miners.md)."""
@@ -24,7 +27,7 @@ from pathlib import Path
 
 import zils
 
-from . import commitments, models, testnet
+from . import bodies, commitments, models, testnet
 
 NETUID = 579
 REQUIRED_MODULES = ("bittensor", "bittensor_wallet", "huggingface_hub", "kev", "torch")
@@ -34,6 +37,10 @@ SAVED = ("wallet_name", "wallet_hotkey", "wallet_path", "model", "candidate", "r
 RUNTIME_TOKEN_ENV = "ZILS_RUNTIME_TOKEN"
 INSTALL = "curl -fsSL https://zils.ai/install.sh | sh"
 STABLE_URL = "https://raw.githubusercontent.com/ooo-hq/zils/main/release/stable"
+# Every soup body is a fine-tune of this parent; its change from it is bounded (bodies.validate_body).
+BODY_PARENT = ("Qwen/Qwen3.5-4B", "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a")
+BODY_FILES = ("*.safetensors", "model.safetensors.index.json", "README.md", "zils-owner.json")
+SLOT_NOTE = "a hotkey has one commitment slot, shared by zils1 base candidates and zilsb2 bodies"
 
 
 def paint(code, text):
@@ -202,6 +209,28 @@ def commit_command(args, revision=None):
     return " \\\n  ".join(command + ["--yes"])
 
 
+def registered_state(args, hotkey):
+    state = hotkey_state(args.netuid, hotkey, args.network)
+    if state["uid"] is None:
+        raise ValueError(
+            f"hotkey {hotkey} is not registered on {testnet.NAMES[args.network]} subnet {args.netuid}"
+        )
+    return state
+
+
+def write_chain(args, keys, hotkey, text):
+    """Write `text` as the hotkey's commitment and read it back."""
+    config = chain_config(args.netuid, args.network)
+    with testnet.connect(config, raw_calls=True) as sub:
+        testnet.write_commitment(config, sub, keys, text)
+        after = testnet.hotkey_state(config, sub, hotkey)["commitment"]
+    if (after or {}).get("data") != text:
+        raise ValueError(
+            "the chain does not show the new commitment; read it again before retrying"
+        )
+    return after
+
+
 def commit_candidate(args):
     candidate, sha256 = local_candidate(args.candidate, args.model)
     commitments.check_repo(args.repo)
@@ -209,11 +238,7 @@ def commit_candidate(args):
         commitments.check_revision(args.revision)
     keys = wallet(args)
     hotkey = keys.hotkey.ss58_address
-    state = hotkey_state(args.netuid, hotkey, args.network)
-    if state["uid"] is None:
-        raise ValueError(
-            f"hotkey {hotkey} is not registered on {testnet.NAMES[args.network]} subnet {args.netuid}"
-        )
+    state = registered_state(args, hotkey)
     current = (state["commitment"] or {}).get("data")
     revision = args.revision
     print(
@@ -240,14 +265,7 @@ def commit_candidate(args):
     if current == text:
         print(f"already committed at block {state['commitment']['block']}; nothing to do")
         return state["commitment"]
-    config = chain_config(args.netuid, args.network)
-    with testnet.connect(config, raw_calls=True) as sub:
-        testnet.write_commitment(config, sub, keys, text)
-        after = testnet.hotkey_state(config, sub, hotkey)["commitment"]
-    if (after or {}).get("data") != text:
-        raise ValueError(
-            "the chain does not show the new commitment; read it again before retrying"
-        )
+    after = write_chain(args, keys, hotkey, text)
     write_config(
         load_config()
         | {
@@ -259,6 +277,135 @@ def commit_candidate(args):
     )
     print(
         f"committed at block {after['block']}; validators pull it at their next round",
+        flush=True,
+    )
+    return after
+
+
+def hf_cache():
+    return str(Path(os.environ.get("HF_HOME", str(zils.ROOT / ".cache/huggingface"))) / "hub")
+
+
+def body_references(args):
+    """The chassis (pinned d3-mini release) and parent (Qwen) folders: given paths, else downloaded."""
+    if args.chassis:
+        chassis = Path(args.chassis).expanduser().resolve(strict=True)
+    else:
+        from . import d3
+
+        chassis = d3.pinned_base_path(download=True, model=models.D3)
+    if args.base:
+        return chassis, Path(args.base).expanduser().resolve(strict=True)
+    from huggingface_hub import snapshot_download
+
+    repo, revision = BODY_PARENT
+    base = snapshot_download(
+        repo_id=repo,
+        revision=revision,
+        cache_dir=hf_cache(),
+        allow_patterns=["*.safetensors", "model.safetensors.index.json"],
+    )
+    return chassis, Path(base)
+
+
+def owner_missing(repo, hotkey):
+    return ValueError(
+        f"the body has no zils-owner.json. Write one naming hotkey {hotkey} with"
+        f" `zils commit-body --repo {repo} --path <local body folder> --write-owner`, upload it"
+        " to the repo, then commit the new revision"
+    )
+
+
+def download_body(repo, revision, hotkey):
+    """The body files at exactly this commit, after checking the listing for the ownership file and
+    the byte budget so a refused body is not downloaded."""
+    listed = commitments.revision_files(repo, revision)
+    if "zils-owner.json" not in listed:
+        raise owner_missing(repo, hotkey)
+    total = sum(v["size"] or 0 for k, v in listed.items() if k.endswith(".safetensors"))
+    if total > bodies.MAX_BYTES:
+        raise ValueError(f"{repo} holds {total} bytes of safetensors, over {bodies.MAX_BYTES}")
+    from huggingface_hub import snapshot_download
+
+    folder = snapshot_download(
+        repo_id=repo, revision=revision, cache_dir=hf_cache(), allow_patterns=list(BODY_FILES)
+    )
+    return Path(folder)
+
+
+def check_remote_body(repo, revision, folder):
+    """The repo at this commit holds every local body file with the same size and LFS digest."""
+    listed = commitments.revision_files(repo, revision)
+    names = sorted(p.name for p in folder.iterdir() if p.name.endswith(".safetensors"))
+    names += [name for name in BODY_FILES[1:] if (folder / name).is_file()]
+    for name in names:
+        local, remote = folder / name, listed.get(name)
+        if remote is None:
+            raise ValueError(f"{repo} at {revision[:12]} has no {name}")
+        if remote["size"] not in (None, local.stat().st_size):
+            raise ValueError(f"{name} on Hugging Face differs from the local body")
+        if remote["sha256"] is not None:
+            with local.open("rb") as stream:
+                if hashlib.file_digest(stream, "sha256").hexdigest() != remote["sha256"]:
+                    raise ValueError(f"{name} on Hugging Face differs from the local body")
+
+
+def commit_body(args):
+    """Validate a soup body at an uploaded revision, print its zilsb2 commitment and, with --yes,
+    write it. --write-owner only writes zils-owner.json into --path and checks the body locally."""
+    if args.write_owner and args.yes:
+        raise ValueError("--write-owner writes a file to upload first; commit after the upload")
+    if args.write_owner and not args.path:
+        raise ValueError("--write-owner needs --path, the local body folder you upload")
+    commitments.check_repo(args.repo)
+    if not args.write_owner:
+        if args.revision is None:
+            raise ValueError("--revision is needed: the commit sha of the uploaded body")
+        commitments.check_revision(args.revision)
+    keys = wallet(args)
+    hotkey = keys.hotkey.ss58_address
+    if args.path:
+        folder = Path(args.path).expanduser().resolve(strict=True)
+    else:
+        folder = download_body(args.repo, args.revision, hotkey)
+    owner = folder / "zils-owner.json"
+    if args.write_owner:
+        owner.write_text(json.dumps({"hotkey": hotkey}) + "\n")
+        print(f"wrote {owner} naming hotkey {hotkey}", flush=True)
+    elif not owner.is_file():
+        raise owner_missing(args.repo, hotkey)
+    chassis, base = body_references(args)
+    sha256 = bodies.validate_body(folder, chassis, hotkey=hotkey, base=base)
+    if args.write_owner:
+        print(
+            f"body {sha256} passes the local checks. Upload the folder, then commit that"
+            f" revision:\n  hf upload {args.repo} {folder} .\n"
+            f"  zils commit-body --repo {args.repo} --revision <the new commit> --path {folder}",
+            flush=True,
+        )
+        return None
+    text = bodies.format_commitment(sha256, args.revision, args.repo)
+    state = registered_state(args, hotkey)
+    current = (state["commitment"] or {}).get("data")
+    print(
+        f"miner {state['uid']}: body {sha256}\n"
+        f"  repo {args.repo} at {args.revision}\n"
+        f"  commitment {text}\n"
+        f"  current on chain: {current or 'none'}",
+        flush=True,
+    )
+    if current == text:
+        print(f"already committed at block {state['commitment']['block']}; nothing to do")
+        return state["commitment"]
+    print(f"  note: {SLOT_NOTE}" + (f"; this replaces {current}" if current else ""), flush=True)
+    if not args.yes:
+        print("dry run: nothing written; run again with --yes", flush=True)
+        return None
+    if args.path:
+        check_remote_body(args.repo, args.revision, folder)
+    after = write_chain(args, keys, hotkey, text)
+    print(
+        f"committed at block {after['block']}; validators admit it at their next soup round",
         flush=True,
     )
     return after
@@ -626,6 +773,29 @@ def main(argv=None):
     commit = commands.add_parser(
         "commit-candidate", help="upload a base candidate and commit it on chain"
     )
+    body = commands.add_parser(
+        "commit-body",
+        help="check a soup-pool body on Hugging Face and commit it on chain",
+        description="Check a soup-pool body uploaded to Hugging Face (a bf16 fine-tune of"
+        f" {BODY_PARENT[0]}@{BODY_PARENT[1][:7]} in the d3-mini chassis layout), print its body hash"
+        f" and zilsb2 commitment and, with --yes, write it. Note: {SLOT_NOTE}; committing a body"
+        " replaces whatever the hotkey committed before.",
+    )
+    body.add_argument("--repo", required=True, help="your public Hugging Face model repo")
+    body.add_argument(
+        "--revision", help="40-hex commit sha of the uploaded body (not needed with --write-owner)"
+    )
+    body.add_argument("--path", help="local copy of the body at --revision (skips the download)")
+    body.add_argument("--chassis", help="local pinned d3-mini release (skips the download)")
+    body.add_argument("--base", help=f"local {BODY_PARENT[0]} at the pinned revision")
+    body.add_argument(
+        "--write-owner",
+        action="store_true",
+        help="write zils-owner.json naming your hotkey into --path; upload it before committing",
+    )
+    body.add_argument(
+        "--yes", action="store_true", help="write the commitment; without it, a dry run"
+    )
     announce = commands.add_parser("announce-serving", help="write your public endpoint on chain")
     host = commands.add_parser("serve", help="serve z3 checkpoints to validators")
     for command in (announce, host):
@@ -652,7 +822,7 @@ def main(argv=None):
             default=RUNTIME_TOKEN_ENV,
             help="environment variable holding the runtime's token (default %(default)s)",
         )
-    for command in (start, check, commit, announce, host):
+    for command in (start, check, commit, body, announce, host):
         command.add_argument(
             "--network",
             choices=tuple(testnet.ENDPOINTS),
@@ -666,7 +836,7 @@ def main(argv=None):
                 choices=models.d3_family(),
                 help="base profile to beat in your tier; saved by setup or read from the candidate",
             )
-    for command in (check, commit, announce, host):
+    for command in (check, commit, body, announce, host):
         command.add_argument("--wallet-name")
         command.add_argument("--wallet-hotkey", help="hotkey name; the coldkey is never read")
         command.add_argument("--wallet-path")
@@ -691,14 +861,17 @@ def main(argv=None):
         config = load_config()
         if args.command == "commit-candidate":
             config.pop("revision", None)  # a fresh upload must not reuse the last one
+        if args.command == "commit-body":  # the saved repo and revision are the base candidate's
+            config = {k: v for k, v in config.items() if k.startswith("wallet_")}
         for key in SAVED:
             if getattr(args, key, None) is None:
                 setattr(args, key, config.get(key))
         args.wallet_path = args.wallet_path or WALLET_PATH
         if args.wallet_name is None or args.wallet_hotkey is None:
             raise ValueError("no wallet configured; run zils setup (or pass --wallet-name)")
-        if args.command in ("announce-serving", "serve"):
-            {"announce-serving": announce_serving, "serve": serve}[args.command](args)
+        if args.command in ("commit-body", "announce-serving", "serve"):
+            run = {"commit-body": commit_body, "announce-serving": announce_serving, "serve": serve}
+            run[args.command](args)
             return
         args.model = selected_model(args.model, args.candidate)
         if args.command == "doctor":
