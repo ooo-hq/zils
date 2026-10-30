@@ -3,6 +3,9 @@
 import hashlib
 import json
 import math
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import UTC, datetime
@@ -960,6 +963,119 @@ class SoupEpochTest(unittest.TestCase):
         )
         self.assertIn("GPU fell over", summary["d3-mini"]["error"])
         self.assertIsNotNone(soup_pool.decision(self.directory, "d3-mini"))
+
+    def test_a_running_round_is_not_waited_on_or_restarted(self):
+        starts = []
+
+        def start(pool, request):
+            starts.append(request["round_id"])
+            return os.getpid()  # a live process: the round is still running
+
+        def epoch():
+            return soup_pool.epoch(
+                self.config,
+                self.directory,
+                self.snapshot,
+                block_info=self.chain,
+                commitments_at=self.commitments_at,
+                run_round=start,
+            )
+
+        self.assertTrue(epoch()["d3-mini"]["started"])
+        summary = epoch()
+        self.assertEqual(starts, ["d3-mini-2026-11-03"])
+        self.assertTrue(summary["d3-mini"]["running"])
+        self.assertFalse(summary["d3-mini"]["decision"])  # the previous decision (none) stands
+
+    def test_a_dead_round_is_restarted_a_bounded_number_of_times(self):
+        starts = []
+
+        def start(pool, request):
+            starts.append(request["round_id"])
+            child = subprocess.Popen([sys.executable, "-c", "pass"])
+            child.wait()
+            return child.pid  # exited without recording the round
+
+        for _ in range(soup_pool.MAX_ATTEMPTS + 2):
+            summary = soup_pool.epoch(
+                self.config,
+                self.directory,
+                self.snapshot,
+                block_info=self.chain,
+                commitments_at=self.commitments_at,
+                run_round=start,
+            )
+        self.assertEqual(len(starts), soup_pool.MAX_ATTEMPTS)
+        self.assertIn("attempts", summary["d3-mini"]["error"])
+
+    def test_timeouts_and_capacity_errors_never_escape_the_epoch(self):
+        from zils import runtime
+
+        for error in (
+            subprocess.TimeoutExpired(["x"], 1),
+            runtime.CapacityUnavailable(),
+            KeyError("x"),
+        ):
+
+            def start(pool, request, error=error):
+                raise error
+
+            with self.subTest(error=type(error).__name__):
+                summary = soup_pool.epoch(
+                    self.config,
+                    self.directory,
+                    self.snapshot,
+                    block_info=self.chain,
+                    commitments_at=self.commitments_at,
+                    run_round=start,
+                )
+                self.assertIn("error", summary["d3-mini"])
+
+    def test_the_round_runner_bounds_capacity_waits_and_the_deadline(self):
+        from zils import runtime
+
+        path = self.directory / "request.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "state_dir": str(self.directory / "state"),
+                    "config": {"model": models.spec(models.D3)},
+                    "runner": {"runtime_python": "python3", "device": "cuda", "poll": 1},
+                }
+            )
+        )
+        calls, sleeps = [], []
+
+        def busy(command, log, device, timeout, *, model):
+            calls.append((command, timeout, model))
+            raise runtime.CapacityUnavailable()
+
+        self.assertFalse(soup_pool.run_locked(path, run_child=busy, sleep=sleeps.append))
+        self.assertEqual(len(calls), soup_pool.CAPACITY_TRIES)
+        self.assertEqual(calls[0][0], ["python3", "-m", "zils.soup_pool", str(path)])
+        self.assertEqual(calls[0][1], soup_pool.ROUND_SECONDS)
+        self.assertEqual(calls[0][2], models.D3)
+
+        def slow(command, log, device, timeout, *, model):
+            raise subprocess.TimeoutExpired(command, timeout)
+
+        self.assertFalse(soup_pool.run_locked(path, run_child=slow, sleep=sleeps.append))
+        self.assertTrue(soup_pool.run_locked(path, run_child=lambda *a, **k: None))
+
+    def test_background_round_starts_a_detached_runner_and_returns(self):
+        args = SimpleNamespace(runtime_python="python3", device="cuda", poll=5)
+        request = {"round_id": "d3-mini-2026-11-03", "state_dir": str(self.directory / "s")}
+        with patch("zils.soup_pool.subprocess.Popen") as popen:
+            popen.return_value.pid = 4321
+            pid = soup_pool.background_round(args)("d3-mini", request)
+        self.assertEqual(pid, 4321)
+        command = popen.call_args.args[0]
+        self.assertEqual(command[1:4], ["-m", "zils.soup_pool", "--run"])
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        written = json.loads(Path(command[4]).read_text())
+        self.assertEqual(
+            written["runner"], {"runtime_python": "python3", "device": "cuda", "poll": 5}
+        )
 
     def test_house_file_is_read_relative_to_the_validator_directory(self):
         (self.directory / "house.json").write_text(json.dumps(HOUSE))

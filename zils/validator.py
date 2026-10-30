@@ -1130,26 +1130,32 @@ def validator(config, directory, args):
                 and not (work / "soup-pools.json").exists()
             ):
                 # One soup round per soup pool per day, before this round's pool decisions freeze.
+                # Rounds run detached (soup_pool.background_round): this only starts or checks them,
+                # and any failure leaves the last decision paying.
                 frozen = json.loads((work / "chain-snapshot.json").read_text())
-                with testnet.connect(config) as sub:
-                    netuid = testnet.check_config(config)
+                try:
+                    with testnet.connect(config) as sub:
+                        netuid = testnet.check_config(config)
 
-                    def commitments_at(block):
-                        found = {}
-                        for uid, hotkey in frozen["members"].items():
-                            item = testnet.read_commitment(sub, netuid, hotkey, block)
-                            if item is not None:
-                                found[uid] = item
-                        return found
+                        def commitments_at(block):
+                            found = {}
+                            for uid, hotkey in frozen["members"].items():
+                                item = testnet.read_commitment(sub, netuid, hotkey, block)
+                                if item is not None:
+                                    found[uid] = item
+                            return found
 
-                    soup_summary = soup_pool.epoch(
-                        settings_for_round,
-                        directory,
-                        frozen,
-                        block_info=sub.block_info,
-                        commitments_at=commitments_at,
-                        run_round=soup_pool.child_round(args, work),
-                    )
+                        soup_summary = soup_pool.epoch(
+                            settings_for_round,
+                            directory,
+                            frozen,
+                            block_info=sub.block_info,
+                            commitments_at=commitments_at,
+                            run_round=soup_pool.background_round(args),
+                        )
+                except Exception as error:  # the chain or a pool config, never the weights
+                    soup_summary = {"error": f"{type(error).__name__}: {error}"[:400]}
+                print(f"validator: soup pools {soup_summary}", flush=True)
                 wire.write_json(work / "soup-pools.json", soup_summary)
             report = attach_base_pools(settings_for_round, directory, work, report)
             if features and not (work / "feature-tracks.json").exists():

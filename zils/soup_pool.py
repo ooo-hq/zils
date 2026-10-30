@@ -3,11 +3,17 @@
 A soup pool's round for day D runs once the chain passes D's commit deadline (``schedule.deadline_utc``).
 Its seed is the hash of the first block after the deadline; commitments made at or after that block wait
 for the next day's round. The coordinator stays torch-free: ``epoch`` decides what is due and hands a
-request to ``run_round``, which on a validator runs ``python -m zils.soup_pool <request>`` in the GPU
-runtime (``child_round``). State lives under ``<validator dir>/base-pools/<pool>/soup``.
+request to ``run_round``. On a validator that is ``background_round``: it starts a detached
+``python -m zils.soup_pool --run <request>`` and returns at once, so weight setting never waits for a
+round; the runner takes the compute lock and runs ``python -m zils.soup_pool <request>`` in the GPU
+runtime under a hard deadline. Later epochs see the round running, finished (its ledger entry) or dead
+(restarted, at most ``MAX_ATTEMPTS`` times per round). Until a round finishes the previous decision
+pays. State lives under ``<validator dir>/base-pools/<pool>/soup``.
 """
 
 import json
+import os
+import subprocess
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -20,6 +26,9 @@ SOUP_PATHS = {
     "base",
 }  # base_pool_rounds keys for a soup pool (the bank and vendor base)
 BLOCK_SECONDS = 12
+ROUND_SECONDS = 6 * 3600  # hard deadline for one soup round in the GPU runtime
+MAX_ATTEMPTS = 3  # starts of one day's round before it is skipped until the next day
+CAPACITY_TRIES = 120  # GPU-busy retries (one poll apart) before a runner gives up
 
 
 def state_dir(directory, pool):
@@ -109,9 +118,31 @@ def house(entry, directory):
     return soup_rates.validate_house(entry["house"])
 
 
+def _alive(pid):
+    """True while process `pid` runs (a finished child of this process is reaped, not counted)."""
+    if type(pid) is not int or pid <= 0:
+        return False
+    try:
+        if os.waitpid(pid, os.WNOHANG)[0]:
+            return False
+    except ChildProcessError:
+        pass  # not our child: ask the kernel
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round):
-    """Run each enabled soup pool's due round once. Returns {pool: summary}; a failed round keeps the
-    pool's last decision (yesterday's soup stays paid) and is retried on the next epoch.
+    """Start each enabled soup pool's due round once; never waits for one. Returns {pool: summary}.
+
+    `run_round(pool, request)` starts the round and returns its process id (or None). A started
+    round is recorded in `<state>/job.json`; while it runs later epochs only report it, and a round
+    that died unrecorded is restarted up to `MAX_ATTEMPTS` times. Any failure is reported in the
+    summary and the pool's last decision (yesterday's soup) stays paid.
 
     `commitments_at(block)` returns the roster's commitments ({uid: {"block", "data"}}) as of
     `block`; the round reads them at its seed block, so every validator sees the same set however
@@ -123,8 +154,21 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
             day, deadline = due(entry["schedule"], _time(block_info(head)))
             round_id = f"{pool}-{day}"
             summary[pool] = {"round_id": round_id}
+            summary[pool]["decision"] = decision(directory, pool) is not None
             if recorded(directory, pool, round_id):
                 continue
+            job_path = state_dir(directory, pool) / "job.json"
+            job = json.loads(job_path.read_text()) if job_path.exists() else {}
+            attempts = job.get("attempts", 0) if job.get("round_id") == round_id else 0
+            if (
+                attempts
+                and _alive(job.get("pid"))
+                and time.time() < job["started"] + ROUND_SECONDS + 3600
+            ):
+                summary[pool]["running"] = True
+                continue
+            if attempts >= MAX_ATTEMPTS:
+                raise RuntimeError(f"round skipped after {attempts} failed attempts")
             block, block_hash = seed_block(block_info, head, deadline)
             commitments = {
                 uid: item
@@ -146,35 +190,75 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
                 "state_dir": str(state_dir(directory, pool)),
                 **paths(config, directory, pool),
             }
-            run_round(pool, request)
+            job = {"round_id": round_id, "attempts": attempts + 1, "started": time.time()}
+            _write(job_path, {**job, "pid": None})  # an attempt counts even if starting fails
+            pid = run_round(pool, request)
+            _write(job_path, {**job, "pid": pid})
+            summary[pool]["started"] = True
             summary[pool]["decision"] = decision(directory, pool) is not None
-        except (ValueError, OSError, RuntimeError) as error:
-            summary.setdefault(pool, {})["error"] = str(error)[:400]
+        except Exception as error:  # one pool's round must never stop the validator's weights
+            summary.setdefault(pool, {})["error"] = f"{type(error).__name__}: {error}"[:400]
     return summary
 
 
-def child_round(args, work):
-    """A `run_round` for the validator loop: the round runs in the GPU runtime, under the shared
-    compute lock, as `python -m zils.soup_pool <request.json>`."""
-    from . import protocol as wire, runtime
+def _write(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + ".partial")
+    partial.write_text(json.dumps(value, sort_keys=True) + "\n")
+    os.replace(partial, path)
+
+
+def background_round(args):
+    """A `run_round` for the validator loop: writes the request under the pool's state directory and
+    starts a detached `python -m zils.soup_pool --run <request>` (``run_locked``). Returns its pid."""
+    from . import ROOT
 
     def run_round(pool, request):
-        path = Path(work) / f"soup-{pool}-request.json"
-        wire.write_json(path, request)
-        while True:
-            try:
-                runtime.run_child(
-                    [args.runtime_python, "-m", "zils.soup_pool", str(path)],
-                    Path(work) / f"soup-{pool}.log",
-                    args.device,
-                    timeout=12 * 3600,
-                    model=request["config"]["model"]["id"],
-                )
-                return
-            except runtime.CapacityUnavailable:
-                time.sleep(max(1, args.poll))
+        root = Path(request["state_dir"])
+        path = root / f"request-{request['round_id']}.json"
+        runner = {"runtime_python": args.runtime_python, "device": args.device, "poll": args.poll}
+        _write(path, {**request, "runner": runner})
+        with (root / "round.log").open("ab") as output:
+            process = subprocess.Popen(
+                [sys.executable, "-m", "zils.soup_pool", "--run", str(path)],
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                cwd=ROOT,
+            )
+        return process.pid
 
     return run_round
+
+
+def run_locked(path, *, run_child=None, sleep=time.sleep):
+    """Run the round in `path` in the GPU runtime under the shared compute lock, within
+    `ROUND_SECONDS`. Waits for GPU capacity at most `CAPACITY_TRIES` polls. Returns True on success;
+    a failure leaves the round unrecorded for the next epoch to restart."""
+    from . import runtime
+
+    run_child = run_child or runtime.run_child
+    request = json.loads(Path(path).read_text())
+    runner = request["runner"]
+    for _ in range(CAPACITY_TRIES):
+        try:
+            run_child(
+                [runner["runtime_python"], "-m", "zils.soup_pool", str(path)],
+                Path(request["state_dir"]) / "round.log",
+                runner["device"],
+                timeout=ROUND_SECONDS,
+                model=request["config"]["model"]["id"],
+            )
+            return True
+        except runtime.CapacityUnavailable:
+            sleep(max(1, runner["poll"]))
+        except subprocess.TimeoutExpired:
+            print(f"soup round passed its {ROUND_SECONDS} s deadline", flush=True)
+            return False
+    print("soup round found no GPU capacity", flush=True)
+    return False
 
 
 def _bank(path):
@@ -207,6 +291,8 @@ def main(argv=None):
     from . import d3, soup_exam, soup_grade, soup_round
 
     argv = sys.argv[1:] if argv is None else argv
+    if argv[0] == "--run":
+        raise SystemExit(0 if run_locked(argv[1]) else 1)
     request = json.loads(Path(argv[0]).read_text())
     config, root = request["config"], Path(request["state_dir"])
     model = config["model"]["id"]
