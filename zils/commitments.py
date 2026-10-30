@@ -139,8 +139,10 @@ def download_files(claim, destination, names, listed, budget, endpoint=None):
                         raise ValueError("artifact size differs from the pinned revision")
                     while chunk := response.read(1024 * 1024):
                         received += len(chunk)
-                        if received > size or time.monotonic() - started > DOWNLOAD_SECONDS:
-                            raise ValueError("artifact exceeds declared size or download deadline")
+                        if received > size:
+                            raise ValueError("artifact exceeds its declared size")
+                        if time.monotonic() - started > DOWNLOAD_SECONDS:
+                            raise OSError("artifact download deadline exceeded")
                         output.write(chunk)
                 if received == size:
                     break

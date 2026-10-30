@@ -11,6 +11,7 @@ sorted tuple of bodies and returns its exam score in points.
 """
 
 import hashlib
+import http.client
 import json
 import math
 import os
@@ -224,11 +225,24 @@ def _house(config, state, *, names, download, folder, scratch):
     return {resolved[f"{i['repo']}@{i['revision']}"] for i in config["house"]}
 
 
+def claim_key(claim):
+    """A commitment's identity for failures that are not the weights' fault: (hotkey, repo, revision)."""
+    return f"{claim['hotkey']}:{claim['repo']}@{claim['revision']}"
+
+
 def _intake(state, snapshot, *, chassis, base, download, copies, folder):
-    """Admit new zilsb2 commitments in commitment order. Returns (new bodies, rejected, refused)."""
+    """Admit new zilsb2 commitments in commitment order. Returns (new, rejected, refused, failed).
+
+    Only failures of weights that hash to the committed hash (``bodies.WeightError``, copies) reject
+    the hash itself (``rejected``, by hash, for good). Any other failure (owner file, licence, hash
+    mismatch, unreadable files, a bad repo) fails only that commitment (``failed``, by
+    ``claim_key``), so another hotkey committing the same hash is still evaluated. Transport errors
+    are ``refused`` for this round only and retried next round.
+    """
     from . import bodies
 
     known, prior_rejected = state["bodies"], state["rejected"]
+    prior_failed = state.setdefault("failed", {})
     claims, refused = [], {}
     for uid, item in snapshot.get("commitments", {}).items():
         if not str(item.get("data", "")).startswith(bodies.PREFIX + ":"):
@@ -242,43 +256,51 @@ def _intake(state, snapshot, *, chassis, base, download, copies, folder):
             refused[str(uid)] = str(error)[:400]
             continue
         claims.append({**claim, "uid": int(uid), "hotkey": hotkey, "block": int(item["block"])})
-    new, rejected = {}, {}
+    new, rejected, failed = {}, {}, {}
     for claim in sorted(claims, key=lambda c: (c["block"], c["uid"])):
-        sha, uid = claim["sha256"], str(claim["uid"])
+        sha, uid, key = claim["sha256"], str(claim["uid"]), claim_key(claim)
         if sha in known or sha in new:
             if (known.get(sha) or new[sha])["hotkey"] != claim["hotkey"]:
                 refused[uid] = "body committed first by another hotkey"
             continue
-        if sha in prior_rejected:
+        if sha in prior_rejected or sha in rejected:
             refused[uid] = "body rejected in an earlier round"
+            continue
+        if key in prior_failed or key in failed:
+            refused[uid] = "commitment failed in an earlier round"
             continue
         earlier = {
             s: folder(s)
             for s, info in [*known.items(), *new.items()]
             if not info["house"] and info["hotkey"] != claim["hotkey"]
         }
+        # Checked in a partial folder, so a failed claim never leaves files under the hash's name.
+        partial = folder(sha).with_name(f".{sha}.partial")
         try:
-            if not folder(sha).exists():
-                os.replace(download(claim, folder(sha).with_name(f".{sha}.partial")), folder(sha))
-            if bodies.validate_body(folder(sha), chassis, hotkey=claim["hotkey"], base=base) != sha:
-                raise ValueError("downloaded body hash differs from the commitment")
+            shutil.rmtree(folder(sha), ignore_errors=True)  # never trust files of an unknown hash
+            download(claim, partial)
+            bodies.validate_body(partial, chassis, hotkey=claim["hotkey"], base=base, sha256=sha)
             soup = tuple(s for s in state["members"] if s in known)
-            if copies is not None and (reason := copies(sha, folder(sha), earlier, soup=soup)):
-                raise ValueError(f"copy: {reason}")
-        except OSError as error:  # a failed download is retried next round, not held against it
-            refused[uid] = f"download failed: {error}"[:400]
-            shutil.rmtree(folder(sha), ignore_errors=True)
+            if copies is not None and (reason := copies(sha, partial, earlier, soup=soup)):
+                raise bodies.WeightError(f"copy: {reason}")
+            os.replace(partial, folder(sha))
+        except (OSError, http.client.HTTPException) as error:  # retried next round
+            refused[uid] = f"download failed: {_reason(error)}"[:400]
+            continue
+        except bodies.WeightError as error:
+            rejected[sha] = _reason(error)
             continue
         except Exception as error:  # one hostile body must never abort the round
-            print(f"soup intake: body {sha} rejected ({type(error).__name__})", flush=True)
-            rejected[sha] = _reason(error)
-            shutil.rmtree(folder(sha), ignore_errors=True)
+            print(f"soup intake: commitment {key} failed ({type(error).__name__})", flush=True)
+            failed[key] = refused[uid] = _reason(error)
             continue
+        finally:
+            shutil.rmtree(partial, ignore_errors=True)
         new[sha] = {
             "hotkey": claim["hotkey"], "uid": claim["uid"], "repo": claim["repo"],
             "revision": claim["revision"], "block": claim["block"], "house": False, "solo": None,
         }  # fmt: skip
-    return new, rejected, refused
+    return new, rejected, refused, failed
 
 
 class _Sketches:
@@ -401,7 +423,7 @@ def run(
             def copies(sha, body, earlier, *, soup):
                 members = [sketch(s) for s in soup]
                 return soup_copies.is_copy(
-                    sketch(sha),
+                    sketches(sha, body),
                     [sketch(s) for s in earlier],
                     soup=sum(members) / len(members) if members else None,
                 )
@@ -423,14 +445,15 @@ def run(
 
     intake = _read_json(round_dir / "intake.json", None)
     if intake is None:
-        new, rejected, refused = _intake(
+        new, rejected, refused, failed = _intake(
             state, snapshot, chassis=chassis, base=base, download=download, copies=copies,
             folder=folder,
         )  # fmt: skip
-        intake = {"new": new, "rejected": rejected, "refused": refused}
+        intake = {"new": new, "rejected": rejected, "refused": refused, "failed": failed}
         _write_json(round_dir / "intake.json", intake)
     known.update(intake["new"])
     state["rejected"].update(intake["rejected"])
+    state.setdefault("failed", {}).update(intake["failed"])
     _write_json(state_dir / "pool.json", state)
     rejected = dict(intake["rejected"])
 
@@ -578,6 +601,8 @@ def run(
         "trace": trace,
         "rejected": rejected,
         "refused": intake["refused"],
+        "failed": intake["failed"],
+        "new": sorted(intake["new"]),
     }
     _write_json(round_dir / "private.json", private)
     return _finish(state_dir, round_dir, ledger)
@@ -596,7 +621,10 @@ def _finish(state_dir, round_dir, ledger):
     state["members"] = [m["body_sha256"] for m in private["members"]]
     for sha, score in private["solo"].items():
         state["bodies"][sha]["solo"] = score
+    new = set(private["new"])
     for sha, reason in private["rejected"].items():
+        if sha in state["members"] or (sha in state["bodies"] and sha not in new):
+            continue  # a seated or earlier-admitted body is never condemned or deleted here
         state["rejected"][sha] = reason
         state["bodies"].pop(sha, None)
         shutil.rmtree(state_dir / "bodies" / sha, ignore_errors=True)

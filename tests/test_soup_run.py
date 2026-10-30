@@ -333,7 +333,7 @@ class SoupRunTest(unittest.TestCase):
         self.assertAlmostEqual(members[self.r.sha["t2"]]["seat_weight"], 0.4)
         self.assertAlmostEqual(record["crown"]["weight"], 0.05)
 
-    def test_a_body_failing_validation_is_rejected_and_deleted(self):
+    def test_a_commitment_failing_validation_fails_and_leaves_no_files(self):
         def fetch(claim, dest):
             dest = self.r.fetch(claim, dest)
             if claim["sha256"] == self.r.sha["weak"]:
@@ -341,13 +341,17 @@ class SoupRunTest(unittest.TestCase):
             return dest
 
         record = self.r.run(fetch_body=fetch)
-        self.assertIn("zils-owner.json", record["rejected"][self.r.sha["weak"]])
+        key = f"{HOTKEYS[4]}:miner/weak@{REVISION}"
+        self.assertIn("zils-owner.json", record["failed"][key])
+        self.assertIn("zils-owner.json", record["refused"]["4"])
+        self.assertNotIn(self.r.sha["weak"], record["rejected"])
         self.assertFalse((self.r.state / "bodies" / self.r.sha["weak"]).exists())
+        self.assertEqual([p.name for p in (self.r.state / "bodies").glob(".*")], [])
 
-    def hostile(self, name, folder, block):
-        """Commit a hand-made body repo `folder` as `name` (its claimed hash cannot be computed)."""
+    def hostile(self, name, folder, block, sha=None):
+        """Commit a hand-made body repo `folder` as `name`, claiming `sha` (default: a made-up hash)."""
         self.r.repos[name] = folder
-        self.r.sha[name] = hashlib.sha256(name.encode()).hexdigest()
+        self.r.sha[name] = sha or hashlib.sha256(name.encode()).hexdigest()
         uid = max(self.r.commits) + 1
         self.r.commits[uid] = (name, block)
         self.enterContext(patch.dict(HOTKEYS, {uid: HOTKEYS.get(uid, f"5Hostile{uid}")}))
@@ -357,9 +361,9 @@ class SoupRunTest(unittest.TestCase):
         nan = strengths(1, 1, 0, 0, 0)
         nan["visual.patch.weight"][0] = math.nan
         repos = self.tmp / "hostile"
-        nan_sha = self.hostile(
-            "nan", test_bodies.checkpoint(repos / "nan", nan, prefix="model.", owner=None), 90
-        )
+        folder = test_bodies.checkpoint(repos / "nan", nan, prefix="model.", owner=None)
+        names = list(bodies.load_index(self.r.chassis))
+        nan_sha = self.hostile("nan", folder, 90, sha=bodies._digest(folder, names)[0])
         header, total = test_bodies.raw_header()
         header = {
             STRENGTH: {"dtype": "BF16", "shape": [5], "data_offsets": ["0", "10"]},
@@ -377,9 +381,12 @@ class SoupRunTest(unittest.TestCase):
         (deep / "README.md").write_text("---\nlicense: mit\n---\n")
         deep_sha = self.hostile("deep", deep, 92)
         record = self.r.run()
-        self.assertIn("finite", record["rejected"][nan_sha])
-        self.assertIn("malformed", record["rejected"][offsets_sha])
-        self.assertIn("unreadable", record["rejected"][deep_sha])
+        self.assertIn("finite", record["rejected"][nan_sha])  # its own weights: the hash is banned
+        # Unreadable files never verify a hash, so only the commitment fails.
+        self.assertIn("malformed", record["refused"]["6"])
+        self.assertIn("unreadable", record["refused"]["7"])
+        self.assertNotIn(offsets_sha, record["rejected"])
+        self.assertNotIn(deep_sha, record["rejected"])
         self.assertEqual(set(self.by_body(record)), {self.r.sha["t1"], self.r.sha["t2"]})
 
     def test_any_exception_from_one_body_rejects_that_body_only(self):
@@ -389,7 +396,8 @@ class SoupRunTest(unittest.TestCase):
             return None
 
         record = self.r.run(copies=copies)
-        self.assertIn("RuntimeError", record["rejected"][self.r.sha["weak"]])
+        self.assertIn("RuntimeError", record["refused"]["4"])
+        self.assertNotIn(self.r.sha["weak"], record["pool"])
         self.assertEqual(set(self.by_body(record)), {self.r.sha["t1"], self.r.sha["t2"]})
 
     def test_a_body_that_fails_grading_is_rejected_and_the_round_completes(self):
@@ -423,6 +431,97 @@ class SoupRunTest(unittest.TestCase):
         self.assertEqual(len(record["rejected"]), 1)
         self.assertIn("bad rows", next(iter(record["rejected"].values())))
         self.assertTrue(record["members"])
+
+    def grief_snapshot(self, victim, griefer_repo, block=95, uid=5):
+        """The roster commits as usual, and `uid` first commits `victim`'s hash from `griefer_repo`."""
+        snapshot = self.r.snapshot()
+        snapshot["commitments"][str(uid)] = {
+            "block": block,
+            "data": bodies.format_commitment(self.r.sha[victim], REVISION, griefer_repo),
+        }
+        return snapshot
+
+    def test_a_griefer_cannot_ban_another_committers_hash(self):
+        sha = self.r.sha
+        for label, repo in (("hash mismatch", "miner/weak"), ("no owner file", "miner/t1")):
+            with self.subTest(label):
+                r = Round(self.tmp / label.replace(" ", "-"))
+                self.r = r
+
+                def fetch(claim, dest, r=r, label=label):
+                    dest = r.fetch(claim, dest)
+                    if label == "no owner file" and claim["hotkey"] == HOTKEYS[5]:
+                        (dest / "zils-owner.json").unlink()
+                    return dest
+
+                snapshot = self.grief_snapshot("t1", repo)
+                record = r.run(snapshot=snapshot, fetch_body=fetch)
+                self.assertNotIn(r.sha["t1"], record["rejected"])
+                self.assertIn(r.sha["t1"], self.by_body(record))
+                self.assertEqual(self.by_body(record)[r.sha["t1"]]["hotkey"], HOTKEYS[1])
+                self.assertTrue((r.state / "bodies" / r.sha["t1"]).exists())
+                key = f"{HOTKEYS[5]}:{repo}@{REVISION}"
+                self.assertIn(key, record["failed"])
+                fetched = len(r.fetched)
+                again = r.run(round_id="d3-mini-2026-11-04", snapshot=snapshot, fetch_body=fetch)
+                self.assertEqual(len(r.fetched), fetched)  # the failed claim is not fetched again
+                self.assertIn("5", again["refused"])
+                self.assertIn(r.sha["t1"], self.by_body(again))
+        del sha
+
+    def test_weight_failures_ban_the_hash(self):
+        nan = strengths(1, 0, 0, 0, 0)
+        nan["visual.patch.weight"][0] = math.nan
+        folder = test_bodies.checkpoint(self.tmp / "nanrepo", nan, prefix="model.", owner=None)
+        names = list(bodies.load_index(self.r.chassis))
+        nan_sha = bodies._digest(folder, names)[0]
+        self.r.repos["nan"], self.r.sha["nan"] = folder, nan_sha
+        self.r.commits[5] = ("nan", 90)
+        record = self.r.run()
+        self.assertIn("finite", record["rejected"][nan_sha])
+        self.r.commits[6] = ("nan", 150)
+        self.r.commits.pop(5)
+        again = self.r.run(round_id="d3-mini-2026-11-04")
+        self.assertIn("rejected in an earlier round", again["refused"]["6"])
+
+    def test_a_download_deadline_is_transient(self):
+        def fetch(claim, dest):
+            if claim["sha256"] == self.r.sha["weak"]:
+                raise OSError("artifact download deadline exceeded")
+            return self.r.fetch(claim, dest)
+
+        record = self.r.run(fetch_body=fetch)
+        self.assertIn("deadline", record["refused"]["4"])
+        self.assertNotIn(self.r.sha["weak"], record["rejected"])
+        self.assertEqual(record["failed"], {})
+        again = self.r.run(round_id="d3-mini-2026-11-04")
+        self.assertIn(self.r.sha["weak"], again["pool"])
+
+    def test_an_incomplete_http_read_is_transient(self):
+        import http.client
+
+        def fetch(claim, dest):
+            if claim["sha256"] == self.r.sha["weak"]:
+                raise http.client.IncompleteRead(b"", 10)
+            return self.r.fetch(claim, dest)
+
+        record = self.r.run(fetch_body=fetch)
+        self.assertIn("download failed", record["refused"]["4"])
+        self.assertEqual(record["failed"], {})
+
+    def test_finish_never_deletes_a_seated_or_earlier_admitted_body(self):
+        first = self.r.run()
+        seated = first["members"][0]["body_sha256"]
+        round_dir = self.r.state / "rounds" / "d3-mini-2026-11-04"
+        private = {**first, "round_id": "d3-mini-2026-11-04", "new": []}
+        private["rejected"] = {seated: "simulated", self.r.sha["weak"]: "simulated"}
+        round_dir.mkdir(parents=True)
+        (round_dir / "private.json").write_text(json.dumps(private))
+        soup_round._finish(self.r.state, round_dir, self.r.ledger)
+        for sha in (seated, self.r.sha["weak"]):
+            self.assertTrue((self.r.state / "bodies" / sha).exists())
+        state = json.loads((self.r.state / "pool.json").read_text())
+        self.assertIn(self.r.sha["weak"], state["bodies"])
 
     def test_default_checks_reject_a_layer_copy_and_rate_a_house_retrain_as_a_scout(self):
         self.r.commits.update({5: ("scout", 50), 6: ("t1copy", 104)})

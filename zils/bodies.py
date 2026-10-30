@@ -152,20 +152,33 @@ def _chunks(path, info):
             yield chunk
 
 
-def body_hash(folder, chassis_names):
-    """sha256 over each mapped chassis tensor in sorted name order: name, shape, raw bf16 bytes.
-    Every value must be finite (a bf16 NaN or infinity has all exponent bits set)."""
+class WeightError(ValueError):
+    """The body's own weights (hash verified) fail a check: its hash is refused for good."""
+
+
+def _digest(folder, chassis_names):
+    """(body hash, the first tensor holding a NaN or infinity, or None), in one streamed pass.
+    A bf16 NaN or infinity has all exponent bits set."""
     import numpy as np
 
-    digest = hashlib.sha256()
+    digest, bad = hashlib.sha256(), None
     for name, (path, info) in sorted(_tensors(folder, chassis_names).items()):
         shape = _bf16(name, info)
         digest.update(f"{name}\0{','.join(map(str, shape))}\0".encode())
         for chunk in _chunks(path, info):
-            if ((np.frombuffer(chunk, dtype="<u2") & 0x7F80) == 0x7F80).any():
-                raise ValueError(f"body tensor {name} is not finite")
+            if bad is None and ((np.frombuffer(chunk, dtype="<u2") & 0x7F80) == 0x7F80).any():
+                bad = name
             digest.update(chunk)
-    return digest.hexdigest()
+    return digest.hexdigest(), bad
+
+
+def body_hash(folder, chassis_names):
+    """sha256 over each mapped chassis tensor in sorted name order: name, shape, raw bf16 bytes.
+    Every value must be finite."""
+    digest, bad = _digest(folder, chassis_names)
+    if bad is not None:
+        raise ValueError(f"body tensor {bad} is not finite")
+    return digest
 
 
 def relative_change(folder, base_folder, chassis_names, *, prefix="language_model.layers."):
@@ -234,10 +247,14 @@ def _shapes(chassis):
     return out
 
 
-def validate_body(folder, chassis, *, hotkey, base=None, max_change=0.15):
+def validate_body(folder, chassis, *, hotkey, base=None, max_change=0.15, sha256=None):
     """Check a downloaded body against the chassis and return its body hash. `chassis` is the chassis
     checkpoint folder or a mapping name -> shape; `base`, when given, is the parent (Qwen) folder whose
-    language layers the body may move by at most `max_change` (relative Frobenius norm)."""
+    language layers the body may move by at most `max_change` (relative Frobenius norm).
+
+    Failures of the repo (owner file, licence, size, unreadable files, a hash other than `sha256`)
+    raise ValueError; failures of weights that hash to `sha256` (shape, finiteness, change) raise
+    `WeightError`, so only the latter condemn the hash itself."""
     folder = Path(folder)
     owner = _owner(folder)
     if owner != hotkey:
@@ -251,14 +268,20 @@ def validate_body(folder, chassis, *, hotkey, base=None, max_change=0.15):
     if total > MAX_BYTES:
         raise ValueError(f"body safetensors total {total} bytes, over the {MAX_BYTES} byte limit")
     shapes = _shapes(chassis)
-    for name, (_, info) in sorted(_tensors(folder, shapes).items()):
+    tensors = sorted(_tensors(folder, shapes).items())
+    for name, (_, info) in tensors:
         if info["dtype"] != "BF16":
             raise ValueError(f"body tensor {name} must be bfloat16, not {info['dtype']}")
+    digest, bad = _digest(folder, shapes)
+    if sha256 is not None and digest != sha256:
+        raise ValueError("downloaded body hash differs from the commitment")
+    for name, (_, info) in tensors:
         if tuple(info["shape"]) != shapes[name]:
-            raise ValueError(f"body tensor {name} shape {info['shape']} differs from the chassis")
-    digest = body_hash(folder, shapes)
+            raise WeightError(f"body tensor {name} shape {info['shape']} differs from the chassis")
+    if bad is not None:
+        raise WeightError(f"body tensor {bad} is not finite")
     if base is not None:
         change = relative_change(folder, base, shapes)
         if not change <= max_change:  # NaN fails too
-            raise ValueError(f"body change from the base {change:.4f} exceeds {max_change}")
+            raise WeightError(f"body change from the base {change:.4f} exceeds {max_change}")
     return digest

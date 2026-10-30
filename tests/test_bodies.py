@@ -266,6 +266,45 @@ def raw_header(**changes):
     return header, offset
 
 
+class DeadlineTest(unittest.TestCase):
+    def test_a_deadline_overrun_mid_download_is_transient(self):
+        import itertools
+
+        from zils import commitments
+
+        class Response:
+            status = 200
+            headers = {"Content-Length": "4"}
+
+            def __init__(self):
+                self.parts = [b"ab", b"cd"]
+
+            def read(self, n):
+                return self.parts.pop(0) if self.parts else b""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        clock = itertools.chain([0, 0], itertools.repeat(10**9))
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(
+                commitments,
+                "opener",
+                return_value=type("O", (), {"open": lambda *a, **k: Response()})(),
+            ),
+            patch.object(commitments.time, "monotonic", side_effect=lambda: next(clock)),
+            self.assertRaisesRegex(OSError, "deadline"),
+        ):
+            claim = {"repo": REPO, "revision": REVISION}
+            commitments.download_files(
+                claim, Path(tmp) / "out", ["a.bin"], {"a.bin": {"size": 4}}, 100
+            )
+
+
 class HostileHeaderTest(unittest.TestCase):
     def test_malformed_offsets_and_shapes_are_rejected_as_invalid(self):
         first = NAMES[0]
