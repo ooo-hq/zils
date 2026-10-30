@@ -655,6 +655,41 @@ class SoupRunTest(unittest.TestCase):
             }
         return snapshot
 
+    def test_dead_commitments_do_not_starve_intake_and_retire_after_three_rounds(self):
+        dead = range(20, 32)  # twelve commitments whose repos never answer, ahead of everyone
+        self.enterContext(patch.dict(HOTKEYS, {uid: f"5Dead{uid}" for uid in dead}))
+        snapshot = self.r.snapshot()
+        for n, uid in enumerate(dead):
+            snapshot["commitments"][str(uid)] = {
+                "block": 10 + n,
+                "data": bodies.format_commitment(f"{uid:064x}", REVISION, f"dead/r{uid}"),
+            }
+        calls = []
+
+        def fetch(claim, dest):
+            if claim["repo"].startswith("dead/"):
+                calls.append(claim["repo"])
+                raise OSError("connection refused")
+            return self.r.fetch(claim, dest)
+
+        for day in ("03", "04", "05"):
+            record = self.r.run(
+                round_id=f"d3-mini-2026-11-{day}", snapshot=snapshot, fetch_body=fetch
+            )
+            if day == "03":
+                self.assertEqual(
+                    sorted(record["new"]),
+                    sorted(self.r.sha[n] for n in ("t1", "t2", "weak")),
+                )
+        self.assertEqual(len(record["failed"]), 12)  # retired on the third failed round
+        self.assertEqual(len(calls), 36)
+        again = self.r.run(round_id="d3-mini-2026-11-06", snapshot=snapshot, fetch_body=fetch)
+        self.assertEqual(len(calls), 36)
+        self.assertIn("earlier round", again["refused"]["20"])
+        state = json.loads((self.r.state / "pool.json").read_text())
+        self.assertFalse(set(state["bodies"]) & {f"{uid:064x}" for uid in dead})  # no hash banned
+        self.assertFalse(set(state["rejected"]) & {f"{uid:064x}" for uid in dead})
+
     def test_failed_claims_count_toward_the_claims_cap(self):
         config = self.r.config(max_claims_per_round=2)
         snapshot = self.junk(5, 6)

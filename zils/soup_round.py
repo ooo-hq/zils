@@ -155,6 +155,7 @@ PRUNE_ROUNDS = 3  # a body out of the pool this many rounds loses its folder (ha
 SOUP_CACHE_ROUNDS = 3  # a soup's cached predictions are dropped after this many rounds unused
 MAX_CLAIMS_PER_ROUND = 12  # commitments downloaded per round, failed ones included
 MAX_DOWNLOAD_BYTES_PER_ROUND = 60 * 1024**3  # bytes downloaded per round, failed claims included
+TRANSPORT_STRIKES = 3  # rounds a claim's download may fail before the claim is retired
 GRADE_CHUNK = 200  # items graded per cache write, so a timed-out round keeps its progress
 GRADE_STRIKES = 3  # rounds a body may fail grading (with a healthy chassis) before it is banned
 _GPU_FAULTS = ("cuda", "out of memory", "cublas", "cudnn", "nccl", "device-side", "accelerator")
@@ -252,14 +253,14 @@ def claim_key(claim):
     return f"{claim['hotkey']}:{claim['repo']}@{claim['revision']}"
 
 
-def _folder_bytes(path):
+def _folder_bytes(path, pattern="*"):
     path = Path(path)
-    return sum(p.stat().st_size for p in path.rglob("*") if p.is_file()) if path.exists() else 0
+    return sum(p.stat().st_size for p in path.rglob(pattern) if p.is_file()) if path.exists() else 0
 
 
 def _intake(
     state, snapshot, *, chassis, base, download, copies, folder, limits=None, progress=None,
-    save=lambda progress: None,
+    save=lambda progress: None, round_id=None,
 ):  # fmt: skip
     """Admit new zilsb2 commitments in commitment order. Returns (new, rejected, refused, failed).
 
@@ -272,7 +273,9 @@ def _intake(
     Claims run in commitment-block order, then hotkey. ``limits`` caps the bodies admitted
     (``max_new_per_round``), the claims downloaded, failed ones included (``max_claims_per_round``)
     and the bytes downloaded (``max_download_bytes_per_round``); later claims wait for the next
-    round. ``progress`` holds the outcome of each claim so far and is passed to ``save`` after every
+    round. Only a claim that downloaded weight bytes counts toward the claims cap, so dead repos
+    cannot starve intake; a claim whose download fails in ``TRANSPORT_STRIKES`` separate rounds
+    (``round_id``) is retired as failed (the claim, never the hash). ``progress`` holds the outcome of each claim so far and is passed to ``save`` after every
     claim, so a round cut off by its deadline resumes without downloading a claim twice.
     """
     from . import bodies
@@ -302,6 +305,8 @@ def _intake(
     progress.setdefault("done", [])
     progress.setdefault("claims", 0)
     progress.setdefault("bytes", 0)
+    progress.setdefault("transient", {})
+    prior_transient = state.setdefault("transient", {})
     new, rejected, failed = progress["new"], progress["rejected"], progress["failed"]
     refused.update(progress["refused"])
     progress["refused"] = refused
@@ -335,20 +340,23 @@ def _intake(
         }
         # Checked in a partial folder, so a failed claim never leaves files under the hash's name.
         partial = folder(sha).with_name(f".{sha}.partial")
-        progress["claims"] += 1
         try:
             shutil.rmtree(folder(sha), ignore_errors=True)  # never trust files of an unknown hash
             try:
                 download(claim, partial)
             finally:
                 progress["bytes"] += _folder_bytes(partial)
+                progress["claims"] += _folder_bytes(partial, "*.safetensors") > 0
             bodies.validate_body(partial, chassis, hotkey=claim["hotkey"], base=base, sha256=sha)
             soup = tuple(s for s in state["members"] if s in known)
             if copies is not None and (reason := copies(sha, partial, earlier, soup=soup)):
                 raise bodies.WeightError(f"copy: {reason}")
             os.replace(partial, folder(sha))
-        except (OSError, http.client.HTTPException) as error:  # retried next round
-            refused[uid] = f"download failed: {_reason(error)}"[:400]
+        except (OSError, http.client.HTTPException) as error:  # retried next round, a few times
+            reason = f"download failed: {_reason(error)}"[:400]
+            refused[uid] = progress["transient"][key] = reason
+            if len({*prior_transient.get(key, {}), round_id}) >= TRANSPORT_STRIKES:
+                failed[key] = f"{reason} ({TRANSPORT_STRIKES} rounds)"[:400]
         except bodies.WeightError as error:
             rejected[sha] = _reason(error)
         except Exception as error:  # one hostile body must never abort the round
@@ -570,15 +578,20 @@ def run(
         }
         new, rejected, refused, failed = _intake(
             state, snapshot, chassis=chassis, base=base, download=download, copies=copies,
-            folder=folder, limits=limits,
+            folder=folder, limits=limits, round_id=round_id,
             progress=_read_json(round_dir / "intake-progress.json", None),
             save=lambda progress: _write_json(round_dir / "intake-progress.json", progress),
         )  # fmt: skip
         intake = {"new": new, "rejected": rejected, "refused": refused, "failed": failed}
+        intake["transient"] = _read_json(round_dir / "intake-progress.json", {}).get(
+            "transient", {}
+        )
         _write_json(round_dir / "intake.json", intake)
     known.update(intake["new"])
     state["rejected"].update(intake["rejected"])
     state.setdefault("failed", {}).update(intake["failed"])
+    for key, reason in intake.get("transient", {}).items():
+        state.setdefault("transient", {}).setdefault(key, {})[round_id] = reason
     _write_json(state_dir / "pool.json", state)
     rejected = dict(intake["rejected"])
 
