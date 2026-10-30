@@ -312,8 +312,7 @@ class SoupRunTest(unittest.TestCase):
         self.assertNotIn(self.r.sha["weak"], record["pool"])
         self.assertEqual(record["rejected"][self.r.sha["weak"]], "copy: copy of an earlier body")
         weak = next(s for s in seen if s[0] == self.r.sha["weak"])
-        # Earlier bodies of other hotkeys and every house body: a house re-upload is a copy.
-        self.assertEqual(weak[1], {self.r.sha["t1"], self.r.sha["t2"], self.r.sha["house"]})
+        self.assertEqual(weak[1], {self.r.sha["t1"], self.r.sha["t2"]})  # never house bodies
         self.assertEqual(weak[2], ())
         self.assertFalse((self.r.state / "bodies" / self.r.sha["weak"]).exists())
 
@@ -623,19 +622,18 @@ class SoupRunTest(unittest.TestCase):
         r = Round(self.tmp / "rehouse")
         r.commits[5] = ("rehouse", 90)
         record = r.run()
-        self.assertEqual(record["rejected"], {r.sha["rehouse"]: "copy: cosine"})
+        self.assertEqual(record["rejected"], {r.sha["rehouse"]: "copy: house re-upload"})
         self.assertNotIn(r.sha["rehouse"], record["pool"])
 
-    def test_default_checks_reject_a_layer_copy_and_a_light_house_retrain(self):
+    def test_default_checks_reject_a_layer_copy_and_admit_a_house_fine_tune_as_a_trainer(self):
         self.r.commits.update({5: ("scout", 50), 6: ("t1copy", 104)})
         record = self.r.run()
         sha = self.r.sha
-        # House bodies are earlier bodies for every submitter, so a light retrain of one is a copy.
-        self.assertEqual(
-            record["rejected"],
-            {sha["t1copy"]: "copy: cosine", sha["scout"]: "copy: explained by earlier"},
-        )
+        self.assertEqual(record["rejected"], {sha["t1copy"]: "copy: cosine"})
         self.assertFalse((self.r.state / "bodies" / sha["t1copy"]).exists())
+        # A light fine-tune of a house model is allowed and paid as a trainer's.
+        self.assertIn(sha["scout"], record["pool"])
+        self.assertEqual(record["rates"][sha["scout"]], 1.0)
         self.assertEqual(record["rates"][sha["t1"]], 1.0)
         self.assertEqual(record["rates"][sha["house"]], 0.0)
         self.assertEqual(set(self.by_body(record)), {sha["t1"], sha["t2"]})

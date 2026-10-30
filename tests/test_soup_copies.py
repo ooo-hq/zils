@@ -143,6 +143,22 @@ class IsCopyTest(unittest.TestCase):
             "release re-upload",
         )
 
+    def test_house_bodies_reject_only_near_exact_re_uploads(self):
+        house = self.earlier[2]
+        self.assertEqual(
+            soup_copies.is_copy(house + self.noise, [], house=[house]), "house re-upload"
+        )
+        # A real fine-tune of a house model moves away from it and is allowed.
+        tuned = house + 0.3 * self.fresh
+        self.assertGreater(soup_copies.explained_share(tuned, [house]), 0.8)
+        self.assertIsNone(soup_copies.is_copy(tuned, [], house=[house]))
+
+    def test_a_fine_tune_of_the_soup_or_release_is_allowed(self):
+        soup = sum(self.earlier) / 3
+        tuned = soup + 0.2 * self.fresh
+        self.assertGreater(soup_copies.explained_share(tuned, [soup]), 0.8)
+        self.assertIsNone(soup_copies.is_copy(tuned, [], soup=soup, release=soup))
+
     def test_genuinely_different_body_passes(self):
         self.assertIsNone(
             soup_copies.is_copy(

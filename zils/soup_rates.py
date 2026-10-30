@@ -53,12 +53,16 @@ def _house_hashes(house):
 def rate(body_sha256, sketch, *, house, known, hotkey, cosine_scout=COSINE_SCOUT) -> float:
     """HOUSE_RATE for a house body hash; SCOUT_RATE when the sketch's cosine to any known public model is at
     least `cosine_scout`; else TRAINER_RATE. `house` holds registry entries or hashes; `known` holds
-    {"body_sha256", "sketch", "hotkey" (None for a house or public model), "repo"}. Only known entries
-    committed by the submitting `hotkey` itself are skipped, so a trainer's own earlier upload never
-    makes it a scout; house and public models always count, whatever repo the body comes from."""
-    if body_sha256 in _house_hashes(house):
+    {"body_sha256", "sketch", "hotkey" (None for a public model), "repo"}. House entries never make a
+    scout: a fine-tune of a house model is a trainer's work (an exact or near-exact re-upload is
+    rejected as a copy before rating). Known entries committed by the submitting `hotkey` itself are
+    skipped, so a trainer's own earlier upload never makes it a scout, whatever its repo."""
+    house_hashes = _house_hashes(house)
+    if body_sha256 in house_hashes:
         return HOUSE_RATE
     for entry in known:
+        if entry.get("body_sha256") in house_hashes:
+            continue
         if entry.get("hotkey") is not None and entry.get("hotkey") == hotkey:
             continue
         if cosine(sketch, entry["sketch"]) >= cosine_scout:

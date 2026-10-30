@@ -93,16 +93,19 @@ def seat_weights(members, contributions, rates, *, share=SEAT_SHARE, floor=FLOOR
     return {m: share / len(paid) * _check_rate(rates[m]) for m in paid}
 
 
-def crown_weight(solo, rates, house, *, share=CROWN_SHARE, order_key):
-    """The crown: the best solo body that is not a house ingredient gets ``share`` times its rate.
+def crown_weight(solo, rates, house, *, share=CROWN_SHARE, margin=MARGIN, order_key):
+    """The crown: the best solo body that is not a house ingredient gets ``share`` times its rate,
+    provided its solo score beats every house body's by at least ``margin``.
 
-    Ties go to the earlier commitment (``order_key``). With no eligible body the result is {} and the
-    crown share burns.
+    Ties go to the earlier commitment (``order_key``). With no eligible body, or a best body that does
+    not clear the house bodies by the margin, the result is {} and the crown share burns.
     """
     eligible = [body for body in solo if body not in house]
     if not eligible:
         return {}
     best = min(eligible, key=lambda body: (-solo[body], order_key(body)))
+    if any(solo[best] - solo[h] < margin - _EPS for h in solo if h in house):
+        return {}
     return {best: share * _check_rate(rates[best])}
 
 
@@ -278,10 +281,10 @@ def _intake(state, snapshot, *, chassis, base, download, copies, folder, max_new
         if len(new) >= max_new:
             refused[uid] = "the round's new-body cap is reached; retried next round"
             continue
-        earlier = {  # house bodies count for everyone: a house re-upload is a copy
+        earlier = {
             s: folder(s)
             for s, info in [*known.items(), *new.items()]
-            if info["house"] or info["hotkey"] != claim["hotkey"]
+            if not info["house"] and info["hotkey"] != claim["hotkey"]
         }
         # Checked in a partial folder, so a failed claim never leaves files under the hash's name.
         partial = folder(sha).with_name(f".{sha}.partial")
@@ -474,17 +477,15 @@ def run(
                     sketches(sha, body),
                     [sketch(s) for s in earlier],
                     soup=sum(members) / len(members) if members else None,
+                    house=[sketch(s) for s in sorted(house)],
                 )
 
         if rates is None:
-            house_known = [
-                {"body_sha256": s, "sketch": sketch(s), "hotkey": None, "repo": known[s]["repo"]}
-                for s in sorted(house)
-            ]
+            public = []  # known public models other than the house ones (none at launch)
 
             def rates(sha, info, house):
                 return soup_rates.rate(
-                    sha, sketch(sha), house=house, known=house_known, hotkey=info["hotkey"]
+                    sha, sketch(sha), house=house, known=public, hotkey=info["hotkey"]
                 )
 
     twins = soup_copies.is_twin if twins is None else twins

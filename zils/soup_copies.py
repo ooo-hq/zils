@@ -138,18 +138,22 @@ def explained_share(target, others) -> float:
     return min(1.0, max(0.0, float(fit @ fit) / norm))
 
 
-def is_copy(target, earlier, soup=None, release=None, *, cosine_max=0.999, explained_max=0.8):
+def is_copy(
+    target, earlier, soup=None, release=None, *, house=(), cosine_max=0.999, explained_max=0.8
+):
     """Why a body sketch is a copy, or None. `earlier` are sketches of earlier commitments by other
-    hotkeys; `soup` and `release` are sketches of the current soup and release bodies."""
+    hotkeys: a near-exact copy of one, or a body mostly explained by them, is a copy. `house`
+    (house bodies) and `soup` and `release` (the current soup and release bodies) reject only
+    near-exact re-uploads (cosine at least `cosine_max`): fine-tuning them is allowed."""
     target = np.asarray(target, dtype=np.float64)
     if not np.any(target):
         return "no change from the base"
     if any(cosine(target, e) >= cosine_max for e in earlier):
         return "cosine"
+    if any(cosine(target, h) >= cosine_max for h in house):
+        return "house re-upload"
     for label, other in (("soup re-upload", soup), ("release re-upload", release)):
-        if other is not None and (
-            cosine(target, other) >= cosine_max or explained_share(target, [other]) >= explained_max
-        ):
+        if other is not None and cosine(target, other) >= cosine_max:
             return label
     if explained_share(target, list(earlier)) >= explained_max:
         return "explained by earlier"

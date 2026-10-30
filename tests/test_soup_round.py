@@ -144,7 +144,7 @@ class SeatWeightsTest(unittest.TestCase):
 
 class CrownWeightTest(unittest.TestCase):
     def test_best_non_house_solo_body_wins_at_its_rate(self):
-        solo = {"house": 5.0, "scout": 4.0, "trainer": 3.0}
+        solo = {"house": 3.0, "scout": 4.0, "trainer": 3.5}
         rates = {"house": 0.0, "scout": 0.25, "trainer": 1.0}
         got = soup_round.crown_weight(
             solo, rates, {"house"}, order_key=commit_order("house", "scout", "trainer")
@@ -158,6 +158,15 @@ class CrownWeightTest(unittest.TestCase):
             order_key=commit_order("early", "late"),
         )  # fmt: skip
         self.assertEqual(got, {"early": 0.2})
+
+    def test_the_crown_must_beat_every_house_body_by_the_margin(self):
+        rates = {"h1": 0.0, "h2": 0.0, "t": 1.0}
+        order = commit_order("h1", "h2", "t")
+        for best, paid in ((5.29, False), (5.3, True), (6.0, True), (4.0, False)):
+            with self.subTest(best=best):
+                solo = {"h1": 4.5, "h2": 5.0, "t": best}
+                got = soup_round.crown_weight(solo, rates, {"h1", "h2"}, order_key=order)
+                self.assertEqual(got, {"t": 0.2} if paid else {})
 
     def test_only_house_bodies_means_no_crown(self):
         self.assertEqual(soup_round.crown_weight({"h": 5.0}, {"h": 0.0}, {"h"}, order_key=str), {})

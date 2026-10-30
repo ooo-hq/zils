@@ -105,6 +105,13 @@ class RateTest(unittest.TestCase):
             self.rate(BODY_HASH, self.known_sketch, repo="public/model")
         self.assertEqual(self.rate(BODY_HASH, self.known_sketch), 0.25)
 
+    def test_a_body_near_a_house_body_is_a_trainer(self):
+        house_known = [{**self.known[0], "body_sha256": HOUSE_HASH}]
+        near = self.known_sketch + 0.1 * self.fresh
+        self.assertEqual(self.rate(BODY_HASH, near, known=house_known), 1.0)
+        self.assertEqual(self.rate(HOUSE_HASH, self.known_sketch, known=house_known), 0.0)
+        self.assertEqual(self.rate(BODY_HASH, near), 0.25)  # a non-house public model still counts
+
     def test_threshold_boundary(self):
         near = self.known_sketch + 0.5 * self.fresh
         cosine = soup_copies.cosine(near, self.known_sketch)
