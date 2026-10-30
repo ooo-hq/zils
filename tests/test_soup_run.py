@@ -430,37 +430,121 @@ class SoupRunTest(unittest.TestCase):
         self.assertNotIn(self.r.sha["weak"], record["pool"])
         self.assertEqual(set(self.by_body(record)), {self.r.sha["t1"], self.r.sha["t2"]})
 
-    def test_a_body_that_fails_grading_is_rejected_and_the_round_completes(self):
+    def failing(self, error, *, chassis_error=None):
+        """A runner whose `weak` body (and, with `chassis_error`, the chassis) raises."""
         fake = self.r.runner
 
         def runner_for(folder):
             run = fake(folder)
+            broken = None
             if Path(folder).name.startswith(self.r.sha["weak"][:32]):
+                broken = error
+            elif chassis_error is not None and Path(folder) == self.r.chassis:
+                broken = chassis_error
+            if broken is None:
+                return run
 
-                def broken(cases):
-                    raise RuntimeError("cannot load this body")
+            def fail(cases):
+                raise broken
 
-                return broken
-            return run
+            return fail
 
-        self.r.runner = runner_for
+        return runner_for
+
+    def test_a_gpu_fault_fails_the_round_and_never_the_body(self):
+        healthy = self.r.runner
+        for error in (
+            torch.cuda.OutOfMemoryError("CUDA out of memory"),
+            RuntimeError("CUDA error: an illegal memory access"),
+        ):
+            with self.subTest(error=str(error)):
+                self.r.runner = self.failing(error)
+                with self.assertRaises(RuntimeError):
+                    self.r.run()
+        self.r.runner = healthy
         record = self.r.run()
-        self.assertIn("cannot load", record["rejected"][self.r.sha["weak"]])
-        self.assertNotIn(self.r.sha["weak"], record["pool"])
-        self.assertEqual(set(self.by_body(record)), {self.r.sha["t1"], self.r.sha["t2"]})
+        self.assertIn(self.r.sha["weak"], record["pool"])
+        self.assertEqual(record["rejected"], {})
 
-    def test_a_twin_check_failure_rejects_only_the_new_body(self):
+    def test_a_chassis_that_cannot_grade_fails_the_round(self):
+        self.r.runner = self.failing(
+            ValueError("bad output"), chassis_error=ValueError("driver gone")
+        )
+        with self.assertRaisesRegex(RuntimeError, "chassis"):
+            self.r.run()
+        self.assertTrue((self.r.state / "bodies" / self.r.sha["weak"]).exists())
+        state = json.loads((self.r.state / "pool.json").read_text())
+        self.assertNotIn(self.r.sha["weak"], state["rejected"])
+
+    def test_a_body_failing_grading_is_banned_only_after_three_rounds(self):
+        weak = self.r.sha["weak"]
+        self.r.runner = self.failing(ValueError("bad output"))
+        for day, banned in (("03", False), ("04", False), ("05", True)):
+            with self.subTest(day=day):
+                record = self.r.run(round_id=f"d3-mini-2026-11-{day}")
+                self.assertNotIn(weak, record["pool"])
+                self.assertEqual(set(self.by_body(record)), {self.r.sha["t1"], self.r.sha["t2"]})
+                state = json.loads((self.r.state / "pool.json").read_text())
+                self.assertEqual(weak in state["rejected"], banned)
+                self.assertEqual((self.r.state / "bodies" / weak).exists(), not banned)
+        self.assertEqual(len(state["grade_failures"][weak]), 3)
+
+    def test_a_twin_check_failure_is_a_retryable_strike(self):
         def twins(rows, other_rows):
-            if len(rows) and rows is not other_rows and twins.calls == 0:
+            if twins.calls == 0:
                 twins.calls += 1
                 raise ValueError("bad rows")
             return False
 
         twins.calls = 0
         record = self.r.run(twins=twins)
-        self.assertEqual(len(record["rejected"]), 1)
-        self.assertIn("bad rows", next(iter(record["rejected"].values())))
+        self.assertEqual(record["rejected"], {})
+        self.assertEqual(len(record["grade_failures"]), 1)
         self.assertTrue(record["members"])
+        failed = next(iter(record["grade_failures"]))
+        again = self.r.run(round_id="d3-mini-2026-11-04", twins=lambda a, b: False)
+        self.assertIn(failed, again["pool"])  # retried in the next round
+
+    def test_each_body_is_built_once_and_graded_once_on_the_whole_subset(self):
+        from zils import soup
+
+        build, built, sizes = soup.build, [], []
+        fake = self.r.runner
+
+        def counting(out, chassis, members, *, model):
+            built.append(Path(out).name)
+            return build(out, chassis, members, model=model)
+
+        def runner_for(folder):
+            run = fake(folder)
+
+            def sized(cases):
+                sizes.append(len(cases))
+                return run(cases)
+
+            return sized
+
+        self.r.runner = runner_for
+        with patch("zils.soup.build", side_effect=counting):
+            record = self.r.run()
+        for sha in record["pool"]:
+            self.assertEqual(sum(n.startswith(sha[:32]) for n in built), 1, sha)
+            graded = [v for k, v in fake.graded.items() if Path(k).name.startswith(sha[:32])]
+            self.assertEqual(graded, [300])  # the screen items are read from the full-subset rows
+        self.assertLessEqual(max(sizes), soup_round.GRADE_CHUNK)
+
+    def test_a_crash_mid_body_keeps_its_graded_chunks(self):
+        self.r.runner.fail_after = 300 + 250  # the second body dies in its second chunk
+        with self.assertRaises(RuntimeError):  # the chassis cannot grade either: a round fault
+            self.r.run()
+        self.r.runner.fail_after = None
+        record = self.r.run()
+        bodies_graded = sum(
+            v
+            for k, v in self.r.runner.graded.items()
+            if "/tmp/soup-" not in k and "/tmp/final" not in k
+        )
+        self.assertLess(bodies_graded - 300 * len(record["pool"]), soup_round.GRADE_CHUNK)
 
     def grief_snapshot(self, victim, griefer_repo, block=95, uid=5):
         """The roster commits as usual, and `uid` first commits `victim`'s hash from `griefer_repo`."""

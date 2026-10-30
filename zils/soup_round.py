@@ -153,6 +153,9 @@ MAX_NEW_PER_ROUND = (
 )
 PRUNE_ROUNDS = 3  # a body out of the pool this many rounds loses its folder (hash and sketch kept)
 SOUP_CACHE_ROUNDS = 3  # a soup's cached predictions are dropped after this many rounds unused
+GRADE_CHUNK = 200  # items graded per cache write, so a timed-out round keeps its progress
+GRADE_STRIKES = 3  # rounds a body may fail grading (with a healthy chassis) before it is banned
+_GPU_FAULTS = ("cuda", "out of memory", "cublas", "cudnn", "nccl", "device-side", "accelerator")
 _ROUND_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
@@ -193,6 +196,15 @@ def _reason(error):
     """A rejection reason: a ValueError's message, or any other exception's type and message."""
     text = str(error) if isinstance(error, ValueError) else f"{type(error).__name__}: {error}"
     return text[:400]
+
+
+def _round_fault(error):
+    """True for failures of the validator rather than a body: its disk or files, or the GPU (a CUDA
+    or out-of-memory error). These fail the whole round, which is retried; they never strike a body."""
+    if isinstance(error, OSError | MemoryError):
+        return True
+    text = f"{type(error).__name__} {error}".lower()
+    return isinstance(error, RuntimeError) and any(word in text for word in _GPU_FAULTS)
 
 
 def _rename(folder):
@@ -513,65 +525,106 @@ def run(
         return f"{sha[:32]}-{scope}"
 
     def graded(key, cases, members):
-        """Rows for `cases` under `key`; missing rows grade the soup of `members` built on the chassis
-        (a one-member soup is the body itself as a d3 candidate), deleted after grading."""
+        """Rows for `cases` under `key`. Missing rows grade the soup of `members` built once on the
+        chassis (a one-member soup is the body itself as a d3 candidate), cached every
+        `GRADE_CHUNK` items, and the build is deleted after grading."""
         have = cache.get(key, [c["id"] for c in cases])
-        if len(have) == len(cases):
-            return [have[c["id"]] for c in cases]
-        out = scratch / key
-        shutil.rmtree(out, ignore_errors=True)
-        try:
-            built = [(folder(s), _rename(folder(s))) for s in members]
-            soup.build(out, chassis, built, model=model)
-            return soup_grade.grade(key, cases, cache, runner_for(out))
-        finally:
+        missing = [c for c in cases if c["id"] not in have]
+        if missing:
+            out = scratch / key
             shutil.rmtree(out, ignore_errors=True)
+            try:
+                built = [(folder(s), _rename(folder(s))) for s in members]
+                soup.build(out, chassis, built, model=model)
+                runner = runner_for(out)
+                for start in range(0, len(missing), GRADE_CHUNK):
+                    soup_grade.grade(key, missing[start : start + GRADE_CHUNK], cache, runner)
+            finally:
+                shutil.rmtree(out, ignore_errors=True)
+            have = cache.get(key, [c["id"] for c in cases])
+        return [have[c["id"]] for c in cases]
 
     def grade(sha, cases):
         return graded(body_key(sha), cases, (sha,))
 
+    failures, checked = {}, []
+
+    def strike(sha, stage, error):
+        """A body failed grading. A GPU or disk fault, or a chassis that cannot grade either, fails
+        the round instead; otherwise the body sits this round out (``_finish`` bans it after
+        ``GRADE_STRIKES`` such rounds)."""
+        if _round_fault(error):
+            raise error
+        if not checked:
+            try:
+                runner_for(chassis)(subset[:1])
+            except Exception as chassis_error:
+                raise RuntimeError(
+                    f"the chassis cannot grade either ({type(chassis_error).__name__}); "
+                    "the round is retried"
+                ) from error
+            checked.append(True)
+        print(f"soup {stage}: body {sha} failed grading ({type(error).__name__})", flush=True)
+        failures[sha] = _reason(error)
+
     screen_ids = set(soup_grade.screen_subset(subset, seed, config.get("screen_size", SCREEN_SIZE)))
     screen_cases = [c for c in subset if c["id"] in screen_ids]
+    max_pool = config.get("max_pool", MAX_POOL)
     incumbents = list(dict.fromkeys([s for s in state["members"] if s in known] + sorted(house)))
-    screened, screen = [], {}
-    for sha in sorted(intake["new"], key=order):
+    solo = {}
+    for sha in incumbents[:max_pool]:  # graded first, so twin checks read their rows from the cache
         try:
-            rows = grade(sha, screen_cases)
+            solo[sha] = soup_grade.score(subset, grade(sha, subset))
+        except Exception as error:
+            strike(sha, "solo", error)
+    # New bodies, and bodies admitted earlier that have not been graded yet (an earlier failure).
+    candidates = set(intake["new"]) | {
+        s
+        for s, info in known.items()
+        if not info["house"] and info["solo"] is None and not info.get("pruned")
+        if s not in rejected and s not in solo
+    }
+    screened, screen, scored = [], {}, {}
+    for sha in sorted(candidates, key=order):
+        try:
+            rows = grade(sha, subset)  # the whole subset once; the screen reads its own items
+            by_id = {r["id"]: r for r in rows}
+            screen_rows = [by_id[c["id"]] for c in screen_cases]
             others = [  # a hotkey's newer body may behave like its own earlier one
                 o
-                for o in incumbents + screened
+                for o in [*solo, *screened]
                 if known[o]["hotkey"] is None or known[o]["hotkey"] != known[sha]["hotkey"]
             ]
-            if any(twins(rows, grade(other, screen_cases)) for other in others):
+            if any(twins(screen_rows, grade(other, screen_cases)) for other in others):
                 rejected[sha] = "behavioural twin of a pool body"
                 continue
-            screen[sha] = soup_grade.screen_score(screen_cases, rows)
-        except OSError:
-            raise  # the validator's disk or files, not the body: the round retries
-        except Exception as error:  # a body that cannot be graded is rejected
-            print(f"soup screen: body {sha} rejected ({type(error).__name__})", flush=True)
-            rejected[sha] = _reason(error)
+            screen[sha] = soup_grade.screen_score(screen_cases, screen_rows)
+            score = soup_grade.score(subset, rows)
+        except Exception as error:
+            strike(sha, "screen", error)
             continue
         screened.append(sha)
+        scored[sha] = score
     past = [
         s
         for s, info in known.items()
-        if s not in incumbents and s not in screen and s not in rejected
+        if s not in solo and s not in screen and s not in rejected and s not in failures
         if not info["house"] and info["solo"] is not None and not info.get("pruned")
     ]
-    ranked = incumbents + sorted(screened, key=lambda s: (-screen[s], order(s)))
+    ranked = list(solo) + sorted(screened, key=lambda s: (-screen[s], order(s)))
     ranked += sorted(past, key=lambda s: (-known[s]["solo"], order(s)))
-    solo = {}
     for sha in dict.fromkeys(ranked):
-        if len(solo) >= config.get("max_pool", MAX_POOL):
+        if len(solo) >= max_pool:
             break
+        if sha in solo:
+            continue
+        if sha in scored:
+            solo[sha] = scored[sha]
+            continue
         try:
             solo[sha] = soup_grade.score(subset, grade(sha, subset))
-        except OSError:
-            raise
-        except Exception as error:  # a body that cannot be graded is rejected
-            print(f"soup solo: body {sha} rejected ({type(error).__name__})", flush=True)
-            rejected[sha] = _reason(error)
+        except Exception as error:
+            strike(sha, "solo", error)
     pool = list(solo)
     if not pool:
         raise ValueError("soup pool has no bodies")
@@ -657,6 +710,7 @@ def run(
         "rates": rate_map,
         "trace": trace,
         "rejected": rejected,
+        "grade_failures": failures,
         "refused": intake["refused"],
         "failed": intake["failed"],
         "new": sorted(intake["new"]),
@@ -681,9 +735,18 @@ def _finish(state_dir, round_dir, ledger):
     for sha, score in private["solo"].items():
         state["bodies"][sha]["solo"] = score
     new = set(private["new"])
-    for sha, reason in private["rejected"].items():
-        if sha in state["members"] or (sha in state["bodies"] and sha not in new):
-            continue  # a seated or earlier-admitted body is never condemned or deleted here
+    banned = dict(private["rejected"])
+    strikes = state.setdefault("grade_failures", {})
+    for sha, reason in private.get("grade_failures", {}).items():
+        strikes.setdefault(sha, {})[private["round_id"]] = reason
+        if len(strikes[sha]) >= GRADE_STRIKES:
+            banned[sha] = f"failed grading in {len(strikes[sha])} rounds: {reason}"[:400]
+    for sha, reason in banned.items():
+        info = state["bodies"].get(sha, {})
+        if sha in state["members"] or info.get("house"):
+            continue  # a seated or house body is never condemned or deleted here
+        if sha in state["bodies"] and sha not in new and sha not in strikes:
+            continue  # nor an earlier-admitted body, except after repeated grading failures
         state["rejected"][sha] = reason
         state["bodies"].pop(sha, None)
         shutil.rmtree(state_dir / "bodies" / sha, ignore_errors=True)
