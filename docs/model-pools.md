@@ -51,6 +51,58 @@ sealed draw. Runtime state goes under `base-pools/<pool>/base-tier`; prior legac
 state is preserved. Each pending validator round freezes the pool config and
 results. A changed config cannot replay that pending round.
 
+## Soup pools
+
+A pool entry with `"type": "soup"` pays from daily soup rounds instead of a king
+history (omit `type` for a king pool). Each round admits `zilsb2` body
+commitments, grades the pool's bodies alone and as uniform averages ("soups") on
+a seeded subset of a private round bank, and pays the soup's seats and the best
+solo body (the crown). The mechanism and its constants live in
+`zils/soup_round.py`; copy and twin checks in `zils/soup_copies.py`; pay rates and
+the house registry in `zils/soup_rates.py`.
+
+A soup entry contains `type`, `model`, `enabled`, `share`, `house`, `schedule` and
+`sketch_seed`, and optionally `subset_size` (default 3,000), `screen_size` (300)
+and `max_pool` (20, at least 5):
+
+```json
+"d3-mini": {
+  "type": "soup",
+  "model": "d3-mini-4.5b-v1",
+  "enabled": true,
+  "share": 0.4,
+  "house": "zils/data/soup-house.json",
+  "schedule": {"deadline_utc": "00:00"},
+  "sketch_seed": "<64 hex characters, fixed for the life of the pool>"
+}
+```
+
+- `house` is the house registry inline (a list of `name`, `repo`, `revision`,
+  `body_sha256`) or a path to it relative to the validator directory. A
+  `body_sha256` of `null` is identified by the hash of the body at its revision.
+- `schedule.deadline_utc` is the daily commit deadline. The round for a day uses
+  the first block after that deadline as its seed and admits only commitments
+  made before that block.
+- `sketch_seed` seeds the weight sketches used by the copy checks and the scout
+  rate. Changing it makes earlier sketches incomparable, so keep it fixed.
+
+`base_pool_rounds` names a soup pool with `round_bank` (the private bank, JSON
+list or JSONL of exam cases) and `base` (the vendor parent folder the body change
+is measured against). The chassis is the pool model's pinned parent.
+
+Payout: the latest round's public record pays each seated hotkey its seat
+weight and the crown its crown weight, as fractions of the pool's share. Whatever
+a round does not pay goes to `burn_uid`; before the first round the whole share
+burns. A failed round keeps the previous round's record.
+
+Rounds run inside the validator loop, at most one per pool per day, as a child
+process in the GPU runtime (`python -m zils.soup_pool <request>`). State lives
+under `base-pools/<pool>/soup`: known bodies, the prediction cache, the item use
+ledger and `rounds/<round id>/` with the private and public records. A crashed
+round resumes from its cache and is counted once in the ledger. Only the public
+record (members, rates, rounded contributions, category scores and hashes of the
+subset, predictions and soup) enters the published report.
+
 ## Submit, evaluate and promote
 
 Run `zils setup` to select the exact base profile to beat in your tier, or pass

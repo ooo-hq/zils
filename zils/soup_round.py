@@ -3,13 +3,20 @@
 Each round, validators build a fresh uniform-weight average ("soup") of up to five model bodies from the
 round's pool, chosen greedily (Wortsman et al. 2022, with a minimum gain per added member). The pool's
 emission share splits 80% among soup seats and 20% to the round's best single body (the crown); any share
-nobody earns burns. These functions are pure: grading is passed in as ``evaluate`` and never imported here.
+nobody earns burns. The selection and pay functions are pure: grading is passed in as ``evaluate``.
+``run`` orchestrates one round on a validator; its model, download and chain dependencies are injected.
 
 A body is any hashable id (a body sha256 in production). ``evaluate(members)`` grades the uniform soup of a
 sorted tuple of bodies and returns its exam score in points.
 """
 
+import hashlib
+import json
 import math
+import os
+import re
+import shutil
+from pathlib import Path
 
 MARGIN = 0.3  # minimum soup score gain (points) for greedy to add a body; above GPU-to-GPU drift
 MAX_MEMBERS = 5
@@ -128,3 +135,450 @@ def soup_weights(decision, members):
             uid = uid_by_hotkey[hotkey]
             result[uid] = result.get(uid, 0.0) + weight
     return result
+
+
+# ---- Round orchestration -------------------------------------------------------------------------
+
+SUBSET_SIZE = (
+    3000  # round items graded per body; drawn fresh from the private round bank each round
+)
+SCREEN_SIZE = 300  # items a new body is screened on before it can join the pool
+MAX_POOL = 20  # bodies graded alone and offered to the greedy soup each round
+_ROUND_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+
+
+def round_seed(block_hash, pool_id):
+    """The round's seed: sha256 of the seed block's hash and the pool id."""
+    return hashlib.sha256(f"{block_hash}:{pool_id}".encode()).digest()
+
+
+def bank_sha256(bank):
+    """Commitment to the round bank's content, so cached rows are never shared between banks."""
+    from .soup_publish import canonical_json
+
+    return hashlib.sha256(canonical_json(sorted(bank, key=lambda c: c["id"]))).hexdigest()
+
+
+def default_rate(sha256, info, house):
+    """House ingredients are seated unpaid; every other body is paid as a trainer's.
+
+    The scout/trainer rate (``soup_rates.rate``) replaces this through ``run(rates=...)``.
+    """
+    return HOUSE_RATE if sha256 in house else TRAINER_RATE
+
+
+def _write_json(path, value):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + ".partial")
+    partial.write_text(json.dumps(value, indent=2, sort_keys=True, allow_nan=False) + "\n")
+    os.replace(partial, path)
+
+
+def _read_json(path, default):
+    path = Path(path)
+    return json.loads(path.read_text()) if path.exists() else default
+
+
+def _rename(folder):
+    from . import bodies
+
+    return "strip-model" if any(k.startswith("model.") for k in bodies.load_index(folder)) else None
+
+
+def _house(config, state, *, names, download, folder, scratch):
+    """Resolve the house registry to body hashes, downloading each house body once.
+
+    An entry pinned with ``body_sha256`` must hash to it; an unpinned one (null, until the registry is
+    filled) is identified by the hash of the body downloaded at its pinned revision.
+    """
+    from . import bodies
+
+    resolved, known = state.setdefault("house", {}), state["bodies"]
+    for item in config["house"]:
+        ref = f"{item['repo']}@{item['revision']}"
+        sha = resolved.get(ref)
+        if sha is None or sha not in known:
+            claim = {k: item[k] for k in ("repo", "revision")}
+            claim.update(sha256=item["body_sha256"], hotkey=None)
+            partial = download(claim, scratch / "house.partial")
+            sha = bodies.body_hash(partial, names)
+            if item["body_sha256"] not in (None, sha):
+                shutil.rmtree(partial, ignore_errors=True)
+                raise ValueError(f"house body {item['name']} differs from its pinned hash")
+            if folder(sha).exists():
+                shutil.rmtree(partial)
+            else:
+                os.replace(partial, folder(sha))
+            resolved[ref] = sha
+            known[sha] = {
+                "hotkey": None, "uid": None, "repo": item["repo"], "revision": item["revision"],
+                "block": -1, "house": True, "solo": None, "name": item["name"],
+            }  # fmt: skip
+    return {resolved[f"{i['repo']}@{i['revision']}"] for i in config["house"]}
+
+
+def _intake(state, snapshot, *, chassis, base, download, copies, folder):
+    """Admit new zilsb2 commitments in commitment order. Returns (new bodies, rejected, refused)."""
+    from . import bodies
+
+    known, prior_rejected = state["bodies"], state["rejected"]
+    claims, refused = [], {}
+    for uid, item in snapshot.get("commitments", {}).items():
+        if not str(item.get("data", "")).startswith(bodies.PREFIX + ":"):
+            continue
+        hotkey = snapshot.get("members", {}).get(str(uid))
+        try:
+            claim = bodies.parse_commitment(item["data"])
+            if not isinstance(hotkey, str):
+                raise ValueError("commitment uid is not in the round's roster")
+        except ValueError as error:
+            refused[str(uid)] = str(error)[:400]
+            continue
+        claims.append({**claim, "uid": int(uid), "hotkey": hotkey, "block": int(item["block"])})
+    new, rejected = {}, {}
+    for claim in sorted(claims, key=lambda c: (c["block"], c["uid"])):
+        sha, uid = claim["sha256"], str(claim["uid"])
+        if sha in known or sha in new:
+            if (known.get(sha) or new[sha])["hotkey"] != claim["hotkey"]:
+                refused[uid] = "body committed first by another hotkey"
+            continue
+        if sha in prior_rejected:
+            refused[uid] = "body rejected in an earlier round"
+            continue
+        earlier = {
+            s: folder(s)
+            for s, info in [*known.items(), *new.items()]
+            if not info["house"] and info["hotkey"] != claim["hotkey"]
+        }
+        try:
+            if not folder(sha).exists():
+                os.replace(download(claim, folder(sha).with_name(f".{sha}.partial")), folder(sha))
+            if bodies.validate_body(folder(sha), chassis, hotkey=claim["hotkey"], base=base) != sha:
+                raise ValueError("downloaded body hash differs from the commitment")
+            soup = tuple(s for s in state["members"] if s in known)
+            if copies is not None and (reason := copies(sha, folder(sha), earlier, soup=soup)):
+                raise ValueError(f"copy: {reason}")
+        except ValueError as error:
+            rejected[sha] = str(error)[:400]
+            shutil.rmtree(folder(sha), ignore_errors=True)
+            continue
+        except OSError as error:  # a failed download is retried next round, not held against it
+            refused[uid] = f"download failed: {error}"[:400]
+            shutil.rmtree(folder(sha), ignore_errors=True)
+            continue
+        new[sha] = {
+            "hotkey": claim["hotkey"], "uid": claim["uid"], "repo": claim["repo"],
+            "revision": claim["revision"], "block": claim["block"], "house": False, "solo": None,
+        }  # fmt: skip
+    return new, rejected, refused
+
+
+class _Sketches:
+    """Body sketches (``soup_copies.sketch``) under one fixed per-pool seed, cached on disk by body hash."""
+
+    def __init__(self, root, base, names, seed):
+        self.root, self.base, self.names, self.seed = Path(root), base, names, seed
+        self.tag = hashlib.sha256(seed).hexdigest()[:16]
+
+    def __call__(self, sha, folder):
+        import numpy as np
+
+        from . import soup_copies
+
+        path = self.root / f"{sha}-{self.tag}.npy"
+        if path.exists():
+            return np.load(path)
+        value = soup_copies.sketch(folder, self.base, self.names, seed=self.seed)
+        self.root.mkdir(parents=True, exist_ok=True)
+        partial = path.with_name(path.name + ".partial.npy")
+        np.save(partial, value)
+        os.replace(partial, path)
+        return value
+
+
+def run(
+    config,
+    state_dir,
+    *,
+    round_id,
+    snapshot,
+    block_hash,
+    bank,
+    ledger,
+    cache,
+    runner_for,
+    fetch_body,
+    chassis,
+    base=None,
+    copies=None,
+    twins=None,
+    rates=None,
+):
+    """One soup round for one pool. Returns the private round record (also written to disk).
+
+    ``config`` is the validated soup pool entry plus ``pool_id``, with ``house`` resolved to the
+    registry list ({name, repo, revision, body_sha256 or null}) and ``sketch_seed`` the pool's fixed
+    sketch seed (hex). ``snapshot`` is the frozen chain view ({"members": {uid: hotkey},
+    "commitments": {uid: {"block", "data"}}}) holding only commitments made before the seed block.
+    ``block_hash`` is the seed block's hash. ``ledger`` is a ``soup_exam.UseLedger``, ``cache`` a
+    ``soup_grade.PredictionCache``. ``runner_for(folder)`` returns a ``soup_grade`` runner for a body
+    or soup folder. ``fetch_body(claim, dest)`` downloads a body repo at its revision into ``dest``
+    and returns it. ``chassis`` is the pinned parent folder; ``base`` the vendor (Qwen) parent.
+
+    Hooks, each defaulting to ``soup_copies``/``soup_rates`` when ``base`` is given:
+    ``copies(sha256, folder, earlier, *, soup) -> reason | None`` rejects a weight-level copy of an
+    earlier body by another hotkey (``earlier`` = {sha256: folder}) or of the current soup (``soup`` =
+    its member hashes) before screening; ``twins(rows, other_rows) -> bool`` rejects a behavioural
+    twin of a pool body on the screen items (default ``soup_copies.is_twin``);
+    ``rates(sha256, info, house) -> 0.0 | 0.25 | 1.0`` sets each pool body's pay rate (default
+    ``soup_rates.rate`` against the house sketches; without ``base``, house 0.0 and others 1.0).
+
+    State lives under ``state_dir``: ``pool.json`` (known bodies, rejections, members), ``bodies/``,
+    ``sketches/``, ``rounds/<round_id>/`` (subset, intake, private and public records, the final
+    soup) and ``decision.json`` (the latest public record). The ledger is written last, so a crashed
+    round reruns from its cached predictions and is recorded once.
+    """
+    from . import base_metrics, bodies, models, soup, soup_copies, soup_exam, soup_grade, soup_rates
+
+    if not isinstance(round_id, str) or not _ROUND_ID.fullmatch(round_id):
+        raise ValueError("round_id must be a safe name")
+    state_dir = Path(state_dir)
+    round_dir = state_dir / "rounds" / round_id
+    if (round_dir / "private.json").exists():
+        return _finish(state_dir, round_dir, ledger)
+    pool_id = config["pool_id"]
+    model = config["model"]
+    model = model if isinstance(model, str) else models.validate_spec(model)
+    seed = round_seed(block_hash, pool_id)
+    bank_key = bank_sha256(bank)
+    scratch = state_dir / "tmp"
+    scratch.mkdir(parents=True, exist_ok=True)
+    (state_dir / "bodies").mkdir(parents=True, exist_ok=True)
+    names = list(bodies.load_index(chassis))
+
+    def folder(sha):
+        return state_dir / "bodies" / sha
+
+    def download(claim, dest):
+        shutil.rmtree(dest, ignore_errors=True)
+        return Path(fetch_body(claim, dest) or dest)
+
+    by_id = {c["id"]: c for c in bank}
+    if (round_dir / "subset.json").exists():
+        subset = [by_id[i] for i in json.loads((round_dir / "subset.json").read_text())]
+    else:
+        size = config.get("subset_size", SUBSET_SIZE)
+        subset = soup_exam.subset(bank, seed, size, exclude=ledger.retired())
+        _write_json(round_dir / "subset.json", [c["id"] for c in subset])
+    ids = [c["id"] for c in subset]
+
+    state = _read_json(
+        state_dir / "pool.json", {"bodies": {}, "rejected": {}, "members": [], "soup": None}
+    )
+    house = _house(config, state, names=names, download=download, folder=folder, scratch=scratch)
+    _write_json(state_dir / "pool.json", state)
+    known = state["bodies"]
+
+    sketch = None
+    if base is not None:
+        sketches = _Sketches(
+            state_dir / "sketches", base, names, bytes.fromhex(config["sketch_seed"])
+        )
+
+        def sketch(sha):
+            return sketches(sha, folder(sha))
+
+        if copies is None:
+
+            def copies(sha, body, earlier, *, soup):
+                members = [sketch(s) for s in soup]
+                return soup_copies.is_copy(
+                    sketch(sha),
+                    [sketch(s) for s in earlier],
+                    soup=sum(members) / len(members) if members else None,
+                )
+
+        if rates is None:
+            house_known = [
+                {"body_sha256": s, "sketch": sketch(s), "hotkey": None, "repo": known[s]["repo"]}
+                for s in sorted(house)
+            ]
+
+            def rates(sha, info, house):
+                return soup_rates.rate(
+                    sha, sketch(sha), house=house, known=house_known, hotkey=info["hotkey"],
+                    repo=info["repo"],
+                )  # fmt: skip
+
+    twins = soup_copies.is_twin if twins is None else twins
+    rates = rates or default_rate
+
+    intake = _read_json(round_dir / "intake.json", None)
+    if intake is None:
+        new, rejected, refused = _intake(
+            state, snapshot, chassis=chassis, base=base, download=download, copies=copies,
+            folder=folder,
+        )  # fmt: skip
+        intake = {"new": new, "rejected": rejected, "refused": refused}
+        _write_json(round_dir / "intake.json", intake)
+    known.update(intake["new"])
+    state["rejected"].update(intake["rejected"])
+    _write_json(state_dir / "pool.json", state)
+    rejected = dict(intake["rejected"])
+
+    def order(sha):
+        info = known[sha]
+        return (info["block"], -1 if info["uid"] is None else info["uid"], sha)
+
+    def body_key(sha):
+        return f"{sha[:32]}-{bank_key[:16]}"
+
+    def grade(sha, cases):
+        return soup_grade.grade(body_key(sha), cases, cache, runner_for(folder(sha)))
+
+    screen_ids = set(soup_grade.screen_subset(subset, seed, config.get("screen_size", SCREEN_SIZE)))
+    screen_cases = [c for c in subset if c["id"] in screen_ids]
+    incumbents = list(dict.fromkeys([s for s in state["members"] if s in known] + sorted(house)))
+    screened, screen = [], {}
+    for sha in sorted(intake["new"], key=order):
+        rows = grade(sha, screen_cases)
+        if any(twins(rows, grade(other, screen_cases)) for other in incumbents + screened):
+            rejected[sha] = "behavioural twin of a pool body"
+            continue
+        screen[sha] = soup_grade.screen_score(screen_cases, rows)
+        screened.append(sha)
+    past = [
+        s
+        for s, info in known.items()
+        if s not in incumbents and s not in screen and s not in rejected
+        if not info["house"] and info["solo"] is not None
+    ]
+    ranked = incumbents + sorted(screened, key=lambda s: (-screen[s], order(s)))
+    ranked += sorted(past, key=lambda s: (-known[s]["solo"], order(s)))
+    pool = list(dict.fromkeys(ranked))[: config.get("max_pool", MAX_POOL)]
+    if not pool:
+        raise ValueError("soup pool has no bodies")
+
+    solo = {sha: soup_grade.score(subset, grade(sha, subset)) for sha in pool}
+
+    def soup_key(members):
+        digest = hashlib.sha256("+".join(members).encode()).hexdigest()
+        return f"soup-{digest[:32]}-{bank_key[:16]}"
+
+    def soup_rows(members):
+        if len(members) == 1:
+            return grade(members[0], subset)
+        key = soup_key(members)
+        have = cache.get(key, ids)
+        if len(have) == len(ids):
+            return [have[i] for i in ids]
+        out = scratch / key
+        shutil.rmtree(out, ignore_errors=True)
+        try:
+            built = [(folder(s), _rename(folder(s))) for s in members]
+            soup.build(out, chassis, built, model=model)
+            return soup_grade.grade(key, subset, cache, runner_for(out))
+        finally:
+            shutil.rmtree(out, ignore_errors=True)
+
+    scores = {}
+
+    def evaluate(members):
+        members = tuple(sorted(members))
+        if len(members) == 1:
+            return solo[members[0]]
+        if members not in scores:
+            scores[members] = soup_grade.score(subset, soup_rows(members))
+        return scores[members]
+
+    members, trace = greedy(solo, evaluate, order_key=order)
+    baseline = None
+    if len(members) == 1:
+        key = f"chassis-{soup.soup_hash(chassis)[:32]}-{bank_key[:16]}"
+        baseline = soup_grade.score(
+            subset, soup_grade.grade(key, subset, cache, runner_for(chassis))
+        )
+    contributions = leave_one_out(members, evaluate, baseline=baseline)
+    rate_map = {sha: rates(sha, known[sha], house) for sha in pool}
+    seats = seat_weights(members, contributions, rate_map)
+    crown = crown_weight(solo, rate_map, house, order_key=order)
+
+    final = round_dir / "soup"
+    if not final.exists():
+        partial = scratch / f"final-{round_id}"
+        shutil.rmtree(partial, ignore_errors=True)
+        soup.build(
+            partial, chassis, [(folder(s), _rename(folder(s))) for s in members], model=model
+        )
+        os.replace(partial, final)
+    rows = soup_rows(members)
+    metrics = base_metrics.score(subset, rows)
+    crown_body = next(iter(crown), None)
+    private = {
+        "round_id": round_id,
+        "pool_id": pool_id,
+        "seed": seed.hex(),
+        "block_hash": block_hash,
+        "bank_sha256": bank_key,
+        "subset_ids": ids,
+        "members": [
+            {
+                "hotkey": known[s]["hotkey"],
+                "body_sha256": s,
+                "rate": rate_map[s],
+                "contribution": contributions[s],
+                "seat_weight": seats.get(s, 0.0),
+            }
+            for s in members
+        ],
+        "crown": None
+        if crown_body is None
+        else {
+            "hotkey": known[crown_body]["hotkey"],
+            "body_sha256": crown_body,
+            "rate": rate_map[crown_body],
+            "weight": crown[crown_body],
+        },
+        "category_scores": {c: 100 * v for c, v in metrics["categories"].items()},
+        "family_scores": {f: 100 * v["skill"] for f, v in metrics["families"].items()},
+        "predictions": rows,
+        "soup_sha256": soup.soup_hash(final),
+        "pool": pool,
+        "solo": solo,
+        "screen": screen,
+        "rates": rate_map,
+        "trace": trace,
+        "rejected": rejected,
+        "refused": intake["refused"],
+    }
+    _write_json(round_dir / "private.json", private)
+    return _finish(state_dir, round_dir, ledger)
+
+
+def _finish(state_dir, round_dir, ledger):
+    """Publish a graded round: public record, pool state, decision, then the ledger (idempotent)."""
+    from . import soup_publish
+
+    private = json.loads((round_dir / "private.json").read_text())
+    public = soup_publish.public_record(private)
+    _write_json(round_dir / "public.json", public)
+    state = _read_json(
+        state_dir / "pool.json", {"bodies": {}, "rejected": {}, "members": [], "soup": None}
+    )
+    state["members"] = [m["body_sha256"] for m in private["members"]]
+    for sha, score in private["solo"].items():
+        state["bodies"][sha]["solo"] = score
+    for sha, reason in private["rejected"].items():
+        state["rejected"][sha] = reason
+        state["bodies"].pop(sha, None)
+        shutil.rmtree(state_dir / "bodies" / sha, ignore_errors=True)
+    state["soup"] = f"rounds/{private['round_id']}/soup"
+    state["round_id"] = private["round_id"]
+    _write_json(state_dir / "pool.json", state)
+    _write_json(state_dir / "decision.json", public)
+    for other in (state_dir / "rounds").iterdir():
+        if other != round_dir:
+            shutil.rmtree(other / "soup", ignore_errors=True)
+    ledger.record(private["round_id"], private["subset_ids"])
+    return private

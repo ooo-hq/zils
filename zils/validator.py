@@ -312,8 +312,14 @@ def attach_base_pools(config, directory, work, report):
         else:
             for pool, entry in normalized["pools"].items():
                 current = directory / "base-pools" / pool / "base-tier" / "decision.json"
-                if entry["enabled"] and current.exists():
+                if entry["enabled"] and not model_pools.is_soup(entry) and current.exists():
                     decisions[pool] = json.loads(current.read_text())
+        from . import soup_pool
+
+        for pool in soup_pool.soup_pools(config):
+            # The latest soup round's public record; before the first round the pool burns.
+            if (soup := soup_pool.decision(directory, pool)) is not None:
+                decisions[pool] = soup
         wire.write_json(frozen, {"config": normalized, "decisions": decisions})
     saved = json.loads(frozen.read_text())
     if saved["config"] != normalized:
@@ -334,6 +340,11 @@ def pool_rounds(config, directory):
         raise ValueError("base_pool_rounds must name each enabled pool exactly once")
     rounds = {}
     for pool, entry in enabled.items():
+        if model_pools.is_soup(entry):
+            from . import soup_pool
+
+            soup_pool.paths(config, directory, pool)  # soup rounds run in soup_pool.epoch
+            continue
         if not isinstance(paths[pool], dict) or set(paths[pool]) != {
             "base_round_dir",
             "base_reference",
@@ -361,7 +372,7 @@ def pool_rounds(config, directory):
 
 
 def base_pools_epoch(config, directory, work, snapshot, args, rounds):
-    from . import commitments, feature_commitments
+    from . import bodies, commitments, feature_commitments
 
     if "base_validation_queue" in config:
         from . import base_queue
@@ -376,7 +387,9 @@ def base_pools_epoch(config, directory, work, snapshot, args, rounds):
         "commitments": {
             uid: item
             for uid, item in snapshot.get("commitments", {}).items()
-            if not str(item.get("data", "")).startswith(feature_commitments.PREFIX + ":")
+            if not str(item.get("data", "")).startswith(
+                (feature_commitments.PREFIX + ":", bodies.PREFIX + ":")
+            )
         },
     }
     routed, rejected = commitments.route_pools(
@@ -1108,6 +1121,24 @@ def validator(config, directory, args):
                     args,
                     pools,
                 )
+            from . import soup_pool
+
+            if (
+                chain_state is not None
+                and soup_pool.soup_pools(settings_for_round)
+                and not (work / "base-pools.json").exists()
+                and not (work / "soup-pools.json").exists()
+            ):
+                # One soup round per soup pool per day, before this round's pool decisions freeze.
+                with testnet.connect(config) as sub:
+                    soup_summary = soup_pool.epoch(
+                        settings_for_round,
+                        directory,
+                        json.loads((work / "chain-snapshot.json").read_text()),
+                        block_info=sub.block_info,
+                        run_round=soup_pool.child_round(args, work),
+                    )
+                wire.write_json(work / "soup-pools.json", soup_summary)
             report = attach_base_pools(settings_for_round, directory, work, report)
             if features and not (work / "feature-tracks.json").exists():
                 feature_round.epoch(

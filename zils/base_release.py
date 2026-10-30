@@ -71,6 +71,8 @@ def active_context(config, pool_id, *, directory):
     entry = pools["pools"].get(pool_id)
     if not entry or not entry["enabled"]:
         raise ValueError("pool is not enabled in active configuration")
+    if model_pools.is_soup(entry):
+        raise ValueError("soup pool releases do not use the king release path")
     paths = config.get("base_pool_rounds", {}).get(pool_id)
     if (
         not isinstance(paths, dict)

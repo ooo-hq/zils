@@ -19,7 +19,11 @@ FIELDS = {"name", "repo", "revision", "body_sha256"}
 
 def load_house(path=None):
     """The pinned house registry: a list of {"name", "repo", "revision", "body_sha256" (or null)}."""
-    value = json.loads(Path(path or HOUSE_PATH).read_text())
+    return validate_house(json.loads(Path(path or HOUSE_PATH).read_text()))
+
+
+def validate_house(value):
+    """Check a house registry list (as `load_house` reads it) and return it."""
     if not isinstance(value, list):
         raise ValueError("house registry must be a list")
     names = set()

@@ -109,21 +109,14 @@ def revision_files(repo, revision, endpoint=None):
     }
 
 
-def fetch(claim, destination, *, model, endpoint=None):
-    """Download only the candidate files at the pinned revision under the candidate byte budget,
-    then check the profile and the committed checkpoint hash."""
-    files = models.candidate_files(model, "candidate")
-    budget = models.artifact_budget("candidate", model)
+def download_files(claim, destination, names, listed, budget, endpoint=None):
+    """Download `names` of the repo at the claim's revision into a new `destination` folder, within
+    `budget` bytes and the download deadline. Returns (bytes, start time)."""
     endpoint = endpoint or HF_ENDPOINT
-    listed = revision_files(claim["repo"], claim["revision"], endpoint)
-    if missing := [name for name in files if name not in listed]:
-        raise ValueError(f"repo revision has no {missing[0]}")
-    if sum(listed[name]["size"] or 0 for name in files) > budget:
-        raise ValueError("checkpoint exceeds byte budget")
     destination = Path(destination)
     destination.mkdir()
     started, total = time.monotonic(), 0
-    for name in files:
+    for name in names:
         url = f"{endpoint}/{claim['repo']}/resolve/{claim['revision']}/{quote(name)}"
         size = listed[name]["size"]
         if type(size) is not int or not 0 <= size <= budget - total:
@@ -155,6 +148,22 @@ def fetch(claim, destination, *, model, endpoint=None):
             # A short HTTP body is a transport failure, not invalid model evidence.
             raise OSError(f"truncated artifact {name}: received {received} of {size} bytes")
         total += received
+    return total, started
+
+
+def fetch(claim, destination, *, model, endpoint=None):
+    """Download only the candidate files at the pinned revision under the candidate byte budget,
+    then check the profile and the committed checkpoint hash."""
+    files = models.candidate_files(model, "candidate")
+    budget = models.artifact_budget("candidate", model)
+    endpoint = endpoint or HF_ENDPOINT
+    listed = revision_files(claim["repo"], claim["revision"], endpoint)
+    if missing := [name for name in files if name not in listed]:
+        raise ValueError(f"repo revision has no {missing[0]}")
+    if sum(listed[name]["size"] or 0 for name in files) > budget:
+        raise ValueError("checkpoint exceeds byte budget")
+    total, started = download_files(claim, destination, files, listed, budget, endpoint)
+    destination = Path(destination)
     if models.checkpoint_model(destination) != model or models.artifact_files(destination) != files:
         raise ValueError("downloaded candidate differs from the required model profile")
     if zils.checkpoint_hash(destination) != claim["sha256"]:
@@ -194,6 +203,8 @@ def route_pools(registry, config):
             entry = pools.get(pool)
             if not entry or not entry["enabled"]:
                 raise ValueError("model pool is not enabled")
+            if model_pools.is_soup(entry):
+                raise ValueError("soup pool takes zilsb2 bodies, not zils1 candidates")
             if entry["model"] != models.spec(model):
                 raise ValueError("candidate parent differs from the pool incumbent profile")
             if claim["sha256"] == entry["incumbent_sha256"]:
