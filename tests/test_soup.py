@@ -55,6 +55,8 @@ class SoupTest(unittest.TestCase):
     def setUp(self):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.chassis = chassis(self.root / "chassis", {"a": t(0), "b": t(0), "c": t(0)})
+        pinned = hashlib.sha256((self.chassis / "readout.safetensors").read_bytes()).hexdigest()
+        self.enterContext(patch.dict(d3.PINS["files"], {"readout.safetensors": pinned}))
 
     def build(self, *bodies):
         return soup.build(self.root / "out", self.chassis, list(bodies), model=models.D3)
@@ -131,6 +133,12 @@ class SoupTest(unittest.TestCase):
             patch("zils.d3.pinned_base_path", return_value=self.chassis),
         ):
             d3.validate_candidate(out, models.D3)
+
+    def test_a_chassis_with_a_retrained_readout_is_rejected(self):
+        one = body(self.root / "one", {"a": t(1), "b": t(1), "c": t(1)})
+        save_file({"readout": torch.ones(2, 3)}, str(self.chassis / "readout.safetensors"))
+        with self.assertRaisesRegex(ValueError, "pinned"):
+            self.build((one, None))
 
     def test_a_tampered_readout_is_rejected(self):
         one = body(self.root / "one", {"a": t(1), "b": t(1), "c": t(1)})
