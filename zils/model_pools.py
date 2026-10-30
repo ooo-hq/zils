@@ -8,7 +8,7 @@ from . import base_round, core, models
 # Pool-entry keys that are not part of the base-tier payout track.
 NOT_TRACK = ("model", "enabled", "cooldown_seconds")
 SOUP_KEYS = {"type", "model", "enabled", "share", "house", "schedule", "sketch_seed"}
-SOUP_OPTIONAL = {"subset_size": 3000, "screen_size": 300, "max_pool": 20}
+SOUP_OPTIONAL = {"subset_size": 3000, "screen_size": 300, "max_pool": 20, "max_new_per_round": 6}
 
 
 def track(entry):
@@ -54,11 +54,15 @@ def validate_soup(entry):
         raise ValueError("soup sketch_seed must be 64 lowercase hex characters")
     sizes = {k: entry.get(k, v) for k, v in SOUP_OPTIONAL.items()}
     if any(type(v) is not int for v in sizes.values()):
-        raise ValueError("soup subset_size, screen_size and max_pool must be integers")
+        raise ValueError(
+            "soup subset_size, screen_size, max_pool and max_new_per_round must be integers"
+        )
     if not 1 <= sizes["screen_size"] <= sizes["subset_size"]:
         raise ValueError("soup screen_size must be in [1, subset_size]")
     if not 5 <= sizes["max_pool"] <= 20:
         raise ValueError("soup max_pool must be in [5, 20]")
+    if not 1 <= sizes["max_new_per_round"] <= 20:
+        raise ValueError("soup max_new_per_round must be in [1, 20]")
     return {
         "type": "soup",
         "enabled": entry["enabled"],

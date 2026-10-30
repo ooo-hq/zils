@@ -145,6 +145,11 @@ SUBSET_SIZE = (
 )
 SCREEN_SIZE = 300  # items a new body is screened on before it can join the pool
 MAX_POOL = 20  # bodies graded alone and offered to the greedy soup each round
+MAX_NEW_PER_ROUND = (
+    6  # new bodies admitted per round (disk and download time); the rest wait a round
+)
+PRUNE_ROUNDS = 3  # a body out of the pool this many rounds loses its folder (hash and sketch kept)
+SOUP_CACHE_ROUNDS = 3  # a soup's cached predictions are dropped after this many rounds unused
 _ROUND_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 
 
@@ -230,14 +235,15 @@ def claim_key(claim):
     return f"{claim['hotkey']}:{claim['repo']}@{claim['revision']}"
 
 
-def _intake(state, snapshot, *, chassis, base, download, copies, folder):
+def _intake(state, snapshot, *, chassis, base, download, copies, folder, max_new=MAX_NEW_PER_ROUND):
     """Admit new zilsb2 commitments in commitment order. Returns (new, rejected, refused, failed).
 
     Only failures of weights that hash to the committed hash (``bodies.WeightError``, copies) reject
     the hash itself (``rejected``, by hash, for good). Any other failure (owner file, licence, hash
     mismatch, unreadable files, a bad repo) fails only that commitment (``failed``, by
     ``claim_key``), so another hotkey committing the same hash is still evaluated. Transport errors
-    are ``refused`` for this round only and retried next round.
+    are ``refused`` for this round only and retried next round. At most ``max_new`` bodies are
+    admitted, in commitment-block order, then hotkey; later commitments wait for the next round.
     """
     from . import bodies
 
@@ -257,7 +263,7 @@ def _intake(state, snapshot, *, chassis, base, download, copies, folder):
             continue
         claims.append({**claim, "uid": int(uid), "hotkey": hotkey, "block": int(item["block"])})
     new, rejected, failed = {}, {}, {}
-    for claim in sorted(claims, key=lambda c: (c["block"], c["uid"])):
+    for claim in sorted(claims, key=lambda c: (c["block"], c["hotkey"], c["uid"])):
         sha, uid, key = claim["sha256"], str(claim["uid"]), claim_key(claim)
         if sha in known or sha in new:
             if (known.get(sha) or new[sha])["hotkey"] != claim["hotkey"]:
@@ -268,6 +274,9 @@ def _intake(state, snapshot, *, chassis, base, download, copies, folder):
             continue
         if key in prior_failed or key in failed:
             refused[uid] = "commitment failed in an earlier round"
+            continue
+        if len(new) >= max_new:
+            refused[uid] = "the round's new-body cap is reached; retried next round"
             continue
         earlier = {
             s: folder(s)
@@ -447,7 +456,7 @@ def run(
     if intake is None:
         new, rejected, refused, failed = _intake(
             state, snapshot, chassis=chassis, base=base, download=download, copies=copies,
-            folder=folder,
+            folder=folder, max_new=config.get("max_new_per_round", MAX_NEW_PER_ROUND),
         )  # fmt: skip
         intake = {"new": new, "rejected": rejected, "refused": refused, "failed": failed}
         _write_json(round_dir / "intake.json", intake)
@@ -504,7 +513,7 @@ def run(
         s
         for s, info in known.items()
         if s not in incumbents and s not in screen and s not in rejected
-        if not info["house"] and info["solo"] is not None
+        if not info["house"] and info["solo"] is not None and not info.get("pruned")
     ]
     ranked = incumbents + sorted(screened, key=lambda s: (-screen[s], order(s)))
     ranked += sorted(past, key=lambda s: (-known[s]["solo"], order(s)))
@@ -523,9 +532,13 @@ def run(
     if not pool:
         raise ValueError("soup pool has no bodies")
 
+    soup_keys = set()
+
     def soup_key(members):
         digest = hashlib.sha256("+".join(members).encode()).hexdigest()
-        return f"soup-{digest[:32]}-{bank_key[:16]}"
+        key = f"soup-{digest[:32]}-{bank_key[:16]}"
+        soup_keys.add(key)
+        return key
 
     def soup_rows(members):
         if len(members) == 1:
@@ -603,6 +616,8 @@ def run(
         "refused": intake["refused"],
         "failed": intake["failed"],
         "new": sorted(intake["new"]),
+        "soup_keys": sorted(soup_keys),
+        "round_index": state.get("rounds", 0) + 1,
     }
     _write_json(round_dir / "private.json", private)
     return _finish(state_dir, round_dir, ledger)
@@ -628,6 +643,25 @@ def _finish(state_dir, round_dir, ledger):
         state["rejected"][sha] = reason
         state["bodies"].pop(sha, None)
         shutil.rmtree(state_dir / "bodies" / sha, ignore_errors=True)
+    index = private["round_index"]
+    for sha in [*private["pool"], *new]:
+        if sha in state["bodies"]:
+            state["bodies"][sha]["pooled"] = max(state["bodies"][sha].get("pooled", 0), index)
+    for sha, info in state["bodies"].items():
+        # A body out of the pool for PRUNE_ROUNDS rounds is retired: its folder goes, its hash
+        # (so a re-commit is not re-admitted) and its sketch (for copy checks) stay.
+        if info["house"] or sha in state["members"] or info.get("pruned"):
+            continue
+        if index - info.get("pooled", index) >= PRUNE_ROUNDS:
+            shutil.rmtree(state_dir / "bodies" / sha, ignore_errors=True)
+            info["pruned"] = True
+    soups = state.setdefault("soup_cache", {})
+    soups.update(dict.fromkeys(private["soup_keys"], index))
+    for key, last in list(soups.items()):
+        if index - last >= SOUP_CACHE_ROUNDS:
+            (state_dir / "cache" / f"{key}.jsonl").unlink(missing_ok=True)
+            del soups[key]
+    state["rounds"] = index
     state["soup"] = f"rounds/{private['round_id']}/soup"
     state["round_id"] = private["round_id"]
     _write_json(state_dir / "pool.json", state)

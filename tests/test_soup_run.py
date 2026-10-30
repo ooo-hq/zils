@@ -523,6 +523,41 @@ class SoupRunTest(unittest.TestCase):
         state = json.loads((self.r.state / "pool.json").read_text())
         self.assertIn(self.r.sha["weak"], state["bodies"])
 
+    def test_new_bodies_per_round_are_capped_in_commitment_order(self):
+        record = self.r.run(config=self.r.config(max_new_per_round=2))
+        self.assertEqual(sorted(record["new"]), sorted([self.r.sha["t1"], self.r.sha["t2"]]))
+        self.assertIn("cap", record["refused"]["4"])
+        self.assertNotIn(self.r.sha["weak"], self.r.fetched)
+        again = self.r.run(round_id="d3-mini-2026-11-04", config=self.r.config(max_new_per_round=2))
+        self.assertEqual(again["new"], [self.r.sha["weak"]])
+
+    def test_default_new_body_cap_is_six(self):
+        self.assertEqual(soup_round.MAX_NEW_PER_ROUND, 6)
+
+    def test_bodies_out_of_the_pool_for_three_rounds_are_pruned_and_old_soups_dropped(self):
+        weak = self.r.sha["weak"]
+        first = self.r.run()
+        self.assertIn(weak, first["pool"])
+        small = self.r.config(max_pool=3)  # the two members and the house body only
+        used = []
+        for day in (4, 5, 6):
+            record = self.r.run(round_id=f"d3-mini-2026-11-0{day}", config=small)
+            self.assertNotIn(weak, record["pool"])
+            used.append(set(record["soup_keys"]))
+            if day < 6:
+                self.assertTrue((self.r.state / "bodies" / weak).exists())
+        self.assertFalse((self.r.state / "bodies" / weak).exists())
+        state = json.loads((self.r.state / "pool.json").read_text())
+        self.assertIn(weak, state["bodies"])  # the hash is kept, so a re-commit is not re-admitted
+        self.assertTrue(list((self.r.state / "sketches").glob(f"{weak}-*.npy")))
+        for sha in (self.r.sha["t1"], self.r.sha["t2"], self.r.sha["house"]):
+            self.assertTrue((self.r.state / "bodies" / sha).exists())
+        soups = {p.stem for p in (self.r.state / "cache").glob("soup-*.jsonl")}
+        self.assertEqual(soups, set().union(*used))
+        self.assertFalse(set(first["soup_keys"]) - set().union(*used) & soups)
+        later = self.r.run(round_id="d3-mini-2026-11-07")
+        self.assertNotIn(weak, later["pool"])
+
     def test_default_checks_reject_a_layer_copy_and_rate_a_house_retrain_as_a_scout(self):
         self.r.commits.update({5: ("scout", 50), 6: ("t1copy", 104)})
         record = self.r.run()
@@ -669,6 +704,7 @@ class SoupPoolWeightsTest(unittest.TestCase):
         self.assertEqual(
             (checked["subset_size"], checked["screen_size"], checked["max_pool"]), (3000, 300, 20)
         )
+        self.assertEqual(checked["max_new_per_round"], 6)
         self.assertEqual(
             model_pools.validate(pools(soup_entry(house="soup-house.json")))["pools"]["d3-mini"][
                 "house"
@@ -687,6 +723,8 @@ class SoupPoolWeightsTest(unittest.TestCase):
             {"incumbent_sha256": "c" * 64},
             {"max_pool": 21},
             {"max_pool": 1},
+            {"max_new_per_round": 0},
+            {"max_new_per_round": 21},
             {"subset_size": 0},
             {"share": 1.5},
             {"model": "d3-lite-0.8b-v1"},
