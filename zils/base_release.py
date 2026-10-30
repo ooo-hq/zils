@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import shutil
 import time
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from . import (
     commitments,
     migration_regression,
     model_pools,
+    models,
     regression_suite,
 )
 
@@ -540,6 +542,26 @@ def channel_proposal(window_report, *, new_profile_id, migration, release_review
     return persist(window_path(active, window_report["frozen"]["window_id"], "channels"), proposal)
 
 
+def seed_soup(store, soup_sha256, directories, model):
+    """Place a frozen soup in the evaluator's checkpoint cache, so the closing draw evaluates it
+    like a fetched commitment. The directory must hash to the receipt's soup_sha256."""
+    import zils
+
+    target = Path(store) / soup_sha256 / "checkpoint"
+    if not target.exists():
+        found = [Path(d) for d in directories if zils.checkpoint_hash(Path(d)) == soup_sha256]
+        if not found:
+            raise ValueError("closing a soup requires --soup-checkpoint matching soup_sha256")
+        models.text_runtime(model).validate_candidate(found[0], model)
+        staged = target.with_name("seed-" + target.parent.name)
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        shutil.rmtree(staged, ignore_errors=True)
+        shutil.copytree(found[0], staged)
+        staged.rename(target)
+    if zils.checkpoint_hash(target) != soup_sha256:
+        raise ValueError("cached soup checkpoint changed")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("qualify", "freeze", "close"))
@@ -561,6 +583,12 @@ def main():
         "channels",
     ):
         parser.add_argument("--" + name)
+    parser.add_argument(
+        "--soup-checkpoint",
+        action="append",
+        default=[],
+        help="close: a frozen soup's checkpoint directory (repeat per soup)",
+    )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--runtime-python")
     args = parser.parse_args()
@@ -642,16 +670,15 @@ def main():
                 or receipt["closing"]["snapshot"] != bound(args.chain_snapshot)
             ):
                 raise ValueError("conflicting reuse of closed window inputs")
-        elif any("ownership" in r for r in frozen["ready"]):
-            raise ValueError(
-                "this command evaluates chain commitments only; close a soup roster with close()"
-            )
         else:
             base_exam.disjoint(
                 [base_exam.audit(p) for p in active["draw_roots"].values()]
                 + [base_exam.audit(args.closing_round, history=active["history"])]
             )
-            candidates = {r["candidate"]["sha256"] for r in frozen["ready"]}
+            soups = {
+                r["candidate"]["uid"]: r["candidate"] for r in frozen["ready"] if "ownership" in r
+            }
+            candidates = {r["candidate"]["sha256"] for r in frozen["ready"] if "ownership" not in r}
             registry = commitments.candidates(snapshot, active["incumbent_sha256"])
             registry = {
                 u: {**c, "hotkey": snapshot["members"][str(u)]}
@@ -660,6 +687,16 @@ def main():
             }
             if {c["sha256"] for c in registry.values()} != candidates:
                 raise ValueError("frozen candidates are missing from the closing snapshot")
+            if set(registry) & set(soups):
+                raise ValueError("a frozen soup's uid collides with a chain candidate")
+            store = Path(active["ready_dir"]).parent / "base-tier" / "store"
+            for uid, row in soups.items():
+                seed_soup(store, row["sha256"], args.soup_checkpoint, active["model"]["id"])
+                registry[uid] = {
+                    "sha256": row["sha256"],
+                    "hotkey": SOUP_OWNER,
+                    "block": row["commitment_block"],
+                }
             identity = base_round.draw(args.closing_round)
             settings = {
                 **active["settings"],

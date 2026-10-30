@@ -1,24 +1,38 @@
 """A validator-built soup qualifies and closes a release window without becoming a king."""
 
+import contextlib
 import copy
+import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import zils
+from tests.test_base_candidate import candidate
 from tests.test_base_exam import inputs
 from tests.test_base_release import decision, fast_pair, save
 from tests.test_regression_suite import election_fixture
 from zils import base_metrics, base_release, base_round, models, regression_suite
 
-SOUP = "c" * 64
+with tempfile.TemporaryDirectory() as _tmp:
+    # The soup is a real candidate checkpoint so the close command can hash-verify it.
+    SOUP = zils.checkpoint_hash(candidate(Path(_tmp) / "soup"))
+HASHES = {0: "a" * 64, 1: "b" * 64, 2: SOUP}
 OWNERS = {1: "miner-one", 2: "validator-soup"}
+SCHEDULE = {
+    "version": "zils-base-windows/v1",
+    "anchor_utc": "1970-01-01T00:00:00Z",
+    "interval_days": 14,
+}
+AT = 14 * 86400
 
 
 def soup_decision(root, name, at, **kwargs):
     """The soup (uid 2) is evaluated like any row but has no chain commitment."""
-    result, evidence, snapshot = decision(root, name, at, owners=OWNERS, **kwargs)
+    result, evidence, snapshot = decision(root, name, at, hashes=HASHES, owners=OWNERS, **kwargs)
     chain = base_release.evidence_read(snapshot)
     chain["members"].pop("2")
     chain["commitments"].pop("2")
@@ -116,6 +130,16 @@ class SoupReleaseTest(unittest.TestCase):
             },
         )
 
+    def freeze(self, ready):
+        return base_release.freeze(
+            ready,
+            active=self.active,
+            schedule=SCHEDULE,
+            window_id="d3-mini:1",
+            frozen_at=AT,
+            opening_channels={"stable": "old", "latest": "prior"},
+        )
+
     def test_soup_qualifies_on_two_decisions_and_suite(self):
         receipt = self.qualify_soup()
         self.assertEqual(receipt["candidate"]["sha256"], SOUP)
@@ -178,19 +202,8 @@ class SoupReleaseTest(unittest.TestCase):
         for receipt in (king, soup):
             save(self.root / "ready" / (receipt["sha256"] + ".json"), receipt)
         ready = base_release.inventory(self.active)
-        self.assertEqual([r["candidate"]["sha256"] for r in ready], ["b" * 64, SOUP])
-        frozen = base_release.freeze(
-            ready,
-            active=self.active,
-            schedule={
-                "version": "zils-base-windows/v1",
-                "anchor_utc": "1970-01-01T00:00:00Z",
-                "interval_days": 14,
-            },
-            window_id="d3-mini:1",
-            frozen_at=14 * 86400,
-            opening_channels={"stable": "old", "latest": "prior"},
-        )
+        self.assertEqual(sorted(r["candidate"]["sha256"] for r in ready), sorted(["b" * 64, SOUP]))
+        frozen = self.freeze(ready)
         result, _, snapshot = soup_decision(self.root, "closing", 14 * 86400 + 10)
         closing = {
             "decision": result,
@@ -206,6 +219,138 @@ class SoupReleaseTest(unittest.TestCase):
         self.assertEqual(closed["winner"]["ownership"], soup["ownership"])
         self.assertEqual(closed["proposed_base_tier"], {"incumbent_sha256": SOUP, "kings": ["old"]})
         self.assertEqual(base_release.verify_window(closed, self.active), closed)
+
+    def close_cli(self, frozen_file, closing, *extra):
+        """Run `base_release close` with the evaluator mocked as the existing CLI test does."""
+        active = {**self.active, "settings": {"base_tier": {}}}
+        config = self.root / "config.json"
+        config.write_text("{}")
+        out = self.root / ("close-out-" + str(len(list(self.root.glob("close-out-*")))) + ".json")
+        argv = [
+            "base_release",
+            "close",
+            "--config",
+            str(config),
+            "--pool",
+            "d3-mini",
+            "--out",
+            str(out),
+            "--frozen",
+            str(frozen_file),
+            "--closing-round",
+            closing["draw_root"],
+            "--chain-snapshot",
+            closing["snapshot"]["path"],
+            *extra,
+        ]
+        with (
+            patch.object(base_release, "active_context", return_value=active),
+            patch("zils.validator.base_tier_epoch", return_value=closing["decision"]) as evaluate,
+            patch("zils.d3.validate_candidate") as validate,
+            patch("zils.base_release.time.time", return_value=AT + 100),
+            patch.object(sys, "argv", argv),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            base_release.main()
+        return base_release.read(out), evaluate, validate
+
+    def soup_window(self):
+        king, soup = self.king(), self.qualify_soup()
+        for receipt in (king, soup):
+            save(self.root / "ready" / (receipt["sha256"] + ".json"), receipt)
+        self.freeze(base_release.inventory(self.active))
+        result, _, snapshot = soup_decision(self.root, "closing", AT + 10)
+        closing = {
+            "decision": result,
+            "draw_root": str(self.root / "closing"),
+            "snapshot": snapshot,
+        }
+        return soup, self.root / "windows/d3-mini-1-frozen.json", closing
+
+    def test_close_command_evaluates_the_soup_checkpoint_and_chain_kings(self):
+        soup, frozen_file, closing = self.soup_window()
+        checkpoint = candidate(self.root / "soup-checkpoint")
+        with self.assertRaisesRegex(ValueError, "soup-checkpoint"):
+            self.close_cli(frozen_file, closing)
+        wrong = candidate(self.root / "wrong-checkpoint")
+        (wrong / "model-00001-of-00002.safetensors").write_text("other weights")
+        with self.assertRaisesRegex(ValueError, "soup-checkpoint"):
+            self.close_cli(frozen_file, closing, "--soup-checkpoint", str(wrong))
+        closed, evaluate, validate = self.close_cli(
+            frozen_file, closing, "--soup-checkpoint", str(checkpoint)
+        )
+        validate.assert_called_once()
+        registry = evaluate.call_args.args[3]
+        row = soup["candidate"]
+        self.assertEqual(
+            registry[row["uid"]],
+            {"sha256": SOUP, "hotkey": base_release.SOUP_OWNER, "block": row["commitment_block"]},
+        )
+        self.assertEqual(registry[1]["hotkey"], "miner-one")
+        self.assertEqual(set(registry), {1, row["uid"]})
+        cached = Path(self.active["ready_dir"]).parent / "base-tier/store" / SOUP / "checkpoint"
+        self.assertEqual(zils.checkpoint_hash(cached), SOUP)
+        self.assertEqual(closed["winner"]["ownership"], soup["ownership"])
+        self.assertEqual(closed["proposed_base_tier"], {"incumbent_sha256": SOUP, "kings": ["old"]})
+
+    def promote(self, winner, *extra):
+        import runpy
+
+        weights = candidate(self.root / "promote-candidate")
+        report = self.root / "window.json"
+        report.write_text("{}")
+        decision = {"manifest_sha256": "9" * 64}
+        verified = {"status": "qualified", "winner": winner, "closing": {"decision": decision}}
+        argv = [
+            "promote_base.py",
+            "--candidate",
+            str(weights),
+            "--round",
+            "4",
+            "--staging",
+            str(self.root / "staging"),
+            "--config",
+            str(report),
+            "--pool",
+            "d3-mini",
+            "--window-report",
+            str(report),
+            *extra,
+        ]
+        out = io.StringIO()
+        with (
+            patch(
+                "zils.base_release.active_context",
+                return_value={"model": models.spec(models.D3), "kings": ["hk-old"]},
+            ),
+            patch("zils.base_release.verify_window", return_value=verified),
+            patch("zils.d3.validate_candidate"),
+            patch.object(sys, "argv", argv),
+            contextlib.redirect_stdout(out),
+        ):
+            runpy.run_path(
+                str(Path(__file__).parents[1] / "scripts/promote_base.py"), run_name="__main__"
+            )
+        return json.loads(out.getvalue())
+
+    def test_promotion_of_a_soup_sets_incumbent_and_records_members_without_a_king(self):
+        ownership = {"owner": base_release.SOUP_OWNER, **self.soup}
+        winner = {
+            "uid": 9,
+            "sha256": SOUP,
+            "hotkey": base_release.SOUP_OWNER,
+            "commitment_block": 0,
+            "score": 1.0,
+            "ownership": ownership,
+        }
+        with self.assertRaisesRegex(ValueError, "king-hotkey"):
+            self.promote(winner, "--king-hotkey", base_release.SOUP_OWNER)
+        result = self.promote(winner)
+        self.assertEqual(
+            result["proposed_base_tier"], {"incumbent_sha256": SOUP, "kings": ["hk-old"]}
+        )
+        self.assertEqual(result["release"], ownership)
+        self.assertIsNone(result["crowned_uid"])
 
 
 if __name__ == "__main__":

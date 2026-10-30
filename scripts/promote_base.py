@@ -3,7 +3,8 @@
 Dry run by default. ``--upload`` publishes the staged directory to the Hugging Face organisation with the
 ``hf`` CLI and prints the resulting revision to pin. Nothing here edits ``zils/models.py`` or a validator
 config; the printed entry and the ``base_tier`` crowning (new ``incumbent_sha256``, the new king's hotkey
-prepended to ``kings``) are applied in a reviewed pull request.
+prepended to ``kings``) are applied in a reviewed pull request. A validator-built soup winner adds no
+king; its members, round and hash are recorded under ``release``.
 """
 
 import argparse
@@ -119,6 +120,9 @@ def main():
     winner = window["winner"]
     if window["status"] != "qualified" or winner is None:
         raise ValueError("release window has no qualified winner")
+    soup = winner.get("ownership")
+    if soup and args.king_hotkey is not None:
+        raise ValueError("a soup release crowns no king; omit --king-hotkey")
     if args.king_hotkey is not None and args.king_hotkey != winner["hotkey"]:
         raise ValueError("king-hotkey differs from verified snapshot")
     if (
@@ -199,14 +203,20 @@ def main():
         "proposed_registration": registration,
         # Crowning: the same promotion PR sets the validator track to the new incumbent and prepends
         # the new king to the history (king of the hill; the last five distinct kings share the base).
+        # A validator-built soup is released without a king: its members are paid by the soup pool.
         "proposed_base_tier": {
             "incumbent_sha256": digest,
-            "kings": [args.king_hotkey, *filter(None, args.previous_kings.split(","))],
+            "kings": [
+                *([] if soup else [args.king_hotkey]),
+                *filter(None, args.previous_kings.split(",")),
+            ],
         },
-        "crowned_uid": winner["uid"],
+        "crowned_uid": None if soup else winner["uid"],
         "pool_id": models.pool_id(args.model) if args.model in models.d3_family() else None,
         "uploaded": False,
     }
+    if soup:
+        result["release"] = soup
     if args.upload:
         out = subprocess.run(
             [

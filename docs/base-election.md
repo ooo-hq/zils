@@ -295,8 +295,12 @@ where the record is `{"soup_sha256": ..., "round_id": ..., "members":
 validator-soup`, the soup hash, round and members). A window that closes on a
 soup records that `ownership` on its `winner` and proposes the soup hash as the
 incumbent without adding a king: soup members are paid through the soup pool,
-not the king history. `close` accepts soup rosters; the `close` command still
-evaluates chain commitments only and refuses a roster that contains a soup.
+not the king history. To close a roster that contains a soup, pass its
+directory with `--soup-checkpoint DIR` (repeat per soup): the command checks the
+directory hashes to the receipt's `soup_sha256`, validates it, and evaluates it
+on the closing draw beside the committed candidates. `promote_base.py` proposes a
+soup winner as the incumbent with `kings` unchanged and records the soup's hash,
+round and members under `release`.
 
 Author a schedule `{ "version": "zils-base-windows/v1", "anchor_utc":
 "ACTUAL_UTC_ANCHOR", "interval_days": 14 }` with a 14–28 day interval. At a
