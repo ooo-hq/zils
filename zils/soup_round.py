@@ -165,6 +165,9 @@ SOUP_CACHE_ROUNDS = 3  # a soup's cached predictions are dropped after this many
 MAX_CLAIMS_PER_ROUND = 12  # commitments downloaded per round, failed ones included
 MAX_DOWNLOAD_BYTES_PER_ROUND = 60 * 1024**3  # bytes downloaded per round, failed claims included
 OTHERS_MAX = 0.3  # share other hotkeys' bodies may add to a body's fit beyond the house bodies
+FAILED_CLAIM_BACKOFF_ROUNDS = (
+    3  # rounds a hotkey sits out after a claim fails validation or download
+)
 TRANSPORT_STRIKES = 3  # rounds a claim's download may fail before the claim is retired
 GRADE_CHUNK = 200  # items graded per cache write, so a timed-out round keeps its progress
 GRADE_STRIKES = 3  # rounds a body may fail grading (with a healthy chassis) before it is banned
@@ -320,6 +323,9 @@ def _intake(
     max_new = limits.get("max_new_per_round", MAX_NEW_PER_ROUND)
     max_claims = limits.get("max_claims_per_round", MAX_CLAIMS_PER_ROUND)
     max_bytes = limits.get("max_download_bytes_per_round", MAX_DOWNLOAD_BYTES_PER_ROUND)
+    backoff_rounds = limits.get("failed_claim_backoff_rounds", FAILED_CLAIM_BACKOFF_ROUNDS)
+    index = state.get("rounds", 0) + 1  # this round's number
+    prior_backoff = state.setdefault("backoff", {})
     progress = progress or {}
     for name, empty in (("new", {}), ("rejected", {}), ("failed", {}), ("refused", {})):
         progress.setdefault(name, empty)
@@ -328,6 +334,7 @@ def _intake(
     progress.setdefault("bytes", 0)
     progress.setdefault("transient", {})
     progress.setdefault("explained", {})
+    progress.setdefault("backoff", {})
     prior_transient = state.setdefault("transient", {})
     prior_explained = state.setdefault("explained", {})
     new, rejected, failed = progress["new"], progress["rejected"], progress["failed"]
@@ -346,6 +353,12 @@ def _intake(
             continue
         if key in prior_failed or key in failed:
             refused[uid] = "commitment failed in an earlier round"
+            continue
+        last = progress["backoff"].get(claim["hotkey"], prior_backoff.get(claim["hotkey"]))
+        if last is not None and 0 < index - last <= backoff_rounds:
+            refused[uid] = (
+                f"the hotkey's last claim failed; it backs off until round {last + backoff_rounds + 1}"
+            )
             continue
         if len(new) >= max_new:
             refused[uid] = "the round's new-body cap is reached; retried next round"
@@ -374,7 +387,8 @@ def _intake(
                 download(claim, partial)
             finally:
                 progress["bytes"] += _folder_bytes(partial)
-                progress["claims"] += _folder_bytes(partial, "*.safetensors") > 0
+            bodies.check_layout(partial, chassis)
+            progress["claims"] += 1  # only a claim with a readable chassis layout uses a slot
             bodies.validate_body(partial, chassis, hotkey=claim["hotkey"], base=base, sha256=sha)
             soup = tuple(s for s in state["members"] if s in known)
             reason = copies(sha, partial, earlier, soup=soup) if copies is not None else None
@@ -390,6 +404,7 @@ def _intake(
         except (OSError, http.client.HTTPException) as error:  # retried next round, a few times
             reason = f"download failed: {_reason(error)}"[:400]
             refused[uid] = progress["transient"][key] = reason
+            progress["backoff"][claim["hotkey"]] = index
             if len({*prior_transient.get(key, {}), round_id}) >= TRANSPORT_STRIKES:
                 failed[key] = f"{reason} ({TRANSPORT_STRIKES} rounds)"[:400]
         except bodies.WeightError as error:
@@ -397,6 +412,7 @@ def _intake(
         except Exception as error:  # one hostile body must never abort the round
             print(f"soup intake: commitment {key} failed ({type(error).__name__})", flush=True)
             failed[key] = refused[uid] = _reason(error)
+            progress["backoff"][claim["hotkey"]] = index
         else:
             if key not in progress["explained"]:
                 new[sha] = {
@@ -612,7 +628,12 @@ def run(
     if intake is None:
         limits = {
             k: config[k]
-            for k in ("max_new_per_round", "max_claims_per_round", "max_download_bytes_per_round")
+            for k in (
+                "max_new_per_round",
+                "max_claims_per_round",
+                "max_download_bytes_per_round",
+                "failed_claim_backoff_rounds",
+            )
             if k in config
         }
         new, rejected, refused, failed = _intake(
@@ -625,6 +646,7 @@ def run(
         done = _read_json(round_dir / "intake-progress.json", {})
         intake["transient"] = done.get("transient", {})
         intake["explained"] = done.get("explained", {})
+        intake["backoff"] = done.get("backoff", {})
         _write_json(round_dir / "intake.json", intake)
     known.update(intake["new"])
     state["rejected"].update(intake["rejected"])
@@ -632,6 +654,7 @@ def run(
     for key, reason in intake.get("transient", {}).items():
         state.setdefault("transient", {}).setdefault(key, {})[round_id] = reason
     state.setdefault("explained", {}).update(intake.get("explained", {}))
+    state.setdefault("backoff", {}).update(intake.get("backoff", {}))
     _write_json(state_dir / "pool.json", state)
     rejected = dict(intake["rejected"])
 

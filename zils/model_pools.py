@@ -18,6 +18,7 @@ SOUP_OPTIONAL = {
     "max_download_bytes_per_round": 60 * 1024**3,
     "max_decision_age_days": 3,
     "others_max": 0.3,
+    "failed_claim_backoff_rounds": 3,
 }
 
 
@@ -83,6 +84,8 @@ def validate_soup(entry):
         raise ValueError("soup max_claims_per_round must be in [1, 100]")
     if sizes["max_download_bytes_per_round"] < 1:
         raise ValueError("soup max_download_bytes_per_round must be positive")
+    if not 0 <= sizes["failed_claim_backoff_rounds"] <= 30:
+        raise ValueError("soup failed_claim_backoff_rounds must be in [0, 30]")
     if not 1 <= sizes["max_decision_age_days"] <= 30:
         raise ValueError("soup max_decision_age_days must be in [1, 30]")
     return {

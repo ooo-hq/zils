@@ -247,6 +247,12 @@ def _shapes(chassis):
     return out
 
 
+def check_layout(folder, chassis):
+    """The cheap checks: every chassis tensor is named in a readable safetensors header within the
+    file. Reads headers only."""
+    _tensors(folder, _shapes(chassis))
+
+
 def validate_body(folder, chassis, *, hotkey, base=None, max_change=0.15, sha256=None):
     """Check a downloaded body against the chassis and return its body hash. `chassis` is the chassis
     checkpoint folder or a mapping name -> shape; `base`, when given, is the parent (Qwen) folder whose

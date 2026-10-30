@@ -648,7 +648,10 @@ class SoupRunTest(unittest.TestCase):
         self.assertIn("deadline", record["refused"]["4"])
         self.assertNotIn(self.r.sha["weak"], record["rejected"])
         self.assertEqual(record["failed"], {})
-        again = self.r.run(round_id="d3-mini-2026-11-04")
+        self.assertNotIn(self.r.sha["weak"], record["new"])
+        # Retried once the hotkey's back-off (none here) is over.
+        retry = self.r.config(failed_claim_backoff_rounds=0)
+        again = self.r.run(round_id="d3-mini-2026-11-04", config=retry)
         self.assertIn(self.r.sha["weak"], again["pool"])
 
     def test_an_incomplete_http_read_is_transient(self):
@@ -712,9 +715,13 @@ class SoupRunTest(unittest.TestCase):
                 raise OSError("connection refused")
             return self.r.fetch(claim, dest)
 
+        config = self.r.config(failed_claim_backoff_rounds=0)  # retry the dead claims every round
         for day in ("03", "04", "05"):
             record = self.r.run(
-                round_id=f"d3-mini-2026-11-{day}", snapshot=snapshot, fetch_body=fetch
+                round_id=f"d3-mini-2026-11-{day}",
+                snapshot=snapshot,
+                fetch_body=fetch,
+                config=config,
             )
             if day == "03":
                 self.assertEqual(
@@ -723,12 +730,59 @@ class SoupRunTest(unittest.TestCase):
                 )
         self.assertEqual(len(record["failed"]), 12)  # retired on the third failed round
         self.assertEqual(len(calls), 36)
-        again = self.r.run(round_id="d3-mini-2026-11-06", snapshot=snapshot, fetch_body=fetch)
+        again = self.r.run(
+            round_id="d3-mini-2026-11-06", snapshot=snapshot, fetch_body=fetch, config=config
+        )
         self.assertEqual(len(calls), 36)
         self.assertIn("earlier round", again["refused"]["20"])
         state = json.loads((self.r.state / "pool.json").read_text())
         self.assertFalse(set(state["bodies"]) & {f"{uid:064x}" for uid in dead})  # no hash banned
         self.assertFalse(set(state["rejected"]) & {f"{uid:064x}" for uid in dead})
+
+    def test_tiny_junk_files_cannot_keep_an_honest_body_out(self):
+        junk = range(20, 32)  # twelve hotkeys committing a 1-byte safetensors file every day
+        self.enterContext(patch.dict(HOTKEYS, {uid: f"5Junk{uid}" for uid in junk}))
+        calls = []
+
+        def fetch(claim, dest):
+            if not claim["repo"].startswith("junk/"):
+                return self.r.fetch(claim, dest)
+            calls.append(claim["repo"])
+            dest = Path(dest)
+            dest.mkdir(parents=True)
+            (dest / "model.safetensors").write_bytes(b"x")
+            (dest / "README.md").write_text("---\nlicense: mit\n---\n")
+            (dest / "zils-owner.json").write_text(json.dumps({"hotkey": claim["hotkey"]}))
+            return dest
+
+        def snapshot(day):
+            value = self.r.snapshot()
+            for n, uid in enumerate(junk):
+                value["commitments"][str(uid)] = {
+                    "block": 10 + n,  # ahead of everyone, and a fresh revision every day
+                    "data": bodies.format_commitment(f"{uid:064x}", f"{day:040x}", f"junk/r{uid}"),
+                }
+            return value
+
+        first = self.r.run(snapshot=snapshot(3), fetch_body=fetch)
+        self.assertEqual(sorted(first["new"]), sorted(self.r.sha[n] for n in ("t1", "t2", "weak")))
+        self.assertEqual(len(calls), 12)
+        for day in (4, 5, 6):  # each junk hotkey sits out the next three rounds
+            record = self.r.run(
+                round_id=f"d3-mini-2026-11-0{day}", snapshot=snapshot(day), fetch_body=fetch
+            )
+            self.assertEqual(len(calls), 12)
+            self.assertIn("backs off", record["refused"]["20"])
+        self.r.run(round_id="d3-mini-2026-11-07", snapshot=snapshot(7), fetch_body=fetch)
+        self.assertEqual(len(calls), 24)
+
+    def test_failed_claim_backoff_is_a_pool_setting(self):
+        checked = model_pools.validate(pools())["pools"]["d3-mini"]
+        self.assertEqual(checked["failed_claim_backoff_rounds"], 3)
+        model_pools.validate(pools(soup_entry(failed_claim_backoff_rounds=0)))
+        for bad in (-1, 31, 1.5):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                model_pools.validate(pools(soup_entry(failed_claim_backoff_rounds=bad)))
 
     def test_failed_claims_count_toward_the_claims_cap(self):
         config = self.r.config(max_claims_per_round=2)
