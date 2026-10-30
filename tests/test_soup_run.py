@@ -353,6 +353,14 @@ class SoupRunTest(unittest.TestCase):
         self.assertEqual([r["ids"] for r in rounds][1:], [[], []])
         self.assertTrue(first["members"])
 
+    def test_the_crown_must_beat_the_current_soup(self):
+        first = self.r.run()
+        self.assertIsNotNone(first["crown"])  # no soup yet: the house bodies are the bar
+        again = self.r.run(round_id="d3-mini-2026-11-04")
+        # The seated soup scores 100 on the new subset; no single body beats it by the margin.
+        self.assertGreater(again["soup_bar"], max(again["solo"].values()))
+        self.assertIsNone(again["crown"])
+
     def test_rates_hook_sets_seat_and_crown_pay(self):
         def rates(sha, info, house):
             return 0.25 if sha == self.r.sha["t1"] else (0.0 if sha in house else 1.0)

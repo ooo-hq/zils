@@ -93,18 +93,24 @@ def seat_weights(members, contributions, rates, *, share=SEAT_SHARE, floor=FLOOR
     return {m: share / len(paid) * _check_rate(rates[m]) for m in paid}
 
 
-def crown_weight(solo, rates, house, *, share=CROWN_SHARE, margin=MARGIN, order_key):
+def crown_weight(
+    solo, rates, house, *, share=CROWN_SHARE, margin=MARGIN, soup_score=None, order_key
+):
     """The crown: the best solo body that is not a house ingredient gets ``share`` times its rate,
-    provided its solo score beats every house body's by at least ``margin``.
+    provided its solo score beats every house body's, and ``soup_score`` (the current soup on the
+    same subset, None before the first soup), by at least ``margin``.
 
     Ties go to the earlier commitment (``order_key``). With no eligible body, or a best body that does
-    not clear the house bodies by the margin, the result is {} and the crown share burns.
+    not clear the bar, the result is {} and the crown share burns.
     """
     eligible = [body for body in solo if body not in house]
     if not eligible:
         return {}
     best = min(eligible, key=lambda body: (-solo[body], order_key(body)))
-    if any(solo[best] - solo[h] < margin - _EPS for h in solo if h in house):
+    bars = [solo[h] for h in solo if h in house]
+    if soup_score is not None:
+        bars.append(soup_score)
+    if any(solo[best] - bar < margin - _EPS for bar in bars):
         return {}
     return {best: share * _check_rate(rates[best])}
 
@@ -730,6 +736,9 @@ def run(
             scores[members] = soup_grade.score(subset, soup_rows(members))
         return scores[members]
 
+    # The crown bar: the current (previous round's) soup on this round's subset, if one exists.
+    current = tuple(sorted(s for s in state["members"] if s in known))
+    soup_bar = evaluate(current) if current and (len(current) > 1 or current[0] in solo) else None
     members, trace = greedy(solo, evaluate, order_key=order)
     baseline = None
     if len(members) == 1:
@@ -740,7 +749,7 @@ def run(
     contributions = leave_one_out(members, evaluate, baseline=baseline)
     rate_map = {sha: rates(sha, known[sha], house) for sha in pool}
     seats = seat_weights(members, contributions, rate_map)
-    crown = crown_weight(solo, rate_map, house, order_key=order)
+    crown = crown_weight(solo, rate_map, house, soup_score=soup_bar, order_key=order)
 
     final = round_dir / "soup"
     if not final.exists():
@@ -787,6 +796,7 @@ def run(
         "screen": screen,
         "rates": rate_map,
         "trace": trace,
+        "soup_bar": soup_bar,
         "rejected": rejected,
         "grade_failures": failures,
         "refused": intake["refused"],

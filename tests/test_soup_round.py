@@ -168,6 +168,22 @@ class CrownWeightTest(unittest.TestCase):
                 got = soup_round.crown_weight(solo, rates, {"h1", "h2"}, order_key=order)
                 self.assertEqual(got, {"t": 0.2} if paid else {})
 
+    def test_a_soup_fine_tune_needs_the_margin_over_the_current_soup(self):
+        rates, order = {"h": 0.0, "t": 1.0}, commit_order("h", "t")
+        for best, paid in ((5.2, False), (5.3, True)):
+            with self.subTest(best=best):
+                got = soup_round.crown_weight(
+                    {"h": 4.0, "t": best}, rates, {"h"}, soup_score=5.0, order_key=order
+                )
+                self.assertEqual(got, {"t": 0.2} if paid else {})
+
+    def test_first_round_without_a_soup_uses_the_house_bodies_only(self):
+        got = soup_round.crown_weight(
+            {"h": 4.0, "t": 4.3}, {"h": 0.0, "t": 1.0}, {"h"}, soup_score=None,
+            order_key=commit_order("h", "t"),
+        )  # fmt: skip
+        self.assertEqual(got, {"t": 0.2})
+
     def test_only_house_bodies_means_no_crown(self):
         self.assertEqual(soup_round.crown_weight({"h": 5.0}, {"h": 0.0}, {"h"}, order_key=str), {})
 
