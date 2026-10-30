@@ -168,6 +168,16 @@ class IsCopyTest(unittest.TestCase):
         # Mostly fresh with a little of an earlier body: its share is under the 0.3 bar.
         self.assertIsNone(soup_copies.is_copy(self.fresh + 0.3 * self.earlier[0], self.earlier))
 
+    def test_two_trainers_fine_tuning_the_same_house_body_are_not_copies(self):
+        # Both deltas are mostly the shared house delta, plus a small part of their own (dry run:
+        # trainer A explains 0.90 of trainer B alone, but adds only 0.007 beyond the house).
+        rng = np.random.default_rng(7)
+        house = 10 * rng.standard_normal(4096)
+        first = house + 3 * rng.standard_normal(4096)
+        second = house + 3 * rng.standard_normal(4096)
+        self.assertGreater(soup_copies.explained_share(second, [first]), 0.8)
+        self.assertIsNone(soup_copies.is_copy(second, [first], house=[house]))
+
     def test_a_merge_with_a_house_body_is_judged_on_the_other_hotkeys_part(self):
         other, house = self.earlier[0], self.earlier[2]
         merge = 0.5 * other + 0.5 * house

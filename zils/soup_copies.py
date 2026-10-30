@@ -139,19 +139,21 @@ def is_copy(
     house=(),
     explained=None,
     cosine_max=0.999,
-    explained_max=0.8,
     others_max=0.3,
 ):
     """Why a body sketch is a copy, or None. `earlier` are sketches of earlier commitments by other
-    hotkeys: a near-exact copy of one, or a body mostly explained by them, is a copy. `house`
+    hotkeys: a near-exact copy of one is a copy. `house`
     (house bodies) and `soup` and `release` (the current soup and release bodies) reject only
     near-exact re-uploads (cosine at least `cosine_max`): fine-tuning them is allowed.
 
     The body is also fitted on the earlier and house sketches jointly. The share the earlier
     (other-hotkey) bodies add to that fit beyond the house bodies alone must stay under
-    `others_max`, so merging another hotkey's body with a house body is a copy, while a body
-    explained by house bodies alone (a house fine-tune) is not. `explained`, when given, replaces
-    `earlier` in both explained-share rules (for example only the earlier bodies still in the pool);
+    `others_max`, so merging another hotkey's body with a house body (or averaging other hotkeys'
+    bodies) is a copy, while a body explained by house bodies alone is not, and neither are two
+    independent fine-tunes of the same house body, which share most of their change through it.
+    There is no rule on the earlier bodies alone, which would ignore that shared house change.
+    `explained`, when given, replaces `earlier` in the joint fit (for example only the earlier
+    bodies still in the pool);
     near-exact copies are always checked against all of `earlier`. Only "explained by earlier" is a
     judgement on the current pool rather than on the weights themselves."""
     target = np.asarray(target, dtype=np.float64)
@@ -165,8 +167,6 @@ def is_copy(
         if other is not None and cosine(target, other) >= cosine_max:
             return label
     explained = list(earlier if explained is None else explained)
-    if explained_share(target, explained) >= explained_max:
-        return "explained by earlier"
     if explained:
         joint = explained_share(target, [*explained, *house])
         if joint - explained_share(target, list(house)) >= others_max:
