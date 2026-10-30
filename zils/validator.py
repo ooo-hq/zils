@@ -1130,12 +1130,24 @@ def validator(config, directory, args):
                 and not (work / "soup-pools.json").exists()
             ):
                 # One soup round per soup pool per day, before this round's pool decisions freeze.
+                frozen = json.loads((work / "chain-snapshot.json").read_text())
                 with testnet.connect(config) as sub:
+                    netuid = testnet.check_config(config)
+
+                    def commitments_at(block):
+                        found = {}
+                        for uid, hotkey in frozen["members"].items():
+                            item = testnet.read_commitment(sub, netuid, hotkey, block)
+                            if item is not None:
+                                found[uid] = item
+                        return found
+
                     soup_summary = soup_pool.epoch(
                         settings_for_round,
                         directory,
-                        json.loads((work / "chain-snapshot.json").read_text()),
+                        frozen,
                         block_info=sub.block_info,
+                        commitments_at=commitments_at,
                         run_round=soup_pool.child_round(args, work),
                     )
                 wire.write_json(work / "soup-pools.json", soup_summary)

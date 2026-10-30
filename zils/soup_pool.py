@@ -109,9 +109,13 @@ def house(entry, directory):
     return soup_rates.validate_house(entry["house"])
 
 
-def epoch(config, directory, snapshot, *, block_info, run_round):
+def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round):
     """Run each enabled soup pool's due round once. Returns {pool: summary}; a failed round keeps the
-    pool's last decision (yesterday's soup stays paid) and is retried on the next epoch."""
+    pool's last decision (yesterday's soup stays paid) and is retried on the next epoch.
+
+    `commitments_at(block)` returns the roster's commitments ({uid: {"block", "data"}}) as of
+    `block`; the round reads them at its seed block, so every validator sees the same set however
+    late it runs (the live snapshot only holds each hotkey's latest commitment)."""
     summary = {}
     for pool, entry in soup_pools(config).items():
         try:
@@ -124,7 +128,7 @@ def epoch(config, directory, snapshot, *, block_info, run_round):
             block, block_hash = seed_block(block_info, head, deadline)
             commitments = {
                 uid: item
-                for uid, item in snapshot.get("commitments", {}).items()
+                for uid, item in commitments_at(block).items()
                 if int(item["block"]) < block
             }
             secret = config["base_pools"]["pools"][pool].get(model_pools.SOUP_SECRET)

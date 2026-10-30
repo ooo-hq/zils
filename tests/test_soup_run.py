@@ -852,6 +852,24 @@ class SoupEpochTest(unittest.TestCase):
             },
         }
         self.calls = []
+        self.queried = []
+        # The chain's commitments by block: uid 1 committed at 250, then again after the deadline.
+        self.history = {
+            "1": [
+                (250, "zilsb2:" + "1" * 64 + ":" + "e" * 40 + ":m/one"),
+                (420, "zilsb2:" + "3" * 64 + ":" + "e" * 40 + ":m/three"),
+            ],
+            "2": [(400, "zilsb2:" + "2" * 64 + ":" + "e" * 40 + ":m/two")],
+        }
+
+    def commitments_at(self, block):
+        self.queried.append(block)
+        found = {}
+        for uid, history in self.history.items():
+            made = [(b, data) for b, data in history if b <= block]
+            if made:
+                found[uid] = {"block": made[-1][0], "data": made[-1][1]}
+        return found
 
     def run_round(self, pool, request):
         self.calls.append((pool, request))
@@ -868,7 +886,19 @@ class SoupEpochTest(unittest.TestCase):
             self.directory,
             self.snapshot,
             block_info=self.chain,
+            commitments_at=self.commitments_at,
             run_round=self.run_round,
+        )
+
+    def test_commitments_are_read_at_the_seed_block(self):
+        # The live snapshot only shows uid 1's newer commitment; the round sees the one at the seed.
+        self.snapshot["commitments"]["1"] = {"block": 420, "data": self.history["1"][1][1]}
+        self.epoch()
+        request = self.calls[0][1]
+        self.assertEqual(self.queried, [301])
+        self.assertEqual(
+            request["snapshot"]["commitments"],
+            {"1": {"block": 250, "data": self.history["1"][0][1]}},
         )
 
     def test_one_round_per_day_seeded_after_the_deadline(self):
@@ -902,7 +932,12 @@ class SoupEpochTest(unittest.TestCase):
 
         self.snapshot["block"] = 1000 + 7200
         summary = soup_pool.epoch(
-            self.config, self.directory, self.snapshot, block_info=self.chain, run_round=broken
+            self.config,
+            self.directory,
+            self.snapshot,
+            block_info=self.chain,
+            commitments_at=self.commitments_at,
+            run_round=broken,
         )
         self.assertIn("GPU fell over", summary["d3-mini"]["error"])
         self.assertIsNotNone(soup_pool.decision(self.directory, "d3-mini"))
