@@ -438,7 +438,9 @@ earning at once.
   most rounds; it pays for a body that is better than the soup by itself.
 - **Rates:** **1.0** for a trainer's body; **0.25** for a scout's body, one within a
   similarity threshold of a listed open model released after launch (the list is
-  empty at launch); **0** for house
+  empty at launch), and for a house mix, a body whose change from Qwen is almost
+  entirely a mix of house ingredients' changes (less than 5% of it is left over;
+  real fine-tunes of a house ingredient leave about 10%); **0** for house
   ingredients, the open Qwen3.5-4B decision models already public at launch, which
   the pool includes unpaid.
 

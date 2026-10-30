@@ -48,8 +48,10 @@ BODIES = {
     "t2": strengths(0, 0, 1, 1, 1),
     "house": strengths(0.25, 0.25, 0.25, 0.25, 0.25),
     "weak": strengths(0.0625, 0, 0, 0, 0.0625),
-    # A light retrain of the house model (a scout) and trainer 1's layers with a new norm (a copy).
-    "scout": strengths(0.25, 0.25, 0.25, 0.25, 0.3125),
+    # A fine-tune of the house model (10% of its change is its own), a tweak of it (a house mix,
+    # under 5% its own) and trainer 1's layers with a new norm (a copy).
+    "scout": strengths(0.25, 0.25, 0.25, 0.25, 0.5),
+    "housemix": strengths(0.25, 0.25, 0.25, 0.25, 0.3125),
     "t1copy": strengths(1, 1, 0, 0, 0, norm=2),
 }
 
@@ -1046,6 +1048,13 @@ class SoupRunTest(unittest.TestCase):
         self.r.run(round_id="d3-mini-2026-11-04")
         self.assertEqual(len(list((self.r.state / "sketches").glob("*.npz"))), 6)
 
+    def test_a_house_mix_is_paid_at_the_scout_rate(self):
+        self.r.commits[5] = ("housemix", 50)
+        record = self.r.run()
+        sha = self.r.sha
+        self.assertIn(sha["housemix"], record["pool"])
+        self.assertEqual(record["rates"][sha["housemix"]], 0.25)
+
     def test_a_merge_with_another_hotkeys_body_is_a_copy_but_not_with_ones_own(self):
         BODIES["merge"] = strengths(0.625, 0.625, 0.125, 0.125, 0.125)  # (t1 + house) / 2
         self.addCleanup(BODIES.pop, "merge")
@@ -1172,6 +1181,22 @@ class SoupRunTest(unittest.TestCase):
         self.assertIn("pinned hash", record["house_failures"]["wrong"])
         self.assertTrue(record["members"])
         self.assertNotIn("house_failures", json.dumps(self.public()))
+
+    def test_rates_see_the_house_sketches_and_the_house_mix_bar(self):
+        from zils import soup_rates
+
+        calls, rate = [], soup_rates.rate
+
+        def spy(*args, **kwargs):
+            calls.append(kwargs)
+            return rate(*args, **kwargs)
+
+        with patch("zils.soup_rates.rate", side_effect=spy):
+            record = self.r.run(config=self.r.config(house_mix_max=0.2))
+        self.assertTrue(calls)
+        self.assertEqual({c["house_mix_max"] for c in calls}, {0.2})
+        self.assertEqual({len(c["house_sketches"]) for c in calls}, {1})
+        self.assertEqual(record["rates"][self.r.sha["t1"]], 1.0)
 
     def test_rate_constants_match_soup_rates(self):
         from zils import soup_rates

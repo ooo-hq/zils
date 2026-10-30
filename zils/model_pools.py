@@ -18,6 +18,7 @@ SOUP_OPTIONAL = {
     "max_download_bytes_per_round": 60 * 1024**3,
     "max_decision_age_days": 3,
     "others_max": 0.3,
+    "house_mix_max": 0.05,
     "failed_claim_backoff_rounds": 3,
 }
 
@@ -70,6 +71,9 @@ def validate_soup(entry):
     others = sizes.pop("others_max")
     if type(others) not in (int, float) or not 0.1 <= others <= 0.9:
         raise ValueError("soup others_max must be a number in [0.1, 0.9]")
+    house_mix = sizes.pop("house_mix_max")
+    if type(house_mix) not in (int, float) or not 0 <= house_mix <= 0.5:
+        raise ValueError("soup house_mix_max must be a number in [0, 0.5]")
     if any(type(v) is not int for v in sizes.values()):
         raise ValueError(
             "soup subset_size, screen_size, max_pool and the per-round caps must be integers"
@@ -96,6 +100,7 @@ def validate_soup(entry):
         "schedule": {"deadline_utc": deadline},
         **sizes,
         "others_max": others,
+        "house_mix_max": house_mix,
     }
 
 

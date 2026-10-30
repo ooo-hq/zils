@@ -634,7 +634,13 @@ def run(
 
             def rates(sha, info, house):
                 return soup_rates.rate(
-                    sha, sketch(sha), house=house, known=public, hotkey=info["hotkey"]
+                    sha,
+                    sketch(sha),
+                    house=house,
+                    known=public,
+                    hotkey=info["hotkey"],
+                    house_sketches=[sketch(s) for s in sorted(house)],
+                    house_mix_max=config.get("house_mix_max", soup_rates.HOUSE_MIX_MAX),
                 )
 
     twins = soup_copies.is_twin if twins is None else twins

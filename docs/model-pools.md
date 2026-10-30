@@ -72,7 +72,8 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
 `schedule`, and optionally `subset_size` (default 3,000), `screen_size` (300),
 `max_pool` (20, at least 5), `max_new_per_round` (6), `max_claims_per_round`
 (12), `max_download_bytes_per_round` (60 GiB), `failed_claim_backoff_rounds` (3),
-`others_max` (0.3), `max_decision_age_days` (3) and `sketch_seed`:
+`others_max` (0.3), `house_mix_max` (0.05), `max_decision_age_days` (3) and
+`sketch_seed`:
 
 ```json
 "d3-mini": {
@@ -163,7 +164,11 @@ repo) fails only that hotkey's commitment of that repo revision; a download that
 times out is retried next round. The first valid commitment of a hash wins.
 
 Fine-tunes are welcome, including fine-tunes of house models, the current soup
-or the release; they are paid at the trainer rate. The copy check rejects a
+or the release; they are paid at the trainer rate. A house mix is paid at the
+scout rate (0.25): a body whose change from the base, fitted on the house
+bodies' changes (non-negative least squares on the sketches), leaves a residual
+share under `house_mix_max` (default 0.05, settable from 0 to 0.5). The dry
+run's two real fine-tunes of a house body left about 0.10 to 0.12. The copy check rejects a
 body that is a near-exact copy (cosine at least 0.999 between weight-change
 sketches) of an earlier body by another hotkey, a house body, the current soup
 or the release. The body is also fitted on earlier other-hotkey bodies and

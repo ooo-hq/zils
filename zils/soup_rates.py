@@ -7,12 +7,13 @@ import re
 from pathlib import Path
 
 from . import commitments
-from .soup_copies import cosine
+from .soup_copies import cosine, explained_share
 
 HOUSE_RATE = 0.0
 SCOUT_RATE = 0.25
 TRAINER_RATE = 1.0
 COSINE_SCOUT = 0.9
+HOUSE_MIX_MAX = 0.05  # a body whose change house bodies explain to within this share is a house mix
 HOUSE_PATH = Path(__file__).with_name("data") / "soup-house.json"
 FIELDS = {"name", "repo", "revision", "body_sha256"}
 
@@ -50,16 +51,32 @@ def _house_hashes(house):
     return out
 
 
-def rate(body_sha256, sketch, *, house, known, hotkey, cosine_scout=COSINE_SCOUT) -> float:
+def rate(
+    body_sha256,
+    sketch,
+    *,
+    house,
+    known,
+    hotkey,
+    cosine_scout=COSINE_SCOUT,
+    house_sketches=(),
+    house_mix_max=HOUSE_MIX_MAX,
+) -> float:
     """HOUSE_RATE for a house body hash; SCOUT_RATE when the sketch's cosine to any known public model is at
     least `cosine_scout`; else TRAINER_RATE. `house` holds registry entries or hashes; `known` holds
     {"body_sha256", "sketch", "hotkey" (None for a public model), "repo"}. House entries never make a
     scout: a fine-tune of a house model is a trainer's work (an exact or near-exact re-upload is
     rejected as a copy before rating). Known entries committed by the submitting `hotkey` itself are
-    skipped, so a trainer's own earlier upload never makes it a scout, whatever its repo."""
+    skipped, so a trainer's own earlier upload never makes it a scout, whatever its repo.
+
+    A house mix is paid as a scout: a body whose change from the base is almost entirely a
+    non-negative mix of the house bodies' changes (`house_sketches`), with a residual share of its
+    squared norm under `house_mix_max`. A light fine-tune leaves more than that and is a trainer's."""
     house_hashes = _house_hashes(house)
     if body_sha256 in house_hashes:
         return HOUSE_RATE
+    if house_sketches and 1 - explained_share(sketch, list(house_sketches)) < house_mix_max - 1e-9:
+        return SCOUT_RATE
     for entry in known:
         if entry.get("body_sha256") in house_hashes:
             continue
