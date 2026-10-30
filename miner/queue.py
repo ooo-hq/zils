@@ -20,11 +20,11 @@ from zils.queue_protocol import identifier, lease_heartbeat
 from zils.runtime import (
     CapacityUnavailable,
     digest,
-    gpu_ready,
     gpu_total_mib,
     locked,
     prepare_base,
 )
+from zils.serving_yield import ready as gpu_ready, yield_gpu
 
 
 class Client:
@@ -186,14 +186,17 @@ def run_once(
                 job["max_seconds"] = assignment["max_seconds"]
             if image_jobs.takes_images(model):
                 download_images(client, auth, training, directory / "images")
-            entry = train_candidate(
-                config,
-                directory,
-                job,
-                runtime,
-                device,
-                check_lease=check_lease,
-            )
+            with yield_gpu(
+                device, model=model, minimum_mib=job["min_free_mib"], check_lease=check_lease
+            ):
+                entry = train_candidate(
+                    config,
+                    directory,
+                    job,
+                    runtime,
+                    device,
+                    check_lease=check_lease,
+                )
             check_lease()
             urls = client.call("uploads", auth)["uploads"]
             for name in models.artifact_files(entry["checkpoint"]):

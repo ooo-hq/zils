@@ -1,5 +1,14 @@
 # Run a text or image queue miner
 
+On testnet hosts that also serve inference, the optional
+`ZILS_SERVING_DIRECTORY` handoff lets a worker claim first, then wait for its
+local serving controller to stop the runtime. `ZILS_SERVING_YIELD_MIB` supplies
+measured reclaimable memory for readiness; actual-free memory guards still apply.
+Enable it only with the matching controller, writable runtime directory and
+service-group supervision described in `zils-platform/docs/serving-coordination.md`.
+Unconfigured workers retain existing behavior. Production serving runs separately
+from miners; co-location does not guarantee uninterrupted inference.
+
 A queue miner downloads assigned training examples, trains the pinned adapter, and
 submits signed artifacts for independent evaluation. It connects to the
 coordinator over outbound HTTPS. It needs an approved hotkey and model hardware;
