@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import shutil
 import time
 from datetime import datetime
 from pathlib import Path
@@ -14,9 +15,12 @@ from . import (
     commitments,
     migration_regression,
     model_pools,
+    models,
     regression_suite,
 )
 
+SOUP_OWNER = "validator-soup"
+MAX_SOUP_MEMBERS = 5
 PATHS = {"base_round_dir", "base_reference", "family_history", "suite_manifest", "pilot_report"}
 
 
@@ -143,9 +147,34 @@ def ownership(candidate, snapshot, incumbent):
     return claim
 
 
-def qualify(first, second, suite_report, *, candidate_sha256, active, expected_suite, evidence):
-    if set(evidence) != {"first", "second", "suite", "snapshot_first", "snapshot_second"}:
-        raise ValueError("readiness requires both decisions, snapshots and suite evidence")
+def soup_ownership(soup):
+    """A validator-built soup has no chain owner: its identity is its own hash and its provenance
+    is the list of member bodies, which are paid through the soup pool, never as kings."""
+    if (
+        not isinstance(soup, dict)
+        or set(soup) != {"soup_sha256", "members", "round_id"}
+        or not isinstance(soup["round_id"], str)
+        or not soup["round_id"]
+        or not isinstance(soup["members"], list)
+        or not 1 <= len(soup["members"]) <= MAX_SOUP_MEMBERS
+    ):
+        raise ValueError("soup requires soup_sha256, round_id and 1-5 members")
+    base_exam._hash(soup["soup_sha256"])
+    for member in soup["members"]:
+        if (
+            not isinstance(member, dict)
+            or set(member) != {"body_sha256", "hotkey"}
+            or not isinstance(member["hotkey"], str)
+            or not member["hotkey"]
+        ):
+            raise ValueError("soup members require body_sha256 and hotkey")
+        base_exam._hash(member["body_sha256"])
+    if len({m["body_sha256"] for m in soup["members"]}) != len(soup["members"]):
+        raise ValueError("soup members must be distinct bodies")
+    return {"owner": SOUP_OWNER, **soup}
+
+
+def confirmed(first, second, suite_report, *, candidate_sha256, active, expected_suite, evidence):
     for key, report in (("first", first), ("second", second), ("suite", suite_report)):
         if evidence_read(evidence[key]) != report:
             raise ValueError("readiness input differs from hash-bound evidence")
@@ -155,9 +184,6 @@ def qualify(first, second, suite_report, *, candidate_sha256, active, expected_s
     candidate = next((c for c in ready if c["sha256"] == candidate_sha256), None)
     if candidate is None:
         raise ValueError("candidate has not qualified on both draws")
-    prior = next(c for c in first["candidates"] if c["sha256"] == candidate_sha256)
-    ownership(prior, evidence_read(evidence["snapshot_first"]), active["incumbent_sha256"])
-    ownership(candidate, evidence_read(evidence["snapshot_second"]), active["incumbent_sha256"])
     regression_suite.verify_election(
         suite_report,
         candidate_sha256,
@@ -165,15 +191,58 @@ def qualify(first, second, suite_report, *, candidate_sha256, active, expected_s
         active["model"]["id"],
         expected_suite=expected_suite,
     )
+    return candidate
+
+
+def receipt(active, candidate, evidence, **extra):
     return addressed(
         {
             "version": "zils-base-ready/v1",
             "active": binding(active),
             "candidate": {k: candidate[k] for k in ("uid", "sha256", "hotkey", "commitment_block")},
+            **extra,
             "completed_at": max(v["completed_at"] for v in candidate["evaluation"].values()),
             "evidence": evidence,
         }
     )
+
+
+def qualify(first, second, suite_report, *, candidate_sha256, active, expected_suite, evidence):
+    if set(evidence) != {"first", "second", "suite", "snapshot_first", "snapshot_second"}:
+        raise ValueError("readiness requires both decisions, snapshots and suite evidence")
+    candidate = confirmed(
+        first,
+        second,
+        suite_report,
+        candidate_sha256=candidate_sha256,
+        active=active,
+        expected_suite=expected_suite,
+        evidence=evidence,
+    )
+    prior = next(c for c in first["candidates"] if c["sha256"] == candidate_sha256)
+    ownership(prior, evidence_read(evidence["snapshot_first"]), active["incumbent_sha256"])
+    ownership(candidate, evidence_read(evidence["snapshot_second"]), active["incumbent_sha256"])
+    return receipt(active, candidate, evidence)
+
+
+def qualify_soup(first, second, suite_report, *, soup, active, expected_suite, evidence):
+    """The same gate as `qualify` for a validator-built soup: both private decisions and the
+    adapter suite, with the soup's decision rows owned by `SOUP_OWNER` instead of a chain claim."""
+    owner = soup_ownership(soup)
+    if set(evidence) != {"first", "second", "suite"}:
+        raise ValueError("soup readiness requires both decisions and suite evidence")
+    candidate = confirmed(
+        first,
+        second,
+        suite_report,
+        candidate_sha256=soup["soup_sha256"],
+        active=active,
+        expected_suite=expected_suite,
+        evidence=evidence,
+    )
+    if candidate["hotkey"] != SOUP_OWNER:
+        raise ValueError("soup decision rows must be validator-built, not a chain commitment")
+    return receipt(active, candidate, evidence, ownership=owner)
 
 
 def verify_ready(receipt, active):
@@ -181,15 +250,20 @@ def verify_ready(receipt, active):
     if receipt.get("version") != "zils-base-ready/v1" or receipt["active"] != binding(active):
         raise ValueError("ready receipt differs from active competition")
     e = receipt["evidence"]
-    actual = qualify(
-        evidence_read(e["first"]),
-        evidence_read(e["second"]),
-        evidence_read(e["suite"]),
-        candidate_sha256=receipt["candidate"]["sha256"],
-        active=active,
-        expected_suite=active["suite_manifest"],
-        evidence=e,
-    )
+    reports = [evidence_read(e[k]) for k in ("first", "second", "suite")]
+    if "ownership" in receipt:
+        soup = {k: v for k, v in receipt["ownership"].items() if k != "owner"}
+        actual = qualify_soup(
+            *reports, soup=soup, active=active, expected_suite=active["suite_manifest"], evidence=e
+        )
+    else:
+        actual = qualify(
+            *reports,
+            candidate_sha256=receipt["candidate"]["sha256"],
+            active=active,
+            expected_suite=active["suite_manifest"],
+            evidence=e,
+        )
     if actual != receipt:
         raise ValueError("ready receipt differs from recomputed evidence")
     return receipt
@@ -210,8 +284,11 @@ def inventory(active):
             candidate = receipt["candidate"]
             sha = candidate["sha256"]
             previous = result.get(sha)
-            if previous and any(
-                previous["candidate"][k] != candidate[k] for k in ("hotkey", "commitment_block")
+            if previous and (
+                any(
+                    previous["candidate"][k] != candidate[k] for k in ("hotkey", "commitment_block")
+                )
+                or previous.get("ownership") != receipt.get("ownership")
             ):
                 raise ValueError("ready checkpoint has conflicting ownership")
             if previous is None or (receipt["completed_at"], receipt["sha256"]) < (
@@ -355,7 +432,8 @@ def close(frozen, closing, *, active, members, now):
         expected = roster[candidate["sha256"]]["candidate"]
         if any(candidate[k] != expected[k] for k in ("hotkey", "commitment_block")):
             raise ValueError("closing candidate differs from frozen ownership")
-        ownership(candidate, snapshot, active["incumbent_sha256"])
+        if "ownership" not in roster[candidate["sha256"]]:
+            ownership(candidate, snapshot, active["incumbent_sha256"])
         if candidate["eligible"]:
             survivors.append(candidate)
         elif not candidate.get("error") and "evaluation" not in candidate:
@@ -374,15 +452,18 @@ def close(frozen, closing, *, active, members, now):
         if survivors
         else None
     )
-    winner = (
-        {k: winner[k] for k in ("uid", "sha256", "hotkey", "commitment_block", "score")}
-        if winner
-        else None
-    )
+    soup = None
+    if winner:
+        soup = roster[winner["sha256"]].get("ownership")
+        winner = {k: winner[k] for k in ("uid", "sha256", "hotkey", "commitment_block", "score")}
+        if soup:
+            winner["ownership"] = soup
     kings = active.get("kings", [])
+    # A soup is released, not crowned: its members are paid through the soup pool, so the
+    # king history is unchanged and the window's winner records the soup hash and members.
     proposed = {
         "incumbent_sha256": winner["sha256"] if winner else active["incumbent_sha256"],
-        "kings": [winner["hotkey"], *kings] if winner else kings,
+        "kings": [winner["hotkey"], *kings] if winner and not soup else kings,
     }
     result = addressed(
         {
@@ -461,6 +542,26 @@ def channel_proposal(window_report, *, new_profile_id, migration, release_review
     return persist(window_path(active, window_report["frozen"]["window_id"], "channels"), proposal)
 
 
+def seed_soup(store, soup_sha256, directories, model):
+    """Place a frozen soup in the evaluator's checkpoint cache, so the closing draw evaluates it
+    like a fetched commitment. The directory must hash to the receipt's soup_sha256."""
+    import zils
+
+    target = Path(store) / soup_sha256 / "checkpoint"
+    if not target.exists():
+        found = [Path(d) for d in directories if zils.checkpoint_hash(Path(d)) == soup_sha256]
+        if not found:
+            raise ValueError("closing a soup requires --soup-checkpoint matching soup_sha256")
+        models.text_runtime(model).validate_candidate(found[0], model)
+        staged = target.with_name("seed-" + target.parent.name)
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        shutil.rmtree(staged, ignore_errors=True)
+        shutil.copytree(found[0], staged)
+        staged.rename(target)
+    if zils.checkpoint_hash(target) != soup_sha256:
+        raise ValueError("cached soup checkpoint changed")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("qualify", "freeze", "close"))
@@ -473,6 +574,7 @@ def main():
         "snapshot-first",
         "snapshot-second",
         "candidate-sha256",
+        "soup",
         "ready-dir",
         "schedule",
         "frozen",
@@ -481,6 +583,12 @@ def main():
         "channels",
     ):
         parser.add_argument("--" + name)
+    parser.add_argument(
+        "--soup-checkpoint",
+        action="append",
+        default=[],
+        help="close: a frozen soup's checkpoint directory (repeat per soup)",
+    )
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--runtime-python")
     args = parser.parse_args()
@@ -488,7 +596,23 @@ def main():
     active = active_context(read(config), args.pool, directory=config.parent)
     if Path(args.out).exists():
         raise FileExistsError(args.out)
-    if args.command == "qualify":
+    if args.command == "qualify" and args.soup:
+        paths = {k: getattr(args, k) for k in ("first", "second", "suite")}
+        if not all(paths.values()) or any(
+            (args.snapshot_first, args.snapshot_second, args.candidate_sha256)
+        ):
+            parser.error("soup qualify requires first, second and suite, without chain inputs")
+        receipt = qualify_soup(
+            read(args.first),
+            read(args.second),
+            read(args.suite),
+            soup=read(args.soup),
+            active=active,
+            expected_suite=active["suite_manifest"],
+            evidence={k: bound(p) for k, p in paths.items()},
+        )
+        persist(Path(active["ready_dir"]) / (receipt["sha256"] + ".json"), receipt)
+    elif args.command == "qualify":
         paths = {
             k: getattr(args, k)
             for k in ("first", "second", "suite", "snapshot_first", "snapshot_second")
@@ -551,7 +675,10 @@ def main():
                 [base_exam.audit(p) for p in active["draw_roots"].values()]
                 + [base_exam.audit(args.closing_round, history=active["history"])]
             )
-            candidates = {r["candidate"]["sha256"] for r in frozen["ready"]}
+            soups = {
+                r["candidate"]["uid"]: r["candidate"] for r in frozen["ready"] if "ownership" in r
+            }
+            candidates = {r["candidate"]["sha256"] for r in frozen["ready"] if "ownership" not in r}
             registry = commitments.candidates(snapshot, active["incumbent_sha256"])
             registry = {
                 u: {**c, "hotkey": snapshot["members"][str(u)]}
@@ -560,6 +687,16 @@ def main():
             }
             if {c["sha256"] for c in registry.values()} != candidates:
                 raise ValueError("frozen candidates are missing from the closing snapshot")
+            if set(registry) & set(soups):
+                raise ValueError("a frozen soup's uid collides with a chain candidate")
+            store = Path(active["ready_dir"]).parent / "base-tier" / "store"
+            for uid, row in soups.items():
+                seed_soup(store, row["sha256"], args.soup_checkpoint, active["model"]["id"])
+                registry[uid] = {
+                    "sha256": row["sha256"],
+                    "hotkey": SOUP_OWNER,
+                    "block": row["commitment_block"],
+                }
             identity = base_round.draw(args.closing_round)
             settings = {
                 **active["settings"],

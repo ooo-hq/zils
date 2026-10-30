@@ -285,6 +285,23 @@ inputs or forged averages fail. The receipt binds raw decisions, reports, chain
 ownership, active incumbent/policy, suite and pilot. Private decisions are under
 `base-pools/<pool>/base-tier/decisions`; the public sidecar is insufficient.
 
+A validator-built soup (a uniform average of up to five member bodies on the
+pinned chassis) has no chain commitment. Its rows in both private decisions use
+the owner `validator-soup`; it must clear the same policy bar with a positive
+lower bound on both draws and pass the same adapter suite. Qualify it with
+`--soup SOUP_RECORD` in place of the two snapshots and `--candidate-sha256`,
+where the record is `{"soup_sha256": ..., "round_id": ..., "members":
+[{"body_sha256": ..., "hotkey": ...}]}`. The receipt adds `ownership` (`owner:
+validator-soup`, the soup hash, round and members). A window that closes on a
+soup records that `ownership` on its `winner` and proposes the soup hash as the
+incumbent without adding a king: soup members are paid through the soup pool,
+not the king history. To close a roster that contains a soup, pass its
+directory with `--soup-checkpoint DIR` (repeat per soup): the command checks the
+directory hashes to the receipt's `soup_sha256`, validates it, and evaluates it
+on the closing draw beside the committed candidates. `promote_base.py` proposes a
+soup winner as the incumbent with `kings` unchanged and records the soup's hash,
+round and members under `release`.
+
 Author a schedule `{ "version": "zils-base-windows/v1", "anchor_utc":
 "ACTUAL_UTC_ANCHOR", "interval_days": 14 }` with a 14–28 day interval. At a
 scheduled window, freeze the entire active ready directory before any closing
