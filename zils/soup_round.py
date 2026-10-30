@@ -396,7 +396,17 @@ def run(
     soup) and ``decision.json`` (the latest public record). The ledger is written last, so a crashed
     round reruns from its cached predictions and is recorded once.
     """
-    from . import base_metrics, bodies, models, soup, soup_copies, soup_exam, soup_grade, soup_rates
+    from . import (
+        base_metrics,
+        bodies,
+        d3,
+        models,
+        soup,
+        soup_copies,
+        soup_exam,
+        soup_grade,
+        soup_rates,
+    )
 
     if not isinstance(round_id, str) or not _ROUND_ID.fullmatch(round_id):
         raise ValueError("round_id must be a safe name")
@@ -409,6 +419,9 @@ def run(
     model = model if isinstance(model, str) else models.validate_spec(model)
     seed = round_seed(block_hash, pool_id)
     bank_key = bank_sha256(bank)
+    # Cached rows are scoped to the bank and the chassis profile (model id and pinned answer layer),
+    # so a profile change never reuses rows graded on another chassis.
+    scope = f"{bank_key[:16]}-{model}-{d3.pins(model)['files'][soup.READOUT][:12]}"
     scratch = state_dir / "tmp"
     scratch.mkdir(parents=True, exist_ok=True)
     (state_dir / "bodies").mkdir(parents=True, exist_ok=True)
@@ -487,7 +500,7 @@ def run(
         return (info["block"], -1 if info["uid"] is None else info["uid"], sha)
 
     def body_key(sha):
-        return f"{sha[:32]}-{bank_key[:16]}"
+        return f"{sha[:32]}-{scope}"
 
     def graded(key, cases, members):
         """Rows for `cases` under `key`; missing rows grade the soup of `members` built on the chassis
@@ -552,7 +565,7 @@ def run(
 
     def soup_key(members):
         digest = hashlib.sha256("+".join(members).encode()).hexdigest()
-        key = f"soup-{digest[:32]}-{bank_key[:16]}"
+        key = f"soup-{digest[:32]}-{scope}"
         soup_keys.add(key)
         return key
 
@@ -574,7 +587,7 @@ def run(
     members, trace = greedy(solo, evaluate, order_key=order)
     baseline = None
     if len(members) == 1:
-        key = f"chassis-{soup.soup_hash(chassis)[:32]}-{bank_key[:16]}"
+        key = f"chassis-{soup.soup_hash(chassis)[:32]}-{scope}"
         baseline = soup_grade.score(
             subset, soup_grade.grade(key, subset, cache, runner_for(chassis))
         )

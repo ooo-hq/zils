@@ -641,12 +641,31 @@ class SoupRunTest(unittest.TestCase):
             (soup_round.HOUSE_RATE, soup_round.SCOUT_RATE, soup_round.TRAINER_RATE),
         )
 
-    def test_cache_keys_are_bank_scoped(self):
+    def test_cache_keys_are_bank_and_profile_scoped(self):
         self.r.run()
         names = {p.stem for p in (self.r.state / "cache").iterdir()}
         bank_sha = soup_round.bank_sha256(self.r.bank)
-        self.assertIn(f"{self.r.sha['t1'][:32]}-{bank_sha[:16]}", names)
-        self.assertTrue(all(n.endswith(bank_sha[:16]) for n in names))
+        pin = d3.PINS["files"]["readout.safetensors"][:12]
+        tag = f"{bank_sha[:16]}-{models.D3}-{pin}"
+        self.assertIn(f"{self.r.sha['t1'][:32]}-{tag}", names)
+        self.assertTrue(all(n.endswith(tag) for n in names))
+
+    def test_a_profile_change_never_reuses_cached_rows(self):
+        first = self.r.run()
+        before = {p.stem for p in (self.r.state / "cache").iterdir()}
+        test_soup.save_file(
+            {"readout": test_soup.torch.ones(2, 3)}, str(self.r.chassis / "readout.safetensors")
+        )
+        pinned = hashlib.sha256((self.r.chassis / "readout.safetensors").read_bytes()).hexdigest()
+        self.enterContext(patch.dict(d3.PINS["files"], {"readout.safetensors": pinned}))
+        graded = sum(self.r.runner.graded.values())
+        again = self.r.run(round_id="d3-mini-2026-11-04")
+        after = {p.stem for p in (self.r.state / "cache").iterdir()} - before
+        for sha in again["pool"]:
+            self.assertTrue(any(n.startswith(sha[:32]) and n.endswith(pinned[:12]) for n in after))
+        self.assertGreaterEqual(
+            sum(self.r.runner.graded.values()) - graded, 300 * len(first["pool"])
+        )
 
 
 MEMBERS = {"1": {"hotkey": "a"}, "2": {"hotkey": "b"}, "3": {"hotkey": "c"}}
