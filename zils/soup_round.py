@@ -10,6 +10,7 @@ A body is any hashable id (a body sha256 in production). ``evaluate(members)`` g
 sorted tuple of bodies and returns its exam score in points.
 """
 
+import gc
 import hashlib
 import http.client
 import json
@@ -17,6 +18,8 @@ import math
 import os
 import re
 import shutil
+import sys
+import traceback
 from pathlib import Path
 
 MARGIN = 0.3  # minimum soup score gain (points) for greedy to add a body; above GPU-to-GPU drift
@@ -214,6 +217,17 @@ def _round_fault(error):
         return True
     text = f"{type(error).__name__} {error}".lower()
     return isinstance(error, RuntimeError) and any(word in text for word in _GPU_FAULTS)
+
+
+def _release_memory(error):
+    """Drop what a failed grading still holds (the body's model and runner live on in the error's
+    traceback frames) and empty the CUDA cache, so the chassis check runs on a clean GPU."""
+    traceback.clear_frames(error.__traceback__)
+    error.__traceback__ = None  # the frames still name their functions, and so their closures
+    gc.collect()
+    torch = sys.modules.get("torch")
+    if torch is not None and torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 def _rename(folder):
@@ -640,6 +654,7 @@ def run(
         if _round_fault(error):
             raise error
         if not checked:
+            _release_memory(error)
             try:
                 runner_for(chassis)(subset[:1])
             except Exception as chassis_error:

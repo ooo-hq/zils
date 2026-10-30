@@ -484,6 +484,38 @@ class SoupRunTest(unittest.TestCase):
         state = json.loads((self.r.state / "pool.json").read_text())
         self.assertNotIn(self.r.sha["weak"], state["rejected"])
 
+    def test_a_failed_bodys_memory_is_released_before_the_chassis_check(self):
+        import weakref
+
+        fake, events, held = self.r.runner, [], []
+
+        class Model:  # stands in for the failed body's loaded weights
+            pass
+
+        def runner_for(folder):
+            if Path(folder) == self.r.chassis:
+                events.append(("chassis", held[0]() is None))
+                return fake(folder)
+            run = fake(folder)
+            if not Path(folder).name.startswith(self.r.sha["weak"][:32]):
+                return run
+            model = Model()
+            held.append(weakref.ref(model))
+
+            def fail(cases):
+                del cases
+                raise ValueError(f"bad output from {model!r}")
+
+            return fail
+
+        self.r.runner = runner_for
+        with (
+            patch("torch.cuda.is_available", return_value=True),
+            patch("torch.cuda.empty_cache", side_effect=lambda: events.append(("empty_cache",))),
+        ):
+            self.r.run()
+        self.assertEqual(events[:2], [("empty_cache",), ("chassis", True)])
+
     def test_a_body_failing_grading_is_banned_only_after_three_rounds(self):
         weak = self.r.sha["weak"]
         self.r.runner = self.failing(ValueError("bad output"))
