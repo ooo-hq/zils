@@ -389,6 +389,10 @@ def _intake(
             # Retried once the claim changes or one of the bodies that explained it leaves the pool.
             refused[uid] = prior_explained[key]["reason"]
             continue
+        partner = state.get("twins", {}).get(key, {}).get("partner")
+        if partner in known and not known[partner].get("pruned"):
+            refused[uid] = state["twins"][key]["reason"]  # retried once the partner leaves
+            continue
         # Checked in a partial folder, so a failed claim never leaves files under the hash's name.
         partial = folder(sha).with_name(f".{sha}.partial")
         try:
@@ -738,7 +742,7 @@ def run(
         if not info["house"] and info["solo"] is None and not info.get("pruned")
         if s not in rejected and s not in solo
     }
-    screened, screen, scored = [], {}, {}
+    screened, screen, scored, twinned = [], {}, {}, {}
     for sha in sorted(candidates, key=order):
         try:
             rows = grade(sha, subset)  # the whole subset once; the screen reads its own items
@@ -749,8 +753,16 @@ def run(
                 for o in [*solo, *screened]
                 if known[o]["hotkey"] is None or known[o]["hotkey"] != known[sha]["hotkey"]
             ]
-            if any(twins(screen_rows, grade(other, screen_cases)) for other in others):
-                rejected[sha] = "behavioural twin of a pool body"
+            partner = next((o for o in others if twins(screen_rows, grade(o, screen_cases))), None)
+            if partner is not None:
+                # A judgement on today's pool, not on the weights: the claim is refused, never the
+                # hash, and is retried when re-committed or once the partner leaves the pool.
+                twinned[sha] = {
+                    "key": claim_key(known[sha]),
+                    "partner": partner,
+                    "reason": f"behavioural twin of pool body {partner}; retried when the claim"
+                    " changes or that body leaves the pool",
+                }
                 continue
             screen[sha] = soup_grade.screen_score(screen_cases, screen_rows)
             score = soup_grade.score(subset, rows)
@@ -885,6 +897,7 @@ def run(
         "soup_bar": soup_bar,
         "rejected": rejected,
         "grade_failures": failures,
+        "twins": twinned,
         "house_failures": house_failures,
         "refused": intake["refused"],
         "failed": intake["failed"],
@@ -923,6 +936,15 @@ def _finish(state_dir, round_dir, ledger):
         if sha in state["bodies"] and sha not in new and sha not in strikes:
             continue  # nor an earlier-admitted body, except after repeated grading failures
         state["rejected"][sha] = reason
+        state["bodies"].pop(sha, None)
+        shutil.rmtree(state_dir / "bodies" / sha, ignore_errors=True)
+    for sha, twin in private.get("twins", {}).items():
+        if sha in state["members"] or state["bodies"].get(sha, {}).get("house"):
+            continue
+        state.setdefault("twins", {})[twin["key"]] = {
+            "partner": twin["partner"],
+            "reason": twin["reason"],
+        }
         state["bodies"].pop(sha, None)
         shutil.rmtree(state_dir / "bodies" / sha, ignore_errors=True)
     index = private["round_index"]

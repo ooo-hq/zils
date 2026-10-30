@@ -330,6 +330,55 @@ class SoupRunTest(unittest.TestCase):
         self.assertIn(self.r.sha["weak"], record["pool"])
         self.assertEqual(record["rejected"], {})
 
+    def twin_round(self):
+        """uid 6 commits a body that predicts exactly like trainer 1's (a behavioural twin)."""
+        self.r.commits[6] = ("t1copy", 104)
+
+        def twins(rows, other_rows):
+            return rows == other_rows
+
+        def run(round_id, **kwargs):
+            return self.r.run(round_id=round_id, twins=twins, copies=lambda *a, **k: None, **kwargs)
+
+        return run
+
+    def test_a_twin_is_refused_by_claim_and_never_banned(self):
+        run, twin = self.twin_round(), self.r.sha["t1copy"]
+        record = run("d3-mini-2026-11-03")
+        self.assertNotIn(twin, record["rejected"])
+        self.assertEqual(record["twins"][twin]["partner"], self.r.sha["t1"])
+        state = json.loads((self.r.state / "pool.json").read_text())
+        self.assertNotIn(twin, state["rejected"])
+        self.assertNotIn(twin, state["bodies"])
+        self.assertFalse((self.r.state / "bodies" / twin).exists())
+        fetched = self.r.fetched.count(twin)
+        again = run("d3-mini-2026-11-04")
+        self.assertEqual(self.r.fetched.count(twin), fetched)  # unchanged claim, partner still here
+        self.assertIn("twin", again["refused"]["6"])
+
+    def test_a_twin_is_retried_when_re_committed(self):
+        run, twin = self.twin_round(), self.r.sha["t1copy"]
+        run("d3-mini-2026-11-03")
+        fetched = self.r.fetched.count(twin)
+        snapshot = self.r.snapshot()
+        snapshot["commitments"]["6"]["data"] = bodies.format_commitment(
+            twin, "c" * 40, "miner/t1copy"
+        )
+        run("d3-mini-2026-11-04", snapshot=snapshot)
+        self.assertEqual(self.r.fetched.count(twin), fetched + 1)
+
+    def test_a_twin_is_retried_when_its_partner_leaves_the_pool(self):
+        run, twin = self.twin_round(), self.r.sha["t1copy"]
+        run("d3-mini-2026-11-03")
+        fetched = self.r.fetched.count(twin)
+        state = json.loads((self.r.state / "pool.json").read_text())
+        state["bodies"][self.r.sha["t1"]]["pruned"] = True
+        state["members"] = [self.r.sha["t2"]]
+        (self.r.state / "pool.json").write_text(json.dumps(state))
+        record = run("d3-mini-2026-11-04")
+        self.assertEqual(self.r.fetched.count(twin), fetched + 1)
+        self.assertIn(twin, record["new"])
+
     def test_a_hotkeys_new_body_is_never_its_own_seated_bodys_twin(self):
         def twins(rows, other_rows):
             return rows == other_rows

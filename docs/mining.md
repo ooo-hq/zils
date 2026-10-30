@@ -327,8 +327,11 @@ soup runs on the pinned d3-mini chassis: its answer layer, prompt and runtime ar
 fixed and are not part of a submission. A body is eligible when:
 
 - **Layout:** its safetensors contain every chassis tensor under
-  `language_model.*` and `visual.*` (723 tensors) with the chassis shape, in
-  `bfloat16`. One leading `model.` is stripped from names; `lm_head*` and `mtp.*`
+  `language_model.*` and `visual.*` (723 tensors) with the chassis shape, stored
+  as `bfloat16` or `float32` (Qwen's own format keeps 48 `linear_attn` tensors in
+  `float32`). Every tensor is rounded to `bfloat16` for the body hash, the change
+  check, the copy checks and the soup, so a tensor saved as `float32` hashes like
+  its `bfloat16` cast. One leading `model.` is stripped from names; `lm_head*` and `mtp.*`
   are ignored; any other tensor rejects the body. Sharded (`model.safetensors.index.json`)
   and single-file checkpoints are both accepted, and the body hash does not depend
   on the shard layout.
@@ -402,11 +405,15 @@ Validators run one soup round per day for each soup pool:
    (cosine ≥ 0.999) to an earlier commitment's, a house ingredient's, the current
    soup's or the release's; a body built largely from other miners' bodies (other
    hotkeys' bodies explain at least 30% of its change beyond what the house
-   ingredients explain); and a behavioural twin of a pool body (near-identical
-   answers, temperature-scaled copies included). Fine-tunes of a house
-   ingredient, the soup or a release are allowed and paid as trainer bodies. Only
-   a re-upload or a broken body (layout, non-finite weights, change bound) bans
-   its hash; other refusals apply to that commitment only.
+   ingredients explain; two fine-tunes of the same house ingredient share that
+   change and are not copies of each other); and a behavioural twin of a pool body
+   (near-identical answers, temperature-scaled copies included). Fine-tunes of a
+   house ingredient, the soup or a release are allowed and paid as trainer bodies.
+   Only a near-exact re-upload or a broken body (shape, non-finite weights, change
+   bound) bans its hash. A body built from other miners' bodies, or a behavioural
+   twin, refuses only that commitment: it is evaluated again when you commit a new
+   revision or when the pool body it matched leaves the pool. Other failures also
+   apply to that commitment only.
 4. **Pool:** new bodies are screened on a few hundred items; the pool is the
    current members, the house ingredients, the best screened new bodies and the
    best past single bodies, at most 20.

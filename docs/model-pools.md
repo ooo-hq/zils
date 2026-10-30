@@ -155,7 +155,9 @@ hashes of the subset, predictions and soup) enters the published report.
 ### Submitting a body
 
 A body's hash is refused for good only when weights that hash to it fail a check
-(shape, a NaN or infinite value, the change cap, a copy or a behavioural twin).
+(shape, a NaN or infinite value, the change cap) or are a near-exact re-upload.
+Tensors may be stored as bf16 or f32; each is rounded to bf16 for the hash, the
+change check, the copy checks and the soup.
 Any other failure (owner file, licence, a hash mismatch, unreadable files, the
 repo) fails only that hotkey's commitment of that repo revision; a download that
 times out is retried next round. The first valid commitment of a hash wins.
@@ -164,20 +166,22 @@ Fine-tunes are welcome, including fine-tunes of house models, the current soup
 or the release; they are paid at the trainer rate. The copy check rejects a
 body that is a near-exact copy (cosine at least 0.999 between weight-change
 sketches) of an earlier body by another hotkey, a house body, the current soup
-or the release, and a body mostly explained by earlier commitments of other
-hotkeys (for example their average). The body is also fitted on earlier
-other-hotkey bodies and house bodies together; if the other hotkeys' bodies add
+or the release. The body is also fitted on earlier other-hotkey bodies and
+house bodies together; if the other hotkeys' bodies add
 `others_max` (default 0.3, settable from 0.1 to 0.9) or more of the body's
 squared norm beyond what the house bodies explain alone, it is a copy. So
-merging another hotkey's body with a house body is rejected, while a fine-tune
-of a house body, or a merge with your own earlier bodies, is not. A behavioural
-twin of a pool body is also rejected.
+merging another hotkey's body with a house body (or averaging other hotkeys'
+bodies) is rejected, while a fine-tune of a house body, two independent
+fine-tunes of the same house body, or a merge with your own earlier bodies are
+not. A behavioural twin of a pool body is also refused.
 
 Only a near-exact re-upload (or a body with no change from the base) bans the
-body hash. "Explained by earlier" judges the current pool: it refuses only that
-commitment, counts only earlier bodies still in the pool, and the commitment is
-evaluated again when it is re-committed or one of the bodies that explained it
-leaves the pool.
+body hash. "Explained by earlier" and behavioural twins judge the current pool:
+they refuse only that commitment (explained shares count only earlier bodies
+still in the pool), and the commitment is evaluated again when it is
+re-committed or when a body that explained it, or its twin partner, leaves the
+pool. A house entry that cannot be downloaded or hashed sits that round out and
+is recorded in the private round record.
 
 Commitments are public on chain the moment they are made, and a public repo can
 be copied and committed by someone else before the deadline. To avoid
