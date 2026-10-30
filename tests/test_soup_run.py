@@ -645,6 +645,57 @@ class SoupRunTest(unittest.TestCase):
         again = self.r.run(round_id="d3-mini-2026-11-04", config=self.r.config(max_new_per_round=2))
         self.assertEqual(again["new"], [self.r.sha["weak"]])
 
+    def junk(self, *uids):
+        """Snapshot where each of `uids` commits a made-up hash from trainer 1's repo, early."""
+        snapshot = self.r.snapshot()
+        for n, uid in enumerate(uids):
+            snapshot["commitments"][str(uid)] = {
+                "block": 10 + n,
+                "data": bodies.format_commitment(f"{uid:064x}", REVISION, "miner/t1"),
+            }
+        return snapshot
+
+    def test_failed_claims_count_toward_the_claims_cap(self):
+        config = self.r.config(max_claims_per_round=2)
+        snapshot = self.junk(5, 6)
+        record = self.r.run(config=config, snapshot=snapshot)
+        self.assertEqual(len(record["failed"]), 2)
+        self.assertEqual(record["new"], [])
+        for uid in ("1", "2", "4"):
+            self.assertIn("claims cap", record["refused"][uid])
+        again = self.r.run(round_id="d3-mini-2026-11-04", config=config, snapshot=snapshot)
+        self.assertEqual(sorted(again["new"]), sorted([self.r.sha["t1"], self.r.sha["t2"]]))
+
+    def test_download_bytes_per_round_are_capped(self):
+        size = sum(p.stat().st_size for p in self.r.repos["t1"].iterdir())
+        record = self.r.run(config=self.r.config(max_download_bytes_per_round=size))
+        self.assertEqual(record["new"], [self.r.sha["t1"]])
+        self.assertIn("download budget", record["refused"]["2"])
+
+    def test_intake_progress_survives_a_crash(self):
+        def dies_on_weak(claim, dest):
+            if claim["sha256"] == self.r.sha["weak"]:
+                raise SystemExit("killed at the round deadline")
+            return self.r.fetch(claim, dest)
+
+        with self.assertRaises(SystemExit):
+            self.r.run(fetch_body=dies_on_weak)
+        self.assertEqual(len(self.r.fetched), 3)  # the house body, trainer 1 and trainer 2
+        record = self.r.run()
+        expected = [self.r.sha[n] for n in ("house", "t1", "t2", "weak")]
+        self.assertEqual(sorted(self.r.fetched), sorted(expected))  # nothing fetched twice
+        self.assertEqual(len(record["new"]), 3)
+
+    def test_default_intake_limits(self):
+        self.assertEqual(soup_round.MAX_CLAIMS_PER_ROUND, 12)
+        self.assertEqual(soup_round.MAX_DOWNLOAD_BYTES_PER_ROUND, 60 * 1024**3)
+        checked = model_pools.validate(pools())["pools"]["d3-mini"]
+        self.assertEqual(checked["max_claims_per_round"], 12)
+        self.assertEqual(checked["max_download_bytes_per_round"], 60 * 1024**3)
+        for bad in ({"max_claims_per_round": 0}, {"max_download_bytes_per_round": 0}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                model_pools.validate(pools(soup_entry(**bad)))
+
     def test_default_new_body_cap_is_six(self):
         self.assertEqual(soup_round.MAX_NEW_PER_ROUND, 6)
 

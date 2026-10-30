@@ -153,6 +153,8 @@ MAX_NEW_PER_ROUND = (
 )
 PRUNE_ROUNDS = 3  # a body out of the pool this many rounds loses its folder (hash and sketch kept)
 SOUP_CACHE_ROUNDS = 3  # a soup's cached predictions are dropped after this many rounds unused
+MAX_CLAIMS_PER_ROUND = 12  # commitments downloaded per round, failed ones included
+MAX_DOWNLOAD_BYTES_PER_ROUND = 60 * 1024**3  # bytes downloaded per round, failed claims included
 GRADE_CHUNK = 200  # items graded per cache write, so a timed-out round keeps its progress
 GRADE_STRIKES = 3  # rounds a body may fail grading (with a healthy chassis) before it is banned
 _GPU_FAULTS = ("cuda", "out of memory", "cublas", "cudnn", "nccl", "device-side", "accelerator")
@@ -250,15 +252,28 @@ def claim_key(claim):
     return f"{claim['hotkey']}:{claim['repo']}@{claim['revision']}"
 
 
-def _intake(state, snapshot, *, chassis, base, download, copies, folder, max_new=MAX_NEW_PER_ROUND):
+def _folder_bytes(path):
+    path = Path(path)
+    return sum(p.stat().st_size for p in path.rglob("*") if p.is_file()) if path.exists() else 0
+
+
+def _intake(
+    state, snapshot, *, chassis, base, download, copies, folder, limits=None, progress=None,
+    save=lambda progress: None,
+):  # fmt: skip
     """Admit new zilsb2 commitments in commitment order. Returns (new, rejected, refused, failed).
 
     Only failures of weights that hash to the committed hash (``bodies.WeightError``, copies) reject
     the hash itself (``rejected``, by hash, for good). Any other failure (owner file, licence, hash
     mismatch, unreadable files, a bad repo) fails only that commitment (``failed``, by
     ``claim_key``), so another hotkey committing the same hash is still evaluated. Transport errors
-    are ``refused`` for this round only and retried next round. At most ``max_new`` bodies are
-    admitted, in commitment-block order, then hotkey; later commitments wait for the next round.
+    are ``refused`` for this round only and retried next round.
+
+    Claims run in commitment-block order, then hotkey. ``limits`` caps the bodies admitted
+    (``max_new_per_round``), the claims downloaded, failed ones included (``max_claims_per_round``)
+    and the bytes downloaded (``max_download_bytes_per_round``); later claims wait for the next
+    round. ``progress`` holds the outcome of each claim so far and is passed to ``save`` after every
+    claim, so a round cut off by its deadline resumes without downloading a claim twice.
     """
     from . import bodies
 
@@ -277,9 +292,23 @@ def _intake(state, snapshot, *, chassis, base, download, copies, folder, max_new
             refused[str(uid)] = str(error)[:400]
             continue
         claims.append({**claim, "uid": int(uid), "hotkey": hotkey, "block": int(item["block"])})
-    new, rejected, failed = {}, {}, {}
+    limits = limits or {}
+    max_new = limits.get("max_new_per_round", MAX_NEW_PER_ROUND)
+    max_claims = limits.get("max_claims_per_round", MAX_CLAIMS_PER_ROUND)
+    max_bytes = limits.get("max_download_bytes_per_round", MAX_DOWNLOAD_BYTES_PER_ROUND)
+    progress = progress or {}
+    for name, empty in (("new", {}), ("rejected", {}), ("failed", {}), ("refused", {})):
+        progress.setdefault(name, empty)
+    progress.setdefault("done", [])
+    progress.setdefault("claims", 0)
+    progress.setdefault("bytes", 0)
+    new, rejected, failed = progress["new"], progress["rejected"], progress["failed"]
+    refused.update(progress["refused"])
+    progress["refused"] = refused
     for claim in sorted(claims, key=lambda c: (c["block"], c["hotkey"], c["uid"])):
         sha, uid, key = claim["sha256"], str(claim["uid"]), claim_key(claim)
+        if uid in progress["done"]:
+            continue
         if sha in known or sha in new:
             if (known.get(sha) or new[sha])["hotkey"] != claim["hotkey"]:
                 refused[uid] = "body committed first by another hotkey"
@@ -293,6 +322,12 @@ def _intake(state, snapshot, *, chassis, base, download, copies, folder, max_new
         if len(new) >= max_new:
             refused[uid] = "the round's new-body cap is reached; retried next round"
             continue
+        if progress["claims"] >= max_claims:
+            refused[uid] = "the round's claims cap is reached; retried next round"
+            continue
+        if progress["bytes"] >= max_bytes:
+            refused[uid] = "the round's download budget is spent; retried next round"
+            continue
         earlier = {
             s: folder(s)
             for s, info in [*known.items(), *new.items()]
@@ -300,9 +335,13 @@ def _intake(state, snapshot, *, chassis, base, download, copies, folder, max_new
         }
         # Checked in a partial folder, so a failed claim never leaves files under the hash's name.
         partial = folder(sha).with_name(f".{sha}.partial")
+        progress["claims"] += 1
         try:
             shutil.rmtree(folder(sha), ignore_errors=True)  # never trust files of an unknown hash
-            download(claim, partial)
+            try:
+                download(claim, partial)
+            finally:
+                progress["bytes"] += _folder_bytes(partial)
             bodies.validate_body(partial, chassis, hotkey=claim["hotkey"], base=base, sha256=sha)
             soup = tuple(s for s in state["members"] if s in known)
             if copies is not None and (reason := copies(sha, partial, earlier, soup=soup)):
@@ -310,20 +349,21 @@ def _intake(state, snapshot, *, chassis, base, download, copies, folder, max_new
             os.replace(partial, folder(sha))
         except (OSError, http.client.HTTPException) as error:  # retried next round
             refused[uid] = f"download failed: {_reason(error)}"[:400]
-            continue
         except bodies.WeightError as error:
             rejected[sha] = _reason(error)
-            continue
         except Exception as error:  # one hostile body must never abort the round
             print(f"soup intake: commitment {key} failed ({type(error).__name__})", flush=True)
             failed[key] = refused[uid] = _reason(error)
-            continue
+        else:
+            new[sha] = {
+                "hotkey": claim["hotkey"], "uid": claim["uid"], "repo": claim["repo"],
+                "revision": claim["revision"], "block": claim["block"], "house": False,
+                "solo": None,
+            }  # fmt: skip
         finally:
             shutil.rmtree(partial, ignore_errors=True)
-        new[sha] = {
-            "hotkey": claim["hotkey"], "uid": claim["uid"], "repo": claim["repo"],
-            "revision": claim["revision"], "block": claim["block"], "house": False, "solo": None,
-        }  # fmt: skip
+        progress["done"].append(uid)
+        save(progress)
     return new, rejected, refused, failed
 
 
@@ -505,9 +545,16 @@ def run(
 
     intake = _read_json(round_dir / "intake.json", None)
     if intake is None:
+        limits = {
+            k: config[k]
+            for k in ("max_new_per_round", "max_claims_per_round", "max_download_bytes_per_round")
+            if k in config
+        }
         new, rejected, refused, failed = _intake(
             state, snapshot, chassis=chassis, base=base, download=download, copies=copies,
-            folder=folder, max_new=config.get("max_new_per_round", MAX_NEW_PER_ROUND),
+            folder=folder, limits=limits,
+            progress=_read_json(round_dir / "intake-progress.json", None),
+            save=lambda progress: _write_json(round_dir / "intake-progress.json", progress),
         )  # fmt: skip
         intake = {"new": new, "rejected": rejected, "refused": refused, "failed": failed}
         _write_json(round_dir / "intake.json", intake)
