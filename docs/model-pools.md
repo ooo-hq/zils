@@ -61,9 +61,17 @@ solo body (the crown). The mechanism and its constants live in
 `zils/soup_round.py`; copy and twin checks in `zils/soup_copies.py`; pay rates and
 the house registry in `zils/soup_rates.py`.
 
+> **Chain endpoint requirement.** A soup round reads the roster's commitments as
+> of its seed block (the first block after the day's commit deadline), so every
+> validator sees the same set. Use an archive-capable chain endpoint. A pruned
+> node keeps only about 256 blocks (under an hour) of state, so a round started
+> later than that fails to read its commitments; it is retried, and until it
+> succeeds the previous decision keeps paying.
+
 A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
 `schedule`, and optionally `subset_size` (default 3,000), `screen_size` (300),
-`max_pool` (20, at least 5), `max_new_per_round` (6) and `sketch_seed`:
+`max_pool` (20, at least 5), `max_new_per_round` (6), `max_claims_per_round`
+(12), `max_download_bytes_per_round` (60 GiB) and `sketch_seed`:
 
 ```json
 "d3-mini": {
@@ -84,19 +92,28 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
   made before that block.
 - `max_new_per_round` caps the new bodies admitted in one round, in commitment
   block order, then hotkey; later commitments wait for the next round.
+  `max_claims_per_round` and `max_download_bytes_per_round` cap the commitments
+  downloaded and the bytes they take, failed ones included. Each claim's outcome
+  is saved as it finishes, so a round cut off by its deadline resumes without
+  downloading a claim twice.
 - `sketch_seed` (64 hex characters) seeds the weight sketches used by the copy
   checks and the scout rate. It is a private, per-validator secret: sketches are
   compared only on the validator that made them, and a known seed would let a
   copier disguise a copy. Omit it and the validator generates one on the first
   round and keeps it in `base-pools/<pool>/soup/sketch-seed`. It never appears in
-  a report. Changing it makes earlier sketches incomparable, so keep it fixed.
+  a report. **It must never change once set:** sketches of pruned bodies cannot be
+  remade, so a round whose seed differs from the pool's recorded seed stops with
+  an error until the original seed is restored.
 
 `base_pool_rounds` names a soup pool with `round_bank` (the private bank, JSON
 list or JSONL of exam cases) and `base` (the vendor parent folder the body change
 is measured against). The chassis is the pool model's pinned parent.
 
 Payout: the latest round's public record pays each seated hotkey its seat
-weight and the crown its crown weight, as fractions of the pool's share. Whatever
+weight and the crown its crown weight, as fractions of the pool's share. The
+crown (20%) goes to the best non-house solo body only if its solo score beats
+every house body's by at least the greedy margin (0.3 points); otherwise it
+burns. Whatever
 a round does not pay goes to `burn_uid`; before the first round the whole share
 burns. A failed round keeps the previous round's record.
 
@@ -105,13 +122,17 @@ for it: the round runs detached (`python -m zils.soup_pool --run <request>`),
 takes the shared GPU lock and runs in the GPU runtime under a 6-hour deadline.
 Later loops report it running, restart a round that died (at most three times a
 day) and otherwise leave the previous decision paying. The round reads the
-roster's commitments as of its seed block, so the validator's chain endpoint must
-serve state at that block (an archive node, or a round started within the node's
-pruning window). State lives under `base-pools/<pool>/soup`: known bodies, the
+roster's commitments as of its seed block (see the chain endpoint requirement
+above). State lives under `base-pools/<pool>/soup`: known bodies, the
 prediction cache, the item use ledger and `rounds/<round id>/` with the private
 and public records. A crashed round resumes from its cache and is counted once in
-the ledger. A body out of the pool for three rounds loses its folder (its hash
-and sketch stay); cached soup predictions unused for three rounds are deleted.
+the ledger. Each body is built once per round and graded on the whole round
+subset, with rows cached every 200 items. A GPU, disk or out-of-memory error,
+or a chassis that cannot grade either, fails the round (it is retried); any
+other grading failure makes the body sit the round out, and a body that fails
+grading in three separate rounds is banned. A body out of the pool for three
+rounds loses its folder (its hash and sketch stay); cached soup predictions
+unused for three rounds are deleted.
 When the round bank has too few unretired items, the round is skipped and logged.
 Only the public record (members, rates, rounded contributions, category scores and
 hashes of the subset, predictions and soup) enters the published report.
@@ -122,8 +143,15 @@ A body's hash is refused for good only when weights that hash to it fail a check
 (shape, a NaN or infinite value, the change cap, a copy or a behavioural twin).
 Any other failure (owner file, licence, a hash mismatch, unreadable files, the
 repo) fails only that hotkey's commitment of that repo revision; a download that
-times out is retried next round. The first valid commitment of a hash wins, and
-copy checks compare a body with every earlier body and every house body.
+times out is retried next round. The first valid commitment of a hash wins.
+
+Fine-tunes are welcome, including fine-tunes of house models, the current soup
+or the release; they are paid at the trainer rate. The copy check rejects a
+body that is a near-exact copy (cosine at least 0.999 between weight-change
+sketches) of an earlier body by another hotkey, a house body, the current soup
+or the release, and a body mostly explained by earlier commitments of other
+hotkeys (for example their average). A behavioural twin of a pool body is also
+rejected.
 
 Commitments are public on chain the moment they are made, and a public repo can
 be copied and committed by someone else before the deadline. To avoid
