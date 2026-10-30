@@ -439,7 +439,16 @@ def run(
         subset = [by_id[i] for i in json.loads((round_dir / "subset.json").read_text())]
     else:
         size = config.get("subset_size", SUBSET_SIZE)
-        subset = soup_exam.subset(bank, seed, size, exclude=ledger.retired())
+        retired = ledger.retired()
+        if sum(c["id"] not in retired for c in bank) < size:
+            # Recorded with no items, so the round is not retried; the last decision keeps paying.
+            print(
+                f"soup round {round_id} skipped: the round bank has too few unretired items",
+                flush=True,
+            )
+            ledger.record(round_id, [])
+            return None
+        subset = soup_exam.subset(bank, seed, size, exclude=retired)
         _write_json(round_dir / "subset.json", [c["id"] for c in subset])
     ids = [c["id"] for c in subset]
 
@@ -527,7 +536,12 @@ def run(
     for sha in sorted(intake["new"], key=order):
         try:
             rows = grade(sha, screen_cases)
-            if any(twins(rows, grade(other, screen_cases)) for other in incumbents + screened):
+            others = [  # a hotkey's newer body may behave like its own earlier one
+                o
+                for o in incumbents + screened
+                if known[o]["hotkey"] is None or known[o]["hotkey"] != known[sha]["hotkey"]
+            ]
+            if any(twins(rows, grade(other, screen_cases)) for other in others):
                 rejected[sha] = "behavioural twin of a pool body"
                 continue
             screen[sha] = soup_grade.screen_score(screen_cases, rows)

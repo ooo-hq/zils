@@ -327,6 +327,33 @@ class SoupRunTest(unittest.TestCase):
         self.assertIn(self.r.sha["weak"], record["pool"])
         self.assertEqual(record["rejected"], {})
 
+    def test_a_hotkeys_new_body_is_never_its_own_seated_bodys_twin(self):
+        def twins(rows, other_rows):
+            return rows == other_rows
+
+        self.r.run(twins=twins)
+        self.r.commits[1] = (
+            "t1copy",
+            150,
+        )  # trainer 1's newer body predicts exactly like its old one
+        record = self.r.run(round_id="d3-mini-2026-11-04", twins=twins, copies=lambda *a, **k: None)
+        self.assertNotIn(self.r.sha["t1copy"], record["rejected"])
+        self.assertIn(self.r.sha["t1copy"], record["pool"])
+
+    def test_an_exhausted_bank_skips_the_round_and_keeps_the_last_decision(self):
+        first = self.r.run()
+        decision = (self.r.state / "decision.json").read_text()
+        config = self.r.config(subset_size=len(self.r.bank) + 1)
+        for day in ("04", "05"):
+            self.assertIsNone(self.r.run(round_id=f"d3-mini-2026-11-{day}", config=config))
+        self.assertEqual((self.r.state / "decision.json").read_text(), decision)
+        rounds = [json.loads(line) for line in self.r.ledger.path.read_text().splitlines()]
+        self.assertEqual(
+            [r["round"] for r in rounds][1:], ["d3-mini-2026-11-04", "d3-mini-2026-11-05"]
+        )
+        self.assertEqual([r["ids"] for r in rounds][1:], [[], []])
+        self.assertTrue(first["members"])
+
     def test_rates_hook_sets_seat_and_crown_pay(self):
         def rates(sha, info, house):
             return 0.25 if sha == self.r.sha["t1"] else (0.0 if sha in house else 1.0)

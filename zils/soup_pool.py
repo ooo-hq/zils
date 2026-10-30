@@ -311,7 +311,8 @@ def main(argv=None):
         chassis=d3.pinned_base_path(model=model),
         base=request["base"],
     )
-    print(f"soup round {record['round_id']}: {len(record['members'])} members", flush=True)
+    if record is not None:
+        print(f"soup round {record['round_id']}: {len(record['members'])} members", flush=True)
 
 
 if __name__ == "__main__":
