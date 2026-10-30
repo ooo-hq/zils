@@ -878,13 +878,84 @@ class SoupRunTest(unittest.TestCase):
         r.run()
         r.commits[6] = ("merge", 150)  # another hotkey merges trainer 1's body with the house body
         record = r.run(round_id="d3-mini-2026-11-04")
-        self.assertEqual(record["rejected"], {r.sha["merge"]: "copy: explained by earlier"})
+        self.assertIn("explained by earlier", record["refused"]["6"])
         own = Round(self.tmp / "own")
         own.run()
         own.commits[1] = ("merge", 150)  # trainer 1 merges its own body with the house body
         record = own.run(round_id="d3-mini-2026-11-04")
         self.assertEqual(record["rejected"], {})
         self.assertIn(own.sha["merge"], record["new"])
+
+    def merge_round(self):
+        BODIES["merge"] = strengths(0.625, 0.625, 0.125, 0.125, 0.125)  # (t1 + house) / 2
+        self.addCleanup(BODIES.pop, "merge")
+        r = Round(self.tmp / "explained")
+        r.run()
+        r.commits[6] = ("merge", 150)
+        return r
+
+    def test_explained_by_earlier_never_bans_the_hash(self):
+        r = self.merge_round()
+        record = r.run(round_id="d3-mini-2026-11-04")
+        merge = r.sha["merge"]
+        self.assertNotIn(merge, record["rejected"])
+        self.assertIn("explained by earlier", record["refused"]["6"])
+        state = json.loads((r.state / "pool.json").read_text())
+        self.assertNotIn(merge, state["rejected"])
+        # Unchanged claim and unchanged earlier bodies: not downloaded again.
+        fetched = len(r.fetched)
+        again = r.run(round_id="d3-mini-2026-11-05")
+        self.assertEqual(len(r.fetched), fetched)
+        self.assertIn("explained by earlier", again["refused"]["6"])
+        # Another hotkey committing the same hash is still evaluated (and judged on its own).
+        r.commits[4] = ("merge", 160)
+        third = r.run(round_id="d3-mini-2026-11-06")
+        self.assertEqual(len(r.fetched), fetched + 1)
+        self.assertIn("explained by earlier", third["refused"]["4"])
+
+    def test_an_explained_claim_is_retried_when_re_committed(self):
+        r = self.merge_round()
+        r.run(round_id="d3-mini-2026-11-04")
+        fetched = len(r.fetched)
+        snapshot = r.snapshot()
+        snapshot["commitments"]["6"]["data"] = bodies.format_commitment(
+            r.sha["merge"], "c" * 40, "miner/merge"
+        )
+        r.run(round_id="d3-mini-2026-11-05", snapshot=snapshot)
+        self.assertEqual(len(r.fetched), fetched + 1)
+
+    def test_an_explained_claim_is_retried_when_the_earlier_body_leaves_the_pool(self):
+        r = self.merge_round()
+        r.run(round_id="d3-mini-2026-11-04")
+        fetched = len(r.fetched)
+        state = json.loads((r.state / "pool.json").read_text())
+        state["bodies"][r.sha["t1"]]["pruned"] = True  # trainer 1's body left the pool
+        state["members"] = [r.sha["t2"]]
+        (r.state / "pool.json").write_text(json.dumps(state))
+        record = r.run(round_id="d3-mini-2026-11-05")
+        self.assertEqual(len(r.fetched), fetched + 1)
+        self.assertIn(r.sha["merge"], record["new"])
+
+    def test_the_other_hotkey_share_bar_is_a_pool_setting(self):
+        from zils import soup_copies
+
+        r = self.merge_round()
+        seen, is_copy = [], soup_copies.is_copy
+
+        def spy(*args, **kwargs):
+            seen.append(kwargs["others_max"])
+            return is_copy(*args, **kwargs)
+
+        with patch("zils.soup_copies.is_copy", side_effect=spy):
+            r.run(round_id="d3-mini-2026-11-04", config=r.config(others_max=0.9))
+        self.assertEqual(set(seen), {0.9})
+        checked = model_pools.validate(pools())["pools"]["d3-mini"]
+        self.assertEqual(checked["others_max"], 0.3)
+        for good in (0.1, 0.9, 0.5):
+            model_pools.validate(pools(soup_entry(others_max=good)))
+        for bad in (0.05, 0.95, "0.3", True):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                model_pools.validate(pools(soup_entry(others_max=bad)))
 
     def test_an_identical_upload_of_the_base_is_rejected(self):
         BODIES["stock"] = strengths(0, 0, 0, 0, 0, norm=3)

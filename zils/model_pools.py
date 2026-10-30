@@ -17,6 +17,7 @@ SOUP_OPTIONAL = {
     "max_claims_per_round": 12,
     "max_download_bytes_per_round": 60 * 1024**3,
     "max_decision_age_days": 3,
+    "others_max": 0.3,
 }
 
 
@@ -65,6 +66,9 @@ def validate_soup(entry):
     ):
         raise ValueError("soup sketch_seed must be 64 lowercase hex characters")
     sizes = {k: entry.get(k, v) for k, v in SOUP_OPTIONAL.items()}
+    others = sizes.pop("others_max")
+    if type(others) not in (int, float) or not 0.1 <= others <= 0.9:
+        raise ValueError("soup others_max must be a number in [0.1, 0.9]")
     if any(type(v) is not int for v in sizes.values()):
         raise ValueError(
             "soup subset_size, screen_size, max_pool and the per-round caps must be integers"
@@ -88,6 +92,7 @@ def validate_soup(entry):
         "house": house,
         "schedule": {"deadline_utc": deadline},
         **sizes,
+        "others_max": others,
     }
 
 

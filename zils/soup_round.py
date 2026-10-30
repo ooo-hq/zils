@@ -164,6 +164,7 @@ PRUNE_ROUNDS = 3  # a body out of the pool this many rounds loses its folder (ha
 SOUP_CACHE_ROUNDS = 3  # a soup's cached predictions are dropped after this many rounds unused
 MAX_CLAIMS_PER_ROUND = 12  # commitments downloaded per round, failed ones included
 MAX_DOWNLOAD_BYTES_PER_ROUND = 60 * 1024**3  # bytes downloaded per round, failed claims included
+OTHERS_MAX = 0.3  # share other hotkeys' bodies may add to a body's fit beyond the house bodies
 TRANSPORT_STRIKES = 3  # rounds a claim's download may fail before the claim is retired
 GRADE_CHUNK = 200  # items graded per cache write, so a timed-out round keeps its progress
 GRADE_STRIKES = 3  # rounds a body may fail grading (with a healthy chassis) before it is banned
@@ -326,7 +327,9 @@ def _intake(
     progress.setdefault("claims", 0)
     progress.setdefault("bytes", 0)
     progress.setdefault("transient", {})
+    progress.setdefault("explained", {})
     prior_transient = state.setdefault("transient", {})
+    prior_explained = state.setdefault("explained", {})
     new, rejected, failed = progress["new"], progress["rejected"], progress["failed"]
     refused.update(progress["refused"])
     progress["refused"] = refused
@@ -358,6 +361,11 @@ def _intake(
             for s, info in [*known.items(), *new.items()]
             if not info["house"] and info["hotkey"] != claim["hotkey"]
         }
+        active = sorted(s for s in earlier if not {**known, **new}[s].get("pruned"))
+        if key in prior_explained and set(prior_explained[key]["earlier"]) <= set(active):
+            # Retried once the claim changes or one of the bodies that explained it leaves the pool.
+            refused[uid] = prior_explained[key]["reason"]
+            continue
         # Checked in a partial folder, so a failed claim never leaves files under the hash's name.
         partial = folder(sha).with_name(f".{sha}.partial")
         try:
@@ -369,9 +377,16 @@ def _intake(
                 progress["claims"] += _folder_bytes(partial, "*.safetensors") > 0
             bodies.validate_body(partial, chassis, hotkey=claim["hotkey"], base=base, sha256=sha)
             soup = tuple(s for s in state["members"] if s in known)
-            if copies is not None and (reason := copies(sha, partial, earlier, soup=soup)):
+            reason = copies(sha, partial, earlier, soup=soup) if copies is not None else None
+            if reason == "explained by earlier":
+                # A judgement on today's pool, not on the weights: never a hash ban.
+                refused[uid] = f"copy: {reason}; retried when the claim changes or one of the "
+                refused[uid] += "explaining bodies leaves the pool"
+                progress["explained"][key] = {"reason": refused[uid], "earlier": active}
+            elif reason:
                 raise bodies.WeightError(f"copy: {reason}")
-            os.replace(partial, folder(sha))
+            else:
+                os.replace(partial, folder(sha))
         except (OSError, http.client.HTTPException) as error:  # retried next round, a few times
             reason = f"download failed: {_reason(error)}"[:400]
             refused[uid] = progress["transient"][key] = reason
@@ -383,11 +398,12 @@ def _intake(
             print(f"soup intake: commitment {key} failed ({type(error).__name__})", flush=True)
             failed[key] = refused[uid] = _reason(error)
         else:
-            new[sha] = {
-                "hotkey": claim["hotkey"], "uid": claim["uid"], "repo": claim["repo"],
-                "revision": claim["revision"], "block": claim["block"], "house": False,
-                "solo": None,
-            }  # fmt: skip
+            if key not in progress["explained"]:
+                new[sha] = {
+                    "hotkey": claim["hotkey"], "uid": claim["uid"], "repo": claim["repo"],
+                    "revision": claim["revision"], "block": claim["block"], "house": False,
+                    "solo": None,
+                }  # fmt: skip
         finally:
             shutil.rmtree(partial, ignore_errors=True)
         progress["done"].append(uid)
@@ -576,6 +592,9 @@ def run(
                     [sketch(s) for s in earlier],
                     soup=sum(members) / len(members) if members else None,
                     house=[sketch(s) for s in sorted(house)],
+                    # Explained shares count only earlier bodies still in the pool.
+                    explained=[sketch(s) for s in earlier if not known.get(s, {}).get("pruned")],
+                    others_max=config.get("others_max", OTHERS_MAX),
                 )
 
         if rates is None:
@@ -603,15 +622,16 @@ def run(
             save=lambda progress: _write_json(round_dir / "intake-progress.json", progress),
         )  # fmt: skip
         intake = {"new": new, "rejected": rejected, "refused": refused, "failed": failed}
-        intake["transient"] = _read_json(round_dir / "intake-progress.json", {}).get(
-            "transient", {}
-        )
+        done = _read_json(round_dir / "intake-progress.json", {})
+        intake["transient"] = done.get("transient", {})
+        intake["explained"] = done.get("explained", {})
         _write_json(round_dir / "intake.json", intake)
     known.update(intake["new"])
     state["rejected"].update(intake["rejected"])
     state.setdefault("failed", {}).update(intake["failed"])
     for key, reason in intake.get("transient", {}).items():
         state.setdefault("transient", {}).setdefault(key, {})[round_id] = reason
+    state.setdefault("explained", {}).update(intake.get("explained", {}))
     _write_json(state_dir / "pool.json", state)
     rejected = dict(intake["rejected"])
 
