@@ -41,6 +41,23 @@ def decision(directory, pool):
     return json.loads(path.read_text()) if path.exists() else None
 
 
+def fresh_decision(directory, pool, entry, *, now):
+    """The latest decision while it is current: None before the first round, and None once its
+    round's commit deadline is more than ``max_decision_age_days`` old, so a pool whose rounds keep
+    failing burns its share instead of paying an old soup forever."""
+    record = decision(directory, pool)
+    if record is None:
+        return None
+    try:
+        day = datetime.fromisoformat(str(record["round_id"])[-10:]).replace(tzinfo=UTC)
+    except (KeyError, ValueError):
+        return None
+    hours, minutes = map(int, entry["schedule"]["deadline_utc"].split(":"))
+    deadline = day + timedelta(hours=hours, minutes=minutes)
+    age = now - deadline.timestamp()
+    return record if age <= entry["max_decision_age_days"] * 86400 else None
+
+
 def recorded(directory, pool, round_id):
     """True once the round's ledger entry exists (the last write of a finished round)."""
     path = state_dir(directory, pool) / "uses.jsonl"

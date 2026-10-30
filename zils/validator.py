@@ -316,9 +316,11 @@ def attach_base_pools(config, directory, work, report):
                     decisions[pool] = json.loads(current.read_text())
         from . import soup_pool
 
-        for pool in soup_pool.soup_pools(config):
-            # The latest soup round's public record; before the first round the pool burns.
-            if (soup := soup_pool.decision(directory, pool)) is not None:
+        for pool, entry in soup_pool.soup_pools(config).items():
+            # The latest soup round's public record; before the first round, or once it is older
+            # than max_decision_age_days, the pool burns.
+            soup = soup_pool.fresh_decision(directory, pool, entry, now=time.time())
+            if soup is not None:
                 decisions[pool] = soup
         wire.write_json(frozen, {"config": normalized, "decisions": decisions})
     saved = json.loads(frozen.read_text())

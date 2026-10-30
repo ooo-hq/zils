@@ -1134,7 +1134,11 @@ class SoupEpochTest(unittest.TestCase):
         self.calls.append((pool, request))
         decision_path = Path(request["state_dir"]) / "decision.json"
         decision_path.parent.mkdir(parents=True, exist_ok=True)
-        decision_path.write_text(json.dumps({"pool_id": pool, "members": [], "crown": None}))
+        decision_path.write_text(
+            json.dumps(
+                {"round_id": request["round_id"], "pool_id": pool, "members": [], "crown": None}
+            )
+        )
         soup_exam.UseLedger(Path(request["state_dir"]) / "uses.jsonl").record(
             request["round_id"], []
         )
@@ -1358,12 +1362,47 @@ class SoupEpochTest(unittest.TestCase):
         self.epoch()
         work = self.directory / "work"
         work.mkdir()
-        report = validator.attach_base_pools(self.config, self.directory, work, {})
+        with patch("zils.validator.time.time", return_value=at("2026-11-03T05:00:00")):
+            report = validator.attach_base_pools(self.config, self.directory, work, {})
         self.assertEqual(report["base_pools"]["decisions"]["d3-mini"]["pool_id"], "d3-mini")
         weights, _ = model_pools.weights(
             self.config["base_pools"], report["base_pools"]["decisions"], MEMBERS
         )
         self.assertAlmostEqual(weights[0], 0.4)
+
+    def test_a_decision_older_than_the_maximum_age_burns_the_pool(self):
+        from zils import validator
+
+        self.epoch()  # the round for 2026-11-03 (deadline 00:00 UTC)
+        entry = soup_pool.soup_pools(self.config)["d3-mini"]
+        self.assertEqual(entry["max_decision_age_days"], 3)
+        fresh = soup_pool.fresh_decision(
+            self.directory, "d3-mini", entry, now=at("2026-11-05T23:00:00")
+        )
+        self.assertEqual(fresh["round_id"], "d3-mini-2026-11-03")
+        stale = soup_pool.fresh_decision(
+            self.directory, "d3-mini", entry, now=at("2026-11-06T00:00:01")
+        )
+        self.assertIsNone(stale)
+        work = self.directory / "work"
+        work.mkdir()
+        with patch("zils.validator.time.time", return_value=at("2026-11-07T00:00:00")):
+            report = validator.attach_base_pools(self.config, self.directory, work, {})
+        self.assertNotIn("d3-mini", report["base_pools"]["decisions"])
+        weights, record = model_pools.weights(
+            self.config["base_pools"], report["base_pools"]["decisions"], MEMBERS
+        )
+        self.assertAlmostEqual(weights[0], 0.4)  # the whole soup share burns
+        self.config["base_pools"] = pools(soup_entry(max_decision_age_days=5))
+        entry = soup_pool.soup_pools(self.config)["d3-mini"]
+        self.assertIsNotNone(
+            soup_pool.fresh_decision(
+                self.directory, "d3-mini", entry, now=at("2026-11-07T00:00:00")
+            )
+        )
+        for bad in (0, 31, 1.5):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                model_pools.validate(pools(soup_entry(max_decision_age_days=bad)))
 
     def test_zils1_candidates_cannot_enter_a_soup_pool(self):
         from zils import commitments
