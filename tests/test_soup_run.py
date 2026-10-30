@@ -831,6 +831,21 @@ class SoupRunTest(unittest.TestCase):
         self.r.run(round_id="d3-mini-2026-11-04")
         self.assertEqual(len(list((self.r.state / "sketches").glob("*.npz"))), 6)
 
+    def test_a_merge_with_another_hotkeys_body_is_a_copy_but_not_with_ones_own(self):
+        BODIES["merge"] = strengths(0.625, 0.625, 0.125, 0.125, 0.125)  # (t1 + house) / 2
+        self.addCleanup(BODIES.pop, "merge")
+        r = Round(self.tmp / "merge")
+        r.run()
+        r.commits[6] = ("merge", 150)  # another hotkey merges trainer 1's body with the house body
+        record = r.run(round_id="d3-mini-2026-11-04")
+        self.assertEqual(record["rejected"], {r.sha["merge"]: "copy: explained by earlier"})
+        own = Round(self.tmp / "own")
+        own.run()
+        own.commits[1] = ("merge", 150)  # trainer 1 merges its own body with the house body
+        record = own.run(round_id="d3-mini-2026-11-04")
+        self.assertEqual(record["rejected"], {})
+        self.assertIn(own.sha["merge"], record["new"])
+
     def test_an_identical_upload_of_the_base_is_rejected(self):
         BODIES["stock"] = strengths(0, 0, 0, 0, 0, norm=3)
         self.addCleanup(BODIES.pop, "stock")

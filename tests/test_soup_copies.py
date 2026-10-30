@@ -165,8 +165,22 @@ class IsCopyTest(unittest.TestCase):
                 self.fresh, self.earlier, soup=sum(self.earlier) / 3, release=self.earlier[0]
             )
         )
-        # Half fresh, half an earlier body: explained share near 0.5, under the 0.8 bar.
-        self.assertIsNone(soup_copies.is_copy(self.fresh + self.earlier[0], self.earlier))
+        # Mostly fresh with a little of an earlier body: its share is under the 0.3 bar.
+        self.assertIsNone(soup_copies.is_copy(self.fresh + 0.3 * self.earlier[0], self.earlier))
+
+    def test_a_merge_with_a_house_body_is_judged_on_the_other_hotkeys_part(self):
+        other, house = self.earlier[0], self.earlier[2]
+        merge = 0.5 * other + 0.5 * house
+        # Earlier bodies alone explain only half of it, under the 0.8 bar of the old check.
+        self.assertLess(soup_copies.explained_share(merge, [other]), 0.8)
+        self.assertEqual(soup_copies.is_copy(merge, [other], house=[house]), "explained by earlier")
+        # A light fine-tune of the house body owes nothing to the other hotkey's body.
+        tuned = house + 0.3 * self.fresh
+        self.assertIsNone(soup_copies.is_copy(tuned, [other], house=[house]))
+        # Half fresh, half another hotkey's body: that body's share is about 0.5.
+        self.assertEqual(
+            soup_copies.is_copy(self.fresh + other, [other], house=[house]), "explained by earlier"
+        )
 
     def test_zero_change_is_rejected(self):
         self.assertEqual(

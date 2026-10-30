@@ -139,12 +139,25 @@ def explained_share(target, others) -> float:
 
 
 def is_copy(
-    target, earlier, soup=None, release=None, *, house=(), cosine_max=0.999, explained_max=0.8
+    target,
+    earlier,
+    soup=None,
+    release=None,
+    *,
+    house=(),
+    cosine_max=0.999,
+    explained_max=0.8,
+    others_max=0.3,
 ):
     """Why a body sketch is a copy, or None. `earlier` are sketches of earlier commitments by other
     hotkeys: a near-exact copy of one, or a body mostly explained by them, is a copy. `house`
     (house bodies) and `soup` and `release` (the current soup and release bodies) reject only
-    near-exact re-uploads (cosine at least `cosine_max`): fine-tuning them is allowed."""
+    near-exact re-uploads (cosine at least `cosine_max`): fine-tuning them is allowed.
+
+    The body is also fitted on the earlier and house sketches jointly. The share the earlier
+    (other-hotkey) bodies add to that fit beyond the house bodies alone must stay under
+    `others_max`, so merging another hotkey's body with a house body is a copy, while a body
+    explained by house bodies alone (a house fine-tune) is not."""
     target = np.asarray(target, dtype=np.float64)
     if not np.any(target):
         return "no change from the base"
@@ -157,6 +170,10 @@ def is_copy(
             return label
     if explained_share(target, list(earlier)) >= explained_max:
         return "explained by earlier"
+    if earlier:
+        joint = explained_share(target, [*earlier, *house])
+        if joint - explained_share(target, list(house)) >= others_max:
+            return "explained by earlier"
     return None
 
 
