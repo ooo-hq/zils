@@ -71,7 +71,8 @@ the house registry in `zils/soup_rates.py`.
 A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
 `schedule`, and optionally `subset_size` (default 3,000), `screen_size` (300),
 `max_pool` (20, at least 5), `max_new_per_round` (6), `max_claims_per_round`
-(12), `max_download_bytes_per_round` (60 GiB) and `sketch_seed`:
+(12), `max_download_bytes_per_round` (60 GiB), `max_decision_age_days` (3) and
+`sketch_seed`:
 
 ```json
 "d3-mini": {
@@ -93,7 +94,10 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
 - `max_new_per_round` caps the new bodies admitted in one round, in commitment
   block order, then hotkey; later commitments wait for the next round.
   `max_claims_per_round` and `max_download_bytes_per_round` cap the commitments
-  downloaded and the bytes they take, failed ones included. Each claim's outcome
+  that downloaded weights and the bytes downloaded, failed ones included. A
+  commitment whose repo cannot be downloaded at all does not count toward the
+  claims cap; after three rounds of failed downloads it is retired (that
+  commitment only, never the body hash). Each claim's outcome
   is saved as it finishes, so a round cut off by its deadline resumes without
   downloading a claim twice.
 - `sketch_seed` (64 hex characters) seeds the weight sketches used by the copy
@@ -112,10 +116,18 @@ is measured against). The chassis is the pool model's pinned parent.
 Payout: the latest round's public record pays each seated hotkey its seat
 weight and the crown its crown weight, as fractions of the pool's share. The
 crown (20%) goes to the best non-house solo body only if its solo score beats
-every house body's by at least the greedy margin (0.3 points); otherwise it
-burns. Whatever
-a round does not pay goes to `burn_uid`; before the first round the whole share
-burns. A failed round keeps the previous round's record.
+every house body's solo score and the current soup's score on the same subset
+by at least the greedy margin (0.3 points); otherwise it burns. Before the first
+soup only the house bodies set the bar. Whatever a round does not pay goes to
+`burn_uid`; before the first round the whole share burns. A failed round keeps
+the previous round's record for at most `max_decision_age_days` days after that
+round's commit deadline; after that the pool burns its whole share until a round
+succeeds.
+
+Operators should alert when soup rounds fail: the per-pool `error` in the
+validator's `soup-pools.json` and its log (a changed sketch seed, a full disk, a
+GPU or driver fault, a chain endpoint that cannot serve the seed block). A pool
+whose rounds keep failing pays nothing once its decision is too old.
 
 The validator loop starts at most one round per pool per day and never waits
 for it: the round runs detached (`python -m zils.soup_pool --run <request>`),
@@ -150,8 +162,12 @@ or the release; they are paid at the trainer rate. The copy check rejects a
 body that is a near-exact copy (cosine at least 0.999 between weight-change
 sketches) of an earlier body by another hotkey, a house body, the current soup
 or the release, and a body mostly explained by earlier commitments of other
-hotkeys (for example their average). A behavioural twin of a pool body is also
-rejected.
+hotkeys (for example their average). The body is also fitted on earlier
+other-hotkey bodies and house bodies together; if the other hotkeys' bodies add
+0.3 or more of the body's squared norm beyond what the house bodies explain
+alone, it is a copy. So merging another hotkey's body with a house body is
+rejected, while a fine-tune of a house body, or a merge with your own earlier
+bodies, is not. A behavioural twin of a pool body is also rejected.
 
 Commitments are public on chain the moment they are made, and a public repo can
 be copied and committed by someone else before the deadline. To avoid
