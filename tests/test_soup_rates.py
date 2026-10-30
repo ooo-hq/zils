@@ -93,13 +93,24 @@ class RateTest(unittest.TestCase):
         self.assertEqual(self.rate(BODY_HASH, self.fresh), 1.0)
         self.assertEqual(self.rate(BODY_HASH, self.known_sketch, known=[]), 1.0)
 
-    def test_own_repo_and_hotkey_are_not_known(self):
+    def test_only_the_submitters_own_earlier_bodies_are_not_known(self):
         own_hotkey = [{**self.known[0], "hotkey": HOTKEY}]
         self.assertEqual(self.rate(BODY_HASH, self.known_sketch, known=own_hotkey), 1.0)
         other_hotkey = [{**self.known[0], "hotkey": OTHER}]
         self.assertEqual(self.rate(BODY_HASH, self.known_sketch, known=other_hotkey), 0.25)
-        self.assertEqual(self.rate(BODY_HASH, self.known_sketch, repo="public/model"), 1.0)
-        self.assertEqual(self.rate(BODY_HASH, self.known_sketch, repo="someone/else"), 0.25)
+
+    def test_a_house_re_upload_is_a_scout_whatever_its_repo(self):
+        # The house model's own repo (or anyone able to push to it) earns no trainer rate.
+        with self.assertRaises(TypeError):
+            self.rate(BODY_HASH, self.known_sketch, repo="public/model")
+        self.assertEqual(self.rate(BODY_HASH, self.known_sketch), 0.25)
+
+    def test_a_body_near_a_house_body_is_a_trainer(self):
+        house_known = [{**self.known[0], "body_sha256": HOUSE_HASH}]
+        near = self.known_sketch + 0.1 * self.fresh
+        self.assertEqual(self.rate(BODY_HASH, near, known=house_known), 1.0)
+        self.assertEqual(self.rate(HOUSE_HASH, self.known_sketch, known=house_known), 0.0)
+        self.assertEqual(self.rate(BODY_HASH, near), 0.25)  # a non-house public model still counts
 
     def test_threshold_boundary(self):
         near = self.known_sketch + 0.5 * self.fresh
@@ -112,6 +123,63 @@ class RateTest(unittest.TestCase):
     def test_house_entries_without_hash_are_ignored(self):
         house = [{"name": "h", "repo": "house/h", "revision": "a" * 40, "body_sha256": None}]
         self.assertEqual(self.rate(BODY_HASH, self.fresh, house=house), 1.0)
+
+
+class HouseMixTest(unittest.TestCase):
+    """A body whose change from Qwen is almost all explained by house bodies is a house mix and is
+    paid at the scout rate; a light fine-tune keeps the trainer rate."""
+
+    def setUp(self):
+        self.e = np.eye(8, 4096)  # orthonormal directions
+        self.house = [
+            {"name": "h", "repo": "house/h", "revision": "a" * 40, "body_sha256": HOUSE_HASH}
+        ]
+        self.sketches = [3 * self.e[0], 2 * self.e[1]]
+
+    def rate(self, sketch, **kwargs):
+        return soup_rates.rate(
+            BODY_HASH, sketch, house=self.house, known=[], hotkey=HOTKEY,
+            house_sketches=self.sketches, **kwargs,
+        )  # fmt: skip
+
+    def residual(self, sketch):
+        return 1 - soup_copies.explained_share(sketch, self.sketches)
+
+    def test_a_uniform_average_of_house_bodies_is_a_scout(self):
+        average = (self.sketches[0] + self.sketches[1]) / 2
+        self.assertLess(self.residual(average), 1e-9)
+        self.assertEqual(self.rate(average), soup_rates.SCOUT_RATE)
+
+    def test_a_light_fine_tune_of_a_house_body_is_a_trainer(self):
+        tuned = self.sketches[0] + 3 * (0.12 / 0.88) ** 0.5 * self.e[2]
+        self.assertAlmostEqual(self.residual(tuned), 0.12)
+        self.assertEqual(self.rate(tuned), soup_rates.TRAINER_RATE)
+
+    def test_a_residual_exactly_at_the_bar_is_not_a_house_mix(self):
+        tuned = self.sketches[0] + 3 * (0.05 / 0.95) ** 0.5 * self.e[2]
+        self.assertAlmostEqual(self.residual(tuned), 0.05)
+        self.assertEqual(self.rate(tuned), soup_rates.TRAINER_RATE)
+        self.assertEqual(self.rate(tuned, house_mix_max=0.06), soup_rates.SCOUT_RATE)
+        self.assertEqual(self.rate(tuned, house_mix_max=0.0), soup_rates.TRAINER_RATE)
+
+    def test_an_exact_house_hash_stays_unpaid(self):
+        got = soup_rates.rate(
+            HOUSE_HASH, self.sketches[0], house=self.house, known=[], hotkey=HOTKEY,
+            house_sketches=self.sketches,
+        )  # fmt: skip
+        self.assertEqual(got, soup_rates.HOUSE_RATE)
+
+    def test_the_bar_is_a_pool_setting(self):
+        from tests.test_soup_run import pools, soup_entry
+        from zils import model_pools
+
+        self.assertEqual(soup_rates.HOUSE_MIX_MAX, 0.05)
+        self.assertEqual(model_pools.validate(pools())["pools"]["d3-mini"]["house_mix_max"], 0.05)
+        for good in (0, 0.0, 0.5, 0.2):
+            model_pools.validate(pools(soup_entry(house_mix_max=good)))
+        for bad in (-0.01, 0.51, "0.05", True):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                model_pools.validate(pools(soup_entry(house_mix_max=bad)))
 
 
 if __name__ == "__main__":

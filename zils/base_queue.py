@@ -388,6 +388,8 @@ def evaluate(config, directory, job, args, work, lease=None):
     enabled = model_pools.validate(config["base_pools"])["pools"].get(pool)
     if not enabled or not enabled["enabled"] or enabled["model"] != models.spec(model):
         raise ValueError("candidate parent is not an enabled pool profile")
+    if model_pools.is_soup(enabled):
+        raise ValueError("soup pool takes zilsb2 bodies, not zils1 candidates")
     if claim["sha256"] == enabled["incumbent_sha256"]:
         raise ValueError("incumbent is not a candidate")
     admit_submission(directory, claim, pool, enabled.get("cooldown_seconds", 0))

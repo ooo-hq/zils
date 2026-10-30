@@ -20,8 +20,12 @@ MAX_BYTES = models.MAX_CANDIDATE_BYTES
 LICENSES = {"apache-2.0", "mit", "bsd-3-clause", "bsd-2-clause"}
 KEEP = ("language_model.", "visual.")
 DROP = ("lm_head", "mtp.")
-HEADER_BYTES = 100 * 1024**2
+HEADER_BYTES = 8 * 1024**2  # a 4B body's header is ~100 KB; a bigger one is hostile, not a model
 CHUNK = 64 * 1024**2
+DTYPES = {
+    "BF16": 2,
+    "F32": 4,
+}  # stored dtypes a body may use; every tensor is canonicalised to bf16
 
 
 def format_commitment(sha256, revision, repo):
@@ -59,12 +63,25 @@ def map_names(keys, chassis_names):
     return mapped
 
 
-def load_index(folder):
+def _regular(path, trusted=False):
+    """`path` as a regular file. A trusted reference (the chassis or base from our own snapshot
+    download, or a miner's own folder) may be a symlink into the Hugging Face blob store and is
+    resolved; a body the validator downloaded must be made of regular files."""
+    path = Path(path)
+    if trusted and path.is_symlink():
+        path = path.resolve(strict=True)
+    if path.is_symlink() or not path.is_file():
+        raise ValueError(f"body requires a regular {path.name}")
+    return path
+
+
+def load_index(folder, *, trusted=False):
     """name -> (file, key) for a sharded (`model.safetensors.index.json`) or single-file checkpoint."""
     folder = Path(folder)
     index = folder / "model.safetensors.index.json"
     if not index.exists():
-        return {key: ("model.safetensors", key) for key in _header(folder / "model.safetensors")}
+        single = _header(folder / "model.safetensors", trusted=trusted)
+        return {key: ("model.safetensors", key) for key in single}
     value = json.loads(index.read_text())
     weight_map = value.get("weight_map") if isinstance(value, dict) else None
     if not isinstance(weight_map, dict) or not weight_map:
@@ -75,11 +92,9 @@ def load_index(folder):
     return {key: (file, key) for key, file in weight_map.items()}
 
 
-def _header(path):
+def _header(path, *, trusted=False):
     """A safetensors header: key -> {"dtype", "shape", "data_offsets"} with offsets made absolute."""
-    path = Path(path)
-    if path.is_symlink() or not path.is_file():
-        raise ValueError(f"body requires a regular {path.name}")
+    path = _regular(path, trusted)
     size = path.stat().st_size
     with path.open("rb") as stream:
         length = int.from_bytes(stream.read(8), "little")
@@ -87,97 +102,147 @@ def _header(path):
             raise ValueError(f"{path.name} is not a safetensors file")
         try:
             header = json.loads(stream.read(length))
-        except ValueError:
+        except (ValueError, RecursionError):  # RecursionError: a deeply nested hostile header
             raise ValueError(f"{path.name} has an unreadable safetensors header") from None
     if not isinstance(header, dict):
         raise ValueError(f"{path.name} has an unreadable safetensors header")
-    header.pop("__metadata__", None)
+    metadata = header.pop("__metadata__", {})
+    if not isinstance(metadata, dict) or not all(isinstance(v, str) for v in metadata.values()):
+        raise ValueError(f"{path.name} metadata must map names to strings")
     out = {}
     for key, info in header.items():
         try:
             start, end = info["data_offsets"]
-            valid = isinstance(info["dtype"], str) and all(type(d) is int for d in info["shape"])
+            valid = (
+                isinstance(info["dtype"], str)
+                and isinstance(info["shape"], list)
+                and all(type(d) is int and d >= 0 for d in info["shape"])
+                and type(start) is int
+                and type(end) is int
+                and 0 <= start <= end <= size - 8 - length
+            )
         except (KeyError, TypeError, ValueError):
             valid = False
-        if not valid or not 0 <= start <= end <= size - 8 - length:
+        if not valid:
             raise ValueError(f"{path.name} tensor {key} is malformed or outside the file")
         out[key] = {**info, "data_offsets": (8 + length + start, 8 + length + end)}
     return out
 
 
-def _tensors(folder, chassis_names):
+def _tensors(folder, chassis_names, *, trusted=False):
     """chassis name -> (path, header entry) for the mapped source tensors."""
     folder = Path(folder)
-    index = load_index(folder)
+    index = load_index(folder, trusted=trusted)
     mapped = map_names(index, chassis_names)
     headers, out = {}, {}
     for name, source in mapped.items():
         file, key = index[source]
         if file not in headers:
-            headers[file] = _header(folder / file)
+            headers[file] = _header(folder / file, trusted=trusted)
         if key not in headers[file]:
             raise ValueError(f"{file} has no tensor {key}")
-        out[name] = (folder / file, headers[file][key])
+        out[name] = (_regular(folder / file, trusted), headers[file][key])
     return out
 
 
-def _bf16(name, info):
+def _canonical(name, info):
+    """The tensor's shape, after checking it is stored as bf16 or f32 with a matching byte size."""
     shape = info["shape"]
     start, end = info["data_offsets"]
-    if info["dtype"] != "BF16":
-        raise ValueError(f"body tensor {name} must be bfloat16, not {info['dtype']}")
-    if end - start != 2 * math.prod(shape):
+    if info["dtype"] not in DTYPES:
+        raise ValueError(f"body tensor {name} must be bfloat16 or float32, not {info['dtype']}")
+    if end - start != DTYPES[info["dtype"]] * math.prod(shape):
         raise ValueError(f"body tensor {name} size differs from its shape")
     return shape
 
 
-def _chunks(path, info):
-    start, end = info["data_offsets"]
-    with path.open("rb") as stream:
-        stream.seek(start)
-        while start < end:
-            chunk = stream.read(min(CHUNK, end - start))
-            if not chunk:
-                raise ValueError(f"{path.name} is truncated")
-            start += len(chunk)
-            yield chunk
+def read_bf16(path, info, offset, count):
+    """`count` elements from `offset` of one tensor as bf16 bits (uint16), whatever the stored
+    dtype: f32 is rounded to the nearest bf16 (ties to even), as a cast to bfloat16 does."""
+    import numpy as np
+
+    width = DTYPES[info["dtype"]]
+    with Path(path).open("rb") as stream:
+        stream.seek(info["data_offsets"][0] + width * offset)
+        raw = stream.read(width * count)
+    if len(raw) != width * count:
+        raise ValueError(f"{Path(path).name} is truncated")
+    if width == 2:
+        return np.frombuffer(raw, dtype="<u2")
+    bits = np.frombuffer(raw, dtype="<u4").astype(np.uint64)
+    rounded = ((bits + 0x7FFF + ((bits >> 16) & 1)) >> 16) & 0xFFFF
+    nan = (bits & 0x7FFFFFFF) > 0x7F800000
+    return np.where(nan, 0x7FC0, rounded).astype(np.uint16)
 
 
-def body_hash(folder, chassis_names):
-    """sha256 over each mapped chassis tensor in sorted name order: name, shape, raw bf16 bytes."""
-    digest = hashlib.sha256()
-    for name, (path, info) in sorted(_tensors(folder, chassis_names).items()):
-        shape = _bf16(name, info)
+def _bf16_blocks(path, info):
+    """The tensor's canonical bf16 bits, in blocks of a fixed element count."""
+    total, step = math.prod(info["shape"]), CHUNK // 4
+    for offset in range(0, total, step):
+        yield read_bf16(path, info, offset, min(step, total - offset))
+
+
+def _float64(bits):
+    import numpy as np
+
+    return (bits.astype(np.uint32) << 16).view(np.float32).astype(np.float64)
+
+
+class WeightError(ValueError):
+    """The body's own weights (hash verified) fail a check: its hash is refused for good."""
+
+
+def _digest(folder, chassis_names, *, trusted=False):
+    """(body hash, the first tensor holding a NaN or infinity, or None), in one streamed pass over
+    the canonical bf16 values, so a tensor stored as f32 hashes as its bf16 cast. A bf16 NaN or
+    infinity has all exponent bits set."""
+    digest, bad = hashlib.sha256(), None
+    for name, (path, info) in sorted(_tensors(folder, chassis_names, trusted=trusted).items()):
+        shape = _canonical(name, info)
         digest.update(f"{name}\0{','.join(map(str, shape))}\0".encode())
-        for chunk in _chunks(path, info):
-            digest.update(chunk)
-    return digest.hexdigest()
+        for block in _bf16_blocks(path, info):
+            if bad is None and ((block & 0x7F80) == 0x7F80).any():
+                bad = name
+            digest.update(block.astype("<u2").tobytes())
+    return digest.hexdigest(), bad
 
 
-def relative_change(folder, base_folder, chassis_names, *, prefix="language_model.layers."):
-    """‖body − base‖ / ‖base‖ over the chassis tensors whose names start with `prefix`, streamed."""
-    import torch
+def body_hash(folder, chassis_names, *, trusted=False):
+    """sha256 over each mapped chassis tensor in sorted name order: name, shape, canonical bf16
+    bytes. Every value must be finite."""
+    digest, bad = _digest(folder, chassis_names, trusted=trusted)
+    if bad is not None:
+        raise ValueError(f"body tensor {bad} is not finite")
+    return digest
 
+
+def relative_change(
+    folder, base_folder, chassis_names, *, prefix="language_model.layers.", trusted=False
+):
+    """‖body − base‖ / ‖base‖ over the chassis tensors whose names start with `prefix`, streamed,
+    on canonical bf16 values. The base is a trusted reference; `trusted` covers the body."""
     names = [n for n in sorted(chassis_names) if n.startswith(prefix)]
     if not names:
         raise ValueError(f"no chassis tensors start with {prefix!r}")
-    body, base = _tensors(folder, chassis_names), _tensors(base_folder, chassis_names)
+    body = _tensors(folder, chassis_names, trusted=trusted)
+    base = _tensors(base_folder, chassis_names, trusted=True)
     delta = norm = 0.0
     for name in names:
-        if _bf16(name, body[name][1]) != _bf16(name, base[name][1]):
+        if _canonical(name, body[name][1]) != _canonical(name, base[name][1]):
             raise ValueError(f"body tensor {name} shape differs from the base")
-        for a, b in zip(_chunks(*body[name]), _chunks(*base[name]), strict=True):
-            x = torch.frombuffer(bytearray(a), dtype=torch.bfloat16).double()
-            y = torch.frombuffer(bytearray(b), dtype=torch.bfloat16).double()
-            delta += float((x - y).square().sum())
-            norm += float(y.square().sum())
+        for a, b in zip(_bf16_blocks(*body[name]), _bf16_blocks(*base[name]), strict=True):
+            x, y = _float64(a), _float64(b)
+            delta += float(((x - y) ** 2).sum())
+            norm += float((y**2).sum())
     if norm == 0:
         raise ValueError("base tensors are all zero")
     return math.sqrt(delta / norm)
 
 
-def _license(folder):
+def _license(folder, trusted=False):
     path = Path(folder) / "README.md"
+    if trusted and path.is_symlink():
+        path = path.resolve(strict=True)
     if path.is_symlink() or not path.is_file():
         raise ValueError("body repo needs a README.md model card with a license")
     lines = path.read_text(errors="replace")[:65536].splitlines()
@@ -191,8 +256,10 @@ def _license(folder):
     raise ValueError("README.md front matter has no license")
 
 
-def _owner(folder):
+def _owner(folder, trusted=False):
     path = Path(folder) / "zils-owner.json"
+    if trusted and path.is_symlink():
+        path = path.resolve(strict=True)
     if path.is_symlink() or not path.is_file() or path.stat().st_size > 4096:
         raise ValueError("body repo needs a small zils-owner.json naming the committing hotkey")
     try:
@@ -211,39 +278,59 @@ def _owner(folder):
 def _shapes(chassis):
     if isinstance(chassis, Mapping):
         return {name: tuple(shape) for name, shape in chassis.items()}
-    folder = Path(chassis)
+    folder = Path(chassis)  # a trusted reference
     headers, out = {}, {}
-    for name, (file, key) in load_index(folder).items():
+    for name, (file, key) in load_index(folder, trusted=True).items():
         if file not in headers:
-            headers[file] = _header(folder / file)
+            headers[file] = _header(folder / file, trusted=True)
         out[name] = tuple(headers[file][key]["shape"])
     return out
 
 
-def validate_body(folder, chassis, *, hotkey, base=None, max_change=0.15):
+def check_layout(folder, chassis):
+    """The cheap checks: every chassis tensor is named in a readable safetensors header within the
+    file. Reads headers only."""
+    _tensors(folder, _shapes(chassis))
+
+
+def validate_body(
+    folder, chassis, *, hotkey, base=None, max_change=0.15, sha256=None, trusted=False
+):
     """Check a downloaded body against the chassis and return its body hash. `chassis` is the chassis
     checkpoint folder or a mapping name -> shape; `base`, when given, is the parent (Qwen) folder whose
-    language layers the body may move by at most `max_change` (relative Frobenius norm)."""
+    language layers the body may move by at most `max_change` (relative Frobenius norm).
+
+    Failures of the repo (owner file, licence, size, unreadable files, a hash other than `sha256`)
+    raise ValueError; failures of weights that hash to `sha256` (shape, finiteness, change) raise
+    `WeightError`, so only the latter condemn the hash itself. The chassis and base are trusted
+    references (symlinks into a snapshot are followed); the body's files must be regular unless
+    `trusted` (a miner checking its own folder or its own snapshot download)."""
     folder = Path(folder)
-    owner = _owner(folder)
+    owner = _owner(folder, trusted)
     if owner != hotkey:
         raise ValueError(
             f"zils-owner.json names hotkey {owner}, not the committing hotkey {hotkey}"
         )
-    license = _license(folder)
+    license = _license(folder, trusted)
     if license not in LICENSES:
         raise ValueError(f"body license {license!r} is not one of {', '.join(sorted(LICENSES))}")
     total = sum(p.stat().st_size for p in folder.rglob("*.safetensors"))
     if total > MAX_BYTES:
         raise ValueError(f"body safetensors total {total} bytes, over the {MAX_BYTES} byte limit")
     shapes = _shapes(chassis)
-    for name, (_, info) in sorted(_tensors(folder, shapes).items()):
-        if info["dtype"] != "BF16":
-            raise ValueError(f"body tensor {name} must be bfloat16, not {info['dtype']}")
+    tensors = sorted(_tensors(folder, shapes, trusted=trusted).items())
+    for name, (_, info) in tensors:
+        _canonical(name, info)
+    digest, bad = _digest(folder, shapes, trusted=trusted)
+    if sha256 is not None and digest != sha256:
+        raise ValueError("downloaded body hash differs from the commitment")
+    for name, (_, info) in tensors:
         if tuple(info["shape"]) != shapes[name]:
-            raise ValueError(f"body tensor {name} shape {info['shape']} differs from the chassis")
+            raise WeightError(f"body tensor {name} shape {info['shape']} differs from the chassis")
+    if bad is not None:
+        raise WeightError(f"body tensor {bad} is not finite")
     if base is not None:
-        change = relative_change(folder, base, shapes)
-        if change > max_change:
-            raise ValueError(f"body change from the base {change:.4f} exceeds {max_change}")
-    return body_hash(folder, shapes)
+        change = relative_change(folder, base, shapes, trusted=trusted)
+        if not change <= max_change:  # NaN fails too
+            raise WeightError(f"body change from the base {change:.4f} exceeds {max_change}")
+    return digest

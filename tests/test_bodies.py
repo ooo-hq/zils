@@ -131,9 +131,9 @@ class LayoutTest(unittest.TestCase):
             other = checkpoint(Path(tmp) / "d", changed)
             self.assertNotEqual(bodies.body_hash(other, NAMES), bodies.body_hash(folders[0], NAMES))
 
-    def test_hash_rejects_non_bf16(self):
+    def test_hash_rejects_dtypes_other_than_bf16_and_f32(self):
         with tempfile.TemporaryDirectory() as tmp:
-            folder = checkpoint(Path(tmp) / "a", weights(dtype=torch.float32))
+            folder = checkpoint(Path(tmp) / "a", weights(dtype=torch.float16))
             with self.assertRaises(ValueError):
                 bodies.body_hash(folder, NAMES)
 
@@ -239,6 +239,224 @@ class ValidateBodyTest(unittest.TestCase):
             bodies.validate_body(body, self.chassis, hotkey=HOTKEY, base=self.base)
         bodies.validate_body(body, self.chassis, hotkey=HOTKEY, base=self.base, max_change=0.25)
         bodies.validate_body(body, self.chassis, hotkey=HOTKEY)
+
+
+def raw_body(root, header_bytes, data=b""):
+    """A single-file body whose safetensors header is exactly `header_bytes`."""
+    root = Path(root)
+    root.mkdir(parents=True)
+    (root / "model.safetensors").write_bytes(
+        len(header_bytes).to_bytes(8, "little") + header_bytes + data
+    )
+    return root
+
+
+def raw_header(**changes):
+    """A valid header for weights() laid out back to back; `changes` replace whole tensor entries."""
+    header, offset = {}, 0
+    for name, shape in sorted(SHAPES.items()):
+        size = 2 * math.prod(shape)
+        header[name] = {
+            "dtype": "BF16",
+            "shape": list(shape),
+            "data_offsets": [offset, offset + size],
+        }
+        offset += size
+    header.update(changes)
+    return header, offset
+
+
+def snapshot_like(folder):
+    """Rebuild `folder` as a Hugging Face snapshot: every file a symlink into a blobs directory."""
+    folder = Path(folder)
+    blobs = folder.parent / f"{folder.name}-blobs"
+    blobs.mkdir()
+    for path in sorted(folder.iterdir()):
+        target = blobs / path.name
+        path.rename(target)
+        path.symlink_to(target)
+    return folder
+
+
+class TrustedReferenceTest(unittest.TestCase):
+    """The chassis and base come from our own snapshot downloads (symlinks into a blob store); a
+    body downloaded by the validator must still be made of regular files."""
+
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.chassis = snapshot_like(checkpoint(self.root / "chassis", weights(), extras=False))
+        self.base = snapshot_like(checkpoint(self.root / "qwen", weights(), prefix="model."))
+        moved = {n: (t.float() * 1.01).to(torch.bfloat16) for n, t in weights().items()}
+        self.body = checkpoint(self.root / "body", moved, prefix="model.", shards=2)
+
+    def test_symlinked_chassis_and_base_are_accepted(self):
+        digest = bodies.validate_body(self.body, self.chassis, hotkey=HOTKEY, base=self.base)
+        self.assertEqual(digest, bodies.body_hash(self.body, NAMES))
+        self.assertEqual(set(bodies.load_index(self.chassis, trusted=True)), set(NAMES))
+
+    def test_a_symlinked_body_is_still_refused_unless_trusted(self):
+        snapshot_like(self.body)
+        with self.assertRaisesRegex(ValueError, "regular|zils-owner.json"):
+            bodies.validate_body(self.body, self.chassis, hotkey=HOTKEY, base=self.base)
+        with self.assertRaisesRegex(ValueError, "regular"):
+            bodies.check_layout(self.body, self.chassis)
+        bodies.validate_body(self.body, self.chassis, hotkey=HOTKEY, base=self.base, trusted=True)
+
+
+class Float32TensorTest(unittest.TestCase):
+    """Qwen3.5-4B stores some tensors as F32. Bodies may hold bf16 or f32; every tensor is
+    canonicalised to bf16 for the hash, the change check, sketches and averaging."""
+
+    F32 = ("language_model.norm.weight", "language_model.layers.1.mlp.weight")
+
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.chassis = checkpoint(self.root / "chassis", weights(), extras=False)
+        native = weights(dtype=torch.float32)
+        self.native = native
+        base = {n: (t if n in self.F32 else t.to(torch.bfloat16)) for n, t in native.items()}
+        self.base = checkpoint(self.root / "qwen", base, prefix="model.")
+
+    def body(self, name, f32):
+        moved = {n: t * 1.01 + 0.001 for n, t in self.native.items()}
+        tensors = {n: (t if n in f32 else t.to(torch.bfloat16)) for n, t in moved.items()}
+        return checkpoint(self.root / name, tensors, prefix="model.")
+
+    def test_hash_is_the_same_for_f32_storage_and_its_bf16_cast(self):
+        native = self.body("native", self.F32)
+        cast = self.body("cast", ())
+        self.assertEqual(bodies.body_hash(native, NAMES), bodies.body_hash(cast, NAMES))
+        self.assertEqual(
+            bodies.validate_body(native, self.chassis, hotkey=HOTKEY, base=self.base),
+            bodies.validate_body(cast, self.chassis, hotkey=HOTKEY, base=self.base),
+        )
+        self.assertAlmostEqual(
+            bodies.relative_change(native, self.base, NAMES),
+            bodies.relative_change(cast, self.base, NAMES),
+            places=12,
+        )
+
+    def test_other_dtypes_are_refused(self):
+        half = {n: t.to(torch.float16) for n, t in self.native.items()}
+        folder = checkpoint(self.root / "half", half, prefix="model.")
+        with self.assertRaisesRegex(ValueError, "bfloat16 or float32"):
+            bodies.validate_body(folder, self.chassis, hotkey=HOTKEY)
+
+    def test_sketches_and_soups_canonicalise_to_bf16(self):
+        import numpy as np
+
+        from zils import soup_copies
+
+        native, cast = self.body("native", self.F32), self.body("cast", ())
+        seed = b"seed"
+        np.testing.assert_array_equal(
+            soup_copies.sketch(native, self.base, NAMES, seed=seed),
+            soup_copies.sketch(cast, self.base, NAMES, seed=seed),
+        )
+
+
+class DeadlineTest(unittest.TestCase):
+    def test_a_deadline_overrun_mid_download_is_transient(self):
+        import itertools
+
+        from zils import commitments
+
+        class Response:
+            status = 200
+            headers = {"Content-Length": "4"}
+
+            def __init__(self):
+                self.parts = [b"ab", b"cd"]
+
+            def read(self, n):
+                return self.parts.pop(0) if self.parts else b""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        clock = itertools.chain([0, 0], itertools.repeat(10**9))
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(
+                commitments,
+                "opener",
+                return_value=type("O", (), {"open": lambda *a, **k: Response()})(),
+            ),
+            patch.object(commitments.time, "monotonic", side_effect=lambda: next(clock)),
+            self.assertRaisesRegex(OSError, "deadline"),
+        ):
+            claim = {"repo": REPO, "revision": REVISION}
+            commitments.download_files(
+                claim, Path(tmp) / "out", ["a.bin"], {"a.bin": {"size": 4}}, 100
+            )
+
+
+class HostileHeaderTest(unittest.TestCase):
+    def test_malformed_offsets_and_shapes_are_rejected_as_invalid(self):
+        first = NAMES[0]
+        size = 2 * math.prod(SHAPES[first])
+        entry = {"dtype": "BF16", "shape": list(SHAPES[first])}
+        cases = {
+            "string offsets": {**entry, "data_offsets": ["0", str(size)]},
+            "float offsets": {**entry, "data_offsets": [0.0, float(size)]},
+            "bool offsets": {**entry, "data_offsets": [False, size]},
+            "negative offsets": {**entry, "data_offsets": [-2, size - 2]},
+            "three offsets": {**entry, "data_offsets": [0, size, size]},
+            "past the end": {**entry, "data_offsets": [0, 10**12]},
+            "negative shape": {"dtype": "BF16", "shape": [-8, -4], "data_offsets": [0, size]},
+            "not a mapping": [1, 2],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for label, bad in cases.items():
+                with self.subTest(label):
+                    header, total = raw_header(**{first: bad})
+                    folder = raw_body(
+                        Path(tmp) / label.replace(" ", "-"),
+                        json.dumps(header).encode(),
+                        bytes(total),
+                    )
+                    with self.assertRaises(ValueError):
+                        bodies.body_hash(folder, NAMES)
+
+    def test_deeply_nested_header_is_rejected_as_invalid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = raw_body(Path(tmp) / "deep", b"[" * 200000 + b"]" * 200000)
+            with self.assertRaises(ValueError):
+                bodies.body_hash(folder, NAMES)
+            header, total = raw_header()
+            header["__metadata__"] = {"x": json.loads("[" * 50 + "]" * 50)}
+            nested = raw_body(Path(tmp) / "meta", json.dumps(header).encode(), bytes(total))
+            with self.assertRaises(ValueError):
+                bodies.body_hash(nested, NAMES)
+
+    def test_a_body_with_a_non_finite_tensor_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            chassis = checkpoint(root / "chassis", weights(), extras=False)
+            base = checkpoint(root / "qwen", weights(), prefix="model.")
+            for label, value in (("nan", math.nan), ("inf", math.inf)):
+                with self.subTest(label):
+                    tensors = weights()
+                    tensors["visual.patch.weight"][0, 0] = value
+                    body = checkpoint(root / label, tensors, prefix="model.")
+                    with self.assertRaisesRegex(ValueError, "finite"):
+                        bodies.validate_body(body, chassis, hotkey=HOTKEY)
+                    with self.assertRaisesRegex(ValueError, "finite|change"):
+                        bodies.validate_body(body, chassis, hotkey=HOTKEY, base=base)
+
+    def test_a_nan_change_from_the_base_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            chassis = checkpoint(root / "chassis", weights(), extras=False)
+            body = checkpoint(root / "body", weights(), prefix="model.")
+            with (
+                patch.object(bodies, "relative_change", return_value=math.nan),
+                self.assertRaisesRegex(ValueError, "change"),
+            ):
+                bodies.validate_body(body, chassis, hotkey=HOTKEY, base=chassis)
 
 
 if __name__ == "__main__":

@@ -10,7 +10,6 @@ so a 4B body never sits in memory whole."""
 
 import hashlib
 import math
-from pathlib import Path
 
 import numpy as np
 
@@ -46,11 +45,11 @@ class Sketch:
         if not names:
             raise ValueError(f"no chassis tensors start with {PREFIX!r}")
         body = bodies._tensors(folder, chassis_names)
-        base = bodies._tensors(base_folder, chassis_names)
+        base = bodies._tensors(base_folder, chassis_names, trusted=True)
         out = np.zeros(self.dims, dtype=np.float64)
         for name in names:
-            shape = bodies._bf16(name, body[name][1])
-            if shape != bodies._bf16(name, base[name][1]):
+            shape = bodies._canonical(name, body[name][1])
+            if shape != bodies._canonical(name, base[name][1]):
                 raise ValueError(f"body tensor {name} shape differs from the base")
             key, part = self._key(name), np.zeros(self.dims, dtype=np.float64)
             total = math.prod(shape)
@@ -69,15 +68,8 @@ def sketch(folder, base_folder, chassis_names, *, seed: bytes, dims: int = 4096)
 
 
 def _read(path, info, offset, count):
-    """`count` bf16 elements from `offset` of one tensor, as float64."""
-    start = info["data_offsets"][0] + 2 * offset
-    with Path(path).open("rb") as stream:
-        stream.seek(start)
-        raw = stream.read(2 * count)
-    if len(raw) != 2 * count:
-        raise ValueError(f"{Path(path).name} is truncated")
-    bits = np.frombuffer(raw, dtype="<u2").astype(np.uint32) << 16
-    return bits.view(np.float32).astype(np.float64)
+    """`count` elements from `offset` of one tensor, canonicalised to bf16, as float64."""
+    return bodies._float64(bodies.read_bf16(path, info, offset, count))
 
 
 def _hash(index, key, dims):
@@ -138,21 +130,47 @@ def explained_share(target, others) -> float:
     return min(1.0, max(0.0, float(fit @ fit) / norm))
 
 
-def is_copy(target, earlier, soup=None, release=None, *, cosine_max=0.999, explained_max=0.8):
+def is_copy(
+    target,
+    earlier,
+    soup=None,
+    release=None,
+    *,
+    house=(),
+    explained=None,
+    cosine_max=0.999,
+    others_max=0.3,
+):
     """Why a body sketch is a copy, or None. `earlier` are sketches of earlier commitments by other
-    hotkeys; `soup` and `release` are sketches of the current soup and release bodies."""
+    hotkeys: a near-exact copy of one is a copy. `house`
+    (house bodies) and `soup` and `release` (the current soup and release bodies) reject only
+    near-exact re-uploads (cosine at least `cosine_max`): fine-tuning them is allowed.
+
+    The body is also fitted on the earlier and house sketches jointly. The share the earlier
+    (other-hotkey) bodies add to that fit beyond the house bodies alone must stay under
+    `others_max`, so merging another hotkey's body with a house body (or averaging other hotkeys'
+    bodies) is a copy, while a body explained by house bodies alone is not, and neither are two
+    independent fine-tunes of the same house body, which share most of their change through it.
+    There is no rule on the earlier bodies alone, which would ignore that shared house change.
+    `explained`, when given, replaces `earlier` in the joint fit (for example only the earlier
+    bodies still in the pool);
+    near-exact copies are always checked against all of `earlier`. Only "explained by earlier" is a
+    judgement on the current pool rather than on the weights themselves."""
     target = np.asarray(target, dtype=np.float64)
     if not np.any(target):
         return "no change from the base"
     if any(cosine(target, e) >= cosine_max for e in earlier):
         return "cosine"
+    if any(cosine(target, h) >= cosine_max for h in house):
+        return "house re-upload"
     for label, other in (("soup re-upload", soup), ("release re-upload", release)):
-        if other is not None and (
-            cosine(target, other) >= cosine_max or explained_share(target, [other]) >= explained_max
-        ):
+        if other is not None and cosine(target, other) >= cosine_max:
             return label
-    if explained_share(target, list(earlier)) >= explained_max:
-        return "explained by earlier"
+    explained = list(earlier if explained is None else explained)
+    if explained:
+        joint = explained_share(target, [*explained, *house])
+        if joint - explained_share(target, list(house)) >= others_max:
+            return "explained by earlier"
     return None
 
 

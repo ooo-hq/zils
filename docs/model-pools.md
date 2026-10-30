@@ -51,6 +51,151 @@ sealed draw. Runtime state goes under `base-pools/<pool>/base-tier`; prior legac
 state is preserved. Each pending validator round freezes the pool config and
 results. A changed config cannot replay that pending round.
 
+## Soup pools
+
+A pool entry with `"type": "soup"` pays from daily soup rounds instead of a king
+history (omit `type` for a king pool). Each round admits `zilsb2` body
+commitments, grades the pool's bodies alone and as uniform averages ("soups") on
+a seeded subset of a private round bank, and pays the soup's seats and the best
+solo body (the crown). The mechanism and its constants live in
+`zils/soup_round.py`; copy and twin checks in `zils/soup_copies.py`; pay rates and
+the house registry in `zils/soup_rates.py`.
+
+> **Chain endpoint requirement.** A soup round reads the roster's commitments as
+> of its seed block (the first block after the day's commit deadline), so every
+> validator sees the same set. Use an archive-capable chain endpoint. A pruned
+> node keeps only about 256 blocks (under an hour) of state, so a round started
+> later than that fails to read its commitments; it is retried, and until it
+> succeeds the previous decision keeps paying.
+
+A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
+`schedule`, and optionally `subset_size` (default 3,000), `screen_size` (300),
+`max_pool` (20, at least 5), `max_new_per_round` (6), `max_claims_per_round`
+(12), `max_download_bytes_per_round` (60 GiB), `failed_claim_backoff_rounds` (3),
+`others_max` (0.3), `house_mix_max` (0.05), `max_decision_age_days` (3) and
+`sketch_seed`:
+
+```json
+"d3-mini": {
+  "type": "soup",
+  "model": "d3-mini-4.5b-v1",
+  "enabled": true,
+  "share": 0.4,
+  "house": "zils/data/soup-house.json",
+  "schedule": {"deadline_utc": "00:00"}
+}
+```
+
+- `house` is the house registry inline (a list of `name`, `repo`, `revision`,
+  `body_sha256`) or a path to it relative to the validator directory. A
+  `body_sha256` of `null` is identified by the hash of the body at its revision.
+- `schedule.deadline_utc` is the daily commit deadline. The round for a day uses
+  the first block after that deadline as its seed and admits only commitments
+  made before that block.
+- `max_new_per_round` caps the new bodies admitted in one round, in commitment
+  block order, then hotkey; later commitments wait for the next round.
+  `max_claims_per_round` and `max_download_bytes_per_round` cap the commitments
+  whose files pass the header and layout check and the bytes downloaded, failed
+  ones included. A hotkey whose claim fails validation or download sits out the
+  next `failed_claim_backoff_rounds` rounds (0 to 30). A
+  commitment whose repo cannot be downloaded at all does not count toward the
+  claims cap; after three rounds of failed downloads it is retired (that
+  commitment only, never the body hash). Each claim's outcome
+  is saved as it finishes, so a round cut off by its deadline resumes without
+  downloading a claim twice.
+- `sketch_seed` (64 hex characters) seeds the weight sketches used by the copy
+  checks and the scout rate. It is a private, per-validator secret: sketches are
+  compared only on the validator that made them, and a known seed would let a
+  copier disguise a copy. Omit it and the validator generates one on the first
+  round and keeps it in `base-pools/<pool>/soup/sketch-seed`. It never appears in
+  a report. **It must never change once set:** sketches of pruned bodies cannot be
+  remade, so a round whose seed differs from the pool's recorded seed stops with
+  an error until the original seed is restored.
+
+`base_pool_rounds` names a soup pool with `round_bank` (the private bank, JSON
+list or JSONL of exam cases) and `base` (the vendor parent folder the body change
+is measured against). The chassis is the pool model's pinned parent.
+
+Payout: the latest round's public record pays each seated hotkey its seat
+weight and the crown its crown weight, as fractions of the pool's share. The
+crown (20%) goes to the best non-house solo body only if its solo score beats
+every house body's solo score and the current soup's score on the same subset
+by at least the greedy margin (0.3 points); otherwise it burns. If the current
+soup cannot be graded that round, the crown burns too. Before the first
+soup only the house bodies set the bar. Whatever a round does not pay goes to
+`burn_uid`; before the first round the whole share burns. A failed round keeps
+the previous round's record for at most `max_decision_age_days` days after that
+round's commit deadline; after that the pool burns its whole share until a round
+succeeds.
+
+Operators should alert when soup rounds fail: the per-pool `error` in the
+validator's `soup-pools.json` and its log (a changed sketch seed, a full disk, a
+GPU or driver fault, a chain endpoint that cannot serve the seed block). A pool
+whose rounds keep failing pays nothing once its decision is too old.
+
+The validator loop starts at most one round per pool per day and never waits
+for it: the round runs detached (`python -m zils.soup_pool --run <request>`),
+takes the shared GPU lock and runs in the GPU runtime under a 6-hour deadline.
+Later loops report it running, restart a round that died (at most three times a
+day) and otherwise leave the previous decision paying. The round reads the
+roster's commitments as of its seed block (see the chain endpoint requirement
+above). State lives under `base-pools/<pool>/soup`: known bodies, the
+prediction cache, the item use ledger and `rounds/<round id>/` with the private
+and public records. A crashed round resumes from its cache and is counted once in
+the ledger. Each body is built once per round and graded on the whole round
+subset, with rows cached every 200 items. A GPU, disk or out-of-memory error,
+or a chassis that cannot grade either, fails the round (it is retried); any
+other grading failure makes the body sit the round out, and a body that fails
+grading in three separate rounds is banned. A body out of the pool for three
+rounds loses its folder (its hash and sketch stay); cached soup predictions
+unused for three rounds are deleted.
+When the round bank has too few unretired items, the round is skipped and logged.
+Only the public record (members, rates, rounded contributions, category scores and
+hashes of the subset, predictions and soup) enters the published report.
+
+### Submitting a body
+
+A body's hash is refused for good only when weights that hash to it fail a check
+(shape, a NaN or infinite value, the change cap) or are a near-exact re-upload.
+Tensors may be stored as bf16 or f32; each is rounded to bf16 for the hash, the
+change check, the copy checks and the soup.
+Any other failure (owner file, licence, a hash mismatch, unreadable files, the
+repo) fails only that hotkey's commitment of that repo revision; a download that
+times out is retried next round. The first valid commitment of a hash wins.
+
+Fine-tunes are welcome, including fine-tunes of house models, the current soup
+or the release; they are paid at the trainer rate. A house mix is paid at the
+scout rate (0.25): a body whose change from the base, fitted on the house
+bodies' changes (non-negative least squares on the sketches), leaves a residual
+share under `house_mix_max` (default 0.05, settable from 0 to 0.5). The dry
+run's two real fine-tunes of a house body left about 0.10 to 0.12. The copy check rejects a
+body that is a near-exact copy (cosine at least 0.999 between weight-change
+sketches) of an earlier body by another hotkey, a house body, the current soup
+or the release. The body is also fitted on earlier other-hotkey bodies and
+house bodies together; if the other hotkeys' bodies add
+`others_max` (default 0.3, settable from 0.1 to 0.9) or more of the body's
+squared norm beyond what the house bodies explain alone, it is a copy. So
+merging another hotkey's body with a house body (or averaging other hotkeys'
+bodies) is rejected, while a fine-tune of a house body, two independent
+fine-tunes of the same house body, or a merge with your own earlier bodies are
+not. A behavioural twin of a pool body is also refused.
+
+Only a near-exact re-upload (or a body with no change from the base) bans the
+body hash. "Explained by earlier" and behavioural twins judge the current pool:
+they refuse only that commitment (explained shares count only earlier bodies
+still in the pool), and the commitment is evaluated again when it is
+re-committed or when a body that explained it, or its twin partner, leaves the
+pool. A house entry that cannot be downloaded or hashed sits that round out and
+is recorded in the private round record.
+
+Commitments are public on chain the moment they are made, and a public repo can
+be copied and committed by someone else before the deadline. To avoid
+front-running, upload the body to a **private** Hugging Face repo, commit
+`zilsb2:<body sha256>:<revision>:<repo>` while the repo is still private, then make
+the repo public before the round's commit deadline. Validators download at the
+round, after the deadline; a repo that is still private then fails the download
+and is retried in a later round.
+
 ## Submit, evaluate and promote
 
 Run `zils setup` to select the exact base profile to beat in your tier, or pass
@@ -81,20 +226,9 @@ It rechecks the closed window against installed state and produces a reviewable
 profile/king update. Stable/latest movement remains separate from election and
 existing adapters' exact model pins.
 
-## Soup pools
+### Soup releases
 
-A pool entry may set `"type": "soup"`. This type is **new at the mainnet launch**
-and has not yet run as a live competition. A soup pool has no committing king.
-Miners commit full bodies (`zilsb2:<body sha256>:<revision>:<repo>`, written by
-`zils commit-body`) instead of `zils1` candidates. Each day the validator builds
-a greedy uniform average of up to five pool bodies on the pool's pinned chassis
-(d3-mini's answer layer, prompt and runtime) and pays seats in that soup. The
-pool's fraction of the base budget then splits 80% to soup seats and 20% to the
-round's best single body. Unearned parts burn to `burn_uid`, like any other
-pool's unowned fraction. A pool entry without `type` keeps the king election
-described above.
-
-The soup changes the pool's served model only through the release gate. At a
+A soup pool (see [soup pools](#soup-pools)) has no committing king. The soup changes the pool's served model only through the release gate. At a
 release window (every 14 to 28 days) the soup must beat the incumbent on two
 sealed release draws, pass the confirmation draw and the adapter suite, and be
 promoted by the owner's promotion PR. Members are paid through seats, never

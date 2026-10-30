@@ -143,14 +143,54 @@ class IsCopyTest(unittest.TestCase):
             "release re-upload",
         )
 
+    def test_house_bodies_reject_only_near_exact_re_uploads(self):
+        house = self.earlier[2]
+        self.assertEqual(
+            soup_copies.is_copy(house + self.noise, [], house=[house]), "house re-upload"
+        )
+        # A real fine-tune of a house model moves away from it and is allowed.
+        tuned = house + 0.3 * self.fresh
+        self.assertGreater(soup_copies.explained_share(tuned, [house]), 0.8)
+        self.assertIsNone(soup_copies.is_copy(tuned, [], house=[house]))
+
+    def test_a_fine_tune_of_the_soup_or_release_is_allowed(self):
+        soup = sum(self.earlier) / 3
+        tuned = soup + 0.2 * self.fresh
+        self.assertGreater(soup_copies.explained_share(tuned, [soup]), 0.8)
+        self.assertIsNone(soup_copies.is_copy(tuned, [], soup=soup, release=soup))
+
     def test_genuinely_different_body_passes(self):
         self.assertIsNone(
             soup_copies.is_copy(
                 self.fresh, self.earlier, soup=sum(self.earlier) / 3, release=self.earlier[0]
             )
         )
-        # Half fresh, half an earlier body: explained share near 0.5, under the 0.8 bar.
-        self.assertIsNone(soup_copies.is_copy(self.fresh + self.earlier[0], self.earlier))
+        # Mostly fresh with a little of an earlier body: its share is under the 0.3 bar.
+        self.assertIsNone(soup_copies.is_copy(self.fresh + 0.3 * self.earlier[0], self.earlier))
+
+    def test_two_trainers_fine_tuning_the_same_house_body_are_not_copies(self):
+        # Both deltas are mostly the shared house delta, plus a small part of their own (dry run:
+        # trainer A explains 0.90 of trainer B alone, but adds only 0.007 beyond the house).
+        rng = np.random.default_rng(7)
+        house = 10 * rng.standard_normal(4096)
+        first = house + 3 * rng.standard_normal(4096)
+        second = house + 3 * rng.standard_normal(4096)
+        self.assertGreater(soup_copies.explained_share(second, [first]), 0.8)
+        self.assertIsNone(soup_copies.is_copy(second, [first], house=[house]))
+
+    def test_a_merge_with_a_house_body_is_judged_on_the_other_hotkeys_part(self):
+        other, house = self.earlier[0], self.earlier[2]
+        merge = 0.5 * other + 0.5 * house
+        # Earlier bodies alone explain only half of it, under the 0.8 bar of the old check.
+        self.assertLess(soup_copies.explained_share(merge, [other]), 0.8)
+        self.assertEqual(soup_copies.is_copy(merge, [other], house=[house]), "explained by earlier")
+        # A light fine-tune of the house body owes nothing to the other hotkey's body.
+        tuned = house + 0.3 * self.fresh
+        self.assertIsNone(soup_copies.is_copy(tuned, [other], house=[house]))
+        # Half fresh, half another hotkey's body: that body's share is about 0.5.
+        self.assertEqual(
+            soup_copies.is_copy(self.fresh + other, [other], house=[house]), "explained by earlier"
+        )
 
     def test_zero_change_is_rejected(self):
         self.assertEqual(
