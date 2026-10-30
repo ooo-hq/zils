@@ -714,7 +714,7 @@ class SoupRunTest(unittest.TestCase):
         self.assertFalse((self.r.state / "bodies" / weak).exists())
         state = json.loads((self.r.state / "pool.json").read_text())
         self.assertIn(weak, state["bodies"])  # the hash is kept, so a re-commit is not re-admitted
-        self.assertTrue(list((self.r.state / "sketches").glob(f"{weak}-*.npy")))
+        self.assertTrue(list((self.r.state / "sketches").glob(f"{weak}.npz")))
         for sha in (self.r.sha["t1"], self.r.sha["t2"], self.r.sha["house"]):
             self.assertTrue((self.r.state / "bodies" / sha).exists())
         soups = {p.stem for p in (self.r.state / "cache").glob("soup-*.jsonl")}
@@ -731,17 +731,36 @@ class SoupRunTest(unittest.TestCase):
         secret = path.read_text().strip()
         self.assertRegex(secret, "^[0-9a-f]{64}$")
         self.assertEqual(path.stat().st_mode & 0o077, 0)
-        sketches = sorted(p.name for p in (self.r.state / "sketches").glob("*.npy"))
+        sketches = sorted(p.name for p in (self.r.state / "sketches").glob("*.npz"))
         self.r.run(round_id="d3-mini-2026-11-04", config=config)
         self.assertEqual(path.read_text().strip(), secret)  # generated once, then reused
         self.assertEqual(
-            sorted(p.name for p in (self.r.state / "sketches").glob("*.npy")), sketches
+            sorted(p.name for p in (self.r.state / "sketches").glob("*.npz")), sketches
         )
         for name in ("d3-mini-2026-11-03", "d3-mini-2026-11-04"):
             public = (self.r.state / "rounds" / name / "public.json").read_text()
             self.assertNotIn(secret, public)
             self.assertNotIn("sketch", public)
         self.assertNotIn(secret, (self.r.state / "decision.json").read_text())
+
+    def test_sketches_are_keyed_by_body_hash_with_the_seed_tag_inside(self):
+        import numpy as np
+
+        record = self.r.run()
+        tag = hashlib.sha256(bytes.fromhex("5e" * 32)).hexdigest()[:16]
+        for sha in record["pool"]:
+            with np.load(self.r.state / "sketches" / f"{sha}.npz") as stored:
+                self.assertEqual(str(stored["tag"]), tag)
+
+    def test_a_changed_sketch_seed_fails_loudly(self):
+        self.r.run()
+        changed = self.r.config(sketch_seed="7a" * 32)
+        with self.assertRaisesRegex(ValueError, "sketch_seed .*must never change"):
+            self.r.run(round_id="d3-mini-2026-11-04", config=changed)
+        unset = self.r.config()
+        del unset["sketch_seed"]  # a generated local seed differs from the configured one too
+        with self.assertRaisesRegex(ValueError, "sketch_seed"):
+            self.r.run(round_id="d3-mini-2026-11-04", config=unset)
 
     def test_a_configured_sketch_seed_never_reaches_the_public_record(self):
         self.r.run()
@@ -773,9 +792,9 @@ class SoupRunTest(unittest.TestCase):
         self.assertEqual(record["rates"][sha["house"]], 0.0)
         self.assertEqual(set(self.by_body(record)), {sha["t1"], sha["t2"]})
         # One fixed sketch seed per pool: each body is sketched once, whatever the round's seed.
-        self.assertEqual(len(list((self.r.state / "sketches").glob("*.npy"))), 6)
+        self.assertEqual(len(list((self.r.state / "sketches").glob("*.npz"))), 6)
         self.r.run(round_id="d3-mini-2026-11-04")
-        self.assertEqual(len(list((self.r.state / "sketches").glob("*.npy"))), 6)
+        self.assertEqual(len(list((self.r.state / "sketches").glob("*.npz"))), 6)
 
     def test_an_identical_upload_of_the_base_is_rejected(self):
         BODIES["stock"] = strengths(0, 0, 0, 0, 0, norm=3)

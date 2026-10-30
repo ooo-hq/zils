@@ -386,25 +386,40 @@ def sketch_seed(config, state_dir):
     return bytes.fromhex(path.read_text().strip())
 
 
+SEED_CHANGED = (
+    "the sketch_seed differs from the one this pool's sketches were made with; sketches of pruned "
+    "bodies cannot be remade, so every copy check would be wrong. Restore the original sketch_seed "
+    "(or base-pools/<pool>/soup/sketch-seed): it must never change once set"
+)
+
+
+def sketch_tag(seed):
+    return hashlib.sha256(seed).hexdigest()[:16]
+
+
 class _Sketches:
-    """Body sketches (``soup_copies.sketch``) under one fixed per-pool seed, cached on disk by body hash."""
+    """Body sketches (``soup_copies.sketch``) under one fixed per-pool seed, cached on disk by body
+    hash, each file holding the tag of the seed it was made with."""
 
     def __init__(self, root, base, names, seed):
         self.root, self.base, self.names, self.seed = Path(root), base, names, seed
-        self.tag = hashlib.sha256(seed).hexdigest()[:16]
+        self.tag = sketch_tag(seed)
 
     def __call__(self, sha, folder):
         import numpy as np
 
         from . import soup_copies
 
-        path = self.root / f"{sha}-{self.tag}.npy"
+        path = self.root / f"{sha}.npz"
         if path.exists():
-            return np.load(path)
+            with np.load(path) as stored:
+                if str(stored["tag"]) != self.tag:
+                    raise ValueError(SEED_CHANGED)
+                return stored["sketch"]
         value = soup_copies.sketch(folder, self.base, self.names, seed=self.seed)
         self.root.mkdir(parents=True, exist_ok=True)
-        partial = path.with_name(path.name + ".partial.npy")
-        np.save(partial, value)
+        partial = path.with_name(f".{sha}.partial.npz")
+        np.savez(partial, sketch=value, tag=np.array(self.tag))
         os.replace(partial, path)
         return value
 
@@ -517,6 +532,9 @@ def run(
     sketch = None
     if base is not None:
         sketches = _Sketches(state_dir / "sketches", base, names, sketch_seed(config, state_dir))
+        if state.setdefault("sketch_tag", sketches.tag) != sketches.tag:
+            raise ValueError(SEED_CHANGED)  # at startup, never as a silent failure of every claim
+        _write_json(state_dir / "pool.json", state)
 
         def sketch(sha):
             return sketches(sha, folder(sha))
