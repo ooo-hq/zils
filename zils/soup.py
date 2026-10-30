@@ -75,6 +75,8 @@ def build(out, chassis, bodies, *, model):
     models.write_metadata(out, kind="candidate", model=model)
     if _sha256(out / READOUT) != _sha256(chassis / READOUT):
         raise ValueError("soup readout.safetensors differs from the chassis answer layer")
+    if _sha256(out / READOUT) != d3.pins(model)["files"][READOUT]:
+        raise ValueError("soup readout.safetensors differs from the pinned parent answer layer")
     return out
 
 
