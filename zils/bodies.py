@@ -20,7 +20,7 @@ MAX_BYTES = models.MAX_CANDIDATE_BYTES
 LICENSES = {"apache-2.0", "mit", "bsd-3-clause", "bsd-2-clause"}
 KEEP = ("language_model.", "visual.")
 DROP = ("lm_head", "mtp.")
-HEADER_BYTES = 100 * 1024**2
+HEADER_BYTES = 8 * 1024**2  # a 4B body's header is ~100 KB; a bigger one is hostile, not a model
 CHUNK = 64 * 1024**2
 
 
@@ -87,19 +87,28 @@ def _header(path):
             raise ValueError(f"{path.name} is not a safetensors file")
         try:
             header = json.loads(stream.read(length))
-        except ValueError:
+        except (ValueError, RecursionError):  # RecursionError: a deeply nested hostile header
             raise ValueError(f"{path.name} has an unreadable safetensors header") from None
     if not isinstance(header, dict):
         raise ValueError(f"{path.name} has an unreadable safetensors header")
-    header.pop("__metadata__", None)
+    metadata = header.pop("__metadata__", {})
+    if not isinstance(metadata, dict) or not all(isinstance(v, str) for v in metadata.values()):
+        raise ValueError(f"{path.name} metadata must map names to strings")
     out = {}
     for key, info in header.items():
         try:
             start, end = info["data_offsets"]
-            valid = isinstance(info["dtype"], str) and all(type(d) is int for d in info["shape"])
+            valid = (
+                isinstance(info["dtype"], str)
+                and isinstance(info["shape"], list)
+                and all(type(d) is int and d >= 0 for d in info["shape"])
+                and type(start) is int
+                and type(end) is int
+                and 0 <= start <= end <= size - 8 - length
+            )
         except (KeyError, TypeError, ValueError):
             valid = False
-        if not valid or not 0 <= start <= end <= size - 8 - length:
+        if not valid:
             raise ValueError(f"{path.name} tensor {key} is malformed or outside the file")
         out[key] = {**info, "data_offsets": (8 + length + start, 8 + length + end)}
     return out
@@ -144,12 +153,17 @@ def _chunks(path, info):
 
 
 def body_hash(folder, chassis_names):
-    """sha256 over each mapped chassis tensor in sorted name order: name, shape, raw bf16 bytes."""
+    """sha256 over each mapped chassis tensor in sorted name order: name, shape, raw bf16 bytes.
+    Every value must be finite (a bf16 NaN or infinity has all exponent bits set)."""
+    import numpy as np
+
     digest = hashlib.sha256()
     for name, (path, info) in sorted(_tensors(folder, chassis_names).items()):
         shape = _bf16(name, info)
         digest.update(f"{name}\0{','.join(map(str, shape))}\0".encode())
         for chunk in _chunks(path, info):
+            if ((np.frombuffer(chunk, dtype="<u2") & 0x7F80) == 0x7F80).any():
+                raise ValueError(f"body tensor {name} is not finite")
             digest.update(chunk)
     return digest.hexdigest()
 
@@ -242,8 +256,9 @@ def validate_body(folder, chassis, *, hotkey, base=None, max_change=0.15):
             raise ValueError(f"body tensor {name} must be bfloat16, not {info['dtype']}")
         if tuple(info["shape"]) != shapes[name]:
             raise ValueError(f"body tensor {name} shape {info['shape']} differs from the chassis")
+    digest = body_hash(folder, shapes)
     if base is not None:
         change = relative_change(folder, base, shapes)
-        if change > max_change:
+        if not change <= max_change:  # NaN fails too
             raise ValueError(f"body change from the base {change:.4f} exceeds {max_change}")
-    return body_hash(folder, shapes)
+    return digest

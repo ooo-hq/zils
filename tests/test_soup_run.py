@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import tempfile
 import unittest
 from datetime import UTC, datetime
@@ -342,6 +343,86 @@ class SoupRunTest(unittest.TestCase):
         record = self.r.run(fetch_body=fetch)
         self.assertIn("zils-owner.json", record["rejected"][self.r.sha["weak"]])
         self.assertFalse((self.r.state / "bodies" / self.r.sha["weak"]).exists())
+
+    def hostile(self, name, folder, block):
+        """Commit a hand-made body repo `folder` as `name` (its claimed hash cannot be computed)."""
+        self.r.repos[name] = folder
+        self.r.sha[name] = hashlib.sha256(name.encode()).hexdigest()
+        uid = max(self.r.commits) + 1
+        self.r.commits[uid] = (name, block)
+        self.enterContext(patch.dict(HOTKEYS, {uid: HOTKEYS.get(uid, f"5Hostile{uid}")}))
+        return self.r.sha[name]
+
+    def test_hostile_bodies_are_rejected_and_the_round_completes(self):
+        nan = strengths(1, 1, 0, 0, 0)
+        nan["visual.patch.weight"][0] = math.nan
+        repos = self.tmp / "hostile"
+        nan_sha = self.hostile(
+            "nan", test_bodies.checkpoint(repos / "nan", nan, prefix="model.", owner=None), 90
+        )
+        header, total = test_bodies.raw_header()
+        header = {
+            STRENGTH: {"dtype": "BF16", "shape": [5], "data_offsets": ["0", "10"]},
+            "language_model.norm.weight": {
+                "dtype": "BF16",
+                "shape": [2],
+                "data_offsets": [10.0, 14.0],
+            },
+            "visual.patch.weight": {"dtype": "BF16", "shape": [2], "data_offsets": [14, 18]},
+        }
+        offsets = test_bodies.raw_body(repos / "offsets", json.dumps(header).encode(), bytes(18))
+        (offsets / "README.md").write_text("---\nlicense: mit\n---\n")
+        offsets_sha = self.hostile("offsets", offsets, 91)
+        deep = test_bodies.raw_body(repos / "deep", b"[" * 200000 + b"]" * 200000)
+        (deep / "README.md").write_text("---\nlicense: mit\n---\n")
+        deep_sha = self.hostile("deep", deep, 92)
+        record = self.r.run()
+        self.assertIn("finite", record["rejected"][nan_sha])
+        self.assertIn("malformed", record["rejected"][offsets_sha])
+        self.assertIn("unreadable", record["rejected"][deep_sha])
+        self.assertEqual(set(self.by_body(record)), {self.r.sha["t1"], self.r.sha["t2"]})
+
+    def test_any_exception_from_one_body_rejects_that_body_only(self):
+        def copies(sha, folder, earlier, *, soup):
+            if sha == self.r.sha["weak"]:
+                raise RuntimeError("sketch blew up")
+            return None
+
+        record = self.r.run(copies=copies)
+        self.assertIn("RuntimeError", record["rejected"][self.r.sha["weak"]])
+        self.assertEqual(set(self.by_body(record)), {self.r.sha["t1"], self.r.sha["t2"]})
+
+    def test_a_body_that_fails_grading_is_rejected_and_the_round_completes(self):
+        fake = self.r.runner
+
+        def runner_for(folder):
+            run = fake(folder)
+            if Path(folder).name.startswith(self.r.sha["weak"][:32]):
+
+                def broken(cases):
+                    raise RuntimeError("cannot load this body")
+
+                return broken
+            return run
+
+        self.r.runner = runner_for
+        record = self.r.run()
+        self.assertIn("cannot load", record["rejected"][self.r.sha["weak"]])
+        self.assertNotIn(self.r.sha["weak"], record["pool"])
+        self.assertEqual(set(self.by_body(record)), {self.r.sha["t1"], self.r.sha["t2"]})
+
+    def test_a_twin_check_failure_rejects_only_the_new_body(self):
+        def twins(rows, other_rows):
+            if len(rows) and rows is not other_rows and twins.calls == 0:
+                twins.calls += 1
+                raise ValueError("bad rows")
+            return False
+
+        twins.calls = 0
+        record = self.r.run(twins=twins)
+        self.assertEqual(len(record["rejected"]), 1)
+        self.assertIn("bad rows", next(iter(record["rejected"].values())))
+        self.assertTrue(record["members"])
 
     def test_default_checks_reject_a_layer_copy_and_rate_a_house_retrain_as_a_scout(self):
         self.r.commits.update({5: ("scout", 50), 6: ("t1copy", 104)})

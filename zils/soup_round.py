@@ -180,6 +180,12 @@ def _read_json(path, default):
     return json.loads(path.read_text()) if path.exists() else default
 
 
+def _reason(error):
+    """A rejection reason: a ValueError's message, or any other exception's type and message."""
+    text = str(error) if isinstance(error, ValueError) else f"{type(error).__name__}: {error}"
+    return text[:400]
+
+
 def _rename(folder):
     from . import bodies
 
@@ -259,12 +265,13 @@ def _intake(state, snapshot, *, chassis, base, download, copies, folder):
             soup = tuple(s for s in state["members"] if s in known)
             if copies is not None and (reason := copies(sha, folder(sha), earlier, soup=soup)):
                 raise ValueError(f"copy: {reason}")
-        except ValueError as error:
-            rejected[sha] = str(error)[:400]
-            shutil.rmtree(folder(sha), ignore_errors=True)
-            continue
         except OSError as error:  # a failed download is retried next round, not held against it
             refused[uid] = f"download failed: {error}"[:400]
+            shutil.rmtree(folder(sha), ignore_errors=True)
+            continue
+        except Exception as error:  # one hostile body must never abort the round
+            print(f"soup intake: body {sha} rejected ({type(error).__name__})", flush=True)
+            rejected[sha] = _reason(error)
             shutil.rmtree(folder(sha), ignore_errors=True)
             continue
         new[sha] = {
@@ -457,11 +464,18 @@ def run(
     incumbents = list(dict.fromkeys([s for s in state["members"] if s in known] + sorted(house)))
     screened, screen = [], {}
     for sha in sorted(intake["new"], key=order):
-        rows = grade(sha, screen_cases)
-        if any(twins(rows, grade(other, screen_cases)) for other in incumbents + screened):
-            rejected[sha] = "behavioural twin of a pool body"
+        try:
+            rows = grade(sha, screen_cases)
+            if any(twins(rows, grade(other, screen_cases)) for other in incumbents + screened):
+                rejected[sha] = "behavioural twin of a pool body"
+                continue
+            screen[sha] = soup_grade.screen_score(screen_cases, rows)
+        except OSError:
+            raise  # the validator's disk or files, not the body: the round retries
+        except Exception as error:  # a body that cannot be graded is rejected
+            print(f"soup screen: body {sha} rejected ({type(error).__name__})", flush=True)
+            rejected[sha] = _reason(error)
             continue
-        screen[sha] = soup_grade.screen_score(screen_cases, rows)
         screened.append(sha)
     past = [
         s
@@ -471,11 +485,20 @@ def run(
     ]
     ranked = incumbents + sorted(screened, key=lambda s: (-screen[s], order(s)))
     ranked += sorted(past, key=lambda s: (-known[s]["solo"], order(s)))
-    pool = list(dict.fromkeys(ranked))[: config.get("max_pool", MAX_POOL)]
+    solo = {}
+    for sha in dict.fromkeys(ranked):
+        if len(solo) >= config.get("max_pool", MAX_POOL):
+            break
+        try:
+            solo[sha] = soup_grade.score(subset, grade(sha, subset))
+        except OSError:
+            raise
+        except Exception as error:  # a body that cannot be graded is rejected
+            print(f"soup solo: body {sha} rejected ({type(error).__name__})", flush=True)
+            rejected[sha] = _reason(error)
+    pool = list(solo)
     if not pool:
         raise ValueError("soup pool has no bodies")
-
-    solo = {sha: soup_grade.score(subset, grade(sha, subset)) for sha in pool}
 
     def soup_key(members):
         digest = hashlib.sha256("+".join(members).encode()).hexdigest()

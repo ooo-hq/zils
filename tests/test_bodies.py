@@ -241,5 +241,95 @@ class ValidateBodyTest(unittest.TestCase):
         bodies.validate_body(body, self.chassis, hotkey=HOTKEY)
 
 
+def raw_body(root, header_bytes, data=b""):
+    """A single-file body whose safetensors header is exactly `header_bytes`."""
+    root = Path(root)
+    root.mkdir(parents=True)
+    (root / "model.safetensors").write_bytes(
+        len(header_bytes).to_bytes(8, "little") + header_bytes + data
+    )
+    return root
+
+
+def raw_header(**changes):
+    """A valid header for weights() laid out back to back; `changes` replace whole tensor entries."""
+    header, offset = {}, 0
+    for name, shape in sorted(SHAPES.items()):
+        size = 2 * math.prod(shape)
+        header[name] = {
+            "dtype": "BF16",
+            "shape": list(shape),
+            "data_offsets": [offset, offset + size],
+        }
+        offset += size
+    header.update(changes)
+    return header, offset
+
+
+class HostileHeaderTest(unittest.TestCase):
+    def test_malformed_offsets_and_shapes_are_rejected_as_invalid(self):
+        first = NAMES[0]
+        size = 2 * math.prod(SHAPES[first])
+        entry = {"dtype": "BF16", "shape": list(SHAPES[first])}
+        cases = {
+            "string offsets": {**entry, "data_offsets": ["0", str(size)]},
+            "float offsets": {**entry, "data_offsets": [0.0, float(size)]},
+            "bool offsets": {**entry, "data_offsets": [False, size]},
+            "negative offsets": {**entry, "data_offsets": [-2, size - 2]},
+            "three offsets": {**entry, "data_offsets": [0, size, size]},
+            "past the end": {**entry, "data_offsets": [0, 10**12]},
+            "negative shape": {"dtype": "BF16", "shape": [-8, -4], "data_offsets": [0, size]},
+            "not a mapping": [1, 2],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            for label, bad in cases.items():
+                with self.subTest(label):
+                    header, total = raw_header(**{first: bad})
+                    folder = raw_body(
+                        Path(tmp) / label.replace(" ", "-"),
+                        json.dumps(header).encode(),
+                        bytes(total),
+                    )
+                    with self.assertRaises(ValueError):
+                        bodies.body_hash(folder, NAMES)
+
+    def test_deeply_nested_header_is_rejected_as_invalid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = raw_body(Path(tmp) / "deep", b"[" * 200000 + b"]" * 200000)
+            with self.assertRaises(ValueError):
+                bodies.body_hash(folder, NAMES)
+            header, total = raw_header()
+            header["__metadata__"] = {"x": json.loads("[" * 50 + "]" * 50)}
+            nested = raw_body(Path(tmp) / "meta", json.dumps(header).encode(), bytes(total))
+            with self.assertRaises(ValueError):
+                bodies.body_hash(nested, NAMES)
+
+    def test_a_body_with_a_non_finite_tensor_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            chassis = checkpoint(root / "chassis", weights(), extras=False)
+            base = checkpoint(root / "qwen", weights(), prefix="model.")
+            for label, value in (("nan", math.nan), ("inf", math.inf)):
+                with self.subTest(label):
+                    tensors = weights()
+                    tensors["visual.patch.weight"][0, 0] = value
+                    body = checkpoint(root / label, tensors, prefix="model.")
+                    with self.assertRaisesRegex(ValueError, "finite"):
+                        bodies.validate_body(body, chassis, hotkey=HOTKEY)
+                    with self.assertRaisesRegex(ValueError, "finite|change"):
+                        bodies.validate_body(body, chassis, hotkey=HOTKEY, base=base)
+
+    def test_a_nan_change_from_the_base_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            chassis = checkpoint(root / "chassis", weights(), extras=False)
+            body = checkpoint(root / "body", weights(), prefix="model.")
+            with (
+                patch.object(bodies, "relative_change", return_value=math.nan),
+                self.assertRaisesRegex(ValueError, "change"),
+            ):
+                bodies.validate_body(body, chassis, hotkey=HOTKEY, base=chassis)
+
+
 if __name__ == "__main__":
     unittest.main()
