@@ -61,9 +61,9 @@ solo body (the crown). The mechanism and its constants live in
 `zils/soup_round.py`; copy and twin checks in `zils/soup_copies.py`; pay rates and
 the house registry in `zils/soup_rates.py`.
 
-A soup entry contains `type`, `model`, `enabled`, `share`, `house`, `schedule` and
-`sketch_seed`, and optionally `subset_size` (default 3,000), `screen_size` (300)
-and `max_pool` (20, at least 5):
+A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
+`schedule`, and optionally `subset_size` (default 3,000), `screen_size` (300),
+`max_pool` (20, at least 5), `max_new_per_round` (6) and `sketch_seed`:
 
 ```json
 "d3-mini": {
@@ -72,8 +72,7 @@ and `max_pool` (20, at least 5):
   "enabled": true,
   "share": 0.4,
   "house": "zils/data/soup-house.json",
-  "schedule": {"deadline_utc": "00:00"},
-  "sketch_seed": "<64 hex characters, fixed for the life of the pool>"
+  "schedule": {"deadline_utc": "00:00"}
 }
 ```
 
@@ -83,8 +82,14 @@ and `max_pool` (20, at least 5):
 - `schedule.deadline_utc` is the daily commit deadline. The round for a day uses
   the first block after that deadline as its seed and admits only commitments
   made before that block.
-- `sketch_seed` seeds the weight sketches used by the copy checks and the scout
-  rate. Changing it makes earlier sketches incomparable, so keep it fixed.
+- `max_new_per_round` caps the new bodies admitted in one round, in commitment
+  block order, then hotkey; later commitments wait for the next round.
+- `sketch_seed` (64 hex characters) seeds the weight sketches used by the copy
+  checks and the scout rate. It is a private, per-validator secret: sketches are
+  compared only on the validator that made them, and a known seed would let a
+  copier disguise a copy. Omit it and the validator generates one on the first
+  round and keeps it in `base-pools/<pool>/soup/sketch-seed`. It never appears in
+  a report. Changing it makes earlier sketches incomparable, so keep it fixed.
 
 `base_pool_rounds` names a soup pool with `round_bank` (the private bank, JSON
 list or JSONL of exam cases) and `base` (the vendor parent folder the body change

@@ -127,6 +127,7 @@ def epoch(config, directory, snapshot, *, block_info, run_round):
                 for uid, item in snapshot.get("commitments", {}).items()
                 if int(item["block"]) < block
             }
+            secret = config["base_pools"]["pools"][pool].get(model_pools.SOUP_SECRET)
             request = {
                 "round_id": round_id,
                 "seed_block": block,
@@ -136,6 +137,7 @@ def epoch(config, directory, snapshot, *, block_info, run_round):
                     **{k: v for k, v in entry.items() if k != "house"},
                     "pool_id": pool,
                     "house": house(entry, directory),
+                    **({model_pools.SOUP_SECRET: secret} if secret else {}),
                 },
                 "state_dir": str(state_dir(directory, pool)),
                 **paths(config, directory, pool),

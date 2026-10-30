@@ -558,6 +558,34 @@ class SoupRunTest(unittest.TestCase):
         later = self.r.run(round_id="d3-mini-2026-11-07")
         self.assertNotIn(weak, later["pool"])
 
+    def test_the_sketch_seed_is_a_local_secret(self):
+        config = self.r.config()
+        del config["sketch_seed"]
+        self.r.run(config=config)
+        path = self.r.state / "sketch-seed"
+        secret = path.read_text().strip()
+        self.assertRegex(secret, "^[0-9a-f]{64}$")
+        self.assertEqual(path.stat().st_mode & 0o077, 0)
+        sketches = sorted(p.name for p in (self.r.state / "sketches").glob("*.npy"))
+        self.r.run(round_id="d3-mini-2026-11-04", config=config)
+        self.assertEqual(path.read_text().strip(), secret)  # generated once, then reused
+        self.assertEqual(
+            sorted(p.name for p in (self.r.state / "sketches").glob("*.npy")), sketches
+        )
+        for name in ("d3-mini-2026-11-03", "d3-mini-2026-11-04"):
+            public = (self.r.state / "rounds" / name / "public.json").read_text()
+            self.assertNotIn(secret, public)
+            self.assertNotIn("sketch", public)
+        self.assertNotIn(secret, (self.r.state / "decision.json").read_text())
+
+    def test_a_configured_sketch_seed_never_reaches_the_public_record(self):
+        self.r.run()
+        for path in (
+            self.r.state / "decision.json",
+            self.r.state / "rounds" / "d3-mini-2026-11-03" / "public.json",
+        ):
+            self.assertNotIn("5e" * 32, path.read_text())
+
     def test_default_checks_reject_a_layer_copy_and_rate_a_house_retrain_as_a_scout(self):
         self.r.commits.update({5: ("scout", 50), 6: ("t1copy", 104)})
         record = self.r.run()
@@ -705,6 +733,12 @@ class SoupPoolWeightsTest(unittest.TestCase):
             (checked["subset_size"], checked["screen_size"], checked["max_pool"]), (3000, 300, 20)
         )
         self.assertEqual(checked["max_new_per_round"], 6)
+        self.assertNotIn("sketch_seed", checked)  # a local secret: never echoed into reports
+        unseeded = soup_entry()
+        del unseeded["sketch_seed"]
+        self.assertNotIn("sketch_seed", model_pools.validate(pools(unseeded))["pools"]["d3-mini"])
+        _, record = model_pools.weights(pools(), {}, MEMBERS)
+        self.assertNotIn("5e" * 32, json.dumps(record))
         self.assertEqual(
             model_pools.validate(pools(soup_entry(house="soup-house.json")))["pools"]["d3-mini"][
                 "house"

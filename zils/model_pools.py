@@ -7,7 +7,8 @@ from . import base_round, core, models
 
 # Pool-entry keys that are not part of the base-tier payout track.
 NOT_TRACK = ("model", "enabled", "cooldown_seconds")
-SOUP_KEYS = {"type", "model", "enabled", "share", "house", "schedule", "sketch_seed"}
+SOUP_KEYS = {"type", "model", "enabled", "share", "house", "schedule"}
+SOUP_SECRET = "sketch_seed"  # optional, local to each validator, never echoed into a report
 SOUP_OPTIONAL = {"subset_size": 3000, "screen_size": 300, "max_pool": 20, "max_new_per_round": 6}
 
 
@@ -25,11 +26,13 @@ def validate_soup(entry):
 
     ``house`` is the house registry inline (a list, as ``soup_rates.load_house`` reads it) or a path
     to it relative to the validator directory; ``schedule.deadline_utc`` is the daily commit deadline
-    ("HH:MM", UTC); ``sketch_seed`` is the pool's fixed copy-check sketch seed (64 hex characters).
+    ("HH:MM", UTC). An optional ``sketch_seed`` (64 hex characters) fixes this validator's private
+    copy-check sketch seed; it is checked here but left out of the result, which reports publish.
+    Without it each validator generates and keeps its own (``soup_round.sketch_seed``).
     """
     from . import soup_rates
 
-    if set(entry) - SOUP_KEYS - set(SOUP_OPTIONAL) or SOUP_KEYS - set(entry):
+    if set(entry) - SOUP_KEYS - set(SOUP_OPTIONAL) - {SOUP_SECRET} or SOUP_KEYS - set(entry):
         raise ValueError("soup pool requires " + ", ".join(sorted(SOUP_KEYS)))
     share = entry["share"]
     if type(share) not in (int, float) or not math.isfinite(share) or not 0 <= share <= 1:
@@ -48,8 +51,9 @@ def validate_soup(entry):
         or not re.fullmatch(r"([01][0-9]|2[0-3]):[0-5][0-9]", deadline)
     ):
         raise ValueError('soup schedule must be {"deadline_utc": "HH:MM"}')
-    if not isinstance(entry["sketch_seed"], str) or not re.fullmatch(
-        "[a-f0-9]{64}", entry["sketch_seed"]
+    if SOUP_SECRET in entry and (
+        not isinstance(entry[SOUP_SECRET], str)
+        or not re.fullmatch("[a-f0-9]{64}", entry[SOUP_SECRET])
     ):
         raise ValueError("soup sketch_seed must be 64 lowercase hex characters")
     sizes = {k: entry.get(k, v) for k, v in SOUP_OPTIONAL.items()}
@@ -69,7 +73,6 @@ def validate_soup(entry):
         "share": share,
         "house": house,
         "schedule": {"deadline_utc": deadline},
-        "sketch_seed": entry["sketch_seed"],
         **sizes,
     }
 

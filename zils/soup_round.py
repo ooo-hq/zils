@@ -312,6 +312,25 @@ def _intake(state, snapshot, *, chassis, base, download, copies, folder, max_new
     return new, rejected, refused, failed
 
 
+def sketch_seed(config, state_dir):
+    """This validator's private sketch seed: the configured ``sketch_seed``, else one generated once
+    with ``os.urandom`` and kept in ``<state_dir>/sketch-seed``. Sketches are only compared locally,
+    so validators need not share it, and it is never published (a known seed lets a copier steer a
+    body's sketch away from the one it copies)."""
+    if config.get("sketch_seed"):
+        return bytes.fromhex(config["sketch_seed"])
+    path = Path(state_dir) / "sketch-seed"
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        partial = path.with_name(path.name + ".partial")
+        partial.unlink(missing_ok=True)
+        descriptor = os.open(partial, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w") as stream:
+            stream.write(os.urandom(32).hex() + "\n")
+        os.replace(partial, path)
+    return bytes.fromhex(path.read_text().strip())
+
+
 class _Sketches:
     """Body sketches (``soup_copies.sketch``) under one fixed per-pool seed, cached on disk by body hash."""
 
@@ -356,8 +375,8 @@ def run(
     """One soup round for one pool. Returns the private round record (also written to disk).
 
     ``config`` is the validated soup pool entry plus ``pool_id``, with ``house`` resolved to the
-    registry list ({name, repo, revision, body_sha256 or null}) and ``sketch_seed`` the pool's fixed
-    sketch seed (hex). ``snapshot`` is the frozen chain view ({"members": {uid: hotkey},
+    registry list ({name, repo, revision, body_sha256 or null}) and an optional ``sketch_seed``
+    (hex; see ``sketch_seed``). ``snapshot`` is the frozen chain view ({"members": {uid: hotkey},
     "commitments": {uid: {"block", "data"}}}) holding only commitments made before the seed block.
     ``block_hash`` is the seed block's hash. ``ledger`` is a ``soup_exam.UseLedger``, ``cache`` a
     ``soup_grade.PredictionCache``. ``runner_for(folder)`` returns a ``soup_grade`` runner for a body
@@ -420,9 +439,7 @@ def run(
 
     sketch = None
     if base is not None:
-        sketches = _Sketches(
-            state_dir / "sketches", base, names, bytes.fromhex(config["sketch_seed"])
-        )
+        sketches = _Sketches(state_dir / "sketches", base, names, sketch_seed(config, state_dir))
 
         def sketch(sha):
             return sketches(sha, folder(sha))
