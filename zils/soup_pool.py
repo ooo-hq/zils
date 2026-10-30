@@ -118,8 +118,20 @@ def house(entry, directory):
     return soup_rates.validate_house(entry["house"])
 
 
-def _alive(pid):
-    """True while process `pid` runs (a finished child of this process is reaped, not counted)."""
+def _started(pid):
+    """Process `pid`'s start time as `ps` reports it (Linux and macOS), or None."""
+    try:
+        result = subprocess.run(
+            ["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result.stdout.strip() or None
+
+
+def _alive(pid, started=None):
+    """True while process `pid` runs (a finished child of this process is reaped, not counted).
+    With `started`, the process must also have that start time, so a reused pid is not the round."""
     if type(pid) is not int or pid <= 0:
         return False
     try:
@@ -132,8 +144,8 @@ def _alive(pid):
     except ProcessLookupError:
         return False
     except PermissionError:
-        return True
-    return True
+        pass
+    return started is None or _started(pid) == started
 
 
 def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round):
@@ -162,7 +174,7 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
             attempts = job.get("attempts", 0) if job.get("round_id") == round_id else 0
             if (
                 attempts
-                and _alive(job.get("pid"))
+                and _alive(job.get("pid"), job.get("pid_started"))
                 and time.time() < job["started"] + ROUND_SECONDS + 3600
             ):
                 summary[pool]["running"] = True
@@ -193,7 +205,7 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
             job = {"round_id": round_id, "attempts": attempts + 1, "started": time.time()}
             _write(job_path, {**job, "pid": None})  # an attempt counts even if starting fails
             pid = run_round(pool, request)
-            _write(job_path, {**job, "pid": pid})
+            _write(job_path, {**job, "pid": pid, "pid_started": _started(pid) if pid else None})
             summary[pool]["started"] = True
             summary[pool]["decision"] = decision(directory, pool) is not None
         except Exception as error:  # one pool's round must never stop the validator's weights

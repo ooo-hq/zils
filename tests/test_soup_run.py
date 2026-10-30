@@ -1166,6 +1166,35 @@ class SoupEpochTest(unittest.TestCase):
         self.assertTrue(summary["d3-mini"]["running"])
         self.assertFalse(summary["d3-mini"]["decision"])  # the previous decision (none) stands
 
+    def test_a_reused_pid_is_not_mistaken_for_the_running_round(self):
+        starts = []
+
+        def start(pool, request):
+            starts.append(request["round_id"])
+            return os.getpid()
+
+        def epoch():
+            return soup_pool.epoch(
+                self.config,
+                self.directory,
+                self.snapshot,
+                block_info=self.chain,
+                commitments_at=self.commitments_at,
+                run_round=start,
+            )
+
+        epoch()
+        job = json.loads((soup_pool.state_dir(self.directory, "d3-mini") / "job.json").read_text())
+        self.assertEqual(job["pid_started"], soup_pool._started(os.getpid()))
+        self.assertTrue(job["pid_started"])
+        # The round's process died and another process now holds its pid.
+        with patch("zils.soup_pool._started", return_value="another process"):
+            summary = epoch()
+        self.assertEqual(len(starts), 2)
+        self.assertTrue(summary["d3-mini"]["started"])
+        self.assertFalse(soup_pool._alive(os.getpid(), "another process"))
+        self.assertTrue(soup_pool._alive(os.getpid(), soup_pool._started(os.getpid())))
+
     def test_a_dead_round_is_restarted_a_bounded_number_of_times(self):
         starts = []
 
