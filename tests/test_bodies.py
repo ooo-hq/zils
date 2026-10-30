@@ -131,9 +131,9 @@ class LayoutTest(unittest.TestCase):
             other = checkpoint(Path(tmp) / "d", changed)
             self.assertNotEqual(bodies.body_hash(other, NAMES), bodies.body_hash(folders[0], NAMES))
 
-    def test_hash_rejects_non_bf16(self):
+    def test_hash_rejects_dtypes_other_than_bf16_and_f32(self):
         with tempfile.TemporaryDirectory() as tmp:
-            folder = checkpoint(Path(tmp) / "a", weights(dtype=torch.float32))
+            folder = checkpoint(Path(tmp) / "a", weights(dtype=torch.float16))
             with self.assertRaises(ValueError):
                 bodies.body_hash(folder, NAMES)
 
@@ -264,6 +264,95 @@ def raw_header(**changes):
         offset += size
     header.update(changes)
     return header, offset
+
+
+def snapshot_like(folder):
+    """Rebuild `folder` as a Hugging Face snapshot: every file a symlink into a blobs directory."""
+    folder = Path(folder)
+    blobs = folder.parent / f"{folder.name}-blobs"
+    blobs.mkdir()
+    for path in sorted(folder.iterdir()):
+        target = blobs / path.name
+        path.rename(target)
+        path.symlink_to(target)
+    return folder
+
+
+class TrustedReferenceTest(unittest.TestCase):
+    """The chassis and base come from our own snapshot downloads (symlinks into a blob store); a
+    body downloaded by the validator must still be made of regular files."""
+
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.chassis = snapshot_like(checkpoint(self.root / "chassis", weights(), extras=False))
+        self.base = snapshot_like(checkpoint(self.root / "qwen", weights(), prefix="model."))
+        moved = {n: (t.float() * 1.01).to(torch.bfloat16) for n, t in weights().items()}
+        self.body = checkpoint(self.root / "body", moved, prefix="model.", shards=2)
+
+    def test_symlinked_chassis_and_base_are_accepted(self):
+        digest = bodies.validate_body(self.body, self.chassis, hotkey=HOTKEY, base=self.base)
+        self.assertEqual(digest, bodies.body_hash(self.body, NAMES))
+        self.assertEqual(set(bodies.load_index(self.chassis, trusted=True)), set(NAMES))
+
+    def test_a_symlinked_body_is_still_refused_unless_trusted(self):
+        snapshot_like(self.body)
+        with self.assertRaisesRegex(ValueError, "regular|zils-owner.json"):
+            bodies.validate_body(self.body, self.chassis, hotkey=HOTKEY, base=self.base)
+        with self.assertRaisesRegex(ValueError, "regular"):
+            bodies.check_layout(self.body, self.chassis)
+        bodies.validate_body(self.body, self.chassis, hotkey=HOTKEY, base=self.base, trusted=True)
+
+
+class Float32TensorTest(unittest.TestCase):
+    """Qwen3.5-4B stores some tensors as F32. Bodies may hold bf16 or f32; every tensor is
+    canonicalised to bf16 for the hash, the change check, sketches and averaging."""
+
+    F32 = ("language_model.norm.weight", "language_model.layers.1.mlp.weight")
+
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.chassis = checkpoint(self.root / "chassis", weights(), extras=False)
+        native = weights(dtype=torch.float32)
+        self.native = native
+        base = {n: (t if n in self.F32 else t.to(torch.bfloat16)) for n, t in native.items()}
+        self.base = checkpoint(self.root / "qwen", base, prefix="model.")
+
+    def body(self, name, f32):
+        moved = {n: t * 1.01 + 0.001 for n, t in self.native.items()}
+        tensors = {n: (t if n in f32 else t.to(torch.bfloat16)) for n, t in moved.items()}
+        return checkpoint(self.root / name, tensors, prefix="model.")
+
+    def test_hash_is_the_same_for_f32_storage_and_its_bf16_cast(self):
+        native = self.body("native", self.F32)
+        cast = self.body("cast", ())
+        self.assertEqual(bodies.body_hash(native, NAMES), bodies.body_hash(cast, NAMES))
+        self.assertEqual(
+            bodies.validate_body(native, self.chassis, hotkey=HOTKEY, base=self.base),
+            bodies.validate_body(cast, self.chassis, hotkey=HOTKEY, base=self.base),
+        )
+        self.assertAlmostEqual(
+            bodies.relative_change(native, self.base, NAMES),
+            bodies.relative_change(cast, self.base, NAMES),
+            places=12,
+        )
+
+    def test_other_dtypes_are_refused(self):
+        half = {n: t.to(torch.float16) for n, t in self.native.items()}
+        folder = checkpoint(self.root / "half", half, prefix="model.")
+        with self.assertRaisesRegex(ValueError, "bfloat16 or float32"):
+            bodies.validate_body(folder, self.chassis, hotkey=HOTKEY)
+
+    def test_sketches_and_soups_canonicalise_to_bf16(self):
+        import numpy as np
+
+        from zils import soup_copies
+
+        native, cast = self.body("native", self.F32), self.body("cast", ())
+        seed = b"seed"
+        np.testing.assert_array_equal(
+            soup_copies.sketch(native, self.base, NAMES, seed=seed),
+            soup_copies.sketch(cast, self.base, NAMES, seed=seed),
+        )
 
 
 class DeadlineTest(unittest.TestCase):

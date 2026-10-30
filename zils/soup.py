@@ -65,7 +65,11 @@ def build(out, chassis, bodies, *, model):
             tensors = {}
             for name in stream(chassis / shard).keys():
                 dtype = stream(chassis / shard).get_tensor(name).dtype
-                total = sum(stream(p).get_tensor(k).float() for p, k in (s[name] for s in sources))
+                # Each body tensor is canonicalised to bf16 first (a body may store some as f32).
+                total = sum(
+                    stream(p).get_tensor(k).bfloat16().float()
+                    for p, k in (s[name] for s in sources)
+                )
                 tensors[name] = (total / len(sources)).to(dtype).contiguous()
             save_file(tensors, str(out / shard), metadata={"format": "pt"})
             del tensors

@@ -10,7 +10,6 @@ so a 4B body never sits in memory whole."""
 
 import hashlib
 import math
-from pathlib import Path
 
 import numpy as np
 
@@ -46,11 +45,11 @@ class Sketch:
         if not names:
             raise ValueError(f"no chassis tensors start with {PREFIX!r}")
         body = bodies._tensors(folder, chassis_names)
-        base = bodies._tensors(base_folder, chassis_names)
+        base = bodies._tensors(base_folder, chassis_names, trusted=True)
         out = np.zeros(self.dims, dtype=np.float64)
         for name in names:
-            shape = bodies._bf16(name, body[name][1])
-            if shape != bodies._bf16(name, base[name][1]):
+            shape = bodies._canonical(name, body[name][1])
+            if shape != bodies._canonical(name, base[name][1]):
                 raise ValueError(f"body tensor {name} shape differs from the base")
             key, part = self._key(name), np.zeros(self.dims, dtype=np.float64)
             total = math.prod(shape)
@@ -69,15 +68,8 @@ def sketch(folder, base_folder, chassis_names, *, seed: bytes, dims: int = 4096)
 
 
 def _read(path, info, offset, count):
-    """`count` bf16 elements from `offset` of one tensor, as float64."""
-    start = info["data_offsets"][0] + 2 * offset
-    with Path(path).open("rb") as stream:
-        stream.seek(start)
-        raw = stream.read(2 * count)
-    if len(raw) != 2 * count:
-        raise ValueError(f"{Path(path).name} is truncated")
-    bits = np.frombuffer(raw, dtype="<u2").astype(np.uint32) << 16
-    return bits.view(np.float32).astype(np.float64)
+    """`count` elements from `offset` of one tensor, canonicalised to bf16, as float64."""
+    return bodies._float64(bodies.read_bf16(path, info, offset, count))
 
 
 def _hash(index, key, dims):

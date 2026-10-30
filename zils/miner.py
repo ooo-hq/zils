@@ -375,7 +375,9 @@ def commit_body(args):
     elif not owner.is_file():
         raise owner_missing(args.repo, hotkey)
     chassis, base = body_references(args)
-    sha256 = bodies.validate_body(folder, chassis, hotkey=hotkey, base=base)
+    # The miner's own folder or snapshot download (symlinks into the HF blob store) is trusted here;
+    # validators download the files themselves and check them strictly.
+    sha256 = bodies.validate_body(folder, chassis, hotkey=hotkey, base=base, trusted=True)
     if args.write_owner:
         print(
             f"body {sha256} passes the local checks. Upload the folder, then commit that"

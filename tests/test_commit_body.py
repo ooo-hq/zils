@@ -111,6 +111,20 @@ class CommitBodyTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn(f"commitment {self.text}", out)
 
+    def test_accepts_symlinked_snapshots_for_the_body_chassis_and_base(self):
+        from tests.test_bodies import snapshot_like
+
+        for folder in (self.chassis, self.base, self.body):
+            snapshot_like(folder)
+
+        def snapshot_download(*, repo_id, revision, allow_patterns, **kwargs):
+            return str(self.body)
+
+        with patch("huggingface_hub.snapshot_download", snapshot_download):
+            code, out = self.run_miner(local=False)
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"commitment {self.text}", out)
+
     def test_refuses_without_an_ownership_file(self):
         (self.body / "zils-owner.json").unlink()
         code, out = self.run_miner("--yes")

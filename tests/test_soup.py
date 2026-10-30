@@ -104,6 +104,21 @@ class SoupTest(unittest.TestCase):
             self.build((wide, None))
         self.assertFalse((self.root / "out").exists())
 
+    def test_an_f32_body_tensor_is_averaged_as_its_bf16_cast(self):
+        exact = torch.full((2,), 1.0 + 2**-12, dtype=torch.float32)  # rounds to 1.0 in bf16
+        native = body(self.root / "native", {"a": exact, "b": t(2), "c": t(3)})
+        cast = body(self.root / "cast", {"a": exact.to(torch.bfloat16), "b": t(2), "c": t(3)})
+        other = body(self.root / "other", {"a": t(1.0078125), "b": t(2), "c": t(3)})
+        first = self.build((native, None), (other, None))
+        self.assertEqual(
+            read(first),
+            read(
+                soup.build(
+                    self.root / "out2", self.chassis, [(cast, None), (other, None)], model=models.D3
+                )
+            ),
+        )
+
     def test_single_body_build_equals_that_body(self):
         one = body(self.root / "one", {"a": t(1.5), "b": t(-2), "c": t(7)})
         out = self.build((one, None))

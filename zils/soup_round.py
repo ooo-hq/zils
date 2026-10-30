@@ -555,7 +555,7 @@ def run(
     scratch = state_dir / "tmp"
     scratch.mkdir(parents=True, exist_ok=True)
     (state_dir / "bodies").mkdir(parents=True, exist_ok=True)
-    names = list(bodies.load_index(chassis))
+    names = list(bodies.load_index(chassis, trusted=True))
 
     def folder(sha):
         return state_dir / "bodies" / sha
