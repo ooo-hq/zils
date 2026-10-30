@@ -16,4 +16,4 @@ zils = "zils.miner:main"
 include = ["zils", "miner"]
 
 [tool.setuptools.package-data]
-zils = ["*.json"]
+zils = ["*.json", "data/*.json"]
