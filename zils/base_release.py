@@ -17,6 +17,8 @@ from . import (
     regression_suite,
 )
 
+SOUP_OWNER = "validator-soup"
+MAX_SOUP_MEMBERS = 5
 PATHS = {"base_round_dir", "base_reference", "family_history", "suite_manifest", "pilot_report"}
 
 
@@ -143,9 +145,34 @@ def ownership(candidate, snapshot, incumbent):
     return claim
 
 
-def qualify(first, second, suite_report, *, candidate_sha256, active, expected_suite, evidence):
-    if set(evidence) != {"first", "second", "suite", "snapshot_first", "snapshot_second"}:
-        raise ValueError("readiness requires both decisions, snapshots and suite evidence")
+def soup_ownership(soup):
+    """A validator-built soup has no chain owner: its identity is its own hash and its provenance
+    is the list of member bodies, which are paid through the soup pool, never as kings."""
+    if (
+        not isinstance(soup, dict)
+        or set(soup) != {"soup_sha256", "members", "round_id"}
+        or not isinstance(soup["round_id"], str)
+        or not soup["round_id"]
+        or not isinstance(soup["members"], list)
+        or not 1 <= len(soup["members"]) <= MAX_SOUP_MEMBERS
+    ):
+        raise ValueError("soup requires soup_sha256, round_id and 1-5 members")
+    base_exam._hash(soup["soup_sha256"])
+    for member in soup["members"]:
+        if (
+            not isinstance(member, dict)
+            or set(member) != {"body_sha256", "hotkey"}
+            or not isinstance(member["hotkey"], str)
+            or not member["hotkey"]
+        ):
+            raise ValueError("soup members require body_sha256 and hotkey")
+        base_exam._hash(member["body_sha256"])
+    if len({m["body_sha256"] for m in soup["members"]}) != len(soup["members"]):
+        raise ValueError("soup members must be distinct bodies")
+    return {"owner": SOUP_OWNER, **soup}
+
+
+def confirmed(first, second, suite_report, *, candidate_sha256, active, expected_suite, evidence):
     for key, report in (("first", first), ("second", second), ("suite", suite_report)):
         if evidence_read(evidence[key]) != report:
             raise ValueError("readiness input differs from hash-bound evidence")
@@ -155,9 +182,6 @@ def qualify(first, second, suite_report, *, candidate_sha256, active, expected_s
     candidate = next((c for c in ready if c["sha256"] == candidate_sha256), None)
     if candidate is None:
         raise ValueError("candidate has not qualified on both draws")
-    prior = next(c for c in first["candidates"] if c["sha256"] == candidate_sha256)
-    ownership(prior, evidence_read(evidence["snapshot_first"]), active["incumbent_sha256"])
-    ownership(candidate, evidence_read(evidence["snapshot_second"]), active["incumbent_sha256"])
     regression_suite.verify_election(
         suite_report,
         candidate_sha256,
@@ -165,15 +189,58 @@ def qualify(first, second, suite_report, *, candidate_sha256, active, expected_s
         active["model"]["id"],
         expected_suite=expected_suite,
     )
+    return candidate
+
+
+def receipt(active, candidate, evidence, **extra):
     return addressed(
         {
             "version": "zils-base-ready/v1",
             "active": binding(active),
             "candidate": {k: candidate[k] for k in ("uid", "sha256", "hotkey", "commitment_block")},
+            **extra,
             "completed_at": max(v["completed_at"] for v in candidate["evaluation"].values()),
             "evidence": evidence,
         }
     )
+
+
+def qualify(first, second, suite_report, *, candidate_sha256, active, expected_suite, evidence):
+    if set(evidence) != {"first", "second", "suite", "snapshot_first", "snapshot_second"}:
+        raise ValueError("readiness requires both decisions, snapshots and suite evidence")
+    candidate = confirmed(
+        first,
+        second,
+        suite_report,
+        candidate_sha256=candidate_sha256,
+        active=active,
+        expected_suite=expected_suite,
+        evidence=evidence,
+    )
+    prior = next(c for c in first["candidates"] if c["sha256"] == candidate_sha256)
+    ownership(prior, evidence_read(evidence["snapshot_first"]), active["incumbent_sha256"])
+    ownership(candidate, evidence_read(evidence["snapshot_second"]), active["incumbent_sha256"])
+    return receipt(active, candidate, evidence)
+
+
+def qualify_soup(first, second, suite_report, *, soup, active, expected_suite, evidence):
+    """The same gate as `qualify` for a validator-built soup: both private decisions and the
+    adapter suite, with the soup's decision rows owned by `SOUP_OWNER` instead of a chain claim."""
+    owner = soup_ownership(soup)
+    if set(evidence) != {"first", "second", "suite"}:
+        raise ValueError("soup readiness requires both decisions and suite evidence")
+    candidate = confirmed(
+        first,
+        second,
+        suite_report,
+        candidate_sha256=soup["soup_sha256"],
+        active=active,
+        expected_suite=expected_suite,
+        evidence=evidence,
+    )
+    if candidate["hotkey"] != SOUP_OWNER:
+        raise ValueError("soup decision rows must be validator-built, not a chain commitment")
+    return receipt(active, candidate, evidence, ownership=owner)
 
 
 def verify_ready(receipt, active):
@@ -181,15 +248,20 @@ def verify_ready(receipt, active):
     if receipt.get("version") != "zils-base-ready/v1" or receipt["active"] != binding(active):
         raise ValueError("ready receipt differs from active competition")
     e = receipt["evidence"]
-    actual = qualify(
-        evidence_read(e["first"]),
-        evidence_read(e["second"]),
-        evidence_read(e["suite"]),
-        candidate_sha256=receipt["candidate"]["sha256"],
-        active=active,
-        expected_suite=active["suite_manifest"],
-        evidence=e,
-    )
+    reports = [evidence_read(e[k]) for k in ("first", "second", "suite")]
+    if "ownership" in receipt:
+        soup = {k: v for k, v in receipt["ownership"].items() if k != "owner"}
+        actual = qualify_soup(
+            *reports, soup=soup, active=active, expected_suite=active["suite_manifest"], evidence=e
+        )
+    else:
+        actual = qualify(
+            *reports,
+            candidate_sha256=receipt["candidate"]["sha256"],
+            active=active,
+            expected_suite=active["suite_manifest"],
+            evidence=e,
+        )
     if actual != receipt:
         raise ValueError("ready receipt differs from recomputed evidence")
     return receipt
@@ -210,8 +282,11 @@ def inventory(active):
             candidate = receipt["candidate"]
             sha = candidate["sha256"]
             previous = result.get(sha)
-            if previous and any(
-                previous["candidate"][k] != candidate[k] for k in ("hotkey", "commitment_block")
+            if previous and (
+                any(
+                    previous["candidate"][k] != candidate[k] for k in ("hotkey", "commitment_block")
+                )
+                or previous.get("ownership") != receipt.get("ownership")
             ):
                 raise ValueError("ready checkpoint has conflicting ownership")
             if previous is None or (receipt["completed_at"], receipt["sha256"]) < (
@@ -355,7 +430,8 @@ def close(frozen, closing, *, active, members, now):
         expected = roster[candidate["sha256"]]["candidate"]
         if any(candidate[k] != expected[k] for k in ("hotkey", "commitment_block")):
             raise ValueError("closing candidate differs from frozen ownership")
-        ownership(candidate, snapshot, active["incumbent_sha256"])
+        if "ownership" not in roster[candidate["sha256"]]:
+            ownership(candidate, snapshot, active["incumbent_sha256"])
         if candidate["eligible"]:
             survivors.append(candidate)
         elif not candidate.get("error") and "evaluation" not in candidate:
@@ -374,15 +450,18 @@ def close(frozen, closing, *, active, members, now):
         if survivors
         else None
     )
-    winner = (
-        {k: winner[k] for k in ("uid", "sha256", "hotkey", "commitment_block", "score")}
-        if winner
-        else None
-    )
+    soup = None
+    if winner:
+        soup = roster[winner["sha256"]].get("ownership")
+        winner = {k: winner[k] for k in ("uid", "sha256", "hotkey", "commitment_block", "score")}
+        if soup:
+            winner["ownership"] = soup
     kings = active.get("kings", [])
+    # A soup is released, not crowned: its members are paid through the soup pool, so the
+    # king history is unchanged and the window's winner records the soup hash and members.
     proposed = {
         "incumbent_sha256": winner["sha256"] if winner else active["incumbent_sha256"],
-        "kings": [winner["hotkey"], *kings] if winner else kings,
+        "kings": [winner["hotkey"], *kings] if winner and not soup else kings,
     }
     result = addressed(
         {
@@ -473,6 +552,7 @@ def main():
         "snapshot-first",
         "snapshot-second",
         "candidate-sha256",
+        "soup",
         "ready-dir",
         "schedule",
         "frozen",
@@ -488,7 +568,23 @@ def main():
     active = active_context(read(config), args.pool, directory=config.parent)
     if Path(args.out).exists():
         raise FileExistsError(args.out)
-    if args.command == "qualify":
+    if args.command == "qualify" and args.soup:
+        paths = {k: getattr(args, k) for k in ("first", "second", "suite")}
+        if not all(paths.values()) or any(
+            (args.snapshot_first, args.snapshot_second, args.candidate_sha256)
+        ):
+            parser.error("soup qualify requires first, second and suite, without chain inputs")
+        receipt = qualify_soup(
+            read(args.first),
+            read(args.second),
+            read(args.suite),
+            soup=read(args.soup),
+            active=active,
+            expected_suite=active["suite_manifest"],
+            evidence={k: bound(p) for k, p in paths.items()},
+        )
+        persist(Path(active["ready_dir"]) / (receipt["sha256"] + ".json"), receipt)
+    elif args.command == "qualify":
         paths = {
             k: getattr(args, k)
             for k in ("first", "second", "suite", "snapshot_first", "snapshot_second")
@@ -546,6 +642,10 @@ def main():
                 or receipt["closing"]["snapshot"] != bound(args.chain_snapshot)
             ):
                 raise ValueError("conflicting reuse of closed window inputs")
+        elif any("ownership" in r for r in frozen["ready"]):
+            raise ValueError(
+                "this command evaluates chain commitments only; close a soup roster with close()"
+            )
         else:
             base_exam.disjoint(
                 [base_exam.audit(p) for p in active["draw_roots"].values()]
