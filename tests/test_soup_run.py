@@ -208,6 +208,30 @@ class SoupRunTest(unittest.TestCase):
         self.assertTrue((round_dir / "soup" / "readout.safetensors").exists())
         self.assertEqual(list((self.r.state / "tmp").iterdir()), [])
 
+    def test_every_graded_body_and_soup_is_a_valid_d3_candidate(self):
+        # Production grading loads d3.DecisionModel, which needs candidate metadata and the chassis files.
+        pins = {
+            name: hashlib.sha256((self.r.chassis / name).read_bytes()).hexdigest()
+            for name in models.D3_CONTRACT_FILES
+        }
+        self.enterContext(patch.dict(d3.PINS["files"], pins))
+        self.enterContext(patch("zils.d3.pinned_base_path", return_value=self.r.chassis))
+        graded, fake = [], self.r.runner
+
+        def runner_for(folder):
+            d3.validate_candidate(folder, models.D3)
+            graded.append(Path(folder))
+            return fake(folder)
+
+        self.r.runner = runner_for
+        record = self.r.run()
+        self.assertEqual(len(record["members"]), 2)
+        self.assertTrue(graded)
+        self.assertFalse(any(p.parent == self.r.state / "bodies" for p in graded))
+        self.assertEqual(list((self.r.state / "tmp").iterdir()), [])
+        for sha in record["pool"]:  # the body folders themselves are kept for the next round
+            self.assertTrue((self.r.state / "bodies" / sha).exists())
+
     def test_seed_comes_from_block_hash_and_pool(self):
         record = self.r.run()
         expected = hashlib.sha256(("0x" + "ab" * 32 + ":d3-mini").encode()).digest()
@@ -249,7 +273,8 @@ class SoupRunTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "simulated crash"):
             self.r.run()
         self.assertFalse(self.r.ledger.path.exists())
-        solo_items = {k: v for k, v in self.r.runner.graded.items() if "/bodies/" in k}
+        solo_items = {k: v for k, v in self.r.runner.graded.items() if "/tmp/soup-" not in k}
+        self.assertTrue(solo_items)
         self.r.runner.fail_after = None
         record = self.r.run()
         self.assertEqual(len(self.r.ledger.path.read_text().splitlines()), 1)

@@ -434,8 +434,23 @@ def run(
     def body_key(sha):
         return f"{sha[:32]}-{bank_key[:16]}"
 
+    def graded(key, cases, members):
+        """Rows for `cases` under `key`; missing rows grade the soup of `members` built on the chassis
+        (a one-member soup is the body itself as a d3 candidate), deleted after grading."""
+        have = cache.get(key, [c["id"] for c in cases])
+        if len(have) == len(cases):
+            return [have[c["id"]] for c in cases]
+        out = scratch / key
+        shutil.rmtree(out, ignore_errors=True)
+        try:
+            built = [(folder(s), _rename(folder(s))) for s in members]
+            soup.build(out, chassis, built, model=model)
+            return soup_grade.grade(key, cases, cache, runner_for(out))
+        finally:
+            shutil.rmtree(out, ignore_errors=True)
+
     def grade(sha, cases):
-        return soup_grade.grade(body_key(sha), cases, cache, runner_for(folder(sha)))
+        return graded(body_key(sha), cases, (sha,))
 
     screen_ids = set(soup_grade.screen_subset(subset, seed, config.get("screen_size", SCREEN_SIZE)))
     screen_cases = [c for c in subset if c["id"] in screen_ids]
@@ -469,18 +484,7 @@ def run(
     def soup_rows(members):
         if len(members) == 1:
             return grade(members[0], subset)
-        key = soup_key(members)
-        have = cache.get(key, ids)
-        if len(have) == len(ids):
-            return [have[i] for i in ids]
-        out = scratch / key
-        shutil.rmtree(out, ignore_errors=True)
-        try:
-            built = [(folder(s), _rename(folder(s))) for s in members]
-            soup.build(out, chassis, built, model=model)
-            return soup_grade.grade(key, subset, cache, runner_for(out))
-        finally:
-            shutil.rmtree(out, ignore_errors=True)
+        return graded(soup_key(members), subset, members)
 
     scores = {}
 
