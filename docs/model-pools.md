@@ -197,7 +197,8 @@ It does not discover or enable live competitions; verify the accepted incumbent
 and allocation with the validator before training.
 
 The existing `zils1` commitment format is unchanged: one active candidate per
-hotkey. The validator reads at most 16 KiB of metadata at the committed revision,
+hotkey. A hotkey's one commitment slot is shared with `zilsb2` soup bodies
+([soup pools](#soup-pools)). The validator reads at most 16 KiB of metadata at the committed revision,
 resolves its exact parent, and refuses a stale or wrong-pool profile before weight
 downloads. Full download still verifies the committed checkpoint hash, files and
 tensor contract. Work uses the existing shared GPU lock and separate pool stores.
@@ -215,6 +216,17 @@ Promotion uses `promote_base.py --config ... --pool ... --window-report ...`.
 It rechecks the closed window against installed state and produces a reviewable
 profile/king update. Stable/latest movement remains separate from election and
 existing adapters' exact model pins.
+
+### Soup releases
+
+A soup pool (see [soup pools](#soup-pools)) has no committing king. The soup changes the pool's served model only through the release gate. At a
+release window (every 14 to 28 days) the soup must beat the incumbent on two
+sealed release draws, pass the confirmation draw and the adapter suite, and be
+promoted by the owner's promotion PR. Members are paid through seats, never
+added to `kings`. Eligibility, the round steps, rates and the published record
+are in [mining: soup pool](mining.md#soup-pool). The greedy margin, contribution
+floor, member cap, pool size, change bound, 80/20 split and rates are launch
+policy, not tuned results.
 
 ## Qualify each profile and role
 

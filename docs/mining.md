@@ -304,6 +304,162 @@ From then on `zils doctor` names the next step and prints its command; the steps
    committing it again moves your block later, which can hand the hash to a copier
    who committed it in between.
 
+## Soup pool
+
+The soup pool is **new at the mainnet launch** and replaces the king election in
+a pool whose validator config sets `"type": "soup"` ([model pools](model-pools.md#soup-pools)).
+Nothing below has run as a live competition yet: no miner-submitted body has been
+graded or paid. The design rests on one internal experiment on public open models,
+in which plain uniform averages of two or three public Qwen3.5-4B decision
+fine-tunes scored above stock z3-mini on two sealed exam draws, and adding a
+fifth model lowered the score. Treat the numbers in this section as launch policy
+that may change, not as measured results.
+
+Instead of one winner, each round builds the best **soup**: a uniform average of
+up to five bodies submitted by different miners. You earn by holding a seat in
+the round's soup, or by submitting the round's best single body.
+
+### What a body is
+
+A body is the full set of language and vision weights of a fine-tune of
+`Qwen/Qwen3.5-4B` at revision `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a`. Every
+soup runs on the pinned d3-mini chassis: its answer layer, prompt and runtime are
+fixed and are not part of a submission. A body is eligible when:
+
+- **Layout:** its safetensors contain every chassis tensor under
+  `language_model.*` and `visual.*` (723 tensors) with the chassis shape, in
+  `bfloat16`. One leading `model.` is stripped from names; `lm_head*` and `mtp.*`
+  are ignored; any other tensor rejects the body. Sharded (`model.safetensors.index.json`)
+  and single-file checkpoints are both accepted, and the body hash does not depend
+  on the shard layout.
+- **Change:** the relative change of its language layers from the Qwen parent,
+  ‖body − Qwen‖ / ‖Qwen‖, is at most **0.15**. You may start from plain Qwen, from
+  a z3 release or from any open fine-tune of that Qwen revision.
+- **Licence:** the repo's `README.md` front matter declares `license:` as
+  `apache-2.0`, `mit`, `bsd-3-clause` or `bsd-2-clause`.
+- **Size:** the safetensors total at most 10 GiB.
+- **Ownership:** the repo holds `zils-owner.json` containing exactly
+  `{"hotkey": "<your ss58 hotkey>"}`, the hotkey that commits it. Scouts who find a
+  good open model re-upload it to their own repo with their own ownership file.
+  The first valid commitment of a body hash wins.
+
+### Commit a body
+
+Register a hotkey as in [the base tier](#compete-in-the-base-tier-from-outside) and
+install with `curl -fsSL https://zils.ai/install.sh | sh`. Then:
+
+1. Put the body's safetensors and `README.md` (with the licence) in one folder and
+   let the CLI write the ownership file for your hotkey. It also checks the body
+   locally and prints its hash. The body hash does not cover the ownership file,
+   so anyone who copies a public body could commit its hash first: upload to a
+   **private** repo, commit while it is private, and make it public before the
+   round's commit deadline (validators download after the deadline, and a repo
+   that is still private then fails):
+
+   ```bash
+   zils commit-body --repo <you>/<body-repo> --path ./my-body --write-owner
+   ```
+
+2. Upload the folder to your Hugging Face model repo and note the commit sha the
+   upload prints (`hf auth login` once with a write token):
+
+   ```bash
+   hf upload <you>/<body-repo> ./my-body .
+   ```
+
+3. Check and commit. Without `--yes` the command is a dry run: it validates the
+   body at that revision, prints the body hash and the exact
+   `zilsb2:<body sha256>:<revision>:<repo>` commitment, and writes nothing. With
+   `--yes` it also confirms the public repo matches your local folder, writes the
+   commitment with your hotkey and reads it back:
+
+   ```bash
+   zils commit-body --repo <you>/<body-repo> --revision <upload commit> --path ./my-body
+   zils commit-body --repo <you>/<body-repo> --revision <upload commit> --path ./my-body --yes
+   ```
+
+   Without `--path` the command downloads the body at the revision instead. It
+   also downloads the pinned d3-mini chassis and the Qwen parent (about 9 GB each)
+   unless you pass local copies with `--chassis` and `--base`. Wallet flags,
+   `--network` and `--netuid` work as for `commit-candidate`.
+
+A hotkey has **one commitment slot, shared by `zils1` base candidates and
+`zilsb2` bodies**: committing a body replaces the hotkey's base candidate, and the
+reverse. Use a separate hotkey for each. Validators key seats by hotkey and body
+hash, so a body already in the pool keeps its seat until it leaves the pool even
+after you commit a new one.
+
+### A round
+
+Validators run one soup round per day for each soup pool:
+
+1. **Seed.** The hash of the first block after the commit deadline picks the
+   round's private exam subset and breaks ties.
+2. **Admit** new bodies with the checks above, at most 6 new bodies and 12
+   claims per round in commitment order. A hotkey whose claim fails a check or a
+   download sits out the next 3 rounds.
+3. **Reject copies:** a re-upload, whose change from Qwen is nearly identical
+   (cosine ≥ 0.999) to an earlier commitment's, a house ingredient's, the current
+   soup's or the release's; a body built largely from other miners' bodies (other
+   hotkeys' bodies explain at least 30% of its change beyond what the house
+   ingredients explain); and a behavioural twin of a pool body (near-identical
+   answers, temperature-scaled copies included). Fine-tunes of a house
+   ingredient, the soup or a release are allowed and paid as trainer bodies. Only
+   a re-upload or a broken body (layout, non-finite weights, change bound) bans
+   its hash; other refusals apply to that commitment only.
+4. **Pool:** new bodies are screened on a few hundred items; the pool is the
+   current members, the house ingredients, the best screened new bodies and the
+   best past single bodies, at most 20.
+5. **Solo:** each pool body is graded alone on the chassis.
+6. **Greedy soup:** starting from the best single body, add the next best only if
+   the soup's score rises by at least **0.3** points; stop at **5** members.
+7. **Contribution:** each member's leave-one-out effect on the soup's score.
+
+### Pay
+
+The pool's emission share splits **80% to soup seats and 20% to the best single
+body** (the crown). Seats are re-earned every round; a displaced member stops
+earning at once.
+
+- **Seats:** members whose contribution is at least **0.3** points share the 80%
+  equally, each share multiplied by its rate. If no member clears the floor, the
+  seat share burns.
+- **Crown:** the round's best single body that is not a house ingredient takes the
+  20%, multiplied by its rate, only if it beats every house ingredient alone and
+  the current soup by at least **0.3** points on the round's subset; otherwise the
+  crown burns. Since a soup usually beats its members, expect the crown to burn in
+  most rounds; it pays for a body that is better than the soup by itself.
+- **Rates:** **1.0** for a trainer's body; **0.25** for a scout's body, one within a
+  similarity threshold of a listed open model released after launch (the list is
+  empty at launch); **0** for house
+  ingredients, the open Qwen3.5-4B decision models already public at launch, which
+  the pool includes unpaid.
+
+Every unearned part burns to the subnet owner's uid, as in the base tier. Until
+miners submit new bodies, most of the pool's share burns.
+
+### What validators publish
+
+Each round's public record lists the soup members (hotkey, body hash, rate), their
+rounded contributions, per-category soup scores, and sha256 hashes of the item
+subset, the per-item predictions and the soup weights, so a round can be audited
+against the validator's private record. Exam items, labels and per-family scores
+are never published. The round bank is private, so outside re-grading of a round
+is not possible yet.
+
+### Releases
+
+A soup is not served until it is released. Every 14 to 28 days, at a release
+window, the current soup must beat the current release by at least +1 point with a
+positive lower bound on each of two sealed release draws that rounds never use,
+pass the 12-hour confirmation draw and the pinned three-seed adapter suite (the
+[release gate](base-election.md)); the owner's promotion PR then makes it the next
+z3 version. Members are paid through seats, not as kings.
+
+The margin (0.3), floor (0.3), member cap (5), pool size (20), change bound (0.15),
+80/20 split, rates (1.0 / 0.25 / 0) and release cadence are policy choices made
+for the launch, not tuned results.
+
 ## Results and restarts
 
 Miner logs, frozen candidates, and results are in `state/jobs/`. Full validator
