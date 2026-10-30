@@ -100,13 +100,38 @@ weight and the crown its crown weight, as fractions of the pool's share. Whateve
 a round does not pay goes to `burn_uid`; before the first round the whole share
 burns. A failed round keeps the previous round's record.
 
-Rounds run inside the validator loop, at most one per pool per day, as a child
-process in the GPU runtime (`python -m zils.soup_pool <request>`). State lives
-under `base-pools/<pool>/soup`: known bodies, the prediction cache, the item use
-ledger and `rounds/<round id>/` with the private and public records. A crashed
-round resumes from its cache and is counted once in the ledger. Only the public
-record (members, rates, rounded contributions, category scores and hashes of the
-subset, predictions and soup) enters the published report.
+The validator loop starts at most one round per pool per day and never waits
+for it: the round runs detached (`python -m zils.soup_pool --run <request>`),
+takes the shared GPU lock and runs in the GPU runtime under a 6-hour deadline.
+Later loops report it running, restart a round that died (at most three times a
+day) and otherwise leave the previous decision paying. The round reads the
+roster's commitments as of its seed block, so the validator's chain endpoint must
+serve state at that block (an archive node, or a round started within the node's
+pruning window). State lives under `base-pools/<pool>/soup`: known bodies, the
+prediction cache, the item use ledger and `rounds/<round id>/` with the private
+and public records. A crashed round resumes from its cache and is counted once in
+the ledger. A body out of the pool for three rounds loses its folder (its hash
+and sketch stay); cached soup predictions unused for three rounds are deleted.
+When the round bank has too few unretired items, the round is skipped and logged.
+Only the public record (members, rates, rounded contributions, category scores and
+hashes of the subset, predictions and soup) enters the published report.
+
+### Submitting a body
+
+A body's hash is refused for good only when weights that hash to it fail a check
+(shape, a NaN or infinite value, the change cap, a copy or a behavioural twin).
+Any other failure (owner file, licence, a hash mismatch, unreadable files, the
+repo) fails only that hotkey's commitment of that repo revision; a download that
+times out is retried next round. The first valid commitment of a hash wins, and
+copy checks compare a body with every earlier body and every house body.
+
+Commitments are public on chain the moment they are made, and a public repo can
+be copied and committed by someone else before the deadline. To avoid
+front-running, upload the body to a **private** Hugging Face repo, commit
+`zilsb2:<body sha256>:<revision>:<repo>` while the repo is still private, then make
+the repo public before the round's commit deadline. Validators download at the
+round, after the deadline; a repo that is still private then fails the download
+and is retried in a later round.
 
 ## Submit, evaluate and promote
 
