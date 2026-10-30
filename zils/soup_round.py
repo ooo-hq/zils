@@ -681,28 +681,41 @@ def run(
     def body_key(sha):
         return f"{sha[:32]}-{scope}"
 
-    def graded(key, cases, members):
-        """Rows for `cases` under `key`. Missing rows grade the soup of `members` built once on the
-        chassis (a one-member soup is the body itself as a d3 candidate), cached every
-        `GRADE_CHUNK` items, and the build is deleted after grading."""
+    def built(name, sources, use):
+        """``use(runner)`` on the soup of ``sources`` ([(folder, rename)]) built on the chassis as a
+        d3 candidate in scratch, deleted afterwards. Every grading goes through here, so no runner
+        ever loads a raw body or chassis folder (they have no candidate metadata)."""
+        out = scratch / name
+        shutil.rmtree(out, ignore_errors=True)
+        try:
+            soup.build(out, chassis, sources, model=model)
+            return use(runner_for(out))
+        finally:
+            shutil.rmtree(out, ignore_errors=True)
+
+    def graded(key, cases, sources):
+        """Rows for `cases` under `key`. Missing rows grade the soup of `sources` built once on the
+        chassis (a one-member soup is that body as a d3 candidate), cached every `GRADE_CHUNK`
+        items."""
         have = cache.get(key, [c["id"] for c in cases])
         missing = [c for c in cases if c["id"] not in have]
         if missing:
-            out = scratch / key
-            shutil.rmtree(out, ignore_errors=True)
-            try:
-                built = [(folder(s), _rename(folder(s))) for s in members]
-                soup.build(out, chassis, built, model=model)
-                runner = runner_for(out)
+
+            def run_missing(runner):
                 for start in range(0, len(missing), GRADE_CHUNK):
                     soup_grade.grade(key, missing[start : start + GRADE_CHUNK], cache, runner)
-            finally:
-                shutil.rmtree(out, ignore_errors=True)
+
+            built(key, sources, run_missing)
             have = cache.get(key, [c["id"] for c in cases])
         return [have[c["id"]] for c in cases]
 
+    def members_of(shas):
+        return [(folder(s), _rename(folder(s))) for s in shas]
+
     def grade(sha, cases):
-        return graded(body_key(sha), cases, (sha,))
+        return graded(body_key(sha), cases, members_of((sha,)))
+
+    chassis_body = [(chassis, None)]  # the chassis's own body, built like any other
 
     failures, checked = {}, []
 
@@ -715,7 +728,7 @@ def run(
         if not checked:
             _release_memory(error)
             try:
-                runner_for(chassis)(subset[:1])
+                built("chassis-check", chassis_body, lambda runner: runner(subset[:1]))
             except Exception as chassis_error:
                 raise RuntimeError(
                     f"the chassis cannot grade either ({type(chassis_error).__name__}); "
@@ -806,7 +819,7 @@ def run(
     def soup_rows(members):
         if len(members) == 1:
             return grade(members[0], subset)
-        return graded(soup_key(members), subset, members)
+        return graded(soup_key(members), subset, members_of(members))
 
     scores = {}
 
@@ -837,9 +850,7 @@ def run(
     baseline = None
     if len(members) == 1:
         key = f"chassis-{soup.soup_hash(chassis)[:32]}-{scope}"
-        baseline = soup_grade.score(
-            subset, soup_grade.grade(key, subset, cache, runner_for(chassis))
-        )
+        baseline = soup_grade.score(subset, graded(key, subset, chassis_body))
     contributions = leave_one_out(members, evaluate, baseline=baseline)
     rate_map = {sha: rates(sha, known[sha], house) for sha in pool}
     seats = seat_weights(members, contributions, rate_map)

@@ -240,6 +240,51 @@ class SoupRunTest(unittest.TestCase):
         for sha in record["pool"]:  # the body folders themselves are kept for the next round
             self.assertTrue((self.r.state / "bodies" / sha).exists())
 
+    def validating_runner(self, *, failing=None):
+        """A runner_for that requires every folder to be a valid built d3 candidate (production
+        loads d3.DecisionModel); `failing` names a body whose grading raises."""
+        pins = {
+            name: hashlib.sha256((self.r.chassis / name).read_bytes()).hexdigest()
+            for name in models.D3_CONTRACT_FILES
+        }
+        self.enterContext(patch.dict(d3.PINS["files"], pins))
+        self.enterContext(patch("zils.d3.pinned_base_path", return_value=self.r.chassis))
+        graded, fake = [], self.r.runner
+
+        def runner_for(folder):
+            d3.validate_candidate(folder, models.D3)
+            graded.append(Path(folder))
+            if failing and Path(folder).name.startswith(self.r.sha[failing][:32]):
+
+                def fail(cases):
+                    raise ValueError("bad output")
+
+                return fail
+            return fake(folder)
+
+        self.r.runner = runner_for
+        return graded
+
+    def test_a_one_member_soup_grades_its_baseline_through_a_built_chassis(self):
+        graded = self.validating_runner()
+        self.r.commits = {1: ("t1", 100)}
+        record = self.r.run(config=self.r.config(house=[]))
+        self.assertEqual([m["body_sha256"] for m in record["members"]], [self.r.sha["t1"]])
+        self.assertGreater(record["members"][0]["contribution"], 0.3)
+        self.assertNotIn(self.r.chassis, graded)
+        self.assertTrue(any(p.name.startswith("chassis-") for p in graded))
+        roster = {str(uid): {"hotkey": h} for uid, h in HOTKEYS.items()}
+        weights = soup_round.soup_weights(record, roster)
+        self.assertAlmostEqual(weights[1], 1.0)  # its seat (0.8) and the crown (0.2)
+        self.assertEqual(list((self.r.state / "tmp").iterdir()), [])
+
+    def test_the_chassis_check_after_a_failed_body_grades_a_built_chassis(self):
+        graded = self.validating_runner(failing="weak")
+        record = self.r.run()
+        self.assertIn(self.r.sha["weak"], record["grade_failures"])
+        self.assertNotIn(self.r.chassis, graded)
+        self.assertTrue(record["members"])
+
     def test_seed_comes_from_block_hash_and_pool(self):
         record = self.r.run()
         expected = hashlib.sha256(("0x" + "ab" * 32 + ":d3-mini").encode()).digest()
@@ -523,7 +568,7 @@ class SoupRunTest(unittest.TestCase):
             broken = None
             if Path(folder).name.startswith(self.r.sha["weak"][:32]):
                 broken = error
-            elif chassis_error is not None and Path(folder) == self.r.chassis:
+            elif chassis_error is not None and Path(folder).name.startswith("chassis-"):
                 broken = chassis_error
             if broken is None:
                 return run
@@ -569,7 +614,7 @@ class SoupRunTest(unittest.TestCase):
             pass
 
         def runner_for(folder):
-            if Path(folder) == self.r.chassis:
+            if Path(folder).name.startswith("chassis-"):
                 events.append(("chassis", held[0]() is None))
                 return fake(folder)
             run = fake(folder)
