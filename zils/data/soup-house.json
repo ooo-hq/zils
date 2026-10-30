@@ -1,0 +1,32 @@
+[
+  {
+    "name": "d3-mini",
+    "repo": "vllm-sr/d3-mini",
+    "revision": "df99bf4ca4418bc6908ee68e9b7479af1f3b8800",
+    "body_sha256": null
+  },
+  {
+    "name": "pplx-decider-flash-v1.2",
+    "repo": "perplexity-ai/pplx-decider-flash-v1.2",
+    "revision": "9ff7cf9838e59df461c276b7699d56b244d2af58",
+    "body_sha256": null
+  },
+  {
+    "name": "torchcast-decision-4b",
+    "repo": "torchcast-ai/torchcast-decision-4b",
+    "revision": "492bfb19662f3c6e601cc9c4bd2911ac95609ed4",
+    "body_sha256": null
+  },
+  {
+    "name": "Matilda-Decision-v1-Mini",
+    "repo": "Maincode/Matilda-Decision-v1-Mini",
+    "revision": "39479a8a372987bf81ec867e8fc3b2cc364ff343",
+    "body_sha256": null
+  },
+  {
+    "name": "KnowLine-4B-Gen5",
+    "repo": "PelaAI/KnowLine-4B-Gen5",
+    "revision": "a8e0cd664f88bd2d2561dc69de74fdc48c641da5",
+    "body_sha256": null
+  }
+]
