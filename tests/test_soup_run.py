@@ -178,6 +178,9 @@ class SoupRunTest(unittest.TestCase):
         pinned = hashlib.sha256((self.r.chassis / "readout.safetensors").read_bytes()).hexdigest()
         self.enterContext(patch.dict(d3.PINS["files"], {"readout.safetensors": pinned}))
 
+    def public(self, round_id="d3-mini-2026-11-03"):
+        return json.loads((self.r.state / "rounds" / round_id / "public.json").read_text())
+
     def by_body(self, record):
         return {m["body_sha256"]: m for m in record["members"]}
 
@@ -1050,9 +1053,31 @@ class SoupRunTest(unittest.TestCase):
         fresh = Round(self.tmp / "pinned")
         pinned = fresh.config(house=[{**house, "body_sha256": fresh.sha["house"]}])
         self.assertIn(fresh.sha["house"], fresh.run(config=pinned)["pool"])
-        wrong = Round(self.tmp / "wrong")
-        with self.assertRaisesRegex(ValueError, "pinned hash"):
-            wrong.run(config=wrong.config(house=[{**house, "body_sha256": "0" * 64}]))
+
+    def test_a_bad_house_entry_is_skipped_and_recorded_not_fatal(self):
+        house = self.r.config()["house"][0]
+        broken = {
+            "name": "broken",
+            "repo": "open/broken",
+            "revision": REVISION,
+            "body_sha256": None,
+        }
+        wrong = {**house, "name": "wrong", "revision": "d" * 40, "body_sha256": "0" * 64}
+        fetch = self.r.fetch
+
+        def fetch_body(claim, dest):
+            if claim["repo"] == "open/broken":
+                raise ValueError("body tensor language_model.layers.0.mlp.weight is malformed")
+            return fetch(claim, dest)
+
+        config = self.r.config(house=[house, broken, wrong])
+        record = self.r.run(config=config, fetch_body=fetch_body)
+        self.assertIn(self.r.sha["house"], record["pool"])
+        self.assertEqual(set(record["house_failures"]), {"broken", "wrong"})
+        self.assertIn("malformed", record["house_failures"]["broken"])
+        self.assertIn("pinned hash", record["house_failures"]["wrong"])
+        self.assertTrue(record["members"])
+        self.assertNotIn("house_failures", json.dumps(self.public()))
 
     def test_rate_constants_match_soup_rates(self):
         from zils import soup_rates

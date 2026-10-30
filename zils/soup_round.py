@@ -242,24 +242,33 @@ def _rename(folder):
 
 def _house(config, state, *, names, download, folder, scratch):
     """Resolve the house registry to body hashes, downloading each house body once.
+    Returns (house body hashes, {name: reason} for entries skipped this round).
 
     An entry pinned with ``body_sha256`` must hash to it; an unpinned one (null, until the registry is
-    filled) is identified by the hash of the body downloaded at its pinned revision.
+    filled) is identified by the hash of the body downloaded at its pinned revision. An entry that
+    cannot be downloaded or hashed sits this round out; it never stops the round.
     """
     from . import bodies
 
     resolved, known = state.setdefault("house", {}), state["bodies"]
+    house, failures = set(), {}
     for item in config["house"]:
         ref = f"{item['repo']}@{item['revision']}"
         sha = resolved.get(ref)
         if sha is None or sha not in known:
             claim = {k: item[k] for k in ("repo", "revision")}
             claim.update(sha256=item["body_sha256"], hotkey=None)
-            partial = download(claim, scratch / "house.partial")
-            sha = bodies.body_hash(partial, names)
-            if item["body_sha256"] not in (None, sha):
+            partial = scratch / "house.partial"
+            try:
+                download(claim, partial)
+                sha = bodies.body_hash(partial, names)
+                if item["body_sha256"] not in (None, sha):
+                    raise ValueError(f"house body {item['name']} differs from its pinned hash")
+            except Exception as error:
+                print(f"soup house: {item['name']} skipped ({type(error).__name__})", flush=True)
+                failures[item["name"]] = _reason(error)
                 shutil.rmtree(partial, ignore_errors=True)
-                raise ValueError(f"house body {item['name']} differs from its pinned hash")
+                continue
             if folder(sha).exists():
                 shutil.rmtree(partial)
             else:
@@ -269,7 +278,8 @@ def _house(config, state, *, names, download, folder, scratch):
                 "hotkey": None, "uid": None, "repo": item["repo"], "revision": item["revision"],
                 "block": -1, "house": True, "solo": None, "name": item["name"],
             }  # fmt: skip
-    return {resolved[f"{i['repo']}@{i['revision']}"] for i in config["house"]}
+        house.add(sha)
+    return house, failures
 
 
 def claim_key(claim):
@@ -585,7 +595,9 @@ def run(
     state = _read_json(
         state_dir / "pool.json", {"bodies": {}, "rejected": {}, "members": [], "soup": None}
     )
-    house = _house(config, state, names=names, download=download, folder=folder, scratch=scratch)
+    house, house_failures = _house(
+        config, state, names=names, download=download, folder=folder, scratch=scratch
+    )
     _write_json(state_dir / "pool.json", state)
     known = state["bodies"]
 
@@ -873,6 +885,7 @@ def run(
         "soup_bar": soup_bar,
         "rejected": rejected,
         "grade_failures": failures,
+        "house_failures": house_failures,
         "refused": intake["refused"],
         "failed": intake["failed"],
         "new": sorted(intake["new"]),
