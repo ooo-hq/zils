@@ -187,10 +187,18 @@ class GateTest(unittest.TestCase):
 class AfdCheckTest(unittest.TestCase):
     def test_article_existence_agrees_with_the_result(self):
         def handler(url, params):
+            if params.get("list") == "logevents":
+                events = (
+                    [{"type": "delete", "action": "delete", "timestamp": "2026-10-12T18:00:00Z"}]
+                    if params["letitle"] == "Recreated"
+                    else []
+                )
+                return 200, {"query": {"logevents": events}}, {}
             pages = [
                 {"title": "Gone", "missing": True},
                 {"title": "Here"},
                 {"title": "Merged", "redirect": True},
+                {"title": "Recreated"},
             ]
             return 200, {"query": {"pages": pages}}, {}
 
@@ -212,9 +220,11 @@ class AfdCheckTest(unittest.TestCase):
                 **afd("Gone", "B"),
                 "question": {"type": "choice", "criteria": {"A": "Kept", "B": "Deleted"}},
             },
+            {**afd("Recreated", "delete"), "asked_at": "2026-10-04T09:25:00Z"},
         ]
         results = current_check.check_afd(cases, FakeHttp(handler))
-        self.assertEqual([r["agree"] for r in results], [True, True, True, False, True])
+        self.assertEqual([r["agree"] for r in results], [True, True, True, False, True, True])
+        self.assertIn("deletion log", results[-1]["evidence"])
 
 
 class StackExchangeCheckTest(unittest.TestCase):

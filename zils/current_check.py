@@ -125,6 +125,27 @@ def _afd_class(case):
     return names[criteria[label]]
 
 
+def _deleted_since(http, title, since):
+    """Timestamp of a deletion of `title` after `since`, from the deletion log, or None."""
+    from .current_afd import _get
+
+    status, body = _get(
+        http,
+        {
+            "action": "query",
+            "list": "logevents",
+            "letype": "delete",
+            "letitle": title,
+            "lelimit": "20",
+        },
+    )
+    events = (body.get("query") or {}).get("logevents") or [] if status == 200 else []
+    for event in events:
+        if event.get("action") == "delete" and event.get("timestamp", "") >= since:
+            return event["timestamp"]
+    return None
+
+
 def check_afd(cases, http):
     """Compare each closing result with whether the article exists today."""
     from .current_afd import API, _get
@@ -158,13 +179,19 @@ def check_afd(cases, http):
             "no-consensus": {"article"},
             "merge-redirect": {"redirect", "article"},
         }[_afd_class(case)]
-        derived = case["label"] if state in allowed else f"page is {state}"
         evidence_class = _afd_class(case)
+        note = ""
+        if evidence_class == "delete" and state == "article" and case.get("asked_at"):
+            # Deleted, then recreated: the deletion log still shows the deletion.
+            deleted = _deleted_since(http, _article(case), case["asked_at"])
+            if deleted:
+                state, note = "missing", f" (recreated; deletion log {deleted})"
+        derived = case["label"] if state in allowed else f"page is {state}"
         results.append(
             {
                 "derived": derived,
                 "agree": state in allowed,
-                "evidence": f"result {evidence_class}; article is now: {state}",
+                "evidence": f"result {evidence_class}; article is now: {state}{note}",
             }
         )
     return results
