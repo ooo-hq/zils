@@ -143,9 +143,7 @@ class WikiCheckTest(unittest.TestCase):
         self.assertEqual(
             [r["derived"] for r in results], ["true", "true", "false", "false", "false"]
         )
-        self.assertEqual(
-            [r["agree"] for r in results], [True, True, True, True, False, True, False]
-        )
+        self.assertEqual([r["agree"] for r in results], [True, True, True, True, False])
         self.assertIn("102", results[0]["evidence"])
 
 
