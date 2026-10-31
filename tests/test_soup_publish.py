@@ -175,6 +175,27 @@ class SoupPublishTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             soup_publish.verify_public(public, private_round())
 
+    def test_pooled_decision_rounds_are_published_as_round_ids_and_a_count(self):
+        private = private_round()
+        private["decision"] = {
+            "requested": 3,
+            "rounds": ["mini-2026-11-01", "mini-2026-11-02", "mini-2026-11-03"],
+            "items": 3,
+            "dropped_items": 0,
+            "skipped": {},
+            "fallback": None,
+            "estimates": {"1": 10.0},
+        }
+        private["decision_ids"] = sorted(SECRET_IDS)
+        public = soup_publish.public_record(private)
+        self.assertEqual(
+            public["decision"],
+            {"rounds": ["mini-2026-11-01", "mini-2026-11-02", "mini-2026-11-03"], "items": 3},
+        )
+        for secret in SECRET_IDS:
+            self.assertNotIn(secret, json.dumps(public))
+        self.assertNotIn("decision", soup_publish.public_record(private_round()))
+
 
 if __name__ == "__main__":
     unittest.main()
