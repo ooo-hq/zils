@@ -40,10 +40,14 @@ def validate_soup(entry):
     ("HH:MM", UTC). An optional ``sketch_seed`` (64 hex characters) fixes this validator's private
     copy-check sketch seed; it is checked here but left out of the result, which reports publish.
     Without it each validator generates and keeps its own (``soup_round.sketch_seed``).
+    An optional ``exam`` picks where round items come from (``soup_current.validate``): the fixed
+    round bank (the default) or Zils Current dated exports.
     """
-    from . import soup_rates
+    from . import soup_current, soup_rates
 
-    if set(entry) - SOUP_KEYS - set(SOUP_OPTIONAL) - {SOUP_SECRET} or SOUP_KEYS - set(entry):
+    if set(entry) - SOUP_KEYS - set(SOUP_OPTIONAL) - {SOUP_SECRET, "exam"} or SOUP_KEYS - set(
+        entry
+    ):
         raise ValueError("soup pool requires " + ", ".join(sorted(SOUP_KEYS)))
     share = entry["share"]
     if type(share) not in (int, float) or not math.isfinite(share) or not 0 <= share <= 1:
@@ -92,7 +96,9 @@ def validate_soup(entry):
         raise ValueError("soup failed_claim_backoff_rounds must be in [0, 30]")
     if not 1 <= sizes["max_decision_age_days"] <= 30:
         raise ValueError("soup max_decision_age_days must be in [1, 30]")
+    exam = soup_current.validate(entry["exam"]) if "exam" in entry else None
     return {
+        **({"exam": exam} if exam and exam["source"] != "bank" else {}),
         "type": "soup",
         "enabled": entry["enabled"],
         "share": share,
