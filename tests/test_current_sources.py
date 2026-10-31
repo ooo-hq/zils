@@ -175,9 +175,7 @@ class SampledResolutionTest(unittest.TestCase):
     def test_the_resolve_command_passes_the_ratio(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = current.Store(tmp)
-            store.add(
-                [current_wikimedia.record(event("enwiki", 300 + i), WIKIS) for i in range(6)]
-            )
+            store.add([current_wikimedia.record(event("enwiki", 300 + i), WIKIS) for i in range(6)])
             revisions = {
                 300 + i: {"revid": 300 + i, "tags": ["mw-reverted"] if i == 0 else []}
                 for i in range(6)
@@ -283,8 +281,9 @@ class ReplayRetryTest(unittest.TestCase):
                 return iter(lines if len(self.calls) == 2 else [])
 
         waits = []
-        with tempfile.TemporaryDirectory() as tmp, patch.object(
-            current_wikimedia, "sleep", waits.append
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(current_wikimedia, "sleep", waits.append),
         ):
             added = current_wikimedia.collect(
                 current.Store(tmp),
@@ -329,8 +328,9 @@ class PoliteApiTest(unittest.TestCase):
     def test_requests_are_spaced_and_a_lasting_limit_stops_the_pass(self):
         http = FakeHttp(lambda url, params: (429, {}, {}))
         waits = []
-        with patch.object(current_wikimedia, "sleep", waits.append), self.assertRaises(
-            current_items.RateLimited
+        with (
+            patch.object(current_wikimedia, "sleep", waits.append),
+            self.assertRaises(current_items.RateLimited),
         ):
             current_wikimedia._api(http, "https://x/api.php", {})
         self.assertEqual(len(http.calls), current_wikimedia.LIMIT_RETRIES + 1)
@@ -350,8 +350,9 @@ class PoliteApiTest(unittest.TestCase):
 
         waits = []
         times = iter([0.0, 0.0, 0.1, 0.1, 0.1, 0.1])
-        with patch.object(current.time, "sleep", waits.append), patch.object(
-            current.time, "monotonic", lambda: next(times)
+        with (
+            patch.object(current.time, "sleep", waits.append),
+            patch.object(current.time, "monotonic", lambda: next(times)),
         ):
             http = current.Http(session=Session(), gap=0.5)
             http.get_json("https://en.wikipedia.org/w/api.php")
@@ -378,13 +379,132 @@ class CheckpointTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = current.Store(tmp)
             store.add(records)
-            with patch.dict(current.RESOLVERS, {"wikipedia-revert": resolver}), patch.object(
-                current, "CHECKPOINT", 2
-            ), self.assertRaises(RuntimeError):
+            with (
+                patch.dict(current.RESOLVERS, {"wikipedia-revert": resolver}),
+                patch.object(current, "CHECKPOINT", 2),
+                self.assertRaises(RuntimeError),
+            ):
                 current.resolve(store, FakeHttp(), at("2026-10-31T12:00:00Z"))
             self.assertEqual(seen_saved, [2], "saved at the checkpoint, during the pass")
             self.assertEqual(len(store.resolved()), 3, "and again when the pass stops")
             self.assertEqual(len(store.pending()), 2)
+
+
+def change(rev, tags=(), *, wiki_bot=False, comment="copyedit", ns=0, user="Ed Itor"):
+    row = {
+        "type": "edit",
+        "ns": ns,
+        "title": f"Page {rev}",
+        "revid": rev,
+        "old_revid": rev - 1,
+        "oldlen": 100,
+        "newlen": 90,
+        "user": user,
+        "comment": comment,
+        "timestamp": "2026-10-25T10:00:00Z",
+        "tags": list(tags),
+    }
+    if wiki_bot:
+        row["bot"] = True
+    return row
+
+
+class RecentChangesTest(unittest.TestCase):
+    def test_bulk_pull_keeps_reverts_and_a_sample_of_kept_edits(self):
+        changes = [change(1000 + i, ["mw-reverted"] if i < 3 else []) for i in range(30)]
+        changes += [change(2000, ["mw-undo"]), change(2001, ["mw-reverted"], wiki_bot=True)]
+        calls = []
+
+        def handler(url, params):
+            calls.append((url, params))
+            return 200, {"query": {"recentchanges": changes}}, {}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = current.Store(tmp)
+            result = current_wikimedia.collect_recent(
+                store,
+                FakeHttp(handler),
+                at("2026-10-31T12:00:00Z"),
+                wikis=["enwiki"],
+                samples=1,
+                negatives_per_positive=1,
+            )
+            pending = store.pending()
+        self.assertEqual(result["added"], 6)
+        self.assertEqual(result["positives"], {"enwiki": 3})
+        self.assertEqual(len(pending), 6)
+        frog = pending[0]
+        self.assertEqual(frog["stream"], "wikipedia-revert")
+        self.assertEqual(frog["source"]["api"], "https://en.wikipedia.org/w/api.php")
+        self.assertEqual(frog["asked_at"], "2026-10-25T10:00:00Z")
+        self.assertEqual(frog["data"]["editor"], "registered account")
+        self.assertNotIn("Ed Itor", json.dumps(pending))
+        params = calls[0][1]
+        self.assertEqual(params["list"], "recentchanges")
+        self.assertEqual(params["rcshow"], "!bot")
+        self.assertEqual(params["rclimit"], "500")
+        self.assertIn("tags", params["rcprop"])
+
+    def test_windows_spread_over_the_age_range_and_stop_at_the_target(self):
+        seen = []
+
+        def handler(url, params):
+            seen.append(params["rcstart"])
+            rows = [change(3000 + len(seen) * 10 + i, ["mw-reverted"]) for i in range(5)]
+            return 200, {"query": {"recentchanges": rows}}, {}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            result = current_wikimedia.collect_recent(
+                current.Store(tmp),
+                FakeHttp(handler),
+                at("2026-10-31T12:00:00Z"),
+                wikis=["dewiki"],
+                samples=10,
+                min_days=2,
+                max_days=12,
+                target_positives=12,
+            )
+        self.assertEqual(len(seen), 3, "stops once the target is reached")
+        self.assertTrue(all("2026-10-19" <= s <= "2026-10-29T12:00:00Z" for s in seen))
+        self.assertEqual(result["positives"], {"dewiki": 15})
+
+    def test_the_collect_command_and_the_nightly_mode_use_the_bulk_pull(self):
+        import contextlib
+        import io
+        from pathlib import Path
+
+        from zils import current_nightly
+
+        def handler(url, params):
+            if params.get("list") == "recentchanges":
+                rows = [change(4000 + i, ["mw-reverted"] if i < 2 else []) for i in range(6)]
+                return 200, {"query": {"recentchanges": rows}}, {}
+            return 404, {}, {}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                current.main(
+                    ["--dir", tmp, "collect", "--source", "recentchanges", "--wiki", "enwiki"]
+                    + ["--samples", "1", "--negatives-per-positive", "1"],
+                    http=FakeHttp(handler),
+                    now=at("2026-10-31T12:00:00Z"),
+                )
+            self.assertEqual(json.loads(out.getvalue())["added"], 4)
+            result = current_nightly.run(
+                Path(tmp) / "s",
+                Path(tmp) / "b",
+                FakeHttp(handler),
+                at("2026-10-31T12:00:00Z"),
+                check_overlap=False,
+                gh_max_hours=0,
+                se_pages=0,
+                afd_first_days=0,
+                wikis=["enwiki"],
+                wiki_source="recentchanges",
+                wiki_samples=1,
+            )
+        self.assertEqual(result["collected"]["wikimedia"]["added"], 4)
 
 
 class SettingsTest(unittest.TestCase):
@@ -397,6 +517,7 @@ class SettingsTest(unittest.TestCase):
             self.assertEqual(current._wikis(None), ["enwiki", "dewiki"])
         resolve = current._parser().parse_args(["resolve"])
         self.assertIsNone(resolve.negatives_per_positive, "a plain resolve keeps every edit")
+        self.assertEqual(args.wiki_source, "recentchanges")
 
 
 if __name__ == "__main__":

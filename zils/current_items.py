@@ -228,6 +228,7 @@ def block_of(stream):
             return overrides[prefix]
     return STREAMS[stream]["block"]
 
+
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.]*\d)")
 IPV6 = re.compile(
@@ -378,7 +379,9 @@ def _se_state(record, limit):
     labels = [f"\n\nAnswer {chr(65 + i)}:\n" for i in range(len(answers))]
     question = truncate(data["body"] or "(empty)", max(room // 3, 200))
     each = max(0, (room - len(question) - sum(map(len, labels))) // len(answers))
-    parts = [label + truncate(a or "(empty)", each) for label, a in zip(labels, answers, strict=True)]
+    parts = [
+        label + truncate(a or "(empty)", each) for label, a in zip(labels, answers, strict=True)
+    ]
     return head + question + "".join(parts)
 
 

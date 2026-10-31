@@ -133,6 +133,8 @@ def run(
     wiki_max_hours=48,
     wiki_minutes=2,
     wikis=None,
+    wiki_source="stream",
+    wiki_samples=48,
     negatives_per_positive=None,
     afd_first_days=None,
     se_sites=None,
@@ -168,11 +170,19 @@ def run(
         result["collected"]["gharchive"] = step(
             "gharchive", lambda: _gharchive(store, http, cursor, now, gh_first_hours, gh_max_hours)
         )
-        result["collected"]["wikimedia"] = step(
-            "wikimedia",
-            lambda: _wikimedia(
-                store, http, cursor, now, wiki_first_hours, wiki_max_hours, wiki_minutes, wikis
-            ),
+        recent = {"samples": wiki_samples, "min_days": 2, "max_days": 3, "wikis": wikis}
+        result["collected"]["wikimedia"] = (
+            step(
+                "wikimedia",
+                lambda: current_wikimedia.collect_recent(store, http, now, **recent),
+            )
+            if wiki_source == "recentchanges"
+            else step(
+                "wikimedia",
+                lambda: _wikimedia(
+                    store, http, cursor, now, wiki_first_hours, wiki_max_hours, wiki_minutes, wikis
+                ),
+            )
         )
         if afd_first_days != 0:
             result["collected"]["afd"] = step(

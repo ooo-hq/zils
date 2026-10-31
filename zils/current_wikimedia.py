@@ -14,7 +14,17 @@ import re
 import time
 from datetime import UTC, datetime, timedelta
 
-from .current_items import IPV4, IPV6, WIKIDATA, WIKIS, RateLimited, iso, parse_time, scrub, wiki_stream
+from .current_items import (
+    IPV4,
+    IPV6,
+    WIKIDATA,
+    WIKIS,
+    RateLimited,
+    iso,
+    parse_time,
+    scrub,
+    wiki_stream,
+)
 
 STREAM = "https://stream.wikimedia.org/v2/stream/recentchange"
 WAIT_HOURS = 48
@@ -205,6 +215,109 @@ def _api(http, url, params):
         sleep(float(headers.get("retry-after", 5)))
 
 
+def api_url(wiki):
+    """The Action API of a wiki database name (enwiki, dewiki, wikidatawiki, ...)."""
+    if wiki == WIKIDATA:
+        return "https://www.wikidata.org/w/api.php"
+    return f"https://{wiki.removesuffix('wiki').replace('_', '-')}.wikipedia.org/w/api.php"
+
+
+def _rc_event(change, wiki):
+    """A recentchanges entry in the shape of an EventStreams event, for `record`."""
+    server = api_url(wiki).removesuffix("/w/api.php")
+    moment = parse_time(change["timestamp"])
+    return {
+        "meta": {"domain": server.removeprefix("https://"), "dt": change["timestamp"]},
+        "type": change.get("type", "edit"),
+        "namespace": change.get("ns"),
+        "title": change.get("title", ""),
+        "comment": change.get("comment") or "",
+        "timestamp": int(moment.timestamp()),
+        "user": change.get("user") or "",
+        "bot": "bot" in change,
+        "minor": "minor" in change,
+        "length": {"old": change.get("oldlen"), "new": change.get("newlen")},
+        "revision": {"old": change.get("old_revid"), "new": change.get("revid")},
+        "server_url": server,
+        "server_script_path": "/w",
+        "wiki": wiki,
+    }
+
+
+def _spread(samples, min_days, max_days, now):
+    """`samples` moments between max_days and min_days ago, in an order that covers the range
+    evenly from the start (golden-ratio steps), so a run stopped early is still spread out."""
+    span = (max_days - min_days) * 86400
+    newest = now - timedelta(days=min_days)
+    return [newest - timedelta(seconds=((i * 0.6180339887) % 1) * span) for i in range(samples)]
+
+
+def collect_recent(
+    store,
+    http,
+    now,
+    *,
+    wikis=None,
+    samples=48,
+    min_days=2,
+    max_days=14,
+    negatives_per_positive=1,
+    target_positives=None,
+):
+    """Bulk pull of edits whose revert outcome is already recorded.
+
+    `list=recentchanges` returns up to 500 human main-namespace edits older than a moment,
+    with their change tags, so each request labels 500 edits at once. Each wiki is read at
+    `samples` moments between `max_days` and `min_days` ago (the `mw-reverted` tag needs time:
+    keep `min_days` at 2 or more). Every reverted edit is kept, plus `negatives_per_positive`
+    not-reverted edits per reverted one, chosen by hashed id; the rest are not stored. The
+    kept edits enter the waiting room as usual, already past the waiting period, and `resolve`
+    fetches only their diffs (the text before the outcome). A wiki stops early once it has
+    `target_positives` reverted edits."""
+    added, positives, calls = 0, {}, 0
+    for wiki in wikis or DEFAULT_WIKIS:
+        found = 0
+        for moment in _spread(samples, min_days, max_days, now):
+            if target_positives and found >= target_positives:
+                break
+            status, body = _api(
+                http,
+                api_url(wiki),
+                {
+                    "action": "query",
+                    "list": "recentchanges",
+                    "rcstart": iso(moment),
+                    "rcdir": "older",
+                    "rcnamespace": "0",
+                    "rctype": "edit",
+                    "rcshow": "!bot",
+                    "rclimit": "500",
+                    "rcprop": "title|ids|sizes|flags|user|comment|timestamp|tags",
+                },
+            )
+            calls += 1
+            changes = (body.get("query") or {}).get("recentchanges") or [] if status == 200 else []
+            rows, reverted = [], set()
+            for change in changes:
+                tags = set(change.get("tags") or [])
+                if tags & REVERT_TAGS or "bot" in change:
+                    continue
+                row = record(_rc_event(change, wiki), {wiki}, iso(now))
+                if row:
+                    rows.append(row)
+                    if "mw-reverted" in tags:
+                        reverted.add(row["id"])
+            negatives = sorted(
+                (r["id"] for r in rows if r["id"] not in reverted),
+                key=lambda i: hashlib.sha256(i.encode()).hexdigest(),
+            )[: int(len(reverted) * negatives_per_positive)]
+            keep = reverted | set(negatives)
+            added += store.add([r for r in rows if r["id"] in keep])
+            found += len(reverted)
+        positives[wiki] = found
+    return {"added": added, "positives": positives, "calls": calls}
+
+
 def _precheck(record, revision):
     """("dropped", record) for hidden or revert edits, else None."""
     if any(revision.get(flag) for flag in HIDDEN):
@@ -324,8 +437,10 @@ def resolve(records, http, now, wait_hours=WAIT_HOURS, negatives_per_positive=No
             keep = _sample(list(candidates), by_id, negatives_per_positive)
             done = []
             for row_id, row in candidates.items():
-                if keep is not None and row_id not in keep and "mw-reverted" not in (
-                    by_id[row_id].get("tags") or []
+                if (
+                    keep is not None
+                    and row_id not in keep
+                    and "mw-reverted" not in (by_id[row_id].get("tags") or [])
                 ):
                     yield "dropped", {**row, "reason": "sampled-out"}
                     continue
@@ -337,4 +452,7 @@ def resolve(records, http, now, wait_hours=WAIT_HOURS, negatives_per_positive=No
             labels = _labels(http, url, done)
             for resolved in done:
                 item = resolved["source"]["item"]
-                yield "resolved", {**resolved, "data": {**resolved["data"], "label": labels.get(item)}}
+                yield (
+                    "resolved",
+                    {**resolved, "data": {**resolved["data"], "label": labels.get(item)}},
+                )

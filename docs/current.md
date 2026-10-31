@@ -18,12 +18,62 @@ labels and validator integration are not part of it yet (see
 
 ## Streams
 
-| Stream | Question | Type | Label | Source of the label |
-| --- | --- | --- | --- | --- |
-| `github-issue-type` | Is this new issue a bug report or a feature request? | choice | `bug` / `feature` | the issue's labels (`bug`, `type: bug`, `enhancement`, `feature request`, ...) |
-| `github-issue-close` | Will maintainers close it as completed rather than not planned or duplicate? | yes/no | close reason | `state_reason` of the closed issue |
-| `github-pr-merge` | Will this new pull request be merged? | yes/no | merged or closed unmerged | the pull request's `merged` flag |
-| `wikipedia-revert` | Will this article edit be reverted? | yes/no | `mw-reverted` tag | MediaWiki change tags after a waiting period |
+| Stream | Question | Type | Label | Source of the label | Category | Block |
+| --- | --- | --- | --- | --- | --- | --- |
+| `github-issue-type` | Is this new issue a bug report or a feature request? | choice | `bug` / `feature` | the issue's labels (`bug`, `type: bug`, `enhancement`, `feature request`, ...) | language | new |
+| `github-issue-close` | Will maintainers close it as completed rather than not planned or duplicate? | yes/no | close reason | `state_reason` of the closed issue | reasoning | new |
+| `github-pr-merge` | Will this new pull request be merged? | yes/no | merged or closed unmerged | the pull request's `merged` flag | reasoning | new |
+| `wikipedia-revert` (English), `wikipedia-revert-<lang>` | Will this article edit be reverted? | yes/no | `mw-reverted` tag | MediaWiki change tags after a waiting period | language | known |
+| `wikidata-revert` | Will this Wikidata item edit be reverted? | yes/no | `mw-reverted` tag | as for Wikipedia | retrieval | known |
+| `wikipedia-afd` | How did this deletion discussion close? | choice | `keep` / `delete` / `merge-redirect` / `no-consensus` | the closing result of an English Wikipedia Articles for deletion discussion | reasoning | known |
+| `stackexchange-closed-<group>` | Will this new question be closed? | yes/no | closed or still open | `closed_date` a week or more after asking | the group | known |
+| `stackexchange-score-<group>` | What score will this new question have? | score (4 ordered levels) | `0`..`3` | the question's score a week or more after asking | the group | new |
+| `stackexchange-accepted-<group>` | Which of these answers did the asker accept? | choice (2 to 4 answers) | `A`..`D` | `accepted_answer_id` | the group | new |
+
+`<lang>` is the language code of each default Wikipedia: `de`, `fr`, `es`, `ja`, `it`, `pt`, `ru`
+and `zh`. English keeps the pilot's stream name. Each Wikipedia is its own stream so that labels
+are balanced per language. Records that the pilot release pooled under `wikipedia-revert` are
+split by wiki when they are read.
+
+Stack Exchange sites are grouped by subject, and each group is one exam category, so every
+category gets all three question types:
+
+| Group (category) | Sites |
+| --- | --- |
+| `tools` | stackoverflow, superuser, serverfault, askubuntu, unix, dba |
+| `reasoning` | math, physics, stats, cs, chemistry, electronics |
+| `language` | english, ell, german, french, spanish, japanese, chinese |
+| `retrieval` | history, travel, law, biology, money, academia, skeptics |
+| `arts` | movies, scifi, music, literature, photo, graphicdesign, writing |
+
+### Categories and blocks
+
+Each stream has one exam category from `base_metrics.CATEGORY_WEIGHTS` and one block:
+
+- **Categories.** Reverts test how well a model reads edits in a language, so they are
+  `language`. Wikidata edits are claims about facts, so they are `retrieval`. Deletion
+  discussions are judgements of arguments against policy, so they are `reasoning`. Stack
+  Exchange streams take their site group's category.
+- **Blocks.** `known` marks a task type with an established public benchmark: Wikipedia
+  vandalism (PAN-WVC), Wikidata vandalism (WSDM Cup 2017), closed Stack Overflow questions
+  (Kaggle, 2012) and Articles for deletion outcomes. `new` marks the rest. The items themselves
+  are always new events. The blocks are a proposal. `ZILS_CURRENT_BLOCKS` overrides them with
+  comma-separated `stream-prefix=block` pairs, for example
+  `ZILS_CURRENT_BLOCKS=stackexchange-=new,wikipedia-afd=new`. The longest matching prefix wins.
+
+Coverage of the ten exam cells (category by block) and the three question types:
+
+| Category | yes/no | choice | score |
+| --- | --- | --- | --- |
+| language | Wikipedia reverts (known), SE language closed (known) | SE language accepted (new) | SE language score (new) |
+| reasoning | SE reasoning closed (known) | AfD result (known), SE reasoning accepted (new) | SE reasoning score (new) |
+| retrieval | Wikidata reverts (known), SE retrieval closed (known) | SE retrieval accepted (new) | SE retrieval score (new) |
+| tools | SE tools closed (known) | SE tools accepted (new) | SE tools score (new) |
+| arts | SE arts closed (known) | SE arts accepted (new) | SE arts score (new) |
+
+With the default blocks, every category has both blocks. `known` has only yes/no items (plus the
+AfD choice in reasoning), and `new` has only choice and score items. GitHub streams are local-only
+and are not counted here.
 
 The state text holds only what was known when the event happened:
 
@@ -33,9 +83,18 @@ The state text holds only what was known when the event happened:
   description. GitHub's event feed no longer carries pull request text, so the title and
   description are read from the REST API at the first resolution pass (`data.text_at`). If you
   collect an hour that is days old, the text may include edits made after the outcome.
-- **Wikipedia edits:** the article title, the edit summary, the size change, the minor-edit flag,
-  the kind of editor (registered account, temporary account or IP address) and the removed and
-  added lines of the diff.
+- **Wikipedia edits:** the wiki, the article title, the edit summary, the size change, the
+  minor-edit flag, the kind of editor (registered account, temporary account or IP address) and
+  the removed and added lines of the diff.
+- **Wikidata edits:** the item's English label and id, the edit summary in words
+  (`set claim (create): ...`), the size change, the editor kind, and the diff lines with their
+  English property labels (`Property / date of birth: 3 March 1961`).
+- **Deletion discussions:** the article title, the nomination and the discussion up to the
+  close, with signatures, templates and markup removed. The closing statement is above the
+  discussion heading and is never included.
+- **Stack Exchange questions:** the site, the title, the tags and the body. Accepted-answer items
+  add the answers, shuffled once per question and named `Answer A`, `Answer B`, ... Scores,
+  votes, view counts, dates and user names are never shown.
 
 ## Run it
 
@@ -43,6 +102,9 @@ The state text holds only what was known when the event happened:
 python -m zils.current collect --source gharchive --start 2026-10-26-15 --hours 1
 python -m zils.current collect --source wikimedia --minutes 5
 python -m zils.current collect --source wikimedia --minutes 5 --since 2026-10-28T12:00:00Z
+python -m zils.current collect --source afd --day 2026-10-04 --day 2026-10-05
+python -m zils.current collect --source stackexchange [--site math] [--pages 2]
+python -m zils.current resolve --negatives-per-positive 3
 GITHUB_TOKEN=... python -m zils.current resolve
 python -m zils.current export --out items.jsonl --stats
 python -m zils.current export --bank BANK --date 2026-10-30 --reference EXAMS/ --reference POOL.jsonl
@@ -55,11 +117,25 @@ python -m zils.current grade --items BANK/2026-10-30/items.jsonl --model CHECKPO
   old.
 - `--source wikimedia` reads the live stream for `--minutes` of wall time. With `--since`, it
   replays that much stream time from an earlier moment. The stream keeps between 7 and 31 days.
-  `--wiki` adds wikis (database names such as `enwiki`; the default is English Wikipedia).
+  `--wiki` chooses wikis by database name (`enwiki`, `dewiki`, `wikidatawiki`, ...). The default
+  is the nine Wikipedias above plus Wikidata, or the comma-separated `ZILS_CURRENT_WIKIS`.
+  Wikidata edits made in bulk by tools (QuickStatements, OpenRefine, Mix'n'match) are skipped.
+- `--source afd` reads the named Articles for deletion log days. Read days that are at least ten
+  days old, when nearly all of their discussions are closed. Open ones are skipped; relisted
+  discussions also appear on a later day's log.
+- `--source stackexchange` reads questions asked at least 8 days ago, up to `--pages` pages of
+  100 per site, from a per-site cursor in `DIR/stackexchange-cursor.json` (a first run starts 22
+  days back). Without a key the API allows 300 requests a day per IP address. A run of every
+  site with two pages uses about 70 to 110 requests. Set `ZILS_STACKEXCHANGE_KEY` to raise the
+  quota to 10,000. Requests are 2 seconds apart, `backoff` is honoured, and a run stops when
+  fewer than 20 requests remain or the API throttles; the cursor keeps what was read.
 - `resolve` labels items whose outcome is known and drops items still waiting after
   `--max-age-days` (default 14, or `ZILS_CURRENT_MAX_AGE_DAYS`). Wikipedia edits are checked once
   they are `--wiki-wait-hours` old (default 48). Run it again later and it continues where it
-  stopped. With `GITHUB_TOKEN` (or `ZILS_GITHUB_TOKEN`), lookups go through GitHub's GraphQL API
+  stopped. `--negatives-per-positive N` keeps, in each batch of 50 edits, N not-reverted edits
+  per reverted one and drops the rest as `sampled-out` before their diffs are fetched. Reverts
+  are a few percent of edits and export balances labels anyway, so this saves most of the
+  per-edit diff requests. A pass saves its progress every 2,000 outcomes. With `GITHUB_TOKEN` (or `ZILS_GITHUB_TOKEN`), lookups go through GitHub's GraphQL API
   50 at a time, so one request replaces fifty. Without a token, they use the REST API, which
   allows 60 unauthenticated requests an hour. Each lookup resolves every stream built from the
   same issue. When GitHub signals a rate limit, the pass stops and the remaining items stay
@@ -123,9 +199,22 @@ which. An item is dropped when:
 - **`states-outcome`:** its state text contains a phrase that states the outcome, such as
   "closed without merging", "was merged", "superseded by" or "won't merge" for pull requests;
   "duplicate of", "closed as", "won't fix" or "fixed in #12" for issue closes; and "reverted",
-  "undid", "rv" or "rollback" for Wikipedia edits. The lists are short and specific so that
+  "undid", "rv" or "rollback" (and their German, French, Spanish, Italian, Portuguese,
+  Russian, Japanese and Chinese equivalents, such as "zurückgesetzt", "révoqué", "откат" or
+  "差し戻し") for Wikipedia and Wikidata edits; "the result was", "speedily deleted",
+  "withdrawn" or "non-admin closure" for deletion discussions; "possible duplicate", "already has
+  answers here" or "[closed]" for Stack Exchange closes; and "accepted answer" or "thanks for
+  accepting" for accepted answers. The lists are short and specific so that
   ordinary text such as "depends on #4 being merged first" stays in. `current_bank.OUTCOME_PHRASES`
   holds them, and the manifest copies them.
+
+Two filters run at collection instead, and their items appear in `dropped.jsonl`:
+
+- **`edited-after-ask`:** a Stack Exchange question edited more than an hour after it was asked.
+  The API returns the current text only, and later edits can reflect the outcome ("EDIT: solved",
+  a reply to a close vote). About a third of questions are dropped this way.
+- **`ambiguous-label`:** a deletion discussion whose result is not one of the four choices
+  (draftify, userfy, withdrawn, procedural closes).
 
 ## Overlap check
 
@@ -151,9 +240,9 @@ rebuild-only datasets, are compared on that hash alone, and the manifest counts 
 
 ## Licence gate
 
-`--publishable` exports only streams whose licence allows republishing. Today that is
-`wikipedia-revert` (CC BY-SA 4.0), and every case must carry its attribution link in
-`source.url`. The GitHub streams are local-only. Asking for one in a publishable export, or
+`--publishable` exports only streams whose licence allows republishing: the Wikipedia,
+Articles for deletion and Stack Exchange streams (CC BY-SA 4.0) and Wikidata (CC0), and every
+case must carry its attribution link in `source.url`. The GitHub streams are local-only. Asking for one in a publishable export, or
 any GitHub case reaching one, is an error and writes nothing. The manifest records the mode.
 GitHub text needs legal review before any commercial use or release (see
 [Sources, licences and terms](#sources-licences-and-terms)).
@@ -167,12 +256,19 @@ GitHub text needs legal review before any commercial use or release (see
    back (default 24). A run takes at most `--gh-max-hours` (default 48). An hour not yet
    published ends the step, and the next run tries it again.
 2. **Wikimedia:** for every hour after the `wikimedia` cursor, up to the last full hour,
-   replays the first `--wiki-minutes` (default 2) of that hour's stream. This samples about 50
-   minutes a day, spread evenly over the day, instead of every edit. It stays within the
+   replays the first `--wiki-minutes` (default 10, or `ZILS_CURRENT_WIKI_MINUTES`) of that
+   hour's stream, for every wiki in the list. This samples about four hours a day, spread evenly
+   over the day, instead of every edit. It stays within the
    stream's retention. `--wiki-first-hours` and `--wiki-max-hours` bound the step, as for
    GH Archive.
-3. **Resolve:** one resolution pass over the waiting room.
-4. **Export:** writes every finished UTC day after the `export` cursor, oldest first. A first
+3. **Articles for deletion:** every log day after the `afd` cursor that is at least ten days
+   old (a first run reads `--afd-first-days`, default 45; `0` skips the step).
+4. **Stack Exchange:** `--se-pages` pages per site (default 2; `0` skips the step) for
+   `--se-site` sites (default all), from the per-site cursors. A rate limit ends the step without
+   an error.
+5. **Resolve:** one resolution pass over the waiting room, keeping `--negatives-per-positive`
+   (default 3) not-reverted edits per reverted one.
+6. **Export:** writes every finished UTC day after the `export` cursor, oldest first. A first
    run writes yesterday. The overlap and leak options are the same as for `export`.
 
 Each cursor in `DIR/cursor.json` is saved after each hour or day, so a stopped run resumes where
@@ -291,8 +387,13 @@ the cap. Long bodies are cut at a paragraph or line break and marked `[truncated
   address are never stored. Organisation names stay. Scrubbing is pattern-based, so a name typed
   in free text that matches no account can remain.
 - **Bots.** GitHub `[bot]` accounts and `Bot` users are skipped, and so are issues closed by bots
-  (for example stale-issue closers). Wikipedia edits with the bot flag are skipped, along with
-  edits that are themselves reverts.
+  (for example stale-issue closers). Wikipedia and Wikidata edits with the bot flag are skipped,
+  along with edits that are themselves reverts and Wikidata batch edits made with tools.
+  Stack Exchange questions from deleted accounts are skipped.
+- **Discussion and Q&A names.** Deletion discussions lose every `User:`, `User talk:` and
+  `Special:Contributions` link, and the names in them are removed from the text too. Stack
+  Exchange items never show user names, and the asker's and answerers' display names are removed
+  from the text.
 - **Self-merges.** Pull requests that owners open in their own personal repositories are
   skipped, because those are merged almost without exception.
 - **Deleted sources.** Issues and pull requests that return 404/410/451, and revisions that are
@@ -331,10 +432,21 @@ Whether a model trained on such text must be shared alike is unsettled. If edit 
 published, keep CC BY-SA and the attribution links. The EventStreams documentation states no
 separate licence for event metadata.
 
+**Wikidata** structured data is CC0. Item labels and claims may be republished without
+conditions. The tool still keeps the diff link.
+
+**Stack Exchange** posts are CC BY-SA (4.0 for posts since May 2018; each case keeps the
+post's `content_license`). Attribution means linking the post, whose page names its authors
+(`source.url`). The API's terms ask for an identifying client and adherence to the quota and
+`backoff`; the tool sends its User-Agent, waits 2 seconds between requests and stops at the
+quota floor. Stack Exchange has also published restrictions on using its content to train
+commercial AI models; read the current terms before any training use.
+
 **Wikimedia etiquette** is built in: an identifying User-Agent with a contact
 (`ZILS_CURRENT_CONTACT`), one stream connection, a resume from `Last-Event-ID` after the server's
-15-minute disconnect, replay of only the window asked for, serial Action API requests, batches of
-50 revision ids, `maxlag=5` with back-off, and gzip. See the
+15-minute disconnect, replay of only the window asked for, serial Action API requests at least
+0.25 seconds apart per host, batches of 50 revision ids, `maxlag=5` with back-off, waiting for
+`Retry-After` after HTTP 429 (four times before the pass stops), and gzip. See the
 [API etiquette](https://www.mediawiki.org/wiki/API:Etiquette),
 [User-Agent policy](https://foundation.wikimedia.org/wiki/Policy:User-Agent_policy) and
 [Robot policy](https://wikitech.wikimedia.org/wiki/Robot_policy).
@@ -372,14 +484,25 @@ after the check are missed, and so are removals that do not restore an earlier v
   text are compared on their own content hash, whose scheme may differ from the one used here.
 - **Token budget.** The token estimate is conservative and approximate, and it does not replace
   the runtime's own input check.
+- **Wikimedia stream retention.** EventStreams kept about seven days on 31 Oct 2026. After a
+  datacentre switchover, one topic can hold days of later events, so a replay keeps reading
+  past late events until its own window has delivered.
+- **Patrolling.** On wikis with recent-changes patrolling, `mw-reverted` can wait for the
+  reverting edit to be patrolled, which lowers the measured revert rate.
+- **Stack Exchange text** is the current text. Questions edited after the first hour are
+  dropped, but answers are shown as they are now. Closed questions get no score item, because
+  closing changes how people vote.
+- **Deletion discussions** are read as archived. Edits after the close are against convention
+  but possible.
 
 ## Extension points
 
 - **New sources.** A module with `collect(store, http, ...)` and a
   `resolve(records, http, now)` generator that yields `("pending" | "resolved" | "dropped", record)`,
-  plus an entry in `current.RESOLVERS` and `current_items.STREAMS` (with `licence` and
-  `publishable`). Stack Exchange closes and tags,
-  and review text with ratings, fit this shape.
+  plus an entry in `current.RESOLVERS` and `current_items.STREAMS` (with `licence`,
+  `publishable`, `category` and `block`). Sources whose outcome is known at collection
+  (Stack Exchange, Articles for deletion) store it in `outcome`, and their resolver labels them
+  straight away.
 - **Token-free GitHub resolution.** Merge and close events also appear in later GH Archive hours,
   so a resolver could replay those hours instead of calling the API. Pull request text would
   still need the API.

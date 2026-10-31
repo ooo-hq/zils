@@ -165,6 +165,8 @@ class NightlyTest(unittest.TestCase):
                     "0",
                     "--afd-first-days",
                     "0",
+                    "--wiki-source",
+                    "stream",
                 ],
                 http=NightlyHttp(["2026-10-31-9", "2026-10-31-10"]),
                 now=NOW,

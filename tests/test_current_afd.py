@@ -16,7 +16,9 @@ VOTER = (
 )
 
 
-def discussion(title, result, body=None, closer="[[User:Clo Ser|Clo Ser]] 17:52, 12 October 2026 (UTC)"):
+def discussion(
+    title, result, body=None, closer="[[User:Clo Ser|Clo Ser]] 17:52, 12 October 2026 (UTC)"
+):
     body = body or (
         f"Fails [[WP:GNG]], see [[Special:Contributions/Some One|Some One]]. {SIG}\n"
         f"*'''Delete''' all the sources are primary, as Nom Inator says. {VOTER}\n"
@@ -148,7 +150,8 @@ class AfdTest(unittest.TestCase):
         )
         self.assertEqual(len(current_afd.log_days(NOW, cursor=None, first_days=5)), 5)
         self.assertEqual(
-            current_afd.log_title("2026-10-04"), "Wikipedia:Articles for deletion/Log/2026 October 4"
+            current_afd.log_title("2026-10-04"),
+            "Wikipedia:Articles for deletion/Log/2026 October 4",
         )
 
 

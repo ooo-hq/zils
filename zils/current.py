@@ -299,6 +299,14 @@ def _export_options(parser):
     )
 
 
+def _recent_options(parser, samples=48, min_days=2, max_days=14):
+    parser.add_argument(
+        "--samples", type=int, default=samples, help="recentchanges requests (500 edits) per wiki"
+    )
+    parser.add_argument("--min-days", type=float, default=min_days, help="youngest edit age")
+    parser.add_argument("--max-days", type=float, default=max_days, help="oldest edit age")
+
+
 def _sampling_option(parser, default=None):
     parser.add_argument(
         "--negatives-per-positive",
@@ -340,8 +348,18 @@ def _parser():
     commands = parser.add_subparsers(dest="command", required=True)
     collect = commands.add_parser("collect", help="add new events to the waiting room")
     collect.add_argument(
-        "--source", choices=("gharchive", "wikimedia", "stackexchange", "afd"), required=True
+        "--source",
+        choices=("gharchive", "wikimedia", "recentchanges", "stackexchange", "afd"),
+        required=True,
     )
+    _recent_options(collect)
+    collect.add_argument(
+        "--negatives-per-positive",
+        type=float,
+        default=1,
+        help="recentchanges: kept edits per revert",
+    )
+    collect.add_argument("--target-positives", type=int, help="recentchanges: reverts per wiki")
     collect.add_argument("--day", action="append", default=[], help="AfD log day YYYY-MM-DD")
     collect.add_argument("--site", action="append", help="Stack Exchange site (default: all)")
     collect.add_argument(
@@ -390,6 +408,16 @@ def _parser():
         help=f"stream minutes sampled per hour (default {WIKI_MINUTES:g})",
     )
     nightly.add_argument("--wiki", action="append", help="wiki database name (default: all)")
+    nightly.add_argument(
+        "--wiki-source",
+        choices=("recentchanges", "stream"),
+        default="recentchanges",
+        help="recentchanges: bulk pull of edits two to three days old with their revert tags; "
+        "stream: replay EventStreams and wait",
+    )
+    nightly.add_argument(
+        "--wiki-samples", type=int, default=48, help="recentchanges requests per wiki"
+    )
     _sampling_option(nightly, NEGATIVES_PER_POSITIVE)
     nightly.add_argument(
         "--afd-first-days",
@@ -472,6 +500,8 @@ def main(argv=None, http=None, now=None):
             wiki_max_hours=args.wiki_max_hours,
             wiki_minutes=args.wiki_minutes,
             wikis=_wikis(args.wiki),
+            wiki_source=args.wiki_source,
+            wiki_samples=args.wiki_samples,
             negatives_per_positive=args.negatives_per_positive,
             afd_first_days=args.afd_first_days,
             se_sites=args.se_site,
@@ -535,6 +565,20 @@ def main(argv=None, http=None, now=None):
         if not hours:
             raise SystemExit("give --hour or --start")
         added = current_github.collect(store, http, hours, now=now)
+    elif args.source == "recentchanges":
+        result = current_wikimedia.collect_recent(
+            store,
+            http,
+            now,
+            wikis=_wikis(args.wiki),
+            samples=args.samples,
+            min_days=args.min_days,
+            max_days=args.max_days,
+            negatives_per_positive=args.negatives_per_positive,
+            target_positives=args.target_positives,
+        )
+        print(json.dumps({"source": args.source, **result}))
+        return 0
     elif args.source == "afd":
         if not args.day:
             raise SystemExit("give --day")

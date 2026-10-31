@@ -78,7 +78,9 @@ class Api:
         if status == 429 or body.get("error_id") == 502:
             raise RateLimited(body.get("error_message") or f"HTTP {status}")
         if status != 200 or "items" not in body:
-            raise ValueError(f"Stack Exchange {path}: HTTP {status} {body.get('error_message', '')}")
+            raise ValueError(
+                f"Stack Exchange {path}: HTTP {status} {body.get('error_message', '')}"
+            )
         self.quota = body.get("quota_remaining", self.quota)
         self.wait = float(body.get("backoff") or 0)
         return body
@@ -126,9 +128,7 @@ def records(site, questions, now, answers=None):
             dropped[-1]["stream"] = f"stackexchange-closed-{group}"
             continue
         closed = "closed_date" in question
-        outcome_at = (
-            iso(datetime.fromtimestamp(question["closed_date"], UTC)) if closed else None
-        )
+        outcome_at = iso(datetime.fromtimestamp(question["closed_date"], UTC)) if closed else None
         ready.append(
             {
                 **base,
@@ -186,7 +186,9 @@ def collect(store, http, now, *, sites=None, cursors=None, pages=PAGES_PER_SITE,
     until = int((now - timedelta(days=MIN_AGE_DAYS)).timestamp())
     added = 0
     for site in sites or [s for group in SITES.values() for s in group]:
-        since = cursors.get(site) or int((now - timedelta(days=MIN_AGE_DAYS + WINDOW_DAYS)).timestamp())
+        since = cursors.get(site) or int(
+            (now - timedelta(days=MIN_AGE_DAYS + WINDOW_DAYS)).timestamp()
+        )
         for _ in range(pages):
             if since >= until:
                 break

@@ -4,9 +4,9 @@ import contextlib
 import io
 import json
 import tempfile
+import unittest
 from datetime import timedelta
 from pathlib import Path
-import unittest
 from unittest.mock import patch
 
 import zils
@@ -193,7 +193,15 @@ class WiringTest(unittest.TestCase):
             out = io.StringIO()
             with contextlib.redirect_stdout(out):
                 current.main(
-                    ["--dir", tmp, "collect", "--source", "stackexchange", "--site", "stackoverflow"],
+                    [
+                        "--dir",
+                        tmp,
+                        "collect",
+                        "--source",
+                        "stackexchange",
+                        "--site",
+                        "stackoverflow",
+                    ],
                     http=http,
                     now=NOW,
                 )

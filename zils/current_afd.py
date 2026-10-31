@@ -78,7 +78,9 @@ def stamp(text):
     if not match:
         return None
     hour, minute, day, month, year = match.groups()
-    moment = datetime(int(year), MONTHS.index(month) + 1, int(day), int(hour), int(minute), tzinfo=UTC)
+    moment = datetime(
+        int(year), MONTHS.index(month) + 1, int(day), int(hour), int(minute), tzinfo=UTC
+    )
     return iso(moment)
 
 
@@ -122,7 +124,10 @@ def record(title, page, now):
             "url": f"https://en.wikipedia.org/w/index.php?title={title.replace(' ', '_')}"
             f"&oldid={revision.get('revid')}",
         },
-        "data": {"article": article, "text": text.split("\n", 1)[1].strip() if "\n" in text else ""},
+        "data": {
+            "article": article,
+            "text": text.split("\n", 1)[1].strip() if "\n" in text else "",
+        },
     }
     if not label or not row["asked_at"]:
         return "dropped", {**row, "reason": "ambiguous-label"}
