@@ -53,6 +53,8 @@ BODIES = {
     "scout": strengths(0.25, 0.25, 0.25, 0.25, 0.5),
     "housemix": strengths(0.25, 0.25, 0.25, 0.25, 0.3125),
     "t1copy": strengths(1, 1, 0, 0, 0, norm=2),
+    # A fine-tune of the house model whose own change no other body explains.
+    "tuned": strengths(0.25, 0.25, 0.375, 0.125, 0.25),
 }
 
 
@@ -161,8 +163,8 @@ class Round:
             self.state,
             round_id=round_id,
             snapshot=kwargs.pop("snapshot", self.snapshot()),
-            block_hash="0x" + "ab" * 32,
-            bank=self.bank,
+            block_hash=kwargs.pop("block_hash", "0x" + "ab" * 32),
+            bank=kwargs.pop("bank", self.bank),
             ledger=self.ledger,
             cache=soup_grade.PredictionCache(self.state / "cache"),
             runner_for=self.runner,
