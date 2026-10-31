@@ -16,6 +16,7 @@ job history only; one model is pinned per job. Start with the guide matching you
 | Compare tuned open models and miner hardware tradeoffs | [Official Jev comparisons and B300 research](model-research.md) |
 | Submit a replacement base on testnet 579 | [Base candidates](base-candidates.md), [compete from outside](mining.md#compete-in-the-base-tier-from-outside), [two-track payment](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first) |
 | Develop and inspect evidence | [Development](development.md), [benchmark](benchmark.md), [experiments](experiments.md), [JevBench](jevbench-public.md), [recorded testnet round](testnet-round-001.md) |
+| Collect fresh questions labelled by real outcomes | [Zils Current](current.md) |
 
 [Repository boundaries](repositories.md) explains where hosted services, client
 SDKs, and the website live. [Miner grading](miner-grading.md) describes the

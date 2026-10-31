@@ -1,0 +1,38 @@
+:ok
+
+event: message
+id: [{"topic":"eqiad.mediawiki.recentchange","partition":0,"timestamp":1793188801000}]
+data: {"$schema": "/mediawiki/recentchange/1.0.0", "meta": {"uri": "https://en.wikipedia.org/wiki/Green_tree_frog", "domain": "en.wikipedia.org", "stream": "mediawiki.recentchange", "dt": "2026-10-28T12:00:01.000Z"}, "id": 9001, "type": "edit", "namespace": 0, "title": "Green tree frog", "comment": "Added habitat, per [[User:Other Person|Other]]", "timestamp": 1793188801, "user": "Example Editor", "bot": false, "minor": false, "length": {"old": 5000, "new": 5120}, "revision": {"old": 100, "new": 101}, "server_url": "https://en.wikipedia.org", "server_name": "en.wikipedia.org", "server_script_path": "/w", "wiki": "enwiki"}
+
+event: message
+id: [{"topic":"eqiad.mediawiki.recentchange","partition":0,"timestamp":1793188802000}]
+data: {"$schema": "/mediawiki/recentchange/1.0.0", "meta": {"uri": "https://en.wikipedia.org/wiki/Lake_Tahoe", "domain": "en.wikipedia.org", "stream": "mediawiki.recentchange", "dt": "2026-10-28T12:00:02.000Z"}, "id": 9002, "type": "edit", "namespace": 0, "title": "Lake Tahoe", "comment": "", "timestamp": 1793188802, "user": "203.0.113.5", "bot": false, "minor": false, "length": {"old": 8000, "new": 7000}, "revision": {"old": 200, "new": 201}, "server_url": "https://en.wikipedia.org", "server_name": "en.wikipedia.org", "server_script_path": "/w", "wiki": "enwiki"}
+
+event: message
+id: [{"topic":"eqiad.mediawiki.recentchange","partition":0,"timestamp":1793188803000}]
+data: {"$schema": "/mediawiki/recentchange/1.0.0", "meta": {"uri": "https://en.wikipedia.org/wiki/Lake_Tahoe", "domain": "en.wikipedia.org", "stream": "mediawiki.recentchange", "dt": "2026-10-28T12:00:03.000Z"}, "id": 9003, "type": "edit", "namespace": 0, "title": "Lake Tahoe", "comment": "Bot: fixing links", "timestamp": 1793188803, "user": "CleanupBot", "bot": true, "minor": false, "length": {"old": 7000, "new": 7001}, "revision": {"old": 201, "new": 202}, "server_url": "https://en.wikipedia.org", "server_name": "en.wikipedia.org", "server_script_path": "/w", "wiki": "enwiki"}
+
+event: message
+id: [{"topic":"eqiad.mediawiki.recentchange","partition":0,"timestamp":1793188804000}]
+data: {"$schema": "/mediawiki/recentchange/1.0.0", "meta": {"uri": "https://en.wikipedia.org/wiki/Talk:Lake_Tahoe", "domain": "en.wikipedia.org", "stream": "mediawiki.recentchange", "dt": "2026-10-28T12:00:04.000Z"}, "id": 9004, "type": "edit", "namespace": 1, "title": "Talk:Lake Tahoe", "comment": "reply", "timestamp": 1793188804, "user": "Example Editor", "bot": false, "minor": false, "length": {"old": 10, "new": 20}, "revision": {"old": 300, "new": 301}, "server_url": "https://en.wikipedia.org", "server_name": "en.wikipedia.org", "server_script_path": "/w", "wiki": "enwiki"}
+
+event: message
+id: [{"topic":"eqiad.mediawiki.recentchange","partition":0,"timestamp":1793188805000}]
+data: {"$schema": "/mediawiki/recentchange/1.0.0", "meta": {"uri": "https://de.wikipedia.org/wiki/Berlin", "domain": "de.wikipedia.org", "stream": "mediawiki.recentchange", "dt": "2026-10-28T12:00:05.000Z"}, "id": 9005, "type": "edit", "namespace": 0, "title": "Berlin", "comment": "typo", "timestamp": 1793188805, "user": "Beispiel", "bot": false, "minor": false, "length": {"old": 10, "new": 11}, "revision": {"old": 400, "new": 401}, "server_url": "https://de.wikipedia.org", "server_name": "de.wikipedia.org", "server_script_path": "/w", "wiki": "dewiki"}
+
+event: message
+id: [{"topic":"eqiad.mediawiki.recentchange","partition":0,"timestamp":1793188806000}]
+data: {"$schema": "/mediawiki/recentchange/1.0.0", "meta": {"uri": "https://en.wikipedia.org/wiki/New_page", "domain": "en.wikipedia.org", "stream": "mediawiki.recentchange", "dt": "2026-10-28T12:00:06.000Z"}, "id": 9006, "type": "new", "namespace": 0, "title": "New page", "comment": "created", "timestamp": 1793188806, "user": "Example Editor", "bot": false, "minor": false, "length": {"old": null, "new": 100}, "revision": {"old": null, "new": 501}, "server_url": "https://en.wikipedia.org", "server_name": "en.wikipedia.org", "server_script_path": "/w", "wiki": "enwiki"}
+
+event: message
+id: [{"topic":"eqiad.mediawiki.recentchange","partition":0,"timestamp":1793188807000}]
+data: {"$schema": "/mediawiki/recentchange/1.0.0", "meta": {"uri": "https://en.wikipedia.org/wiki/Mount_Rainier", "domain": "en.wikipedia.org", "stream": "mediawiki.recentchange", "dt": "2026-10-28T12:00:07.000Z"}, "id": 9007, "type": "edit", "namespace": 0, "title": "Mount Rainier", "comment": "fix", "timestamp": 1793188807, "user": "~2026-12345-67", "bot": false, "minor": false, "length": {"old": 300, "new": 290}, "revision": {"old": 600, "new": 601}, "server_url": "https://en.wikipedia.org", "server_name": "en.wikipedia.org", "server_script_path": "/w", "wiki": "enwiki"}
+
+event: message
+id: [{"topic":"eqiad.mediawiki.recentchange","partition":0,"timestamp":1793188808000}]
+data: {"$schema": "/mediawiki/recentchange/1.0.0", "meta": {"uri": "https://canary/wiki/Canary", "domain": "canary", "stream": "mediawiki.recentchange", "dt": "2026-10-28T12:00:08.000Z"}, "id": 9008, "type": "edit", "namespace": 0, "title": "Canary", "comment": "", "timestamp": 1793188808, "user": "Canary", "bot": false, "minor": false, "length": {"old": 1, "new": 1}, "revision": {"old": 700, "new": 701}, "server_url": "https://canary", "server_name": "canary", "server_script_path": "/w", "wiki": "enwiki"}
+
+event: message
+id: [{"topic":"eqiad.mediawiki.recentchange","partition":0,"timestamp":1793189200000}]
+data: {"$schema": "/mediawiki/recentchange/1.0.0", "meta": {"uri": "https://en.wikipedia.org/wiki/Glacier", "domain": "en.wikipedia.org", "stream": "mediawiki.recentchange", "dt": "2026-10-28T12:06:40.000Z"}, "id": 9009, "type": "edit", "namespace": 0, "title": "Glacier", "comment": "update", "timestamp": 1793189200, "user": "Late Editor", "bot": false, "minor": false, "length": {"old": 50, "new": 60}, "revision": {"old": 800, "new": 801}, "server_url": "https://en.wikipedia.org", "server_name": "en.wikipedia.org", "server_script_path": "/w", "wiki": "enwiki"}
+
