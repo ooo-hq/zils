@@ -14,17 +14,14 @@ Storage is a local directory of JSON lines (default `runs/current`). See docs/cu
 import argparse
 import json
 import os
-import random
-import statistics
 import sys
 import time
-from collections import Counter, defaultdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import ROOT, current_github, current_items, current_wikimedia, settings
+from . import ROOT, current_bank, current_github, current_items, current_wikimedia, settings
 
-VERSION = "zils-current/v1"
+VERSION = current_items.COLLECTOR
 DEFAULT_DIR = ROOT / "runs" / "current"
 MAX_AGE_DAYS = 14
 CONTACT = "https://github.com/ooo-hq/zils"
@@ -61,6 +58,14 @@ class Http:
             body = {}
         return response.status_code, body, {k.lower(): v for k, v in response.headers.items()}
 
+    def post_json(self, url, payload, headers=None):
+        response = self.session.post(url, json=payload, headers=headers, timeout=self.timeout)
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+        return response.status_code, body, {k.lower(): v for k, v in response.headers.items()}
+
     def get_bytes(self, url):
         response = self.session.get(url, timeout=max(self.timeout, 120))
         return response.status_code, response.content
@@ -71,8 +76,9 @@ class Http:
             url, params=params, headers=headers, stream=True, timeout=self.timeout
         ) as response:
             response.raise_for_status()
-            for line in response.iter_lines(decode_unicode=True):
-                yield line
+            # Bytes, not decode_unicode: str.splitlines would also split on U+2028 inside JSON.
+            for line in response.iter_lines():
+                yield line.decode("utf-8", "replace")
 
 
 class Store:
@@ -85,7 +91,7 @@ class Store:
         path = self.root / name
         if not path.exists():
             return []
-        return [json.loads(line) for line in path.read_text().splitlines() if line]
+        return [json.loads(line) for line in path.read_text().split("\n") if line]
 
     def pending(self):
         return self._read("pending.jsonl")
@@ -162,71 +168,51 @@ def resolve(store, http, now, max_age_days=MAX_AGE_DAYS, wiki_wait_hours=None):
     return {**counts, "rate_limited": True} if limited else counts
 
 
-def _balance(cases, outcomes, seed, stream):
-    """Downsample every outcome to the rarest one's count; choice keys are shuffled per case."""
-    by_label = defaultdict(list)
-    for case in sorted(cases, key=lambda c: c["id"]):
-        by_label[outcomes[case["id"]]].append(case)
-    if len(by_label) < 2:
-        return []
-    size = min(map(len, by_label.values()))
-    rng = random.Random(f"{seed}:{stream}")
-    return [c for label in sorted(by_label) for c in rng.sample(by_label[label], size)]
-
-
-def _median_hours(records, field):
-    hours = [
-        (parse_time(r[field]) - parse_time(r["asked_at"])).total_seconds() / 3600 for r in records
-    ]
-    return round(statistics.median(hours), 2) if hours else None
-
-
-def export(store, out, *, seed=0, balance=True, max_tokens=4096):
-    """Write deduplicated (and by default label-balanced) cases; return per-stream statistics."""
-    resolved, streams = store.resolved(), {}
-    groups = defaultdict(list)
-    for record in resolved:
-        groups[record["stream"]].append(record)
-    dropped = defaultdict(Counter)
-    for record in store.dropped():
-        dropped[record["stream"]][record["reason"]] += 1
-    pending = Counter(r["stream"] for r in store.pending())
-    exported = []
-    for stream in sorted(set(groups) | set(dropped) | set(pending)):
-        records = sorted(groups.get(stream, []), key=lambda r: (r["asked_at"], r["id"]))
-        cases, seen = [], set()
-        for record in records:
-            case = current_items.build(record, max_tokens)
-            if case["content_sha256"] not in seen:
-                seen.add(case["content_sha256"])
-                cases.append(case)
-        outcomes = {r["id"]: r["label"] for r in records}
-        chosen = _balance(cases, outcomes, seed, stream) if balance else cases
-        # resolved_at is when this tool saw the outcome; outcome_at is when it happened, if known.
-        checked = _median_hours(records, "resolved_at")
-        happened = _median_hours([r for r in records if r.get("outcome_at")], "outcome_at")
-        streams[stream] = {
-            "pending": pending.get(stream, 0),
-            "resolved": len(records),
-            "dropped": dict(sorted(dropped[stream].items())),
-            "duplicates": len(records) - len(cases),
-            "labels": dict(sorted(Counter(outcomes[c["id"]] for c in cases).items())),
-            "exported": len(chosen),
-            "exported_labels": dict(sorted(Counter(outcomes[c["id"]] for c in chosen).items())),
-            "median_hours_to_resolution": checked,
-            "median_hours_to_outcome": happened,
-        }
-        exported += chosen
+def export(store, out, *, seed=0, balance=True, max_tokens=4096, leak_filters=True):
+    """Write every resolved item as cases (leak-filtered, deduplicated, by default balanced)."""
+    cases, streams, _ = current_bank.prepare(
+        store, leak_filters=leak_filters, seed=seed, balance=balance, max_tokens=max_tokens
+    )
     Path(out).parent.mkdir(parents=True, exist_ok=True)
-    Path(out).write_text("".join(json.dumps(c, ensure_ascii=False) + "\n" for c in exported))
+    Path(out).write_text("".join(json.dumps(c, ensure_ascii=False) + "\n" for c in cases))
     return {
         "version": VERSION,
         "seed": seed,
         "balanced": balance,
+        "leak_filters": leak_filters,
         "max_tokens": max_tokens,
-        "exported": len(exported),
+        "exported": len(cases),
         "streams": streams,
     }
+
+
+def _references(values):
+    if values:
+        return values
+    joined = settings.get("ZILS_CURRENT_REFERENCES") or ""
+    return [p for p in joined.split(os.pathsep) if p]
+
+
+def _export_options(parser):
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--no-balance", action="store_true", help="keep every label")
+    parser.add_argument("--max-tokens", type=int, default=4096, help="model input cap (mini: 8192)")
+    parser.add_argument(
+        "--no-leak-filters", action="store_true", help="keep items whose text gives the answer away"
+    )
+
+
+def _overlap_options(parser):
+    parser.add_argument(
+        "--reference",
+        action="append",
+        default=[],
+        help="exam/bank/benchmark/training set to keep out (file or folder; repeatable; "
+        "or ZILS_CURRENT_REFERENCES)",
+    )
+    parser.add_argument(
+        "--no-overlap-check", action="store_true", help="export without reference sets"
+    )
 
 
 def _parser():
@@ -245,34 +231,144 @@ def _parser():
     collect.add_argument("--wiki", action="append", help="wiki database name (default enwiki)")
     collect.add_argument("--limit", type=int, help="stop after this many Wikimedia edits")
     resolve_ = commands.add_parser("resolve", help="label waiting items whose outcome is known")
-    resolve_.add_argument(
-        "--max-age-days",
-        type=float,
-        default=float(settings.get("ZILS_CURRENT_MAX_AGE_DAYS") or MAX_AGE_DAYS),
-    )
+    max_age = float(settings.get("ZILS_CURRENT_MAX_AGE_DAYS") or MAX_AGE_DAYS)
+    resolve_.add_argument("--max-age-days", type=float, default=max_age)
     resolve_.add_argument(
         "--wiki-wait-hours", type=float, help=f"default {current_wikimedia.WAIT_HOURS}"
     )
     export_ = commands.add_parser("export", help="write bank-format cases")
-    export_.add_argument("--out", required=True)
-    export_.add_argument("--stats", action="store_true", help="print per-stream statistics as JSON")
-    export_.add_argument("--seed", type=int, default=0)
-    export_.add_argument("--no-balance", action="store_true", help="keep every label")
-    export_.add_argument(
-        "--max-tokens", type=int, default=4096, help="model input cap (mini: 8192)"
+    target = export_.add_mutually_exclusive_group(required=True)
+    target.add_argument("--out", help="one file with every resolved item")
+    target.add_argument(
+        "--bank", help="dated folder DIR/<date>/ with items.jsonl and manifest.json"
     )
+    export_.add_argument("--date", help="UTC day of resolution for --bank (default yesterday)")
+    export_.add_argument("--stats", action="store_true", help="print per-stream statistics as JSON")
+    export_.add_argument(
+        "--publishable", action="store_true", help="only streams whose licence allows republishing"
+    )
+    export_.add_argument("--stream", action="append", help="limit --bank to these streams")
+    export_.add_argument("--force", action="store_true", help="rewrite an existing day")
+    _export_options(export_)
+    _overlap_options(export_)
+    nightly = commands.add_parser("nightly", help="collect, resolve and export, from cursors")
+    nightly.add_argument("--state", required=True, help="waiting room, cursors and run log")
+    nightly.add_argument("--bank", required=True, help="dated exports")
+    nightly.add_argument("--gh-first-hours", type=int, default=24)
+    nightly.add_argument("--gh-max-hours", type=int, default=48)
+    nightly.add_argument("--wiki-first-hours", type=int, default=24)
+    nightly.add_argument("--wiki-max-hours", type=int, default=48)
+    nightly.add_argument(
+        "--wiki-minutes", type=float, default=2, help="stream minutes sampled per hour"
+    )
+    nightly.add_argument("--wiki", action="append", help="wiki database name (default enwiki)")
+    nightly.add_argument("--max-age-days", type=float, default=max_age)
+    nightly.add_argument("--publishable", action="store_true")
+    _export_options(nightly)
+    _overlap_options(nightly)
+    grade_ = commands.add_parser("grade", help="score a dated export with a checkpoint")
+    grade_.add_argument("--items", required=True, help="DIR/<date>/items.jsonl")
+    grade_.add_argument("--model", required=True, help="d3-family checkpoint folder")
+    grade_.add_argument("--key", help="prediction cache key (default: the folder name)")
+    grade_.add_argument("--cache", help="prediction cache (default: next to the items)")
+    grade_.add_argument("--out", help="results JSON (default: grades-<key>.json next to the items)")
+    grade_.add_argument("--lock", default=None, help="shared GPU lock (ZILS_COMPUTE_LOCK)")
+    grade_.add_argument("--lock-wait", type=float, default=600, help="seconds to wait for the GPU")
+    grade_.add_argument("--device", default="cuda")
     return parser
+
+
+def _grade(args):
+    from . import current_grade, soup_grade
+
+    items = Path(args.items)
+    key = args.key or Path(args.model).name
+    result = current_grade.grade(
+        items,
+        soup_grade.production_runner(args.model, args.device),
+        key=key,
+        cache=args.cache or items.parent / "predictions",
+        lock=args.lock or current_grade.lock_path(),
+        wait_seconds=args.lock_wait,
+    )
+    out = Path(args.out) if args.out else items.parent / f"grades-{key}.json"
+    if result["status"] == "busy":
+        print(json.dumps(result))
+        return current_grade.BUSY
+    out.write_text(json.dumps(result, indent=1, sort_keys=True) + "\n")
+    print(json.dumps({"status": "graded", "out": str(out), "all": result["all"]}))
+    return 0
+
+
+def _export_settings(args):
+    return {
+        "seed": args.seed,
+        "balance": not args.no_balance,
+        "max_tokens": args.max_tokens,
+        "leak_filters": not args.no_leak_filters,
+    }
 
 
 def main(argv=None, http=None, now=None):
     args = _parser().parse_args(argv)
-    store = Store(args.dir)
     now = now or datetime.now(UTC)
-    if args.command == "export":
-        stats = export(
-            store, args.out, seed=args.seed, balance=not args.no_balance, max_tokens=args.max_tokens
+    if args.command == "grade":
+        return _grade(args)
+    if args.command == "nightly":
+        from . import current_nightly
+
+        result = current_nightly.run(
+            args.state,
+            args.bank,
+            http or Http(),
+            now,
+            references=_references(args.reference),
+            check_overlap=not args.no_overlap_check,
+            gh_first_hours=args.gh_first_hours,
+            gh_max_hours=args.gh_max_hours,
+            wiki_first_hours=args.wiki_first_hours,
+            wiki_max_hours=args.wiki_max_hours,
+            wiki_minutes=args.wiki_minutes,
+            wikis=args.wiki,
+            max_age_days=args.max_age_days,
+            export_options={**_export_settings(args), "publishable": args.publishable},
         )
-        print(json.dumps(stats, indent=1) if args.stats else f"exported {stats['exported']} cases")
+        print(
+            json.dumps(
+                {k: v for k, v in result.items() if k != "errors"}
+                | {"errors": [e["step"] + ": " + e["error"] for e in result.get("errors", [])]}
+            )
+        )
+        return 1 if result.get("errors") else 0
+    store = Store(args.dir)
+    if args.command == "export":
+        options = _export_settings(args)
+        if args.out:
+            stats = export(store, args.out, **options)
+            print(
+                json.dumps(stats, indent=1) if args.stats else f"exported {stats['exported']} cases"
+            )
+            return 0
+        date = args.date or (now - timedelta(days=1)).strftime("%Y-%m-%d")
+        manifest = current_bank.export_bank(
+            store,
+            args.bank,
+            date,
+            references=_references(args.reference),
+            check_overlap=not args.no_overlap_check,
+            publishable=args.publishable,
+            streams=args.stream,
+            force=args.force,
+            **options,
+        )
+        summary = {
+            "date": date,
+            "mode": manifest["mode"],
+            "rows": manifest["files"]["items.jsonl"]["rows"],
+            "counts": manifest["counts"],
+            "overlap_hits": len(manifest["overlap"]["hits"]),
+        }
+        print(json.dumps(manifest if args.stats else summary, indent=1 if args.stats else None))
         return 0
     http = http or Http()
     if args.command == "resolve":

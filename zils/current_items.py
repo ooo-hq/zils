@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 # per character. Reserve room for the question and the runtime's prompt template.
 CHARS_PER_TOKEN = 1.5
 QUESTION_TOKENS = 384
+COLLECTOR = "zils-current/v1"
 TRUNCATED = "\n[truncated]"
 
 
@@ -35,6 +36,7 @@ STREAMS = {
     "github-issue-type": {
         "category": "language",
         "licence": GITHUB_TERMS,
+        "publishable": False,
         "question": {
             "type": "choice",
             "instructions": "Maintainers later labelled this newly opened GitHub issue. Which kind is it?",
@@ -47,6 +49,7 @@ STREAMS = {
     "github-issue-close": {
         "category": "reasoning",
         "licence": GITHUB_TERMS,
+        "publishable": False,
         "question": {
             "type": "noul",
             "instructions": "Will the maintainers close this newly opened GitHub issue as completed, "
@@ -60,6 +63,7 @@ STREAMS = {
     "github-pr-merge": {
         "category": "reasoning",
         "licence": GITHUB_TERMS,
+        "publishable": False,
         "question": {
             "type": "noul",
             "instructions": "Will this newly opened GitHub pull request be merged?",
@@ -69,6 +73,7 @@ STREAMS = {
     "wikipedia-revert": {
         "category": "language",
         "licence": WIKIMEDIA_TERMS,
+        "publishable": True,
         "question": {
             "type": "noul",
             "instructions": "Will this Wikipedia article edit be reverted by another edit?",

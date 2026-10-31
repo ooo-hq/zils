@@ -4,12 +4,15 @@ import contextlib
 import gzip
 import io
 import json
+import os
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import zils
 from zils import current, current_github, current_items, current_wikimedia
@@ -42,6 +45,66 @@ class FakeHttp:
     def lines(self, url, params=None, headers=None):
         self.calls.append((url, dict(params or {}), dict(headers or {})))
         return iter(self.sse.pop(0) if self.sse else [])
+
+
+class FakeGraphQLHttp(FakeHttp):
+    """FakeHttp that also answers GitHub GraphQL POSTs."""
+
+    def __init__(self, post_handler, **kwargs):
+        super().__init__(**kwargs)
+        self.post_handler = post_handler
+
+    def post_json(self, url, payload, headers=None):
+        self.calls.append((url, {"query": payload["query"]}))
+        return self.post_handler(url, payload)
+
+
+def graphql_node(rest):
+    """The GraphQL shape of a recorded REST issue or pull request."""
+
+    def actor(user):
+        return {"__typename": "Bot" if user["type"] == "Bot" else "User", "login": user["login"]}
+
+    if "merged" in rest:
+        return {
+            "__typename": "PullRequest",
+            "state": "MERGED" if rest["merged"] else rest["state"].upper(),
+            "merged": rest["merged"],
+            "mergedAt": rest.get("merged_at"),
+            "closedAt": rest.get("closed_at"),
+            "title": rest["title"],
+            "body": rest["body"],
+            "author": actor(rest["user"]),
+        }
+    closer = rest.get("closed_by")
+    return {
+        "__typename": "Issue",
+        "state": rest["state"].upper(),
+        "stateReason": (rest.get("state_reason") or "").upper() or None,
+        "closedAt": rest.get("closed_at"),
+        "labels": {"nodes": [{"name": label["name"]} for label in rest["labels"]]},
+        "author": actor(rest["user"]),
+        "timelineItems": {"nodes": [{"actor": actor(closer)}] if closer else []},
+    }
+
+
+def graphql_handler(nodes, errors=()):
+    """Answer aliased repository/issueOrPullRequest queries from {(repo, number): node}."""
+
+    def handler(url, payload):
+        data = {}
+        for alias, owner, name, body in re.findall(
+            r'(r\d+): repository\(owner: "([^"]+)", name: "([^"]+)"\) \{(.*?)\}\s*(?=r\d+:|\}\s*$)',
+            payload["query"],
+            re.S,
+        ):
+            items = {}
+            for item, number in re.findall(r"(n\d+): issueOrPullRequest\(number: (\d+)\)", body):
+                items[item] = nodes.get((f"{owner}/{name}", int(number)))
+            data[alias] = items
+        return 200, {"data": data, "errors": list(errors)}, {}
+
+    return handler
 
 
 def archive_http():
@@ -195,6 +258,19 @@ class GHArchiveTest(unittest.TestCase):
             self.assertEqual(added, 0)
             self.assertEqual(len(store.pending()), 5)
 
+    def test_unicode_line_separators_inside_text_survive_collection_and_storage(self):
+        event = json.loads((FIXTURES / "gharchive.jsonl").read_text().split("\n")[0])
+        event["payload"]["issue"]["body"] = "first\u2028second\x85third\x1cfourth"
+        raw = gzip.compress((json.dumps(event, ensure_ascii=False) + "\n").encode())
+        http = FakeHttp(files={current_github.hour_url("2026-10-26-15"): raw})
+        with tempfile.TemporaryDirectory() as tmp:
+            store = current.Store(tmp)
+            current_github.collect(store, http, ["2026-10-26-15"], now=at("2026-10-31T12:00:00Z"))
+            pending = store.pending()
+            store.save(pending, [], [])
+            self.assertEqual(store.pending(), pending)
+        self.assertEqual(pending[0]["data"]["body"], "first\u2028second\x85third\x1cfourth")
+
     def test_missing_hour_is_an_error(self):
         with (
             tempfile.TemporaryDirectory() as tmp,
@@ -305,6 +381,70 @@ class GitHubResolveTest(unittest.TestCase):
             [(r["stream"], r["source"]["number"]) for r in store.pending()],
         )
         self.assertTrue(store.resolved())
+
+
+class GraphQLResolveTest(unittest.TestCase):
+    def nodes(self):
+        responses = {}
+        handler = github_responses()
+        for number, kind in ((7, "issues"), (9, "issues"), (8, "pulls")):
+            url = f"https://api.github.com/repos/acme/widgets/{kind}/{number}"
+            responses[("acme/widgets", number)] = graphql_node(handler(url, {})[1])
+        return responses
+
+    def resolve(self, handler, batch=50):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"GITHUB_TOKEN": "t"}):
+            store = collected(tmp)
+            http = FakeGraphQLHttp(handler)
+            with patch.object(current_github, "GRAPHQL_BATCH", batch):
+                counts = current.resolve(store, http, now=at("2026-10-31T12:00:00Z"))
+            return Snapshot(store), http, counts
+
+    def test_one_query_resolves_a_batch_with_rest_semantics(self):
+        store, http, counts = self.resolve(graphql_handler(self.nodes()))
+        self.assertEqual([c[0] for c in http.calls], [current_github.GRAPHQL])
+        resolved = {(r["stream"], r["source"]["number"]): r for r in store.resolved()}
+        self.assertEqual(resolved[("github-issue-type", 7)]["label"], "bug")
+        self.assertEqual(resolved[("github-issue-close", 7)]["label"], "true")
+        self.assertEqual(resolved[("github-issue-type", 9)]["label"], "feature")
+        self.assertEqual(resolved[("github-pr-merge", 8)]["label"], "true")
+        self.assertEqual(resolved[("github-pr-merge", 8)]["outcome_at"], "2026-10-26T18:00:00Z")
+        no_logins(self, resolved[("github-pr-merge", 8)]["data"])
+        self.assertEqual(
+            {(r["stream"], r["source"]["number"]): r["reason"] for r in store.dropped()},
+            {("github-issue-close", 9): "closed-by-bot"},
+        )
+        self.assertEqual(counts, {"resolved": 4, "dropped": 1, "pending": 0})
+
+    def test_batches_are_split_by_size(self):
+        _, http, _ = self.resolve(graphql_handler(self.nodes()), batch=2)
+        self.assertEqual(len(http.calls), 2)
+
+    def test_missing_items_drop_and_other_errors_wait(self):
+        nodes = self.nodes()
+        nodes[("acme/widgets", 9)] = None
+        nodes[("acme/widgets", 8)] = None
+        errors = [{"type": "NOT_FOUND", "path": ["r0", "n9"], "message": "gone"}]
+        store, _, _ = self.resolve(graphql_handler(nodes, errors))
+        self.assertEqual({r["reason"] for r in store.dropped()}, {"deleted"})
+        self.assertEqual(len(store.dropped()), 2)
+        self.assertEqual([r["source"]["number"] for r in store.pending()], [8])
+
+    def test_rate_limit_stops_the_pass(self):
+        def limited(url, payload):
+            return 200, {"errors": [{"type": "RATE_LIMITED", "message": "slow down"}]}, {}
+
+        store, _, counts = self.resolve(limited)
+        self.assertTrue(counts["rate_limited"])
+        self.assertEqual(len(store.pending()), 5)
+
+    def test_without_a_token_the_rest_api_is_used(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+            store = collected(tmp)
+            http = FakeGraphQLHttp(graphql_handler(self.nodes()), json_handler=github_responses())
+            current.resolve(store, http, now=at("2026-10-31T12:00:00Z"))
+        self.assertNotIn(current_github.GRAPHQL, [c[0] for c in http.calls])
+        self.assertEqual(len(http.calls), 3)
 
 
 class WikimediaTest(unittest.TestCase):
@@ -654,7 +794,13 @@ class CommandLineTest(unittest.TestCase):
                 )
             self.assertEqual(code, 0)
             stats = json.loads(out.getvalue())
-            self.assertEqual(stats["streams"]["github-issue-type"]["exported"], 2)
+            # Leak filters are on by default: #9 had its type label when opened, and the pull
+            # request text was read after the merge.
+            self.assertEqual(stats["streams"]["github-issue-type"]["exported"], 1)
+            self.assertEqual(
+                stats["streams"]["github-issue-type"]["filtered"], {"label-at-open": 1}
+            )
+            self.assertEqual(stats["streams"]["github-pr-merge"]["filtered"], {"late-text": 1})
             self.assertEqual(stats["version"], current.VERSION)
 
     def test_module_help(self):
