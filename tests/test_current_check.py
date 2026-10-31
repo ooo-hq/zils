@@ -236,7 +236,8 @@ class StackExchangeCheckTest(unittest.TestCase):
                         "answer_id": 21,
                         "question_id": 2,
                         "is_accepted": True,
-                        "body": "<p>Use dateutil.</p>",
+                        "body": "<p>Use <code>dateutil</code>, as Sam Helper said in the docs for parsing "
+                        "ISO dates and much more text here.</p>",
                     },
                     {
                         "answer_id": 22,
@@ -262,7 +263,10 @@ class StackExchangeCheckTest(unittest.TestCase):
                 "source": {"site": "stackoverflow", "question_id": number, "url": "u"},
             }
 
-        accepted_text = "Question:\nQ\n\nAnswer A:\nRegex.\n\nAnswer B:\nUse dateutil."
+        accepted_text = (
+            "Question:\nQ\n\nAnswer A:\nRegex.\n\nAnswer B:\nUse dateutil, as [user] said in"
+            " the docs for parsing.\n[truncated]"
+        )
         cases = [
             se("stackexchange-closed-tools", 1, "true"),
             se("stackexchange-closed-tools", 2, "false"),

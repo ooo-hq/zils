@@ -202,10 +202,29 @@ def _answers(text):
     return {parts[i]: parts[i + 1].strip() for i in range(1, len(parts) - 1, 2)}
 
 
-def _same(ours, theirs):
-    ours = re.sub(r"\s+", " ", ours.replace("[truncated]", "")).strip()
-    theirs = re.sub(r"\s+", " ", theirs).strip()
-    return bool(ours) and (ours == theirs or theirs.startswith(ours[: max(40, len(ours) - 20)]))
+WORDS = re.compile(r"\w+")
+
+
+def _words(text):
+    text = text.replace("[truncated]", "").replace("[user]", " ")
+    return set(WORDS.findall(text.lower()))
+
+
+def _closest(options, accepted):
+    """The option whose words best match the accepted answer's (scrubbed and truncated text
+    keeps most of its words), or None when no option is a clear match."""
+    theirs = _words(accepted)
+    scores = {}
+    for letter, text in options.items():
+        ours = _words(text)
+        scores[letter] = len(ours & theirs) / len(ours) if ours else 0.0
+    if not scores:
+        return None
+    best = max(scores, key=scores.get)
+    others = [v for k, v in scores.items() if k != best]
+    if scores[best] >= 0.8 and all(scores[best] - v >= 0.1 for v in others):
+        return best
+    return None
 
 
 def check_stackexchange(cases, http, key=None):
@@ -255,10 +274,11 @@ def check_stackexchange(cases, http, key=None):
         else:
             options = _answers(case["state"]["text"])
             accepted = [a for a in answers.get(key_, []) if a.get("is_accepted")]
-            derived = None
-            for letter, text in options.items():
-                if accepted and _same(text, current_stackexchange.text(accepted[0].get("body"))):
-                    derived = letter
+            derived = (
+                _closest(options, current_stackexchange.text(accepted[0].get("body")))
+                if accepted
+                else None
+            )
             evidence = (
                 f"is_accepted answer {accepted[0]['answer_id']}"
                 if accepted
