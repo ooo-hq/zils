@@ -319,15 +319,41 @@ Instead of one winner, each round builds the best **soup**: a uniform average of
 up to five bodies submitted by different miners. You earn by holding a seat in
 the round's soup, or by submitting the round's best single body.
 
+### Four pools
+
+There is one soup pool per model size, each with its own bodies, rounds, seats
+and share of the base emission. A body competes only in the pool it is committed
+to.
+
+| Pool | Chassis (pinned) | Body parent (pinned revision) | Chassis tensors | Body size cap | Input cap | Commitment |
+|---|---|---|---|---|---|---|
+| `d3-lite` (0.8B) | `vllm-sr/d3-lite` | `Qwen/Qwen3.5-0.8B` @ `2fc06364715b967f1860aea9cf38778875588b17` | 473 | 2 GiB | 4,096 tokens | `zilsb3:d3-lite:…` |
+| `d3-mini` (4.5B) | `zils-ai/d3-mini-4.5b-v1` | `Qwen/Qwen3.5-4B` @ `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a` | 723 | 10 GiB | 8,192 tokens | `zilsb2:…` |
+| `d3-flash` (9B) | `vllm-sr/d3-flash` | `Qwen/Qwen3.5-9B` @ `c202236235762e1c871ad0ccb60c8ee5ba337b9a` | 759 | 24 GiB | 4,096 tokens | `zilsb3:d3-flash:…` |
+| `d3` (z3, 27B) | `vllm-sr/d3-ultra` | `Qwen/Qwen3.8-27B` @ `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0` | 1,183 | 64 GiB | 4,096 tokens | `zilsb3:d3:…` |
+
+The chassis revisions are in `zils/d3-lite-pins.json`, `zils/d3-pins.json`,
+`zils/d3-flash-pins.json` and `zils/d3-ultra-pins.json`. The z3 chassis uses
+`prefix_bidir` attention and the `header-v1` prompt layout; both are fixed by the
+chassis, so a z3 body is an ordinary Qwen3.8-27B-layout fine-tune. Round items
+longer than a pool's input cap are left out of that pool's rounds.
+
+Lite and mini run rounds from the start. Flash and z3 open later, each at a
+block fixed in the validator configuration. A pool pays nothing before it opens
+(its share burns), and it may pay a temporary **boosted share** for its first
+weeks that steps down to its long-run share; see
+[the emission schedule](model-pools.md#emission-schedule). Bodies committed to a
+pool before it opens are admitted at its first round.
+
 ### What a body is
 
-A body is the full set of language and vision weights of a fine-tune of
-`Qwen/Qwen3.5-4B` at revision `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a`. Every
-soup runs on the pinned d3-mini chassis: its answer layer, prompt and runtime are
-fixed and are not part of a submission. A body is eligible when:
+A body is the full set of language and vision weights of a fine-tune of the
+pool's body parent at its pinned revision (table above). Every soup runs on the
+pool's pinned chassis: its answer layer, prompt and runtime are fixed and are not
+part of a submission. A body is eligible when:
 
 - **Layout:** its safetensors contain every chassis tensor under
-  `language_model.*` and `visual.*` (723 tensors) with the chassis shape, stored
+  `language_model.*` and `visual.*` (the pool's tensor count) with the chassis shape, stored
   as `bfloat16` or `float32` (Qwen's own format keeps 48 `linear_attn` tensors in
   `float32`). Every tensor is rounded to `bfloat16` for the body hash, the change
   check, the copy checks and the soup, so a tensor saved as `float32` hashes like
@@ -335,12 +361,13 @@ fixed and are not part of a submission. A body is eligible when:
   are ignored; any other tensor rejects the body. Sharded (`model.safetensors.index.json`)
   and single-file checkpoints are both accepted, and the body hash does not depend
   on the shard layout.
-- **Change:** the relative change of its language layers from the Qwen parent,
-  ‖body − Qwen‖ / ‖Qwen‖, is at most **0.15**. You may start from plain Qwen, from
-  a z3 release or from any open fine-tune of that Qwen revision.
+- **Change:** the relative change of its language layers from the pool's Qwen
+  parent, ‖body − Qwen‖ / ‖Qwen‖, is at most **0.15**. You may start from plain
+  Qwen, from the pool's chassis, from a release or from any open fine-tune of
+  that Qwen revision.
 - **Licence:** the repo's `README.md` front matter declares `license:` as
   `apache-2.0`, `mit`, `bsd-3-clause` or `bsd-2-clause`.
-- **Size:** the safetensors total at most 10 GiB.
+- **Size:** the safetensors total at most the pool's body size cap.
 - **Ownership:** the repo holds `zils-owner.json` containing exactly
   `{"hotkey": "<your ss58 hotkey>"}`, the hotkey that commits it. Scouts who find a
   good open model re-upload it to their own repo with their own ownership file.
@@ -360,8 +387,10 @@ install with `curl -fsSL https://zils.ai/install.sh | sh`. Then:
    that is still private then fails):
 
    ```bash
-   zils commit-body --repo <you>/<body-repo> --path ./my-body --write-owner
+   zils commit-body --pool <pool> --repo <you>/<body-repo> --path ./my-body --write-owner
    ```
+
+   `--pool` is `d3-lite`, `d3-mini` (the default), `d3-flash` or `d3` (z3).
 
 2. Upload the folder to your Hugging Face model repo and note the commit sha the
    upload prints (`hf auth login` once with a write token):
@@ -371,30 +400,33 @@ install with `curl -fsSL https://zils.ai/install.sh | sh`. Then:
    ```
 
 3. Check and commit. Without `--yes` the command is a dry run: it validates the
-   body at that revision, prints the body hash and the exact
-   `zilsb2:<body sha256>:<revision>:<repo>` commitment, and writes nothing. With
+   body at that revision against the pool's chassis and parent, prints the body
+   hash and the exact commitment (`zilsb2:<body sha256>:<revision>:<repo>` for
+   d3-mini, `zilsb3:<pool>:<body sha256>:<revision>:<repo>` for the other pools),
+   and writes nothing. With
    `--yes` it also confirms the public repo matches your local folder, writes the
    commitment with your hotkey and reads it back:
 
    ```bash
-   zils commit-body --repo <you>/<body-repo> --revision <upload commit> --path ./my-body
-   zils commit-body --repo <you>/<body-repo> --revision <upload commit> --path ./my-body --yes
+   zils commit-body --pool <pool> --repo <you>/<body-repo> --revision <upload commit> --path ./my-body
+   zils commit-body --pool <pool> --repo <you>/<body-repo> --revision <upload commit> --path ./my-body --yes
    ```
 
    Without `--path` the command downloads the body at the revision instead. It
-   also downloads the pinned d3-mini chassis and the Qwen parent (about 9 GB each)
-   unless you pass local copies with `--chassis` and `--base`. Wallet flags,
+   also downloads the pool's pinned chassis and Qwen parent (about 2 GB each for
+   lite, 9 GB for mini, 17 to 19 GB for flash and 52 to 56 GB for z3) unless you
+   pass local copies with `--chassis` and `--base`. Wallet flags,
    `--network` and `--netuid` work as for `commit-candidate`.
 
-A hotkey has **one commitment slot, shared by `zils1` base candidates and
-`zilsb2` bodies**: committing a body replaces the hotkey's base candidate, and the
-reverse. Use a separate hotkey for each. Validators key seats by hotkey and body
+A hotkey has **one commitment slot, shared by `zils1` base candidates and soup
+bodies of every pool**: committing a body replaces the hotkey's base candidate or
+its body in another pool, and the reverse. Use a separate hotkey for each pool. Validators key seats by hotkey and body
 hash, so a body already in the pool keeps its seat until it leaves the pool even
 after you commit a new one.
 
 ### A round
 
-Validators run one soup round per day for each soup pool:
+Validators run one soup round per day for each open soup pool:
 
 1. **Seed.** The hash of the first block after the commit deadline picks the
    round's private exam subset and breaks ties.
@@ -441,11 +473,22 @@ earning at once.
   empty at launch), and for a house mix, a body whose change from Qwen is almost
   entirely a mix of house ingredients' changes (less than 5% of it is left over;
   real fine-tunes of a house ingredient leave about 10%); **0** for house
-  ingredients, the open Qwen3.5-4B decision models already public at launch, which
-  the pool includes unpaid.
+  ingredients, the open decision models of the pool's size already public at
+  launch, which the pool includes unpaid. The house lists are in `zils/data/`:
+  `soup-house.json` (mini), `soup-house-lite.json` (`vllm-sr/d3-lite` and
+  `internlm/Intern-Decision-0.8B`), `soup-house-flash.json` (`vllm-sr/d3-flash`)
+  and `soup-house-z3.json` (`vllm-sr/d3-ultra`).
 
 Every unearned part burns to the subnet owner's uid, as in the base tier. Until
 miners submit new bodies, most of the pool's share burns.
+
+**Pool shares.** The launch configuration (`zils/data/base-pools-launch.json`)
+gives the base emission to lite 35%, mini 30%, flash 20% and z3 10%; the other 5%
+is unassigned and burns. Flash and z3 burn their shares until their opening
+blocks. The launch configuration boosts flash to 30% for its first two weeks and
+25% for the next two, and z3 to 15% for its first two weeks; a boost is paid out
+of budget that would otherwise burn and never reduces another pool's share. The
+exact blocks are in each validator's configuration and its published report.
 
 ### What validators publish
 

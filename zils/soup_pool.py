@@ -9,8 +9,14 @@ round; the runner takes the compute lock and runs ``python -m zils.soup_pool <re
 runtime under a hard deadline. Later epochs see the round running, finished (its ledger entry) or dead
 (restarted, at most ``MAX_ATTEMPTS`` times per round). Until a round finishes the previous decision
 pays. State lives under ``<validator dir>/base-pools/<pool>/soup``.
+
+Each pool reads only the body commitments addressed to it (``zilsb2`` for d3-mini, ``zilsb3:<pool>``
+for the others). A pool with a schedule runs no round before its opening block. A validator can
+declare in ``soup_grading`` which pools it grades (``pools``) and its GPU memory (``gpu_mib``); a
+pool it does not grade is skipped and logged, and its share burns in this validator's weights.
 """
 
+import functools
 import json
 import os
 import subprocess
@@ -29,6 +35,10 @@ BLOCK_SECONDS = 12
 ROUND_SECONDS = 6 * 3600  # hard deadline for one soup round in the GPU runtime
 MAX_ATTEMPTS = 3  # starts of one day's round before it is skipped until the next day
 CAPACITY_TRIES = 120  # GPU-busy retries (one poll apart) before a runner gives up
+# GPU memory (MiB) one soup grading needs per pool: d3-mini measured about 9.5 GB on an RTX 6000 Ada;
+# the others are estimates from bf16 weights (lite 1.7 GB, flash 16.8 GB, z3 52.2 GB) plus room for
+# activations at the pool's token cap. FP8 grading is not supported.
+GRADING_MIB = {"d3-lite": 4096, "d3-mini": 12288, "d3-flash": 20480, "d3": 57344}
 
 
 def state_dir(directory, pool):
@@ -106,12 +116,79 @@ def seed_block(block_info, head, deadline):
     return high, block_info(high).hash
 
 
-def soup_pools(config):
-    """{pool: validated entry} for each enabled soup pool."""
+def grading(config):
+    """The validator's local ``soup_grading`` setting: {"pools": [pool, ...] or None (every soup
+    pool), "gpu_mib": GPU memory in MiB or None (not checked)}."""
+    value = config.get("soup_grading", {})
+    if not isinstance(value, dict) or set(value) - {"pools", "gpu_mib"}:
+        raise ValueError("soup_grading takes only pools and gpu_mib")
+    pools, memory = value.get("pools"), value.get("gpu_mib")
+    if pools is not None and (
+        not isinstance(pools, list) or any(p not in GRADING_MIB for p in pools)
+    ):
+        raise ValueError("soup_grading.pools must list soup pools: " + ", ".join(GRADING_MIB))
+    if memory is not None and (type(memory) is not int or memory < 1):
+        raise ValueError("soup_grading.gpu_mib must be a positive integer")
+    return {"pools": pools, "gpu_mib": memory}
+
+
+def not_graded(config, pools=None):
+    """{pool: reason} for the enabled soup pools this validator does not grade."""
+    if pools is None:
+        if "base_pools" not in config:
+            return {}
+        pools = model_pools.validate(config["base_pools"])["pools"]
+    local, out = grading(config), {}
+    for pool, entry in pools.items():
+        if not (entry["enabled"] and model_pools.is_soup(entry)):
+            continue
+        need = GRADING_MIB.get(pool)
+        if local["pools"] is not None and pool not in local["pools"]:
+            out[pool] = "not in soup_grading.pools"
+        elif need is None:
+            out[pool] = "no soup grading support for this pool"
+        elif local["gpu_mib"] is not None and need > local["gpu_mib"]:
+            out[pool] = (
+                f"needs {need} MiB of GPU memory; soup_grading.gpu_mib is {local['gpu_mib']}"
+            )
+    return out
+
+
+def closed(entry, block):
+    """Why a soup pool runs no round at `block`, or None once it is open."""
+    if model_pools.is_open(entry, block):
+        return None
+    if entry["opens_block"] is None:
+        return "closed: no opening block is set"
+    return f"closed until block {entry['opens_block']}"
+
+
+def soup_pools(config, block=None):
+    """{pool: validated entry} for each enabled soup pool this validator grades. With `block`, a pool
+    that has not reached its opening block is left out too."""
     if "base_pools" not in config:
         return {}
     pools = model_pools.validate(config["base_pools"])["pools"]
-    return {p: e for p, e in pools.items() if e["enabled"] and model_pools.is_soup(e)}
+    skipped = not_graded(config, pools)
+    return {
+        p: e
+        for p, e in pools.items()
+        if e["enabled"]
+        and model_pools.is_soup(e)
+        and p not in skipped
+        and (block is None or model_pools.is_open(e, block))
+    }
+
+
+def pool_commitments(commitments, pool):
+    """The commitments addressed to `pool`, as the zilsb2 text soup intake reads."""
+    from . import bodies
+
+    return {
+        uid: {**item, "data": bodies.as_zilsb2(item.get("data", ""))}
+        for uid, item in commitments.items()
+        if bodies.body_pool(item.get("data", "")) == pool
+    }
 
 
 def paths(config, directory, pool):
@@ -177,7 +254,15 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
     `block`; the round reads them at its seed block, so every validator sees the same set however
     late it runs (the live snapshot only holds each hotkey's latest commitment)."""
     summary = {}
-    for pool, entry in soup_pools(config).items():
+    if "base_pools" in config:
+        validated = model_pools.validate(config["base_pools"])["pools"]
+        for pool, reason in not_graded(config, validated).items():
+            summary[pool] = {"skipped": reason}
+        for pool, entry in validated.items():
+            if pool not in summary and entry["enabled"] and model_pools.is_soup(entry):
+                if reason := closed(entry, int(snapshot["block"])):
+                    summary[pool] = {"closed": reason}
+    for pool, entry in soup_pools(config, int(snapshot["block"])).items():
         try:
             head = int(snapshot["block"])
             day, deadline = due(entry["schedule"], _time(block_info(head)))
@@ -201,7 +286,7 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
             block, block_hash = seed_block(block_info, head, deadline)
             commitments = {
                 uid: item
-                for uid, item in commitments_at(block).items()
+                for uid, item in pool_commitments(commitments_at(block), pool).items()
                 if int(item["block"]) < block
             }
             secret = config["base_pools"]["pools"][pool].get(model_pools.SOUP_SECRET)
@@ -301,8 +386,9 @@ def _bank(path):
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
-def fetch_body(claim, dest):
-    """Download a body repo's weights, index, model card and ownership file at the committed revision."""
+def fetch_body(claim, dest, pool=None):
+    """Download a body repo's weights, index, model card and ownership file at the committed revision,
+    within the pool's body byte cap and download deadline (d3-mini's without a pool)."""
     from . import bodies, commitments
 
     listed = commitments.revision_files(claim["repo"], claim["revision"])
@@ -315,8 +401,40 @@ def fetch_body(claim, dest):
             or n in ("model.safetensors.index.json", "README.md", "zils-owner.json")
         )
     )
-    commitments.download_files(claim, dest, names, listed, bodies.MAX_BYTES)
+    if pool is None:
+        commitments.download_files(claim, dest, names, listed, bodies.MAX_BYTES)
+    else:
+        commitments.download_files(
+            claim, dest, names, listed, bodies.max_bytes(pool),
+            seconds=bodies.download_seconds(pool),
+        )  # fmt: skip
     return Path(dest)
+
+
+def fit_bank(bank, model, *, encoder=None, log=print):
+    """The bank items the pool's model accepts: within its token cap (``max_input_tokens``, the
+    d3 prompt as the runtime renders it) and otherwise valid input. Others are dropped and counted,
+    so one long item never fails a whole round. The encoder is the chassis tokenizer (no weights)."""
+    from . import models
+
+    cap = models.spec(model)["max_input_tokens"]
+    kept = []
+    for case in bank:
+        if encoder is None:
+            from . import d3
+
+            encoder = d3.Encoder(d3.base_path(model=model), model=model)
+        try:
+            ids, _ = encoder.encode(case["state"], case["question"])
+        except ValueError:
+            continue
+        if len(ids) <= cap:
+            kept.append(case)
+    if len(kept) < len(bank):
+        log(
+            f"soup bank: {len(bank) - len(kept)} of {len(bank)} items dropped for {model} ({cap} tokens)"
+        )
+    return kept
 
 
 def main(argv=None):
@@ -330,7 +448,8 @@ def main(argv=None):
     config, root = request["config"], Path(request["state_dir"])
     model = config["model"]["id"]
     device = "cuda"
-    bank, ledger = _bank(request["round_bank"]), soup_exam.UseLedger(root / "uses.jsonl")
+    bank = fit_bank(_bank(request["round_bank"]), model)  # the pool's token cap
+    ledger = soup_exam.UseLedger(root / "uses.jsonl")
     bank_source = None
     if config.get("exam", {}).get("source") == "current":
         from . import soup_current
@@ -353,7 +472,7 @@ def main(argv=None):
         ledger=ledger,
         cache=soup_grade.PredictionCache(root / "cache"),
         runner_for=lambda folder: soup_grade.production_runner(folder, device),
-        fetch_body=fetch_body,
+        fetch_body=functools.partial(fetch_body, pool=config["pool_id"]),
         chassis=d3.pinned_base_path(model=model),
         base=request["base"],
         bank_source=bank_source,

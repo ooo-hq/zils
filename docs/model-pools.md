@@ -1,10 +1,13 @@
 # Model pools
 
-Zils registers five d3 lineages: `d3-lite`, `d3-nano`, `d3-mini`, `d3-flash`
-and `d3`. Each improves against its own incumbent, with its own sealed draws,
-king history, allocation and exact model profiles. Registration does not make a
-pool available for training or serving. New pools start disabled and unallocated;
-qualification, channel configuration and healthy capacity are separate requirements.
+Zils runs four base pools, one per model size: `d3-lite` (0.8B), `d3-mini`
+(4.5B), `d3-flash` (9B) and `d3` (z3, 27B). Each is a [soup pool](#soup-pools)
+with its own bodies, rounds, house list, allocation and exact model profile.
+(The `d3-nano` lineage stays registered so older records stay readable; it has no
+pool.) Registration does not make a pool available for training or serving;
+qualification, channel configuration and healthy capacity are separate
+requirements. `zils/data/base-pools-launch.json` is the launch `base_pools`
+block for all four pools.
 
 The `d3` pool's pinned base is `vllm-sr/d3-ultra` (profile `d3-ultra-26b-v1`,
 `zils/d3-ultra-pins.json`), which replaced `vllm-sr/d3` (`d3-26b-v1`). It uses
@@ -40,8 +43,8 @@ distinct submissions to that pool, measured between commitment blocks (12 s per
 block). With the budgeted queue, a commitment inside the cooldown is refused and
 recorded on that hotkey's queue row; the miner commits again after it has passed.
 A retry or the confirmation run of an accepted submission is never refused. Fractions must
-sum to one. Disabled or unowned pools burn their fraction; another pool cannot
-inherit it. Last-five-distinct registered kings split each earned allocation.
+total at most one; an unassigned remainder burns. Disabled or unowned pools burn
+their fraction; another pool cannot inherit it. Last-five-distinct registered kings split each earned allocation.
 Burn publication checks that `burn_uid` is the subnet owner's uid.
 
 `base_pool_rounds` maps each enabled pool to `base_reference`, `base_round_dir`,
@@ -51,10 +54,53 @@ sealed draw. Runtime state goes under `base-pools/<pool>/base-tier`; prior legac
 state is preserved. Each pending validator round freezes the pool config and
 results. A changed config cannot replay that pending round.
 
+## Emission schedule
+
+A soup pool entry may add an opening block and a boost:
+
+```json
+"d3-flash": {
+  "type": "soup",
+  "model": "d3-flash-8.4b-v1",
+  "enabled": true,
+  "share": 0.20,
+  "opens_block": 7300000,
+  "boost": [{"share": 0.30, "blocks": 100800}, {"share": 0.25, "blocks": 100800}],
+  "house": "zils/data/soup-house-flash.json",
+  "schedule": {"deadline_utc": "12:00"}
+}
+```
+
+- `opens_block` is the chain block at which the pool opens, or `null` for a pool
+  that stays closed until a block is set. Before it the pool runs no rounds,
+  accepts no decision and pays nothing; its share burns. A pool without
+  `opens_block` is open.
+- `boost` (it needs `opens_block`) is a list of 1 to 8 steps paid in order from
+  the opening block: each pays `share` for `blocks` blocks (7,200 blocks is about
+  a day at 12 s per block), then the pool pays its own `share`.
+- The pools' own shares must total at most one, and so must the shares paid at
+  every block: a boost is paid out of budget that closed pools and the
+  unassigned remainder leave unpaid, never out of another pool's share. A
+  configuration that would overfill the budget at any block is refused at
+  startup, naming the block.
+- Shares depend only on the chain block. Each validator round freezes the block
+  of its chain snapshot into its `base-pools.json` (as `block`), and the published
+  weights use the shares at that block, so validators running the same
+  configuration agree on every pool's share. A configuration without any
+  `opens_block` or `boost` pays exactly as before and freezes no block.
+- Only soup pools take a schedule.
+
+The launch configuration gives lite 35% and mini 30% from the start, and flash
+20% and z3 10% once they open; 5% is unassigned and burns. Flash is boosted to
+30% for two weeks and 25% for two more; z3 to 15% for two weeks. Both opening
+blocks are `null` in `zils/data/base-pools-launch.json` and must be set to the
+same values on every validator before they open. z3 cannot open while flash is
+still boosted to 30%: 35 + 30 + 30 + 15 would exceed 100%.
+
 ## Soup pools
 
 A pool entry with `"type": "soup"` pays from daily soup rounds instead of a king
-history (omit `type` for a king pool). Each round admits `zilsb2` body
+history (omit `type` for a king pool). Each round admits the pool's body
 commitments, grades the pool's bodies alone and as uniform averages ("soups") on
 a seeded subset of a private round bank, and pays the soup's seats and the best
 solo body (the crown). The mechanism and its constants live in
@@ -114,7 +160,16 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
 
 `base_pool_rounds` names a soup pool with `round_bank` (the private bank, JSON
 list or JSONL of exam cases) and `base` (the vendor parent folder the body change
-is measured against). The chassis is the pool model's pinned parent.
+is measured against). The chassis is the pool model's pinned parent. Bank items
+longer than the pool's input cap are left out of its rounds.
+
+Each pool reads only the body commitments addressed to it: `zilsb2:…` for
+`d3-mini` and `zilsb3:<pool>:<body sha256>:<revision>:<repo>` for `d3-lite`,
+`d3-flash` and `d3`. Body parents, byte caps and download deadlines per pool are
+in `zils/bodies.py` (`BODY_POOLS`) and [mining](mining.md#four-pools). A
+validator grades the pools its `soup_grading` setting allows
+([validators](validators.md#soup-pools-hardware-disk-and-the-emission-schedule));
+a pool it does not grade burns its share in that validator's weights.
 
 ### Round items from Zils Current
 
@@ -253,7 +308,7 @@ is recorded in the private round record.
 Commitments are public on chain the moment they are made, and a public repo can
 be copied and committed by someone else before the deadline. To avoid
 front-running, upload the body to a **private** Hugging Face repo, commit
-`zilsb2:<body sha256>:<revision>:<repo>` while the repo is still private, then make
+the body (`zilsb2:…` or `zilsb3:<pool>:…`) while the repo is still private, then make
 the repo public before the round's commit deadline. Validators download at the
 round, after the deadline; a repo that is still private then fails the download
 and is retried in a later round.
@@ -268,7 +323,7 @@ It does not discover or enable live competitions; verify the accepted incumbent
 and allocation with the validator before training.
 
 The existing `zils1` commitment format is unchanged: one active candidate per
-hotkey. A hotkey's one commitment slot is shared with `zilsb2` soup bodies
+hotkey. A hotkey's one commitment slot is shared with soup bodies of every pool
 ([soup pools](#soup-pools)). The validator reads at most 16 KiB of metadata at the committed revision,
 resolves its exact parent, and refuses a stale or wrong-pool profile before weight
 downloads. Full download still verifies the committed checkpoint hash, files and

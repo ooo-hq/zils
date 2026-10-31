@@ -279,7 +279,7 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
         if (
             pools is None
             or not isinstance(pool_report, dict)
-            or set(pool_report) != {"config", "decisions"}
+            or set(pool_report) - {"block"} != {"config", "decisions"}
             or pool_report["config"] != model_pools.validate(pools)
         ):
             raise ValueError("pool report differs from the configured base_pools config")
@@ -381,7 +381,9 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
     tracks = None
     weights = adapter
     if pools is not None:
-        base, pool_record = model_pools.weights(pools, pool_report["decisions"], config["members"])
+        base, pool_record = model_pools.weights(
+            pools, pool_report["decisions"], config["members"], block=pool_report.get("block")
+        )
         share, burn = pools["share"], pools["burn_uid"]
         feature_share, feature_vector, feature_record = 0.0, {}, None
         if features is not None:

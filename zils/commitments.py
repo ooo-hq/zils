@@ -109,10 +109,12 @@ def revision_files(repo, revision, endpoint=None):
     }
 
 
-def download_files(claim, destination, names, listed, budget, endpoint=None):
+def download_files(claim, destination, names, listed, budget, endpoint=None, seconds=None):
     """Download `names` of the repo at the claim's revision into a new `destination` folder, within
-    `budget` bytes and the download deadline. Returns (bytes, start time)."""
+    `budget` bytes and the download deadline (`seconds`, default `DOWNLOAD_SECONDS`). Returns
+    (bytes, start time)."""
     endpoint = endpoint or HF_ENDPOINT
+    seconds = DOWNLOAD_SECONDS if seconds is None else seconds
     destination = Path(destination)
     destination.mkdir()
     started, total = time.monotonic(), 0
@@ -125,7 +127,7 @@ def download_files(claim, destination, names, listed, budget, endpoint=None):
         with (destination / name).open("xb") as output:
             # Resume short bodies twice; every byte still shares the same budget and deadline.
             for _ in range(3):
-                if time.monotonic() - started > DOWNLOAD_SECONDS:
+                if time.monotonic() - started > seconds:
                     raise OSError("artifact download deadline exceeded")
                 request = Request(url, headers={"Range": f"bytes={received}-"} if received else {})
                 with opener().open(request, timeout=30) as response:
@@ -141,7 +143,7 @@ def download_files(claim, destination, names, listed, budget, endpoint=None):
                         received += len(chunk)
                         if received > size:
                             raise ValueError("artifact exceeds its declared size")
-                        if time.monotonic() - started > DOWNLOAD_SECONDS:
+                        if time.monotonic() - started > seconds:
                             raise OSError("artifact download deadline exceeded")
                         output.write(chunk)
                 if received == size:

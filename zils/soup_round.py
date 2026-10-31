@@ -403,7 +403,10 @@ def _intake(
                 progress["bytes"] += _folder_bytes(partial)
             bodies.check_layout(partial, chassis)
             progress["claims"] += 1  # only a claim with a readable chassis layout uses a slot
-            bodies.validate_body(partial, chassis, hotkey=claim["hotkey"], base=base, sha256=sha)
+            bodies.validate_body(
+                partial, chassis, hotkey=claim["hotkey"], base=base, sha256=sha,
+                max_bytes=limits.get("max_body_bytes"),
+            )  # fmt: skip
             soup = tuple(s for s in state["members"] if s in known)
             reason = copies(sha, partial, earlier, soup=soup) if copies is not None else None
             if reason == "explained by earlier":
@@ -662,6 +665,7 @@ def run(
             )
             if k in config
         }
+        limits["max_body_bytes"] = bodies.max_bytes(pool_id)  # each pool's own body size
         new, rejected, refused, failed = _intake(
             state, snapshot, chassis=chassis, base=base, download=download, copies=copies,
             folder=folder, limits=limits, round_id=round_id,

@@ -226,3 +226,72 @@ class CommitBodyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("bittensor") and importlib.util.find_spec("kev"), "use .venv-kev"
+)
+class CommitBodyPoolTest(unittest.TestCase):
+    """`commit-body --pool`: lite, flash and z3 bodies, with their own parent, chassis and cap."""
+
+    setUp = CommitBodyTest.setUp
+    run_miner = CommitBodyTest.run_miner
+
+    def test_a_lite_body_commits_as_zilsb3_with_the_lite_pool(self):
+        code, out = self.run_miner("--pool", "d3-lite")
+        self.assertEqual(code, 0, out)
+        text = bodies.format_pool_commitment("d3-lite", self.sha256, self.rev, REPO)
+        self.assertTrue(text.startswith("zilsb3:d3-lite:"))
+        self.assertIn(f"commitment {text}", out)
+        self.assertIn("pool d3-lite", out)
+        code, out = self.run_miner("--pool", "d3", "--yes")
+        self.assertEqual(code, 0, out)
+        stored = testnet.read_commitment(self.chain, 579, self.hotkey, self.chain.block)
+        self.assertEqual(
+            stored["data"], bodies.format_pool_commitment("d3", self.sha256, self.rev, REPO)
+        )
+
+    def test_mini_stays_the_default_and_keeps_zilsb2(self):
+        code, out = self.run_miner("--pool", "d3-mini")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"commitment {self.text}", out)
+
+    def test_each_pool_downloads_its_own_chassis_and_parent(self):
+        from zils import d3, models
+
+        seen = []
+
+        def pinned(download=False, model=models.D3):
+            seen.append(("chassis", model))
+            return self.chassis
+
+        def snapshot_download(*, repo_id, revision, allow_patterns, **kwargs):
+            seen.append(("parent", repo_id, revision))
+            return str(self.base)
+
+        for pool, model in (
+            ("d3-lite", "d3-lite-0.8b-v1"),
+            ("d3-flash", "d3-flash-8.4b-v1"),
+            ("d3", "d3-ultra-26b-v1"),
+        ):
+            seen.clear()
+            args = type("Args", (), {"chassis": None, "base": None, "pool": pool})()
+            with (
+                patch.object(d3, "pinned_base_path", pinned),
+                patch("huggingface_hub.snapshot_download", snapshot_download),
+            ):
+                miner.body_references(args)
+            self.assertEqual(seen, [("chassis", model), ("parent", *bodies.parent(pool))])
+
+    def test_the_download_respects_the_pools_byte_cap(self):
+        listed = {
+            "zils-owner.json": {"size": 40, "sha256": None},
+            "model.safetensors": {"size": 3 * 1024**3, "sha256": None},
+        }
+        with patch("zils.commitments.revision_files", return_value=listed):
+            with self.assertRaisesRegex(ValueError, "over"):
+                miner.download_body(REPO, self.rev, self.hotkey, pool="d3-lite")
+            with (
+                patch("huggingface_hub.snapshot_download", return_value=str(self.body)),
+            ):
+                miner.download_body(REPO, self.rev, self.hotkey, pool="d3-flash")

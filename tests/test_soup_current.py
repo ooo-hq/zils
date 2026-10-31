@@ -506,6 +506,7 @@ class MainTest(unittest.TestCase):
         with (
             patch.object(soup_round, "run", run),
             patch.object(d3, "pinned_base_path", lambda model: tmp / "chassis"),
+            patch.object(soup_pool, "fit_bank", lambda bank, model, **kwargs: bank),
         ):
             soup_pool.main([str(path)])
         self.assertIsNone(seen["bank_source"]["fallback"])
@@ -537,6 +538,7 @@ class MainTest(unittest.TestCase):
         with (
             patch.object(soup_round, "run", lambda config, root, **kwargs: seen.update(kwargs)),
             patch.object(d3, "pinned_base_path", lambda model: tmp / "chassis"),
+            patch.object(soup_pool, "fit_bank", lambda bank, model, **kwargs: bank),
         ):
             soup_pool.main([str(path)])
         self.assertIsNone(seen["bank_source"])
