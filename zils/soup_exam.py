@@ -66,6 +66,10 @@ class UseLedger:
         rows = (json.loads(line) for line in self.path.read_text().splitlines() if line)
         return {row["round"]: row["ids"] for row in rows}
 
+    def rounds(self):
+        """[(round id, item ids)] in the order the rounds were recorded."""
+        return list(self._rounds().items())
+
     def record(self, round_id, ids):
         """Count each id once for this round; a round already recorded adds nothing."""
         if round_id in self._rounds():

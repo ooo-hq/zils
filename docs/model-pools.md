@@ -118,8 +118,8 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
 `schedule`, and optionally `subset_size` (default 3,000), `screen_size` (300),
 `max_pool` (20, at least 5), `max_new_per_round` (6), `max_claims_per_round`
 (12), `max_download_bytes_per_round` (60 GiB), `failed_claim_backoff_rounds` (3),
-`others_max` (0.3), `house_mix_max` (0.05), `max_decision_age_days` (3) and
-`sketch_seed`:
+`others_max` (0.3), `house_mix_max` (0.05), `max_decision_age_days` (3),
+`decision_rounds` (3, from 1 to 7) and `sketch_seed`:
 
 ```json
 "d3-mini": {
@@ -157,6 +157,31 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
   a report. **It must never change once set:** sketches of pruned bodies cannot be
   remade, so a round whose seed differs from the pool's recorded seed stops with
   an error until the original seed is restored.
+
+- `decision_rounds` sets how many rounds' items each seat and crown decision is
+  scored on. A body's measured gain moves by about 0.4 to 0.6 points from one
+  3,000-item subset to the next, more than the 0.3-point margin, so a single
+  subset seats a body with no real gain on a large share of nights. With the
+  default of 3, the round scores every pool body, every soup it tries, each
+  leave-one-out soup, the current soup (the crown bar) and the chassis baseline
+  on the union of its own subset and the subsets of the validator's last two
+  finished rounds that drew items. The greedy margin, the contribution floor,
+  the house-mix rule and the crown bar all use those pooled scores. The earlier
+  items are read from each round's own record of the cases it drew
+  (`rounds/<round id>/subset-cases.json`), not from the bank, so an item that has
+  since left the bank still counts. An earlier item is dropped, for every body
+  alike, if the use ledger has retired it since or if the current bank holds a
+  different case under the same id. A round that failed, was skipped or has no
+  record of its cases is not pooled. Predictions are cached per body or soup and
+  item, so only missing rows are graded: in practice the soups the round tries,
+  and new bodies on the earlier items. The use ledger still counts only each
+  round's own subset. If the estimated grading would not finish within the
+  round's 6-hour deadline (less 30 minutes), the round pools fewer rounds, down
+  to its own subset alone. The private round record names the pooled rounds, the
+  item count, any rounds that could not be pooled and any fallback. The public
+  record carries the pooled round ids and item count. With `decision_rounds` 1 a
+  round behaves exactly as a single-subset round. Cached soup predictions are
+  kept for at least `decision_rounds` rounds.
 
 `base_pool_rounds` names a soup pool with `round_bank` (the private bank, JSON
 list or JSONL of exam cases) and `base` (the vendor parent folder the body change
@@ -233,11 +258,18 @@ The same record is saved as `bank-source.json`, next to `subset.json` and
 three. The Current items of the last eight rounds stay loadable after they leave
 the freshness window, so a round can still score earlier rounds' items.
 
+Pooled decisions (`decision_rounds`) work the same way on a Current exam: each
+earlier round's items come from its `subset-cases.json`, item by item, so a bank
+that changes every day still pools. Cached predictions are scoped to the round
+bank's hash, though. On a day the bank changes, each pool body and soup is graded
+again on the earlier rounds' items, not only on the new subset. That is about
+twice the grading of a fixed bank. The deadline fallback above still bounds it.
+
 Payout: the latest round's public record pays each seated hotkey its seat
 weight and the crown its crown weight, as fractions of the pool's share. The
 crown (20%) goes to the best non-house solo body only if its solo score beats
-every house body's solo score and the current soup's score on the same subset
-by at least the greedy margin (0.3 points); otherwise it burns. If the current
+every house body's solo score and the current soup's score on the same pooled
+items by at least the greedy margin (0.3 points); otherwise it burns. If the current
 soup cannot be graded that round, the crown burns too. Before the first
 soup only the house bodies set the bar. Whatever a round does not pay goes to
 `burn_uid`; before the first round the whole share burns. A failed round keeps
@@ -268,7 +300,8 @@ rounds loses its folder (its hash and sketch stay); cached soup predictions
 unused for three rounds are deleted.
 When the round bank has too few unretired items, the round is skipped and logged.
 Only the public record (members, rates, rounded contributions, category scores and
-hashes of the subset, predictions and soup) enters the published report.
+hashes of the subset, predictions and soup, all on the round's own subset, plus
+the pooled round ids and item count) enters the published report.
 
 ### Submitting a body
 

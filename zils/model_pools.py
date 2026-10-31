@@ -27,6 +27,7 @@ SOUP_OPTIONAL = {
     "others_max": 0.3,
     "house_mix_max": 0.05,
     "failed_claim_backoff_rounds": 3,
+    "decision_rounds": 3,
 }
 
 
@@ -192,6 +193,8 @@ def validate_soup(entry):
         raise ValueError("soup max_download_bytes_per_round must be positive")
     if not 0 <= sizes["failed_claim_backoff_rounds"] <= 30:
         raise ValueError("soup failed_claim_backoff_rounds must be in [0, 30]")
+    if not 1 <= sizes["decision_rounds"] <= 7:
+        raise ValueError("soup decision_rounds must be in [1, 7]")
     if not 1 <= sizes["max_decision_age_days"] <= 30:
         raise ValueError("soup max_decision_age_days must be in [1, 30]")
     exam = soup_current.validate(entry["exam"]) if "exam" in entry else None

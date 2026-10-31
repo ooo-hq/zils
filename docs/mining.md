@@ -449,7 +449,11 @@ Validators run one soup round per day for each open soup pool:
 4. **Pool:** new bodies are screened on a few hundred items; the pool is the
    current members, the house ingredients, the best screened new bodies and the
    best past single bodies, at most 20.
-5. **Solo:** each pool body is graded alone on the chassis.
+5. **Solo:** each pool body is graded alone on the chassis. Every score from here
+   on (solo, greedy, contribution, crown) is on the items of this round and the
+   validator's last two finished rounds pooled together (`decision_rounds`, default
+   3), because one subset's noise is larger than the 0.3-point margin. A new body is
+   graded on the earlier rounds' items too.
 6. **Greedy soup:** starting from the best single body, add the next best only if
    the soup's score rises by at least **0.3** points; stop at **5** members.
 7. **Contribution:** each member's leave-one-out effect on the soup's score.
@@ -465,7 +469,7 @@ earning at once.
   seat share burns.
 - **Crown:** the round's best single body that is not a house ingredient takes the
   20%, multiplied by its rate, only if it beats every house ingredient alone and
-  the current soup by at least **0.3** points on the round's subset; otherwise the
+  the current soup by at least **0.3** points on the pooled items; otherwise the
   crown burns. Since a soup usually beats its members, expect the crown to burn in
   most rounds; it pays for a body that is better than the soup by itself.
 - **Rates:** **1.0** for a trainer's body; **0.25** for a scout's body, one within a
@@ -496,7 +500,8 @@ exact blocks are in each validator's configuration and its published report.
 ### What validators publish
 
 Each round's public record lists the soup members (hotkey, body hash, rate), their
-rounded contributions, per-category soup scores, and sha256 hashes of the item
+rounded contributions, per-category soup scores, the rounds whose items the
+decisions were scored on and their item count, and sha256 hashes of the item
 subset, the per-item predictions and the soup weights, so a round can be audited
 against the validator's private record. Exam items, labels and per-family scores
 are never published. The round bank is private, so outside re-grading of a round
