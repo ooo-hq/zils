@@ -445,6 +445,11 @@ def build(record, max_tokens=4096):
         "licence": spec["licence"],
         "content_sha256": content_sha256(record["stream"], text),
     }
-    if "outcome_at" in record:
-        case["outcome_at"] = record["outcome_at"]
+    # outcome_at: when the outcome happened where the source records it (a close or merge time,
+    # "event"); otherwise when this tool observed it (a revert tag or a still-open question at
+    # the resolution pass, "checked").
+    if record.get("outcome_at"):
+        case["outcome_at"], case["outcome_time"] = record["outcome_at"], "event"
+    else:
+        case["outcome_at"], case["outcome_time"] = record["resolved_at"], "checked"
     return case

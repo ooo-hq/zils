@@ -436,6 +436,19 @@ def _parser():
     nightly.add_argument("--publishable", action="store_true")
     _export_options(nightly)
     _overlap_options(nightly)
+    check_ = commands.add_parser(
+        "crosscheck", help="proof and cross-check gates on a dated export folder"
+    )
+    check_.add_argument("--folder", required=True, help="DIR/<date>/ with items.jsonl")
+    check_.add_argument("--sample", type=int, default=100, help="items checked per stream")
+    check_.add_argument("--threshold", type=float, default=0.97, help="agreement a stream needs")
+    check_.add_argument("--seed", type=int, default=0)
+    nightly.add_argument(
+        "--crosscheck-sample",
+        type=int,
+        default=20,
+        help="items cross-checked per stream in each export (0 skips; failing streams pause)",
+    )
     grade_ = commands.add_parser("grade", help="score a dated export with a checkpoint")
     grade_.add_argument("--items", required=True, help="DIR/<date>/items.jsonl")
     grade_.add_argument("--model", required=True, help="d3-family checkpoint folder")
@@ -484,6 +497,26 @@ def main(argv=None, http=None, now=None):
     now = now or datetime.now(UTC)
     if args.command == "grade":
         return _grade(args)
+    if args.command == "crosscheck":
+        from . import current_check
+
+        report = current_check.run(
+            args.folder,
+            http or Http(),
+            sample=args.sample,
+            seed=args.seed,
+            threshold=args.threshold,
+            now=now,
+        )
+        summary = {
+            "folder": args.folder,
+            "proof_rejected": report["proof_rejected"],
+            "excluded": report["excluded"],
+            "kept": report["kept"],
+            "agreement": {s: v["agreement"] for s, v in report["streams"].items()},
+        }
+        print(json.dumps(summary))
+        return 0
     if args.command == "nightly":
         from . import current_nightly
 
@@ -506,6 +539,7 @@ def main(argv=None, http=None, now=None):
             afd_first_days=args.afd_first_days,
             se_sites=args.se_site,
             se_pages=args.se_pages,
+            crosscheck_sample=args.crosscheck_sample,
             max_age_days=args.max_age_days,
             export_options={**_export_settings(args), "publishable": args.publishable},
         )
