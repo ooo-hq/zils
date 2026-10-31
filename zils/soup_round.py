@@ -299,7 +299,7 @@ def _folder_bytes(path, pattern="*"):
 
 def _intake(
     state, snapshot, *, chassis, base, download, copies, folder, limits=None, progress=None,
-    save=lambda progress: None, round_id=None,
+    save=lambda progress: None, round_id=None, residual=None,
 ):  # fmt: skip
     """Admit new zilsb2 commitments in commitment order. Returns (new, rejected, refused, failed).
 
@@ -314,7 +314,9 @@ def _intake(
     and the bytes downloaded (``max_download_bytes_per_round``); later claims wait for the next
     round. Only a claim that downloaded weight bytes counts toward the claims cap, so dead repos
     cannot starve intake; a claim whose download fails in ``TRANSPORT_STRIKES`` separate rounds
-    (``round_id``) is retired as failed (the claim, never the hash). ``progress`` holds the outcome of each claim so far and is passed to ``save`` after every
+    (``round_id``) is retired as failed (the claim, never the hash). ``residual(sha256, folder, *,
+    soup)``, when given, measures an admitted body's share beyond the house bodies, soup and
+    release (``soup_copies.base_residual``), kept as ``base_residual`` for its rate. ``progress`` holds the outcome of each claim so far and is passed to ``save`` after every
     claim, so a round cut off by its deadline resumes without downloading a claim twice.
     """
     from . import bodies
@@ -411,6 +413,9 @@ def _intake(
             bodies.validate_body(partial, chassis, hotkey=claim["hotkey"], base=base, sha256=sha)
             soup = tuple(s for s in state["members"] if s in known)
             reason = copies(sha, partial, earlier, soup=soup) if copies is not None else None
+            measured = None
+            if not reason and residual is not None:
+                measured = residual(sha, partial, soup=soup)
             if reason == "explained by earlier":
                 # A judgement on today's pool, not on the weights: never a hash ban.
                 refused[uid] = f"copy: {reason}; retried when the claim changes or one of the "
@@ -439,6 +444,8 @@ def _intake(
                     "revision": claim["revision"], "block": claim["block"], "house": False,
                     "solo": None,
                 }  # fmt: skip
+                if measured is not None:
+                    new[sha]["base_residual"] = measured
         finally:
             shutil.rmtree(partial, ignore_errors=True)
         progress["done"].append(uid)
@@ -573,7 +580,7 @@ class _Sketches:
         self.root, self.base, self.names, self.seed = Path(root), base, names, seed
         self.tag = sketch_tag(seed)
 
-    def __call__(self, sha, folder):
+    def __call__(self, sha, folder, *, trusted=False):
         import numpy as np
 
         from . import soup_copies
@@ -584,7 +591,7 @@ class _Sketches:
                 if str(stored["tag"]) != self.tag:
                     raise ValueError(SEED_CHANGED)
                 return stored["sketch"]
-        value = soup_copies.sketch(folder, self.base, self.names, seed=self.seed)
+        value = soup_copies.sketch(folder, self.base, self.names, seed=self.seed, trusted=trusted)
         self.root.mkdir(parents=True, exist_ok=True)
         partial = path.with_name(f".{sha}.partial.npz")
         np.savez(partial, sketch=value, tag=np.array(self.tag))
@@ -630,7 +637,10 @@ def run(
     its member hashes) before screening; ``twins(rows, other_rows) -> bool`` rejects a behavioural
     twin of a pool body on the screen items (default ``soup_copies.is_twin``);
     ``rates(sha256, info, house) -> 0.0 | 0.25 | 1.0`` sets each pool body's pay rate (default
-    ``soup_rates.rate`` against the house sketches; without ``base``, house 0.0 and others 1.0).
+    ``soup_rates.rate`` against the house sketches and the body's ``base_residual``; without
+    ``base``, house 0.0 and others 1.0). The release is the chassis's own body (the pool's served
+    model), so the default checks treat the house bodies, the current soup and the chassis body
+    as allowed bases.
 
     ``bank_source`` (``soup_current.prepare``'s record of where the subset's items came from) is
     stored in the private round record when given.
@@ -723,14 +733,34 @@ def run(
         def sketch(sha):
             return sketches(sha, folder(sha))
 
+        # The release is the chassis's body; its sketch is keyed by the pinned files, so a new
+        # release (a new pinned parent) is sketched once.
+        pinned = hashlib.sha256(json.dumps(d3.pins(model)["files"], sort_keys=True).encode())
+        release_key = f"release-{pinned.hexdigest()[:32]}"
+
+        def release():
+            return sketches(release_key, chassis, trusted=True)
+
+        def soup_sketch(soup):
+            members = [sketch(s) for s in soup]
+            return sum(members) / len(members) if members else None
+
+        def residual(sha, body, *, soup):
+            return soup_copies.base_residual(
+                sketches(sha, body),
+                house=[sketch(s) for s in sorted(house)],
+                soup=soup_sketch(soup),
+                release=release(),
+            )
+
         if copies is None:
 
             def copies(sha, body, earlier, *, soup):
-                members = [sketch(s) for s in soup]
                 return soup_copies.is_copy(
                     sketches(sha, body),
                     [sketch(s) for s in earlier],
-                    soup=sum(members) / len(members) if members else None,
+                    soup=soup_sketch(soup),
+                    release=release(),
                     house=[sketch(s) for s in sorted(house)],
                     # Explained shares count only earlier bodies still in the pool.
                     explained=[sketch(s) for s in earlier if not known.get(s, {}).get("pruned")],
@@ -749,8 +779,11 @@ def run(
                     hotkey=info["hotkey"],
                     house_sketches=[sketch(s) for s in sorted(house)],
                     house_mix_max=config.get("house_mix_max", soup_rates.HOUSE_MIX_MAX),
+                    base_residual=info.get("base_residual"),
                 )
 
+    else:
+        residual = None
     twins = soup_copies.is_twin if twins is None else twins
     rates = rates or default_rate
 
@@ -768,7 +801,7 @@ def run(
         }
         new, rejected, refused, failed = _intake(
             state, snapshot, chassis=chassis, base=base, download=download, copies=copies,
-            folder=folder, limits=limits, round_id=round_id,
+            folder=folder, limits=limits, round_id=round_id, residual=residual,
             progress=_read_json(round_dir / "intake-progress.json", None),
             save=lambda progress: _write_json(round_dir / "intake-progress.json", progress),
         )  # fmt: skip
