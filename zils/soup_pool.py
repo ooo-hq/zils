@@ -448,8 +448,8 @@ def main(argv=None):
     config, root = request["config"], Path(request["state_dir"])
     model = config["model"]["id"]
     device = "cuda"
-    bank = fit_bank(_bank(request["round_bank"]), model)  # the pool's token cap
-    ledger = soup_exam.UseLedger(root / "uses.jsonl")
+    bank, ledger = _bank(request["round_bank"]), soup_exam.UseLedger(root / "uses.jsonl")
+    bank = fit_bank(bank, model)  # items within the pool's token cap
     bank_source = None
     if config.get("exam", {}).get("source") == "current":
         from . import soup_current
