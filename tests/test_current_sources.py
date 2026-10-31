@@ -325,6 +325,14 @@ class PoliteApiTest(unittest.TestCase):
         self.assertEqual((status, body), (200, {"ok": 1}))
         self.assertIn(7.0, waits)
 
+    def test_a_rate_limit_widens_the_clients_gap(self):
+        answers = [(429, {}, {"retry-after": "1"}), (200, {}, {})]
+        http = FakeHttp(lambda url, params: answers.pop(0))
+        http.gap = 0.5
+        with patch.object(current_wikimedia, "sleep", lambda s: None):
+            current_wikimedia._api(http, "https://x/api.php", {})
+        self.assertEqual(http.gap, 1.0)
+
     def test_requests_are_spaced_and_a_lasting_limit_stops_the_pass(self):
         http = FakeHttp(lambda url, params: (429, {}, {}))
         waits = []
@@ -349,7 +357,7 @@ class PoliteApiTest(unittest.TestCase):
                 return Response()
 
         waits = []
-        times = iter([0.0, 0.0, 0.1, 0.1, 0.1, 0.1])
+        times = iter([0.0, 0.0, 0.1, 0.1, 0.1, 0.1, 0.2, 0.2])
         with (
             patch.object(current.time, "sleep", waits.append),
             patch.object(current.time, "monotonic", lambda: next(times)),
@@ -358,7 +366,8 @@ class PoliteApiTest(unittest.TestCase):
             http.get_json("https://en.wikipedia.org/w/api.php")
             http.get_json("https://en.wikipedia.org/w/api.php")
             http.get_json("https://www.wikidata.org/w/api.php")
-        self.assertEqual(len(waits), 1)
+            http.get_json("https://api.stackexchange.com/2.3/info")
+        self.assertEqual(len(waits), 2, "Wikimedia hosts share one rate limit")
         self.assertAlmostEqual(waits[0], 0.4)
         self.assertIn("zils-current/", Session.headers["User-Agent"])
 

@@ -36,7 +36,8 @@ DEFAULT_DIR = ROOT / "runs" / "current"
 MAX_AGE_DAYS = 14
 WIKI_MINUTES = 10  # stream minutes per hour: about 3,000 balanced edits a day over the wiki list
 NEGATIVES_PER_POSITIVE = 3
-GAP_SECONDS = 0.25  # between requests to one host
+GAP_SECONDS = 0.5  # between requests to one host (or to Wikimedia as a whole)
+WIKIMEDIA_HOSTS = ("wikipedia.org", "wikidata.org", "wikimedia.org", "mediawiki.org")
 CHECKPOINT = 2000  # outcomes between saves during a resolution pass
 CONTACT = "https://github.com/ooo-hq/zils"
 FILES = ("pending.jsonl", "resolved.jsonl", "dropped.jsonl")
@@ -69,6 +70,8 @@ class Http:
     def _pace(self, url):
         """Space requests to one host at least `gap` seconds apart (serial, polite clients)."""
         host = urlsplit(url).netloc
+        if host.endswith(WIKIMEDIA_HOSTS):
+            host = "wikimedia"  # one rate limit per client across Wikimedia's sites
         moment = time.monotonic()
         if host in self.last and moment - self.last[host] < self.gap:
             time.sleep(self.gap - (moment - self.last[host]))

@@ -45,7 +45,8 @@ LINENO = re.compile(r'<td[^>]*class="diff-lineno"[^>]*>(.*?)</td>', re.S)
 # Wikidata edits made in bulk by tools; their outcome says little about the edit itself.
 TOOL_EDIT = re.compile(r"toollabs:|quickstatements|#openrefine|#mix'n'match|\[\[:toollabs", re.I)
 DEFAULT_WIKIS = (*WIKIS, WIKIDATA)
-LIMIT_RETRIES, LIMIT_WAIT = 4, 60  # HTTP 429: retries, and the wait without Retry-After
+LIMIT_RETRIES, LIMIT_WAIT = 8, 60  # HTTP 429: retries, and the wait without Retry-After
+MAX_GAP = 5.0  # the widest gap between requests after repeated rate limits
 sleep = time.sleep
 
 
@@ -204,7 +205,10 @@ def _api(http, url, params):
             if limited >= LIMIT_RETRIES:
                 raise RateLimited("HTTP 429")
             limited += 1
-            sleep(float(headers.get("retry-after") or LIMIT_WAIT * limited))
+            if hasattr(http, "gap"):  # slow this client down for the rest of the run
+                http.gap = min(http.gap * 2, MAX_GAP)
+            wait = float(headers.get("retry-after") or LIMIT_WAIT)
+            sleep(max(wait, min(2**limited, LIMIT_WAIT)))
             continue
         error = (body or {}).get("error") or {}
         if error.get("code") != "maxlag":
