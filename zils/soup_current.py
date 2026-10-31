@@ -16,7 +16,7 @@ The rules for the Current part:
   has been drawn in fewer than ``max_uses`` earlier rounds (the use ledger), and fits the pool
   model's input cap.
 * The draw takes ``current_items`` items. No stream may hold more than ``stream_max`` of them, and at
-  least ``min_streams`` streams must contribute. Within a stream the labels are balanced. Newer
+  least ``min_streams`` streams must contribute. Yes/no streams keep balanced labels. Newer
   resolution days come first. Within a day, items are ranked by an HMAC of the item id under this
   validator's local secret (``soup_round.sketch_seed``), because anyone can rebuild Current items.
 * If the Current part cannot meet these rules, the whole round falls back to the fixed bank. The
@@ -239,7 +239,9 @@ def draw(items, secret, settings):
         tag = hmac.new(secret, item["id"].encode(), hashlib.sha256).digest()
         return (-int(day.replace("-", "")), tag)
 
-    def balanced(labels):  # how many items a stream can give with labels kept balanced
+    def balanced(labels):  # how many items a stream can give; yes/no labels are kept balanced
+        if next(iter(labels.values()))[0]["question"]["type"] != "noul":
+            return sum(map(len, labels.values()))  # choice and score are chance-corrected
         floor = min(len(rows) for rows in labels.values())
         return sum(min(len(rows), floor) for rows in labels.values())
 

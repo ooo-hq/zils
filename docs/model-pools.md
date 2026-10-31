@@ -231,7 +231,7 @@ Each round's subset (`subset_size` items, 3,000 by default) has two parts:
     - earlier rounds drew it fewer than `max_uses` times (the use ledger);
     - with the question, it fits the pool model's input cap (8,192 tokens for
       d3-mini). The estimate is the same one Zils Current uses.
-  - Each stream's labels are balanced. No stream may hold more than `stream_max`
+  - Yes/no streams keep their labels balanced. No stream may hold more than `stream_max`
     of the part, and at least `min_streams` streams must contribute.
   - Newer resolution days are drawn first. Within a day, items are ranked under
     the validator's private `sketch_seed`, because anyone can rebuild Current

@@ -630,3 +630,16 @@ class AllCellsTest(unittest.TestCase):
         _, record = f.prepare()
         self.assertIsNone(record["fallback"])
         self.assertEqual(len(f.subset()), 400)
+
+
+class ChoiceBalanceTest(unittest.TestCase):
+    def test_choice_and_score_streams_are_not_cut_to_their_rarest_label(self):
+        resolved = DEADLINE - timedelta(days=1)
+        rows = [item("gh-type", i, resolved, label="A") for i in range(10)]
+        rows += [item("gh-type", 10 + i, resolved, label="B") for i in range(2)]
+        rows += [item("gh-merge", i, resolved, label="true") for i in range(10)]
+        rows += [item("gh-merge", 10 + i, resolved, label="false") for i in range(2)]
+        settings = {"current_items": 100, "min_items": 1, "min_streams": 2, "stream_max": 1.0}
+        _, counts = soup_current.draw(rows, b"k", settings)
+        self.assertEqual(counts["gh-type"]["drawn"], 12)  # a choice stream keeps every item
+        self.assertEqual(counts["gh-merge"]["labels"], {"false": 2, "true": 2})  # yes/no balanced
