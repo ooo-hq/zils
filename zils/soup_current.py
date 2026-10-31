@@ -320,6 +320,33 @@ def _merge(bank, extra):
     return list(by_id.values())
 
 
+def _parts(items, bank, secret, settings, *, size, seed, retired):
+    """(Current part, its stream counts, the cells it covers, bank part) filling ``size`` items.
+
+    In the cells the Current part covers, its streams replace the fixed bank's families. When the
+    rest of the bank cannot fill the remainder (Current covers most or all cells), the Current
+    part grows to take the remainder, up to the whole subset."""
+    from . import soup_exam
+
+    target = min(settings["current_items"], size)
+    for _ in range(4):  # a larger draw can only cover more cells, so this settles quickly
+        current, streams = draw(items, secret, {**settings, "current_items": target})
+        cells = sorted({(c["category"], c["block"]) for c in current})
+        rest = [c for c in bank if (c.get("category"), c.get("block")) not in set(cells)]
+        need = size - len(current)
+        free = sum(c["id"] not in retired for c in rest)
+        if need <= free or target >= size:
+            break
+        target = size - free
+    if need > 0:
+        part = soup_exam.subset(rest, seed, need, exclude=retired, whole=False)
+    elif need == 0:
+        part = []
+    else:
+        raise ValueError("internal: the Current part is larger than the subset")
+    return current, streams, cells, part
+
+
 def prepare(config, state_dir, *, round_id, block_hash, bank, ledger, log=print):
     """(bank for ``soup_round.run``, bank-source record) for a pool whose exam source is current.
 
@@ -374,11 +401,9 @@ def prepare(config, state_dir, *, round_id, block_hash, bank, ledger, log=print)
         secret = hmac.new(
             soup_round.sketch_seed(config, state_dir), b"current-draw:" + seed, hashlib.sha256
         ).digest()
-        current, streams = draw(loaded["items"], secret, settings)
-        cells = sorted({(c["category"], c["block"]) for c in current})
-        # In the cells the Current part covers, its streams replace the fixed bank's families.
-        rest = [c for c in bank if (c.get("category"), c.get("block")) not in set(cells)]
-        part = soup_exam.subset(rest, seed, size - len(current), exclude=retired, whole=False)
+        current, streams, cells, part = _parts(
+            loaded["items"], bank, secret, settings, size=size, seed=seed, retired=retired
+        )
         chosen = sorted([*part, *current], key=lambda c: c["id"])
         base_metrics.baselines(chosen)
         record.update(

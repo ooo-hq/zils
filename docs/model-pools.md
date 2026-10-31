@@ -240,6 +240,9 @@ Each round's subset (`subset_size` items, 3,000 by default) has two parts:
   Each Current stream is a family in its category and block cell of the base
   score. In the cells the Current part covers, its streams replace the bank's
   families. The bank fills every other cell, so the score keeps all ten cells.
+  When the bank's remaining cells cannot fill the rest of the subset, the
+  Current part grows to take it. If Current streams cover every cell, the
+  whole subset comes from Current.
 
 If the Current part cannot meet these rules (too few streams, fewer than
 `min_items` items, or an unreadable bank), the whole round draws from
