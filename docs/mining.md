@@ -473,11 +473,14 @@ earning at once.
   empty at launch), and for a house mix, a body whose change from Qwen is almost
   entirely a mix of house ingredients' changes (less than 5% of it is left over;
   real fine-tunes of a house ingredient leave about 10%); **0** for house
-  ingredients, the open decision models of the pool's size already public at
-  launch, which the pool includes unpaid. The house lists are in `zils/data/`:
-  `soup-house.json` (mini), `soup-house-lite.json` (`vllm-sr/d3-lite` and
-  `internlm/Intern-Decision-0.8B`), `soup-house-flash.json` (`vllm-sr/d3-flash`)
-  and `soup-house-z3.json` (`vllm-sr/d3-ultra`).
+  ingredients, the open Qwen3.5-4B decision models already public at launch, which
+  the pool includes unpaid.
+
+Each pool has its own house ingredients, the open decision models of its size
+already public at launch, listed in `zils/data/`: `soup-house.json` (mini),
+`soup-house-lite.json` (`vllm-sr/d3-lite` and `internlm/Intern-Decision-0.8B`),
+`soup-house-flash.json` (`vllm-sr/d3-flash`) and `soup-house-z3.json`
+(`vllm-sr/d3-ultra`).
 
 Every unearned part burns to the subnet owner's uid, as in the base tier. Until
 miners submit new bodies, most of the pool's share burns.
