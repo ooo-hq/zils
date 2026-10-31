@@ -162,6 +162,24 @@ class HouseMixTest(unittest.TestCase):
         self.assertEqual(self.rate(tuned, house_mix_max=0.06), soup_rates.SCOUT_RATE)
         self.assertEqual(self.rate(tuned, house_mix_max=0.0), soup_rates.TRAINER_RATE)
 
+    def test_a_body_almost_all_soup_or_release_at_intake_is_paid_as_a_mix(self):
+        # base_residual: the share of the body's change left after fitting the house bodies, the
+        # soup and the release, measured when the body was admitted.
+        far = 5 * self.e[5]  # far from the house: the house-only rule would pay it as a trainer
+        self.assertEqual(self.rate(far), soup_rates.TRAINER_RATE)
+        self.assertEqual(self.rate(far, base_residual=0.01), soup_rates.SCOUT_RATE)
+        self.assertEqual(self.rate(far, base_residual=0.05), soup_rates.TRAINER_RATE)
+        self.assertEqual(
+            self.rate(far, base_residual=0.04, house_mix_max=0.0), soup_rates.TRAINER_RATE
+        )
+
+    def test_a_fine_tune_of_the_soup_or_release_is_a_trainer(self):
+        self.assertEqual(self.rate(5 * self.e[5], base_residual=0.10), soup_rates.TRAINER_RATE)
+
+    def test_a_house_mix_stays_a_scout_whatever_its_base_residual(self):
+        average = (self.sketches[0] + self.sketches[1]) / 2
+        self.assertEqual(self.rate(average, base_residual=0.5), soup_rates.SCOUT_RATE)
+
     def test_an_exact_house_hash_stays_unpaid(self):
         got = soup_rates.rate(
             HOUSE_HASH, self.sketches[0], house=self.house, known=[], hotkey=HOTKEY,

@@ -61,6 +61,7 @@ def rate(
     cosine_scout=COSINE_SCOUT,
     house_sketches=(),
     house_mix_max=HOUSE_MIX_MAX,
+    base_residual=None,
 ) -> float:
     """HOUSE_RATE for a house body hash; SCOUT_RATE when the sketch's cosine to any known public model is at
     least `cosine_scout`; else TRAINER_RATE. `house` holds registry entries or hashes; `known` holds
@@ -71,11 +72,16 @@ def rate(
 
     A house mix is paid as a scout: a body whose change from the base is almost entirely a
     non-negative mix of the house bodies' changes (`house_sketches`), with a residual share of its
-    squared norm under `house_mix_max`. A light fine-tune leaves more than that and is a trainer's."""
+    squared norm under `house_mix_max`. A light fine-tune leaves more than that and is a trainer's.
+    So is a body whose `base_residual` (``soup_copies.base_residual`` against the house bodies, the
+    soup and the release, measured when it was admitted) is under `house_mix_max`: a near-pure
+    re-weighting of the soup or release. A real fine-tune of either keeps the trainer rate."""
     house_hashes = _house_hashes(house)
     if body_sha256 in house_hashes:
         return HOUSE_RATE
     if house_sketches and 1 - explained_share(sketch, list(house_sketches)) < house_mix_max - 1e-9:
+        return SCOUT_RATE
+    if base_residual is not None and base_residual < house_mix_max - 1e-9:
         return SCOUT_RATE
     for entry in known:
         if entry.get("body_sha256") in house_hashes:

@@ -314,21 +314,34 @@ repo) fails only that hotkey's commitment of that repo revision; a download that
 times out is retried next round. The first valid commitment of a hash wins.
 
 Fine-tunes are welcome, including fine-tunes of house models, the current soup
-or the release; they are paid at the trainer rate. A house mix is paid at the
-scout rate (0.25): a body whose change from the base, fitted on the house
-bodies' changes (non-negative least squares on the sketches), leaves a residual
-share under `house_mix_max` (default 0.05, settable from 0 to 0.5). The dry
-run's two real fine-tunes of a house body left about 0.10 to 0.12. The copy check rejects a
-body that is a near-exact copy (cosine at least 0.999 between weight-change
-sketches) of an earlier body by another hotkey, a house body, the current soup
-or the release. The body is also fitted on earlier other-hotkey bodies and
-house bodies together; if the other hotkeys' bodies add
-`others_max` (default 0.3, settable from 0.1 to 0.9) or more of the body's
-squared norm beyond what the house bodies explain alone, it is a copy. So
-merging another hotkey's body with a house body (or averaging other hotkeys'
-bodies) is rejected, while a fine-tune of a house body, two independent
-fine-tunes of the same house body, or a merge with your own earlier bodies are
-not. A behavioural twin of a pool body is also refused.
+or the release (the pool's served model, whose body is the chassis body); they
+are paid at the trainer rate. These three are the allowed bases: what a body
+changes beyond them is its own work.
+
+The copy check rejects a body that is a near-exact copy (cosine at least 0.999
+between weight-change sketches) of an earlier body by another hotkey, a house
+body, the current soup or the release. The body is also fitted (non-negative
+least squares on the sketches) on the allowed bases alone, and on the allowed
+bases plus earlier other-hotkey bodies. If those other bodies explain
+`others_max` (default 0.3, settable from 0.1 to 0.9) or more of the part the
+allowed bases leave unexplained, it is a copy. The soup is mostly seated miners'
+bodies, so a fine-tune of the soup is still not refused because those miners'
+bodies resemble it. A near-copy of another hotkey's body, a merge of it with a
+house body, and a re-weighted mix of the seated bodies are all rejected. A
+fine-tune of a house body, two independent fine-tunes of the same house body,
+and a merge with your own earlier bodies are not. On the weight changes of four
+public 4B decision models and two fine-tunes of one of them, independent pairs
+scored at most 0.10 on this measure, and copies and re-weighted mixes scored
+0.36 or more. A behavioural twin of a pool body is also refused.
+
+A house mix is paid at the scout rate (0.25): a body whose change from the base,
+fitted on the house bodies' changes, leaves a residual share under
+`house_mix_max` (default 0.05, settable from 0 to 0.5). So is a body that, when
+admitted, was almost all allowed bases: fitted on the house bodies, the current
+soup and the release, it left a residual under the same bar (a near-pure
+re-weighting of the soup). The dry run's two real fine-tunes of a house body
+left about 0.07 to 0.12, so a real fine-tune of the soup or release keeps the
+trainer rate.
 
 Only a near-exact re-upload (or a body with no change from the base) bans the
 body hash. "Explained by earlier" and behavioural twins judge the current pool:
