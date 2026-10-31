@@ -41,8 +41,27 @@ OUTCOME_PHRASES = {
         r"\bwontfix\b",
         r"\b(?:fixed|resolved|addressed) (?:in|by) #\d+",
     ),
-    "wikipedia-revert": (r"\brevert(?:ed|ing|s)?\b", r"\bundid\b", r"\brvv?\b", r"\brollback\b"),
 }
+# Revert wording in the default wikis' languages; the edits themselves are not reverts (those are
+# dropped), but a summary that mentions one gives the outcome away.
+REVERT_PHRASES = (
+    r"\brevert(?:ed|ing|s)?\b",
+    r"\bundid\b",
+    r"\bundo\b",
+    r"\brvv?\b",
+    r"\brollback\b",
+    r"zurückgesetzt|rückgängig|revertiert",
+    r"révoqu|révocation|\bannul(?:é|ation)",
+    r"\brevertid|\bdeshech|\bdeshac|\brevertir",
+    r"\bannullat|\bripristinat",
+    r"\bdesfeit|\bdesfaz|\brevers(?:ão|ao)\b",
+    r"откат|отмен",
+    r"差し戻|取り消|リバート",
+    r"回退|撤销|撤銷|还原|還原",
+)
+for _stream in current_items.STREAMS:
+    if _stream.startswith(("wikipedia-revert", "wikidata-revert")):
+        OUTCOME_PHRASES[_stream] = REVERT_PHRASES
 OUTCOME = {s: re.compile("|".join(p), re.I) for s, p in OUTCOME_PHRASES.items()}
 SHINGLE_WORDS = 16
 SHINGLE_KEEP = 4  # keep one shingle in four, chosen by hash, so both sides keep the same ones
@@ -54,6 +73,7 @@ TEMPLATE_LABELS = {
     "Pull request title",
     "Wiki",
     "Article",
+    "Item",
     "Edit summary",
 }
 TEMPLATE_FIELDS = {"Size change", "Minor edit", "Editor"}

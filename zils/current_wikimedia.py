@@ -14,7 +14,7 @@ import re
 import time
 from datetime import UTC, datetime, timedelta
 
-from .current_items import IPV4, IPV6, RateLimited, iso, parse_time, scrub
+from .current_items import IPV4, IPV6, WIKIDATA, WIKIS, RateLimited, iso, parse_time, scrub, wiki_stream
 
 STREAM = "https://stream.wikimedia.org/v2/stream/recentchange"
 WAIT_HOURS = 48
@@ -22,9 +22,15 @@ BATCH = 50  # revids per Action API request
 REVERT_TAGS = {"mw-undo", "mw-rollback", "mw-manual-revert"}
 HIDDEN = ("texthidden", "commenthidden", "userhidden", "suppressed")
 MAX_LINES, MAX_LINE = 40, 2000
+RETRIES, RETRY_SECONDS = 3, 10  # connections that deliver nothing, e.g. a timed-out replay
 LATE_RUN = 500  # consecutive replayed events past the window before a replay stops
 CELL = re.compile(r'<td class="diff-(deleted|added)line[^"]*">\s*<div>(.*?)</div>\s*</td>', re.S)
 TAG = re.compile(r"<[^>]+>")
+ROW = re.compile(r"<tr\b.*?</tr>", re.S)
+LINENO = re.compile(r'<td[^>]*class="diff-lineno"[^>]*>(.*?)</td>', re.S)
+# Wikidata edits made in bulk by tools; their outcome says little about the edit itself.
+TOOL_EDIT = re.compile(r"toollabs:|quickstatements|#openrefine|#mix'n'match|\[\[:toollabs", re.I)
+DEFAULT_WIKIS = (*WIKIS, WIKIDATA)
 sleep = time.sleep
 
 
@@ -67,13 +73,18 @@ def record(event, wikis, collected_at=None):
         or meta.get("domain") == "canary"
         or not revision.get("old")
         or not revision.get("new")
+        or (event["wiki"] == WIKIDATA and TOOL_EDIT.search(event.get("comment") or ""))
     ):
         return None
     wiki, new, old, server = event["wiki"], revision["new"], revision["old"], event["server_url"]
     length = event.get("length") or {}
+    stream = wiki_stream(wiki)
+    digest = hashlib.sha256(f"{wiki}:{new}".encode()).hexdigest()[:16]
+    prefix = "wikidata-revert" if wiki == WIKIDATA else "wikipedia-revert"
+    source = {"item": event["title"]} if wiki == WIKIDATA else {}
     return {
-        "id": f"wikipedia-revert-{hashlib.sha256(f'{wiki}:{new}'.encode()).hexdigest()[:16]}",
-        "stream": "wikipedia-revert",
+        "id": f"{prefix}-{digest}",
+        "stream": stream,
         "asked_at": iso(datetime.fromtimestamp(event["timestamp"], UTC)),
         "collected_at": collected_at,
         "source": {
@@ -84,6 +95,7 @@ def record(event, wikis, collected_at=None):
             "title": event["title"],
             "url": f"{server}/w/index.php?diff={new}&oldid={old}",
             "api": f"{server}{event.get('server_script_path', '/w')}/api.php",
+            **source,
         },
         "data": {
             "wiki": wiki,
@@ -99,13 +111,15 @@ def record(event, wikis, collected_at=None):
 
 def collect(store, http, minutes, *, now, wikis=None, since=None, limit=None, clock=time.monotonic):
     """Read the stream for `minutes` of wall time, or of stream time from `since`."""
-    wikis, batch, added, last_id, done = set(wikis or ["enwiki"]), [], 0, None, False
+    wikis, batch, added, last_id, done = set(wikis or DEFAULT_WIKIS), [], 0, None, False
     end = parse_time(since) + timedelta(minutes=minutes) if since else None
+    failures = 0
     deadline = clock() + minutes * 60
     while not done:
         headers = {"Last-Event-ID": last_id} if last_id else {}
         params = {"since": since} if since and not last_id else {}
         seen = late = 0
+        errored = False
         try:
             for last_id_, event in sse_events(http.lines(STREAM, params=params, headers=headers)):
                 seen, last_id = seen + 1, last_id_ or last_id
@@ -128,19 +142,37 @@ def collect(store, http, minutes, *, now, wikis=None, since=None, limit=None, cl
                     done = True
                     break
         except OSError:  # the server closes connections after 15 minutes; resume from last_id
-            pass
+            errored = True
+        if not seen and errored and failures < RETRIES:
+            failures += 1  # a refused or timed-out connection: wait, then ask again
+            sleep(RETRY_SECONDS * failures)
+            continue
         if not seen or (not end and clock() > deadline):
             break
+        failures = 0
     return added + store.add(batch)
 
 
-def diff_text(body):
-    """Removed and added lines from an Action API compare table."""
-    removed, added = [], []
-    for side, cell in CELL.findall(body or ""):
-        text = html.unescape(TAG.sub("", cell)).strip()
-        if text:
-            (removed if side == "deleted" else added).append(text[:MAX_LINE])
+def _cell_text(cell):
+    return " ".join(html.unescape(TAG.sub("", cell)).split())
+
+
+def diff_text(body, context=False):
+    """Removed and added lines from an Action API compare table.
+
+    With `context`, each line is prefixed by its section heading, as Wikibase diffs label their
+    rows (`Property / date of birth: 3 March 1961`)."""
+    removed, added, heading = [], [], ""
+    for row in ROW.findall(body or "") if context else [body or ""]:
+        headings = [_cell_text(c) for c in LINENO.findall(row)]
+        if context and headings:
+            heading = next((h for h in reversed(headings) if h), "")
+            continue
+        for side, cell in CELL.findall(row):
+            text = _cell_text(cell) if context else html.unescape(TAG.sub("", cell)).strip()
+            if text:
+                line = f"{heading}: {text}" if context and heading else text
+                (removed if side == "deleted" else added).append(line[:MAX_LINE])
     return removed[:MAX_LINES], added[:MAX_LINES]
 
 
@@ -158,39 +190,84 @@ def _api(http, url, params):
     raise RateLimited("replication lag stayed high")
 
 
-def _resolve_one(record, revision, http, now):
+def _precheck(record, revision):
+    """("dropped", record) for hidden or revert edits, else None."""
     if any(revision.get(flag) for flag in HIDDEN):
         return "dropped", {**record, "reason": "deleted"}
-    tags = set(revision.get("tags") or [])
-    if tags & REVERT_TAGS:
+    if set(revision.get("tags") or []) & REVERT_TAGS:
         return "dropped", {**record, "reason": "is-revert"}
+    return None
+
+
+def _resolve_one(record, revision, http, now):
     source = record["source"]
-    status, body = _api(
-        http,
-        source["api"],
-        {
-            "action": "compare",
-            "fromrev": str(source["old_rev_id"]),
-            "torev": str(source["rev_id"]),
-            "prop": "diff",
-            "difftype": "table",
-        },
-    )
+    wikidata = record["data"]["wiki"] == WIKIDATA
+    params = {
+        "action": "compare",
+        "fromrev": str(source["old_rev_id"]),
+        "torev": str(source["rev_id"]),
+        "prop": "diff",
+        "difftype": "table",
+    }
+    status, body = _api(http, source["api"], {**params, "uselang": "en"} if wikidata else params)
     if status != 200 or "error" in body or "compare" not in body:
         return "dropped", {**record, "reason": "deleted"}
     names = [revision.get("user", "")]
-    removed, added = diff_text(body["compare"].get("body"))
+    removed, added = diff_text(body["compare"].get("body"), context=wikidata)
     data = {
         **record["data"],
         "removed": [scrub(s, names) for s in removed],
         "added": [scrub(s, names) for s in added],
     }
-    label = "true" if "mw-reverted" in tags else "false"
+    label = "true" if "mw-reverted" in set(revision.get("tags") or []) else "false"
     return "resolved", {**record, "data": data, "resolved_at": iso(now), "label": label}
 
 
-def resolve(records, http, now, wait_hours=WAIT_HOURS):
-    """Yield (status, record) for edits older than the waiting period; younger ones stay pending."""
+def _sample(rows, revisions, ratio):
+    """Ids of the not-reverted edits to keep: `ratio` per reverted edit, chosen by hashed id."""
+    if ratio is None:
+        return None
+    positive = sum("mw-reverted" in (revisions[r]["tags"] or []) for r in rows)
+    negatives = sorted(
+        (r for r in rows if "mw-reverted" not in (revisions[r]["tags"] or [])),
+        key=lambda r: hashlib.sha256(r.encode()).hexdigest(),
+    )
+    return set(negatives[: int(positive * ratio)])
+
+
+def _labels(http, url, records):
+    """English (or fallback) labels of the Wikidata items behind resolved records."""
+    items = sorted({r["source"]["item"] for r in records})
+    if not items:
+        return {}
+    status, body = _api(
+        http,
+        url,
+        {
+            "action": "wbgetentities",
+            "ids": "|".join(items),
+            "props": "labels",
+            "languages": "en",
+            "languagefallback": "1",
+        },
+    )
+    if status != 200:
+        return {}
+    labels = {}
+    for item, entity in ((body or {}).get("entities") or {}).items():
+        values = (entity or {}).get("labels") or {}
+        value = (values.get("en") or next(iter(values.values()), {})).get("value")
+        if value:
+            labels[item] = value
+    return labels
+
+
+def resolve(records, http, now, wait_hours=WAIT_HOURS, negatives_per_positive=None):
+    """Yield (status, record) for edits older than the waiting period; younger ones stay pending.
+
+    With `negatives_per_positive`, each batch keeps that many not-reverted edits per reverted
+    one and drops the rest as `sampled-out` before any diff is fetched. Reverts are rare, export
+    balances labels anyway, and this saves most of the per-edit diff requests."""
     due = [r for r in records if now - parse_time(r["asked_at"]) >= timedelta(hours=wait_hours)]
     groups = {}
     for row in due:
@@ -217,9 +294,32 @@ def resolve(records, http, now, wait_hours=WAIT_HOURS):
                 for rev in page.get("revisions") or []
             }
             missing = {int(k) for k in query.get("badrevids") or {}}
+            candidates = {}
             for row in chunk:
                 rev_id = row["source"]["rev_id"]
                 if rev_id in missing:
                     yield "dropped", {**row, "reason": "deleted"}
                 elif rev_id in revisions:
-                    yield _resolve_one(row, revisions[rev_id], http, now)
+                    early = _precheck(row, revisions[rev_id])
+                    if early:
+                        yield early
+                    else:
+                        candidates[row["id"]] = row
+            by_id = {i: revisions[r["source"]["rev_id"]] for i, r in candidates.items()}
+            keep = _sample(list(candidates), by_id, negatives_per_positive)
+            done = []
+            for row_id, row in candidates.items():
+                if keep is not None and row_id not in keep and "mw-reverted" not in (
+                    by_id[row_id].get("tags") or []
+                ):
+                    yield "dropped", {**row, "reason": "sampled-out"}
+                    continue
+                status_, resolved = _resolve_one(row, by_id[row_id], http, now)
+                if status_ == "resolved" and row["data"]["wiki"] == WIKIDATA:
+                    done.append(resolved)
+                else:
+                    yield status_, resolved
+            labels = _labels(http, url, done)
+            for resolved in done:
+                item = resolved["source"]["item"]
+                yield "resolved", {**resolved, "data": {**resolved["data"], "label": labels.get(item)}}

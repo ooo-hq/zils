@@ -468,6 +468,7 @@ class WikimediaTest(unittest.TestCase):
                 minutes=5,
                 since="2026-10-28T12:00:00Z",
                 now=at("2026-10-31T12:00:00Z"),
+                wikis=["enwiki"],
             )
             pending = store.pending()
         self.assertEqual(added, 3)
@@ -538,6 +539,7 @@ class WikimediaTest(unittest.TestCase):
             minutes=5,
             since="2026-10-28T12:00:00Z",
             now=at("2026-10-28T12:10:00Z"),
+            wikis=["enwiki"],
         )
         return store
 

@@ -121,6 +121,7 @@ def run(
     wiki_max_hours=48,
     wiki_minutes=2,
     wikis=None,
+    negatives_per_positive=None,
     max_age_days=14,
     export_options=None,
 ):
@@ -158,7 +159,12 @@ def run(
                 store, http, cursor, now, wiki_first_hours, wiki_max_hours, wiki_minutes, wikis
             ),
         )
-        result["resolve"] = step("resolve", lambda: current.resolve(store, http, now, max_age_days))
+        result["resolve"] = step(
+            "resolve",
+            lambda: current.resolve(
+                store, http, now, max_age_days, negatives_per_positive=negatives_per_positive
+            ),
+        )
         options = {
             "references": references,
             "check_overlap": check_overlap,

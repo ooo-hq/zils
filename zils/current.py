@@ -24,6 +24,8 @@ from . import ROOT, current_bank, current_github, current_items, current_wikimed
 VERSION = current_items.COLLECTOR
 DEFAULT_DIR = ROOT / "runs" / "current"
 MAX_AGE_DAYS = 14
+WIKI_MINUTES = 10  # stream minutes per hour: about 3,000 balanced edits a day over the wiki list
+NEGATIVES_PER_POSITIVE = 3
 CONTACT = "https://github.com/ooo-hq/zils"
 FILES = ("pending.jsonl", "resolved.jsonl", "dropped.jsonl")
 
@@ -81,6 +83,14 @@ class Http:
                 yield line.decode("utf-8", "replace")
 
 
+def _upgrade(record):
+    """Records the pilot release pooled into `wikipedia-revert` get their own wiki's stream."""
+    if record.get("stream") == "wikipedia-revert":
+        wiki = (record.get("data") or {}).get("wiki", "enwiki")
+        return {**record, "stream": current_items.wiki_stream(wiki)}
+    return record
+
+
 class Store:
     """Waiting room (pending), labelled items (resolved) and dropped items with a reason."""
 
@@ -91,7 +101,7 @@ class Store:
         path = self.root / name
         if not path.exists():
             return []
-        return [json.loads(line) for line in path.read_text().split("\n") if line]
+        return [_upgrade(json.loads(line)) for line in path.read_text().split("\n") if line]
 
     def pending(self):
         return self._read("pending.jsonl")
@@ -132,18 +142,32 @@ class Store:
         os.replace(temporary, path)
 
 
-RESOLVERS = {"github-": current_github.resolve, "wikipedia-": current_wikimedia.resolve}
+RESOLVERS = {
+    "github-": current_github.resolve,
+    "wikipedia-revert": current_wikimedia.resolve,
+    "wikidata-": current_wikimedia.resolve,
+}
+WIKIMEDIA = ("wikipedia-revert", "wikidata-")
 
 
-def resolve(store, http, now, max_age_days=MAX_AGE_DAYS, wiki_wait_hours=None):
+def resolve(
+    store,
+    http,
+    now,
+    max_age_days=MAX_AGE_DAYS,
+    wiki_wait_hours=None,
+    negatives_per_positive=None,
+):
     """One resolution pass over the waiting room; returns counts of what happened."""
     pending = store.pending()
     outcomes, limited = {}, False
     for prefix, resolver in RESOLVERS.items():
         records = [r for r in pending if r["stream"].startswith(prefix)]
-        options = (
-            {"wait_hours": wiki_wait_hours} if prefix == "wikipedia-" and wiki_wait_hours else {}
-        )
+        options = {}
+        if prefix in WIKIMEDIA:
+            options["negatives_per_positive"] = negatives_per_positive
+            if wiki_wait_hours:
+                options["wait_hours"] = wiki_wait_hours
         try:
             for status, record in resolver(records, http, now, **options):
                 outcomes[record["id"]] = (status, record)
@@ -202,6 +226,26 @@ def _export_options(parser):
     )
 
 
+def _sampling_option(parser, default=None):
+    parser.add_argument(
+        "--negatives-per-positive",
+        type=float,
+        default=default,
+        help="not-reverted edits kept per reverted edit before diffs are fetched "
+        f"(default {default or 'all'})",
+    )
+
+
+def _wikis(values=None):
+    """Wikis to read: --wiki, else ZILS_CURRENT_WIKIS (comma-separated), else the default list."""
+    if values:
+        return values
+    joined = settings.get("ZILS_CURRENT_WIKIS") or ""
+    return [w.strip() for w in joined.split(",") if w.strip()] or list(
+        current_wikimedia.DEFAULT_WIKIS
+    )
+
+
 def _overlap_options(parser):
     parser.add_argument(
         "--reference",
@@ -228,7 +272,7 @@ def _parser():
     collect.add_argument("--hours", type=int, default=1, help="consecutive GH Archive hours")
     collect.add_argument("--minutes", type=float, default=5, help="Wikimedia stream minutes")
     collect.add_argument("--since", help="replay Wikimedia from this UTC time (retention is days)")
-    collect.add_argument("--wiki", action="append", help="wiki database name (default enwiki)")
+    collect.add_argument("--wiki", action="append", help="wiki database name (default: _wikis())")
     collect.add_argument("--limit", type=int, help="stop after this many Wikimedia edits")
     resolve_ = commands.add_parser("resolve", help="label waiting items whose outcome is known")
     max_age = float(settings.get("ZILS_CURRENT_MAX_AGE_DAYS") or MAX_AGE_DAYS)
@@ -236,6 +280,7 @@ def _parser():
     resolve_.add_argument(
         "--wiki-wait-hours", type=float, help=f"default {current_wikimedia.WAIT_HOURS}"
     )
+    _sampling_option(resolve_)
     export_ = commands.add_parser("export", help="write bank-format cases")
     target = export_.add_mutually_exclusive_group(required=True)
     target.add_argument("--out", help="one file with every resolved item")
@@ -259,9 +304,13 @@ def _parser():
     nightly.add_argument("--wiki-first-hours", type=int, default=24)
     nightly.add_argument("--wiki-max-hours", type=int, default=48)
     nightly.add_argument(
-        "--wiki-minutes", type=float, default=2, help="stream minutes sampled per hour"
+        "--wiki-minutes",
+        type=float,
+        default=float(settings.get("ZILS_CURRENT_WIKI_MINUTES") or WIKI_MINUTES),
+        help=f"stream minutes sampled per hour (default {WIKI_MINUTES:g})",
     )
-    nightly.add_argument("--wiki", action="append", help="wiki database name (default enwiki)")
+    nightly.add_argument("--wiki", action="append", help="wiki database name (default: all)")
+    _sampling_option(nightly, NEGATIVES_PER_POSITIVE)
     nightly.add_argument("--max-age-days", type=float, default=max_age)
     nightly.add_argument("--publishable", action="store_true")
     _export_options(nightly)
@@ -329,7 +378,8 @@ def main(argv=None, http=None, now=None):
             wiki_first_hours=args.wiki_first_hours,
             wiki_max_hours=args.wiki_max_hours,
             wiki_minutes=args.wiki_minutes,
-            wikis=args.wiki,
+            wikis=_wikis(args.wiki),
+            negatives_per_positive=args.negatives_per_positive,
             max_age_days=args.max_age_days,
             export_options={**_export_settings(args), "publishable": args.publishable},
         )
@@ -372,7 +422,15 @@ def main(argv=None, http=None, now=None):
         return 0
     http = http or Http()
     if args.command == "resolve":
-        print(json.dumps(resolve(store, http, now, args.max_age_days, args.wiki_wait_hours)))
+        counts = resolve(
+            store,
+            http,
+            now,
+            args.max_age_days,
+            args.wiki_wait_hours,
+            negatives_per_positive=args.negatives_per_positive,
+        )
+        print(json.dumps(counts))
         return 0
     if args.source == "gharchive":
         hours = list(args.hour)
@@ -386,7 +444,7 @@ def main(argv=None, http=None, now=None):
             store,
             http,
             args.minutes,
-            wikis=args.wiki,
+            wikis=_wikis(args.wiki),
             since=args.since,
             now=now,
             limit=args.limit,

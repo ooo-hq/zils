@@ -31,6 +31,7 @@ def parse_time(text):
 
 GITHUB_TERMS = "github-user-content: source ids only; text is rebuilt from GitHub, not republished"
 WIKIMEDIA_TERMS = "CC-BY-SA-4.0: attribute via source.url; share-alike applies to published text"
+WIKIDATA_TERMS = "CC0-1.0: Wikidata structured data; link source.url as a courtesy"
 # Categories follow base_metrics.CATEGORY_WEIGHTS; provisional until the bank integration reviews them.
 STREAMS = {
     "github-issue-type": {
@@ -81,7 +82,51 @@ STREAMS = {
         },
     },
 }
-WIKIS = {"enwiki": "English Wikipedia"}
+# Wikipedias and Wikidata read by default: the largest projects by human article edits on
+# EventStreams (31 Oct 2026). Each Wikipedia is its own stream so labels balance per language;
+# English keeps the pilot's stream name.
+WIKIS = {
+    "enwiki": ("en", "English Wikipedia"),
+    "dewiki": ("de", "German Wikipedia"),
+    "frwiki": ("fr", "French Wikipedia"),
+    "eswiki": ("es", "Spanish Wikipedia"),
+    "jawiki": ("ja", "Japanese Wikipedia"),
+    "itwiki": ("it", "Italian Wikipedia"),
+    "ptwiki": ("pt", "Portuguese Wikipedia"),
+    "ruwiki": ("ru", "Russian Wikipedia"),
+    "zhwiki": ("zh", "Chinese Wikipedia"),
+}
+WIKIDATA = "wikidatawiki"
+WIKI_NAMES = {db: name for db, (_, name) in WIKIS.items()} | {WIKIDATA: "Wikidata"}
+
+
+def wiki_stream(wiki):
+    """The stream of an edit on `wiki` (a database name such as dewiki)."""
+    if wiki == WIKIDATA:
+        return "wikidata-revert"
+    if wiki == "enwiki":
+        return "wikipedia-revert"
+    lang = WIKIS[wiki][0] if wiki in WIKIS else wiki.removesuffix("wiki")
+    return f"wikipedia-revert-{lang}"
+
+
+def _revert_spec(what):
+    return {
+        "category": "retrieval" if what == "Wikidata item" else "language",
+        "licence": WIKIDATA_TERMS if what == "Wikidata item" else WIKIMEDIA_TERMS,
+        "publishable": True,
+        "question": {
+            "type": "noul",
+            "instructions": f"Will this {what} edit be reverted by another edit?",
+            "criteria": {"true": "Reverted", "false": "Not reverted"},
+        },
+    }
+
+
+for _db in WIKIS:
+    if _db != "enwiki":
+        STREAMS[wiki_stream(_db)] = _revert_spec("Wikipedia article")
+STREAMS["wikidata-revert"] = _revert_spec("Wikidata item")
 
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.]*\d)")
@@ -100,17 +145,18 @@ WIKI_USER = re.compile(
 
 def scrub(text, names=()):
     """Replace e-mail addresses, IP addresses, @mentions, wiki user links and known account names."""
-    text = EMAIL.sub("[email]", text or "")
-    text = IPV6.sub("[ip]", IPV4.sub("[ip]", text))
-    text = MENTION.sub("@[user]", text)
-    text = WIKI_USER_LINK.sub(lambda m: f"[[{m.group(1)}:[user]", text)
-    text = WIKI_USER.sub(lambda m: f"{m.group(1)}{m.group(2)}[user]", text)
+    text = text or ""
+    # Known names first, so a multi-word name inside a User: link is removed whole.
     for name in sorted({n for n in names if n and len(n) >= 3}, key=len, reverse=True):
         variants = {name, name.replace(" ", "_"), name.replace("_", " ")}
         for variant in variants:
             pattern = r"(?<![\w-])" + re.escape(variant) + r"(?![\w-])"
             text = re.sub(pattern, "[user]", text, flags=re.I)
-    return text
+    text = EMAIL.sub("[email]", text)
+    text = IPV6.sub("[ip]", IPV4.sub("[ip]", text))
+    text = MENTION.sub("@[user]", text)
+    text = WIKI_USER_LINK.sub(lambda m: f"[[{m.group(1)}:[user]", text)
+    return WIKI_USER.sub(lambda m: f"{m.group(1)}{m.group(2)}[user]", text)
 
 
 def state_chars(max_tokens):
@@ -161,12 +207,49 @@ def _github_state(record):
     return f"Repository: {data['repo']}\nIssue title: {data['title']}\n", data.get("body") or ""
 
 
+WIKIBASE_SUMMARY = re.compile(r"/\*\s*wb([a-z]+)-([a-z-]+)(?::[^*]*)?\*/\s*")
+WIKIBASE_ACTIONS = {
+    "createclaim": "create claim",
+    "setclaim": "set claim",
+    "setclaimvalue": "set claim value",
+    "removeclaims": "remove claims",
+    "setlabel": "set label",
+    "setdescription": "set description",
+    "setaliases": "set aliases",
+    "setlabeldescriptionaliases": "set label, description and aliases",
+    "setsitelink": "set sitelink",
+    "linktitles": "link titles",
+    "editentity": "edit entity",
+    "setreference": "set reference",
+    "removereferences": "remove references",
+    "setqualifier": "set qualifier",
+    "removequalifiers": "remove qualifiers",
+    "mergeitems": "merge items",
+}
+
+
+def wikibase_summary(comment):
+    """A Wikibase autosummary in words: `/* wbsetclaim-create:2||1 */ x` -> `set claim (create): x`."""
+
+    def words(match):
+        action = WIKIBASE_ACTIONS.get(match.group(1), match.group(1))
+        return f"{action} ({match.group(2).replace('-', ' ')}): "
+
+    return WIKIBASE_SUMMARY.sub(words, comment or "").strip()
+
+
 def _wiki_state(record, limit):
     data = record["data"]
     change = data["length_new"] - data["length_old"]
+    if data["wiki"] == WIKIDATA:
+        label = data.get("label")
+        page = f"Item: {label} ({data['title']})" if label else f"Item: {data['title']}"
+        summary = wikibase_summary(data["comment"])
+    else:
+        page, summary = f"Article: {data['title']}", data["comment"]
     head = (
-        f"Wiki: {WIKIS.get(data['wiki'], data['wiki'])}\nArticle: {data['title']}\n"
-        f"Edit summary: {data['comment'] or '(none)'}\n"
+        f"Wiki: {WIKI_NAMES.get(data['wiki'], data['wiki'])}\n{page}\n"
+        f"Edit summary: {summary or '(none)'}\n"
         f"Size change: {change:+d} bytes ({data['length_old']} -> {data['length_new']})\n"
         f"Minor edit: {'yes' if data['minor'] else 'no'}\nEditor: {data['editor']}\n"
     )
@@ -181,7 +264,7 @@ def _wiki_state(record, limit):
 
 def state_text(record, max_tokens=4096):
     limit = state_chars(max_tokens)
-    if record["stream"] == "wikipedia-revert":
+    if record["stream"].startswith(("wikipedia-revert", "wikidata-revert")):
         return fit(_wiki_state(record, limit), max_tokens)
     head, body = _github_state(record)
     return fit(truncate(head + ("\n" + body if body.strip() else ""), limit), max_tokens)
