@@ -403,9 +403,11 @@ def change(rev, tags=(), *, wiki_bot=False, comment="copyedit", ns=0, user="Ed I
         "comment": comment,
         "timestamp": "2026-10-25T10:00:00Z",
         "tags": list(tags),
+        # formatversion=2: flags are always present, as booleans
+        "bot": wiki_bot,
+        "minor": False,
+        "new": False,
     }
-    if wiki_bot:
-        row["bot"] = True
     return row
 
 

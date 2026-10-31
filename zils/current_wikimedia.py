@@ -234,8 +234,8 @@ def _rc_event(change, wiki):
         "comment": change.get("comment") or "",
         "timestamp": int(moment.timestamp()),
         "user": change.get("user") or "",
-        "bot": "bot" in change,
-        "minor": "minor" in change,
+        "bot": bool(change.get("bot")),
+        "minor": bool(change.get("minor")),
         "length": {"old": change.get("oldlen"), "new": change.get("newlen")},
         "revision": {"old": change.get("old_revid"), "new": change.get("revid")},
         "server_url": server,
@@ -300,7 +300,7 @@ def collect_recent(
             rows, reverted = [], set()
             for change in changes:
                 tags = set(change.get("tags") or [])
-                if tags & REVERT_TAGS or "bot" in change:
+                if tags & REVERT_TAGS or change.get("bot"):
                     continue
                 row = record(_rc_event(change, wiki), {wiki}, iso(now))
                 if row:
