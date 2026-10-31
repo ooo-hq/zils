@@ -212,6 +212,8 @@ def _api(http, url, params):
             continue
         error = (body or {}).get("error") or {}
         if error.get("code") != "maxlag":
+            if hasattr(http, "base_gap") and http.gap > http.base_gap:
+                http.gap = max(http.base_gap, http.gap * 0.9)  # recover after a limit passes
             return status, body
         lagged += 1
         if lagged >= 4:

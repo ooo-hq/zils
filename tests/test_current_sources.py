@@ -332,6 +332,12 @@ class PoliteApiTest(unittest.TestCase):
         with patch.object(current_wikimedia, "sleep", lambda s: None):
             current_wikimedia._api(http, "https://x/api.php", {})
         self.assertEqual(http.gap, 1.0)
+        http.base_gap = 0.5
+        answers += [(200, {}, {})] * 20
+        with patch.object(current_wikimedia, "sleep", lambda s: None):
+            for _ in range(20):
+                current_wikimedia._api(http, "https://x/api.php", {})
+        self.assertAlmostEqual(http.gap, 0.5, msg="the gap recovers once requests succeed")
 
     def test_requests_are_spaced_and_a_lasting_limit_stops_the_pass(self):
         http = FakeHttp(lambda url, params: (429, {}, {}))

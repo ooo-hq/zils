@@ -65,7 +65,7 @@ class Http:
             session = requests.Session()
         self.session = session
         self.session.headers["User-Agent"] = user_agent()
-        self.timeout, self.gap, self.last = timeout, gap, {}
+        self.timeout, self.gap, self.base_gap, self.last = timeout, gap, gap, {}
 
     def _pace(self, url):
         """Space requests to one host at least `gap` seconds apart (serial, polite clients)."""
