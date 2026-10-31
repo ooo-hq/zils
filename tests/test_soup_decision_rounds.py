@@ -290,6 +290,41 @@ class DecisionRoundsTest(unittest.TestCase):
         soups = {p.stem for p in (self.r.state / "cache").glob("soup-*.jsonl")}
         self.assertFalse(unused & soups)  # five rounds unused: dropped
 
+    def test_pooling_works_on_a_zils_current_exam_whose_bank_changes_every_round(self):
+        from tests.test_soup_current import STREAMS, Fixture, day_items, export
+        from zils import soup_current
+
+        f = Fixture(self.tmp / "exam")
+        exam = f.config()["exam"]
+        config = self.r.config(
+            decision_rounds=3, subset_size=400, schedule={"deadline_utc": "03:00"}, exam=exam
+        )
+        records, cases = [], {}
+        for day in range(3):
+            if day:  # a new dated export each day: the round bank (and its hash) changes
+                date = f"2026-11-0{day + 2}"
+                export(f.current, date, day_items(date))
+            bank, source = soup_current.prepare(
+                config, self.r.state, round_id=DAYS[day], block_hash=block(day),
+                bank=self.r.bank, ledger=self.r.ledger, log=lambda message: None,
+            )  # fmt: skip
+            self.assertIsNone(source["fallback"])
+            cases.update((c["id"], c) for c in bank)
+            records.append(self.round(day, config=config, bank=bank, bank_source=source))
+        self.assertEqual(len({r["bank_sha256"] for r in records}), 3)
+        last = records[2]
+        self.assertEqual(last["decision"]["rounds"], DAYS[:3])
+        self.assertEqual(last["decision"]["skipped"], {})
+        drawn = {i for r in records for i in r["subset_ids"]}
+        self.assertEqual(set(last["decision_ids"]), drawn)
+        current = {i for i in records[0]["subset_ids"] if i.split("-2026")[0] in STREAMS}
+        self.assertTrue(current)
+        self.assertLessEqual(current, set(last["decision_ids"]))  # round 1's Current items count
+        ids = last["decision_ids"]
+        pooled = [cases[i] for i in ids]
+        for sha, value in last["solo"].items():
+            self.assertAlmostEqual(value, soup_grade.score(pooled, self.rows(sha, ids)))
+
 
 class LedgerRoundsTest(unittest.TestCase):
     def test_rounds_in_recorded_order(self):

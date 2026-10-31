@@ -203,6 +203,13 @@ The same record is saved as `bank-source.json`, next to `subset.json` and
 three. The Current items of the last eight rounds stay loadable after they leave
 the freshness window, so a round can still score earlier rounds' items.
 
+Pooled decisions (`decision_rounds`) work the same way on a Current exam: each
+earlier round's items come from its `subset-cases.json`, item by item, so a bank
+that changes every day still pools. Cached predictions are scoped to the round
+bank's hash, though. On a day the bank changes, each pool body and soup is graded
+again on the earlier rounds' items, not only on the new subset. That is about
+twice the grading of a fixed bank. The deadline fallback above still bounds it.
+
 Payout: the latest round's public record pays each seated hotkey its seat
 weight and the crown its crown weight, as fractions of the pool's share. The
 crown (20%) goes to the best non-house solo body only if its solo score beats
