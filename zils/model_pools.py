@@ -1,4 +1,11 @@
-"""Independent base competitions composed under the existing base reward budget."""
+"""Independent base competitions composed under the existing base reward budget.
+
+A soup pool may carry an emission schedule (``opens_block`` and ``boost``): it pays nothing and
+burns its share until its opening block, then pays each boost step's share for that step's blocks,
+then its own ``share``. Shares are a function of the chain block alone, so every validator computes
+the same vector for a round frozen at the same block. Pool shares may total less than one; the
+unassigned rest burns. A config with no schedule pays exactly as before.
+"""
 
 import math
 import re
@@ -22,6 +29,97 @@ SOUP_OPTIONAL = {
     "failed_claim_backoff_rounds": 3,
     "decision_rounds": 3,
 }
+
+
+SCHEDULE_KEYS = ("opens_block", "boost")
+MAX_BOOST_STEPS = 8
+UNASSIGNED = "unassigned"  # the blend track for shares no pool is assigned
+
+
+def _share(value, name):
+    if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 1:
+        raise ValueError(f"{name} must be finite and in [0, 1]")
+    return value
+
+
+def validate_opening(entry):
+    """The pool's validated schedule keys ({} without one). ``opens_block`` is a block number, or
+    null for a pool that stays closed until a block is set; ``boost`` is a list of
+    {"share", "blocks"} steps paid in order from the opening block."""
+    out = {}
+    if "opens_block" in entry:
+        block = entry["opens_block"]
+        if block is not None and (type(block) is not int or block < 0):
+            raise ValueError("pool opens_block must be a block number or null")
+        out["opens_block"] = block
+    if "boost" in entry:
+        if "opens_block" not in entry:
+            raise ValueError("a pool boost needs an opens_block")
+        steps = entry["boost"]
+        if not isinstance(steps, list) or not 1 <= len(steps) <= MAX_BOOST_STEPS:
+            raise ValueError(f"pool boost must be a list of 1 to {MAX_BOOST_STEPS} steps")
+        for step in steps:
+            if not isinstance(step, dict) or set(step) != {"share", "blocks"}:
+                raise ValueError("each boost step is exactly {share, blocks}")
+            _share(step["share"], "boost share")
+            if type(step["blocks"]) is not int or step["blocks"] < 1:
+                raise ValueError("boost step blocks must be a positive integer")
+        out["boost"] = [{"share": s["share"], "blocks": s["blocks"]} for s in steps]
+    return out
+
+
+def is_open(entry, block):
+    """True once the pool's opening block is reached (always, for a pool with no schedule)."""
+    if "opens_block" not in entry:
+        return True
+    return entry["opens_block"] is not None and block is not None and block >= entry["opens_block"]
+
+
+def _scheduled_share(entry, block):
+    """The share an open pool is paid at `block`: its boost step's while one runs, else its own."""
+    if "boost" not in entry:
+        return entry["share"]
+    elapsed = block - entry["opens_block"]
+    for step in entry["boost"]:
+        if elapsed < step["blocks"]:
+            return step["share"]
+        elapsed -= step["blocks"]
+    return entry["share"]
+
+
+def scheduled(config):
+    """True when any pool of a validated config has a schedule."""
+    return any(k in e for e in config["pools"].values() for k in SCHEDULE_KEYS)
+
+
+def shares_at(config, block):
+    """{pool: share paid at `block`} for a validated config; a closed pool pays 0 (its share burns)."""
+    return {
+        p: _scheduled_share(e, block) if is_open(e, block) else 0.0
+        for p, e in config["pools"].items()
+    }
+
+
+def _check_budget(pools):
+    """The pools' own shares, and the shares paid at every block (a boost borrows from the budget
+    closed pools leave unpaid), must each total at most one. Paid shares change only at opening
+    blocks and step ends, so those blocks are checked."""
+    total = sum(e["share"] for e in pools.values())
+    if total > 1 + 1e-9:
+        raise ValueError(f"model pool shares exceed one ({total:.4f})")
+    points = {0}
+    for entry in pools.values():
+        start = entry.get("opens_block")
+        if start is None:
+            continue
+        points.add(start)
+        for step in entry.get("boost", ()):
+            start += step["blocks"]
+            points.add(start)
+    for block in sorted(points):
+        total = sum(shares_at({"pools": pools}, block).values())
+        if total > 1 + 1e-9:
+            raise ValueError(f"model pool shares exceed one at block {block} ({total:.4f})")
 
 
 def track(entry):
@@ -136,8 +234,12 @@ def validate(config):
             raise ValueError("incumbent profile belongs to a different model pool")
         if "type" in entry and entry["type"] not in ("king", "soup"):
             raise ValueError("pool type must be king or soup")
+        opening = validate_opening(entry)
+        if opening and not is_soup(entry):
+            raise ValueError("only soup pools take an opens_block or boost")
         if is_soup(entry):
-            result[pool] = {"model": models.spec(model), **validate_soup(entry)}
+            entry = {k: v for k, v in entry.items() if k not in SCHEDULE_KEYS}
+            result[pool] = {"model": models.spec(model), **validate_soup(entry), **opening}
             continue
         if "type" in entry:
             raise ValueError("a king pool omits type")
@@ -160,21 +262,32 @@ def validate(config):
             if type(cooldown) is not int or not 0 <= cooldown <= 30 * 86400:
                 raise ValueError("pool cooldown_seconds must be an integer in [0, 30 days]")
             result[pool]["cooldown_seconds"] = cooldown
-    if not math.isclose(sum(p["share"] for p in result.values()), 1.0, abs_tol=1e-9):
-        raise ValueError("model pool allocations must sum to one")
+    # Pools may leave part of the budget unassigned (it burns); they may never exceed it.
+    _check_budget(result)
     return {"share": share, "burn_uid": burn, "pools": result}
 
 
-def weights(config, decisions, members):
+def weights(config, decisions, members, block=None):
+    """(chain vector, record) for the pools. A config with a schedule needs `block`, the chain block
+    the round froze at; without one, `block` is ignored and the result is as before schedules."""
     config = validate(config)
     if not isinstance(decisions, dict) or set(decisions) - set(config["pools"]):
         raise ValueError("decisions name an unconfigured model pool")
+    timed = scheduled(config)
+    if timed and (type(block) is not int or block < 0):
+        raise ValueError("a pool schedule needs the round's chain block")
+    paid_shares = shares_at(config, block) if timed else {}
     vectors, shares, records = {}, {}, {}
     burned = 0.0
     for pool, entry in config["pools"].items():
         decision = decisions.get(pool)
         paid = 1.0
-        if not entry["enabled"]:
+        share = paid_shares.get(pool, entry["share"])
+        if timed and not is_open(entry, block):
+            if decision is not None:
+                raise ValueError(f"model pool {pool} is not open at block {block}")
+            earned = {}  # its share is 0 until it opens; the budget it would take burns
+        elif not entry["enabled"]:
             if decision is not None:
                 raise ValueError("disabled model pool cannot have a decision")
             earned = {}
@@ -203,14 +316,25 @@ def weights(config, decisions, members):
         else:
             pool_track = {**track(entry), "burn_uid": config["burn_uid"]}
             earned = base_round.king_weights(pool_track, members)
-        vectors[pool], shares[pool] = earned, entry["share"]
+        vectors[pool], shares[pool] = earned, share
         if not earned:
-            burned += entry["share"]
+            burned += share
         elif paid < 1:
-            burned += entry["share"] * (1 - paid)
+            burned += share * (1 - paid)
         records[pool] = {**entry, "weights": {str(uid): w for uid, w in earned.items()}}
+        if timed:
+            records[pool].update(open=is_open(entry, block), paid_share=paid_shares[pool])
+    extra = {}
+    unassigned = 1 - sum(shares.values())
+    if unassigned > 1e-12:  # shares under one: the rest burns, never flows to the pools
+        vectors[UNASSIGNED], shares[UNASSIGNED] = {}, unassigned
+        burned += unassigned
+        extra["unassigned"] = unassigned
+    if timed:
+        extra["block"] = block
     return core.blend_weights(vectors, shares, burn_uid=config["burn_uid"]), {
         "pools": records,
         "burned": burned,
         "burn_uid": config["burn_uid"],
+        **extra,
     }

@@ -316,13 +316,22 @@ def attach_base_pools(config, directory, work, report):
                     decisions[pool] = json.loads(current.read_text())
         from . import soup_pool
 
-        for pool, entry in soup_pool.soup_pools(config).items():
+        block = None
+        if model_pools.scheduled(normalized):
+            # Scheduled shares are a function of the round's frozen chain block, never the clock.
+            snapshot = work / "chain-snapshot.json"
+            if not snapshot.exists():
+                raise ValueError("a pool schedule needs the round's chain snapshot block")
+            block = int(json.loads(snapshot.read_text())["block"])
+        for pool, entry in soup_pool.soup_pools(config, block).items():
             # The latest soup round's public record; before the first round, or once it is older
-            # than max_decision_age_days, the pool burns.
+            # than max_decision_age_days, the pool burns. Pools this validator does not grade, and
+            # pools not yet open at the block, have no decision and burn.
             soup = soup_pool.fresh_decision(directory, pool, entry, now=time.time())
             if soup is not None:
                 decisions[pool] = soup
-        wire.write_json(frozen, {"config": normalized, "decisions": decisions})
+        record = {"config": normalized, "decisions": decisions}
+        wire.write_json(frozen, record if block is None else {**record, "block": block})
     saved = json.loads(frozen.read_text())
     if saved["config"] != normalized:
         raise ValueError("pending pool report differs from the installed configuration")
@@ -333,18 +342,17 @@ def pool_rounds(config, directory):
     """Keep operator paths outside the public, frozen payout contract."""
     if "base_pools" not in config:
         return {}
-    from . import model_pools
+    from . import model_pools, soup_pool
 
     normalized = model_pools.validate(config["base_pools"])
-    enabled = {p: e for p, e in normalized["pools"].items() if e["enabled"]}
+    skipped = soup_pool.not_graded(config, normalized["pools"])  # needs no round paths here
+    enabled = {p: e for p, e in normalized["pools"].items() if e["enabled"] and p not in skipped}
     paths = config.get("base_pool_rounds", {})
     if not isinstance(paths, dict) or set(paths) != set(enabled):
         raise ValueError("base_pool_rounds must name each enabled pool exactly once")
     rounds = {}
     for pool, entry in enabled.items():
         if model_pools.is_soup(entry):
-            from . import soup_pool
-
             soup_pool.paths(config, directory, pool)  # soup rounds run in soup_pool.epoch
             continue
         if not isinstance(paths[pool], dict) or set(paths[pool]) != {
@@ -390,7 +398,7 @@ def base_pools_epoch(config, directory, work, snapshot, args, rounds):
             uid: item
             for uid, item in snapshot.get("commitments", {}).items()
             if not str(item.get("data", "")).startswith(
-                (feature_commitments.PREFIX + ":", bodies.PREFIX + ":")
+                (feature_commitments.PREFIX + ":", bodies.PREFIX + ":", bodies.POOL_PREFIX + ":")
             )
         },
     }
