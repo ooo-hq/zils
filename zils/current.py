@@ -18,12 +18,27 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from . import ROOT, current_bank, current_github, current_items, current_wikimedia, settings
+from . import (
+    ROOT,
+    current_afd,
+    current_bank,
+    current_github,
+    current_items,
+    current_stackexchange,
+    current_wikimedia,
+    settings,
+)
 
 VERSION = current_items.COLLECTOR
 DEFAULT_DIR = ROOT / "runs" / "current"
 MAX_AGE_DAYS = 14
+WIKI_MINUTES = 10  # stream minutes per hour: about 3,000 balanced edits a day over the wiki list
+NEGATIVES_PER_POSITIVE = 3
+GAP_SECONDS = 0.5  # between requests to one host (or to Wikimedia as a whole)
+WIKIMEDIA_HOSTS = ("wikipedia.org", "wikidata.org", "wikimedia.org", "mediawiki.org")
+CHECKPOINT = 2000  # outcomes between saves during a resolution pass
 CONTACT = "https://github.com/ooo-hq/zils"
 FILES = ("pending.jsonl", "resolved.jsonl", "dropped.jsonl")
 
@@ -43,14 +58,27 @@ def user_agent():
 class Http:
     """requests with an identifying User-Agent; every call returns (status, body[, headers])."""
 
-    def __init__(self, timeout=30):
-        import requests
+    def __init__(self, timeout=30, gap=GAP_SECONDS, session=None):
+        if session is None:
+            import requests
 
-        self.session = requests.Session()
+            session = requests.Session()
+        self.session = session
         self.session.headers["User-Agent"] = user_agent()
-        self.timeout = timeout
+        self.timeout, self.gap, self.base_gap, self.last = timeout, gap, gap, {}
+
+    def _pace(self, url):
+        """Space requests to one host at least `gap` seconds apart (serial, polite clients)."""
+        host = urlsplit(url).netloc
+        if host.endswith(WIKIMEDIA_HOSTS):
+            host = "wikimedia"  # one rate limit per client across Wikimedia's sites
+        moment = time.monotonic()
+        if host in self.last and moment - self.last[host] < self.gap:
+            time.sleep(self.gap - (moment - self.last[host]))
+        self.last[host] = time.monotonic()
 
     def get_json(self, url, params=None, headers=None):
+        self._pace(url)
         response = self.session.get(url, params=params, headers=headers, timeout=self.timeout)
         try:
             body = response.json()
@@ -59,6 +87,7 @@ class Http:
         return response.status_code, body, {k.lower(): v for k, v in response.headers.items()}
 
     def post_json(self, url, payload, headers=None):
+        self._pace(url)
         response = self.session.post(url, json=payload, headers=headers, timeout=self.timeout)
         try:
             body = response.json()
@@ -81,6 +110,14 @@ class Http:
                 yield line.decode("utf-8", "replace")
 
 
+def _upgrade(record):
+    """Records the pilot release pooled into `wikipedia-revert` get their own wiki's stream."""
+    if record.get("stream") == "wikipedia-revert":
+        wiki = (record.get("data") or {}).get("wiki", "enwiki")
+        return {**record, "stream": current_items.wiki_stream(wiki)}
+    return record
+
+
 class Store:
     """Waiting room (pending), labelled items (resolved) and dropped items with a reason."""
 
@@ -91,7 +128,7 @@ class Store:
         path = self.root / name
         if not path.exists():
             return []
-        return [json.loads(line) for line in path.read_text().split("\n") if line]
+        return [_upgrade(json.loads(line)) for line in path.read_text().split("\n") if line]
 
     def pending(self):
         return self._read("pending.jsonl")
@@ -121,6 +158,11 @@ class Store:
         self._append("pending.jsonl", fresh)
         return len(fresh)
 
+    def drop(self, records):
+        """Record items that will never be used (with a reason) without passing the waiting room."""
+        known = self.known_ids()
+        self._append("dropped.jsonl", [r for r in records if r["id"] not in known])
+
     def save(self, pending, resolved, dropped):
         """Replace the waiting room and append newly resolved and dropped items."""
         self._append("resolved.jsonl", resolved)
@@ -132,39 +174,79 @@ class Store:
         os.replace(temporary, path)
 
 
-RESOLVERS = {"github-": current_github.resolve, "wikipedia-": current_wikimedia.resolve}
+# Sources collected with their outcome come first: they need no network and finish at once.
+RESOLVERS = {
+    "stackexchange-": current_stackexchange.resolve,
+    "wikipedia-afd": current_stackexchange.resolve,  # collected with the outcome: label now
+    "github-": current_github.resolve,
+    "wikipedia-revert": current_wikimedia.resolve,
+    "wikidata-": current_wikimedia.resolve,
+}
+WIKIMEDIA = ("wikipedia-revert", "wikidata-")
 
 
-def resolve(store, http, now, max_age_days=MAX_AGE_DAYS, wiki_wait_hours=None):
-    """One resolution pass over the waiting room; returns counts of what happened."""
+def resolve(
+    store,
+    http,
+    now,
+    max_age_days=MAX_AGE_DAYS,
+    wiki_wait_hours=None,
+    negatives_per_positive=None,
+):
+    """One resolution pass over the waiting room; returns counts of what happened.
+
+    Finished items are saved every CHECKPOINT outcomes, so a stopped pass keeps its work."""
     pending = store.pending()
-    outcomes, limited = {}, False
+    outcomes, saved, limited = {}, set(), False
+    totals = {"resolved": 0, "dropped": 0}
+
+    def save(final=False):
+        oldest = now - timedelta(days=max_age_days)
+        keep, resolved, dropped = [], [], []
+        for record in pending:
+            if record["id"] in saved:
+                continue
+            status, record = outcomes.get(record["id"], ("pending", record))
+            if final and status == "pending" and parse_time(record["asked_at"]) < oldest:
+                status, record = "dropped", {**record, "reason": "expired"}
+            if status == "dropped":
+                dropped.append({**record, "dropped_at": iso(now)})
+            else:
+                (resolved if status == "resolved" else keep).append(record)
+        store.save(keep, resolved, dropped)
+        saved.update(r["id"] for r in resolved + dropped)
+        totals["resolved"] += len(resolved)
+        totals["dropped"] += len(dropped)
+        return len(keep)
+
     for prefix, resolver in RESOLVERS.items():
         records = [r for r in pending if r["stream"].startswith(prefix)]
-        options = (
-            {"wait_hours": wiki_wait_hours} if prefix == "wikipedia-" and wiki_wait_hours else {}
-        )
+        options = {}
+        if prefix in WIKIMEDIA:
+            options["negatives_per_positive"] = negatives_per_positive
+            if wiki_wait_hours:
+                options["wait_hours"] = wiki_wait_hours
         try:
+            since = 0
             for status, record in resolver(records, http, now, **options):
                 outcomes[record["id"]] = (status, record)
-        except RateLimited as error:
+                since += status != "pending"
+                if since >= CHECKPOINT:
+                    save()
+                    since = 0
+        except (RateLimited, OSError) as error:  # OSError: network failures (requests too)
             print(
-                f"{prefix.rstrip('-')}: rate limited, will continue later ({error})",
+                f"{prefix.rstrip('-')}: stopped, will continue later ({error})",
                 file=sys.stderr,
             )
             limited = True
-    keep, resolved, dropped = [], [], []
-    oldest = now - timedelta(days=max_age_days)
-    for record in pending:
-        status, record = outcomes.get(record["id"], ("pending", record))
-        if status == "pending" and parse_time(record["asked_at"]) < oldest:
-            status, record = "dropped", {**record, "reason": "expired"}
-        if status == "dropped":
-            dropped.append({**record, "dropped_at": iso(now)})
-        else:
-            (resolved if status == "resolved" else keep).append(record)
-    store.save(keep, resolved, dropped)
-    counts = {"resolved": len(resolved), "dropped": len(dropped), "pending": len(keep)}
+        except BaseException:
+            save()
+            raise
+        if since:
+            save()  # each source's work is kept before the next, slower one starts
+    counts = {**totals, "pending": save(final=True)}
+    counts.update(totals)
     return {**counts, "rate_limited": True} if limited else counts
 
 
@@ -186,6 +268,27 @@ def export(store, out, *, seed=0, balance=True, max_tokens=4096, leak_filters=Tr
     }
 
 
+def stackexchange(store, http, now, *, sites=None, pages=None, cursor_path=None):
+    """Collect Stack Exchange questions, keeping per-site cursors next to the store."""
+    path = Path(cursor_path or store.root / "stackexchange-cursor.json")
+    cursors = json.loads(path.read_text()) if path.exists() else {}
+    try:
+        return current_stackexchange.collect(
+            store,
+            http,
+            now,
+            sites=sites,
+            cursors=cursors,
+            pages=pages or current_stackexchange.PAGES_PER_SITE,
+            key=settings.get("ZILS_STACKEXCHANGE_KEY"),
+        )
+    except RateLimited as error:
+        return {"status": "rate-limited", "error": str(error)}
+    finally:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cursors, indent=1, sort_keys=True) + "\n")
+
+
 def _references(values):
     if values:
         return values
@@ -199,6 +302,34 @@ def _export_options(parser):
     parser.add_argument("--max-tokens", type=int, default=4096, help="model input cap (mini: 8192)")
     parser.add_argument(
         "--no-leak-filters", action="store_true", help="keep items whose text gives the answer away"
+    )
+
+
+def _recent_options(parser, samples=48, min_days=2, max_days=14):
+    parser.add_argument(
+        "--samples", type=int, default=samples, help="recentchanges requests (500 edits) per wiki"
+    )
+    parser.add_argument("--min-days", type=float, default=min_days, help="youngest edit age")
+    parser.add_argument("--max-days", type=float, default=max_days, help="oldest edit age")
+
+
+def _sampling_option(parser, default=None):
+    parser.add_argument(
+        "--negatives-per-positive",
+        type=float,
+        default=default,
+        help="not-reverted edits kept per reverted edit before diffs are fetched "
+        f"(default {default or 'all'})",
+    )
+
+
+def _wikis(values=None):
+    """Wikis to read: --wiki, else ZILS_CURRENT_WIKIS (comma-separated), else the default list."""
+    if values:
+        return values
+    joined = settings.get("ZILS_CURRENT_WIKIS") or ""
+    return [w.strip() for w in joined.split(",") if w.strip()] or list(
+        current_wikimedia.DEFAULT_WIKIS
     )
 
 
@@ -222,13 +353,30 @@ def _parser():
     parser.add_argument("--dir", default=settings.get("ZILS_CURRENT_DIR") or str(DEFAULT_DIR))
     commands = parser.add_subparsers(dest="command", required=True)
     collect = commands.add_parser("collect", help="add new events to the waiting room")
-    collect.add_argument("--source", choices=("gharchive", "wikimedia"), required=True)
+    collect.add_argument(
+        "--source",
+        choices=("gharchive", "wikimedia", "recentchanges", "stackexchange", "afd"),
+        required=True,
+    )
+    _recent_options(collect)
+    collect.add_argument(
+        "--negatives-per-positive",
+        type=float,
+        default=1,
+        help="recentchanges: kept edits per revert",
+    )
+    collect.add_argument("--target-positives", type=int, help="recentchanges: reverts per wiki")
+    collect.add_argument("--day", action="append", default=[], help="AfD log day YYYY-MM-DD")
+    collect.add_argument("--site", action="append", help="Stack Exchange site (default: all)")
+    collect.add_argument(
+        "--pages", type=int, default=current_stackexchange.PAGES_PER_SITE, help="per site"
+    )
     collect.add_argument("--hour", action="append", default=[], help="GH Archive hour YYYY-MM-DD-H")
     collect.add_argument("--start", help="first GH Archive hour YYYY-MM-DD-H")
     collect.add_argument("--hours", type=int, default=1, help="consecutive GH Archive hours")
     collect.add_argument("--minutes", type=float, default=5, help="Wikimedia stream minutes")
     collect.add_argument("--since", help="replay Wikimedia from this UTC time (retention is days)")
-    collect.add_argument("--wiki", action="append", help="wiki database name (default enwiki)")
+    collect.add_argument("--wiki", action="append", help="wiki database name (default: _wikis())")
     collect.add_argument("--limit", type=int, help="stop after this many Wikimedia edits")
     resolve_ = commands.add_parser("resolve", help="label waiting items whose outcome is known")
     max_age = float(settings.get("ZILS_CURRENT_MAX_AGE_DAYS") or MAX_AGE_DAYS)
@@ -236,6 +384,7 @@ def _parser():
     resolve_.add_argument(
         "--wiki-wait-hours", type=float, help=f"default {current_wikimedia.WAIT_HOURS}"
     )
+    _sampling_option(resolve_)
     export_ = commands.add_parser("export", help="write bank-format cases")
     target = export_.add_mutually_exclusive_group(required=True)
     target.add_argument("--out", help="one file with every resolved item")
@@ -259,13 +408,53 @@ def _parser():
     nightly.add_argument("--wiki-first-hours", type=int, default=24)
     nightly.add_argument("--wiki-max-hours", type=int, default=48)
     nightly.add_argument(
-        "--wiki-minutes", type=float, default=2, help="stream minutes sampled per hour"
+        "--wiki-minutes",
+        type=float,
+        default=float(settings.get("ZILS_CURRENT_WIKI_MINUTES") or WIKI_MINUTES),
+        help=f"stream minutes sampled per hour (default {WIKI_MINUTES:g})",
     )
-    nightly.add_argument("--wiki", action="append", help="wiki database name (default enwiki)")
+    nightly.add_argument("--wiki", action="append", help="wiki database name (default: all)")
+    nightly.add_argument(
+        "--wiki-source",
+        choices=("recentchanges", "stream"),
+        default="recentchanges",
+        help="recentchanges: bulk pull of edits two to three days old with their revert tags; "
+        "stream: replay EventStreams and wait",
+    )
+    nightly.add_argument(
+        "--wiki-samples", type=int, default=48, help="recentchanges requests per wiki"
+    )
+    _sampling_option(nightly, NEGATIVES_PER_POSITIVE)
+    nightly.add_argument(
+        "--afd-first-days",
+        type=int,
+        default=current_afd.FIRST_DAYS,
+        help="AfD log days a first run reads (0 skips AfD)",
+    )
+    nightly.add_argument("--se-site", action="append", help="Stack Exchange site (default: all)")
+    nightly.add_argument(
+        "--se-pages",
+        type=int,
+        default=current_stackexchange.PAGES_PER_SITE,
+        help="question pages per Stack Exchange site per run (0 skips Stack Exchange)",
+    )
     nightly.add_argument("--max-age-days", type=float, default=max_age)
     nightly.add_argument("--publishable", action="store_true")
     _export_options(nightly)
     _overlap_options(nightly)
+    check_ = commands.add_parser(
+        "crosscheck", help="proof and cross-check gates on a dated export folder"
+    )
+    check_.add_argument("--folder", required=True, help="DIR/<date>/ with items.jsonl")
+    check_.add_argument("--sample", type=int, default=100, help="items checked per stream")
+    check_.add_argument("--threshold", type=float, default=0.97, help="agreement a stream needs")
+    check_.add_argument("--seed", type=int, default=0)
+    nightly.add_argument(
+        "--crosscheck-sample",
+        type=int,
+        default=20,
+        help="items cross-checked per stream in each export (0 skips; failing streams pause)",
+    )
     grade_ = commands.add_parser("grade", help="score a dated export with a checkpoint")
     grade_.add_argument("--items", required=True, help="DIR/<date>/items.jsonl")
     grade_.add_argument("--model", required=True, help="d3-family checkpoint folder")
@@ -314,6 +503,26 @@ def main(argv=None, http=None, now=None):
     now = now or datetime.now(UTC)
     if args.command == "grade":
         return _grade(args)
+    if args.command == "crosscheck":
+        from . import current_check
+
+        report = current_check.run(
+            args.folder,
+            http or Http(),
+            sample=args.sample,
+            seed=args.seed,
+            threshold=args.threshold,
+            now=now,
+        )
+        summary = {
+            "folder": args.folder,
+            "proof_rejected": report["proof_rejected"],
+            "excluded": report["excluded"],
+            "kept": report["kept"],
+            "agreement": {s: v["agreement"] for s, v in report["streams"].items()},
+        }
+        print(json.dumps(summary))
+        return 0
     if args.command == "nightly":
         from . import current_nightly
 
@@ -329,7 +538,14 @@ def main(argv=None, http=None, now=None):
             wiki_first_hours=args.wiki_first_hours,
             wiki_max_hours=args.wiki_max_hours,
             wiki_minutes=args.wiki_minutes,
-            wikis=args.wiki,
+            wikis=_wikis(args.wiki),
+            wiki_source=args.wiki_source,
+            wiki_samples=args.wiki_samples,
+            negatives_per_positive=args.negatives_per_positive,
+            afd_first_days=args.afd_first_days,
+            se_sites=args.se_site,
+            se_pages=args.se_pages,
+            crosscheck_sample=args.crosscheck_sample,
             max_age_days=args.max_age_days,
             export_options={**_export_settings(args), "publishable": args.publishable},
         )
@@ -372,7 +588,15 @@ def main(argv=None, http=None, now=None):
         return 0
     http = http or Http()
     if args.command == "resolve":
-        print(json.dumps(resolve(store, http, now, args.max_age_days, args.wiki_wait_hours)))
+        counts = resolve(
+            store,
+            http,
+            now,
+            args.max_age_days,
+            args.wiki_wait_hours,
+            negatives_per_positive=args.negatives_per_positive,
+        )
+        print(json.dumps(counts))
         return 0
     if args.source == "gharchive":
         hours = list(args.hour)
@@ -381,12 +605,36 @@ def main(argv=None, http=None, now=None):
         if not hours:
             raise SystemExit("give --hour or --start")
         added = current_github.collect(store, http, hours, now=now)
+    elif args.source == "recentchanges":
+        result = current_wikimedia.collect_recent(
+            store,
+            http,
+            now,
+            wikis=_wikis(args.wiki),
+            samples=args.samples,
+            min_days=args.min_days,
+            max_days=args.max_days,
+            negatives_per_positive=args.negatives_per_positive,
+            target_positives=args.target_positives,
+        )
+        print(json.dumps({"source": args.source, **result}))
+        return 0
+    elif args.source == "afd":
+        if not args.day:
+            raise SystemExit("give --day")
+        result = current_afd.collect(store, http, now, days=args.day)
+        print(json.dumps({"source": args.source, **result}))
+        return 0
+    elif args.source == "stackexchange":
+        result = stackexchange(store, http, now, sites=args.site, pages=args.pages)
+        print(json.dumps({"source": args.source, **result}))
+        return 0
     else:
         added = current_wikimedia.collect(
             store,
             http,
             args.minutes,
-            wikis=args.wiki,
+            wikis=_wikis(args.wiki),
             since=args.since,
             now=now,
             limit=args.limit,

@@ -307,7 +307,8 @@ class BankExportTest(unittest.TestCase):
         self.assertEqual(manifest["mode"], "publishable")
         items = (self.bank / "2026-10-30" / "items.jsonl").read_text().splitlines()
         self.assertEqual({json.loads(line)["family"] for line in items}, {"wikipedia-revert"})
-        self.assertEqual(set(manifest["streams"]), {"wikipedia-revert"})
+        self.assertEqual(set(manifest["streams"]), set(current_bank.publishable_streams()))
+        self.assertIn("wikipedia-revert", manifest["streams"])
         for stream in ("github-pr-merge", "github-issue-type", "github-issue-close"):
             with self.subTest(stream=stream), self.assertRaisesRegex(ValueError, "local-only"):
                 self.export(publishable=True, streams=[stream], force=True)

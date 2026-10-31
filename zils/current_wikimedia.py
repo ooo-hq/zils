@@ -14,7 +14,17 @@ import re
 import time
 from datetime import UTC, datetime, timedelta
 
-from .current_items import IPV4, IPV6, RateLimited, iso, parse_time, scrub
+from .current_items import (
+    IPV4,
+    IPV6,
+    WIKIDATA,
+    WIKIS,
+    RateLimited,
+    iso,
+    parse_time,
+    scrub,
+    wiki_stream,
+)
 
 STREAM = "https://stream.wikimedia.org/v2/stream/recentchange"
 WAIT_HOURS = 48
@@ -22,9 +32,21 @@ BATCH = 50  # revids per Action API request
 REVERT_TAGS = {"mw-undo", "mw-rollback", "mw-manual-revert"}
 HIDDEN = ("texthidden", "commenthidden", "userhidden", "suppressed")
 MAX_LINES, MAX_LINE = 40, 2000
+RETRIES, RETRY_SECONDS = 3, 10  # connections that deliver nothing, e.g. a timed-out replay
 LATE_RUN = 500  # consecutive replayed events past the window before a replay stops
+# ...once the window has delivered something. Before that, a run of late events is the other
+# datacentre's topic arriving first (after a switchover it holds days of later events), so keep
+# reading, up to this many late events in all.
+LATE_LIMIT = 200_000
 CELL = re.compile(r'<td class="diff-(deleted|added)line[^"]*">\s*<div>(.*?)</div>\s*</td>', re.S)
 TAG = re.compile(r"<[^>]+>")
+ROW = re.compile(r"<tr\b.*?</tr>", re.S)
+LINENO = re.compile(r'<td[^>]*class="diff-lineno"[^>]*>(.*?)</td>', re.S)
+# Wikidata edits made in bulk by tools; their outcome says little about the edit itself.
+TOOL_EDIT = re.compile(r"toollabs:|quickstatements|#openrefine|#mix'n'match|\[\[:toollabs", re.I)
+DEFAULT_WIKIS = (*WIKIS, WIKIDATA)
+LIMIT_RETRIES, LIMIT_WAIT = 8, 60  # HTTP 429: retries, and the wait without Retry-After
+MAX_GAP = 5.0  # the widest gap between requests after repeated rate limits
 sleep = time.sleep
 
 
@@ -67,13 +89,18 @@ def record(event, wikis, collected_at=None):
         or meta.get("domain") == "canary"
         or not revision.get("old")
         or not revision.get("new")
+        or (event["wiki"] == WIKIDATA and TOOL_EDIT.search(event.get("comment") or ""))
     ):
         return None
     wiki, new, old, server = event["wiki"], revision["new"], revision["old"], event["server_url"]
     length = event.get("length") or {}
+    stream = wiki_stream(wiki)
+    digest = hashlib.sha256(f"{wiki}:{new}".encode()).hexdigest()[:16]
+    prefix = "wikidata-revert" if wiki == WIKIDATA else "wikipedia-revert"
+    source = {"item": event["title"]} if wiki == WIKIDATA else {}
     return {
-        "id": f"wikipedia-revert-{hashlib.sha256(f'{wiki}:{new}'.encode()).hexdigest()[:16]}",
-        "stream": "wikipedia-revert",
+        "id": f"{prefix}-{digest}",
+        "stream": stream,
         "asked_at": iso(datetime.fromtimestamp(event["timestamp"], UTC)),
         "collected_at": collected_at,
         "source": {
@@ -84,6 +111,7 @@ def record(event, wikis, collected_at=None):
             "title": event["title"],
             "url": f"{server}/w/index.php?diff={new}&oldid={old}",
             "api": f"{server}{event.get('server_script_path', '/w')}/api.php",
+            **source,
         },
         "data": {
             "wiki": wiki,
@@ -99,21 +127,26 @@ def record(event, wikis, collected_at=None):
 
 def collect(store, http, minutes, *, now, wikis=None, since=None, limit=None, clock=time.monotonic):
     """Read the stream for `minutes` of wall time, or of stream time from `since`."""
-    wikis, batch, added, last_id, done = set(wikis or ["enwiki"]), [], 0, None, False
+    wikis, batch, added, last_id, done = set(wikis or DEFAULT_WIKIS), [], 0, None, False
     end = parse_time(since) + timedelta(minutes=minutes) if since else None
+    failures = late_total = 0
+    inside = False
     deadline = clock() + minutes * 60
     while not done:
         headers = {"Last-Event-ID": last_id} if last_id else {}
         params = {"since": since} if since and not last_id else {}
         seen = late = 0
+        errored = False
         try:
             for last_id_, event in sse_events(http.lines(STREAM, params=params, headers=headers)):
                 seen, last_id = seen + 1, last_id_ or last_id
                 meta = event.get("meta") or {}
                 if end and meta.get("domain") != "canary":
                     # Two datacentres' topics interleave out of order: stop after a run of late events.
-                    late = late + 1 if parse_time(meta.get("dt", since)) > end else 0
-                    if late >= LATE_RUN:
+                    is_late = parse_time(meta.get("dt", since)) > end
+                    late, late_total = (late + 1, late_total + 1) if is_late else (0, late_total)
+                    inside = inside or not is_late
+                    if (late >= LATE_RUN and inside) or late_total >= LATE_LIMIT:
                         done = True
                         break
                     if late:
@@ -128,69 +161,256 @@ def collect(store, http, minutes, *, now, wikis=None, since=None, limit=None, cl
                     done = True
                     break
         except OSError:  # the server closes connections after 15 minutes; resume from last_id
-            pass
+            errored = True
+        if not seen and errored and failures < RETRIES:
+            failures += 1  # a refused or timed-out connection: wait, then ask again
+            sleep(RETRY_SECONDS * failures)
+            continue
         if not seen or (not end and clock() > deadline):
             break
+        failures = 0
     return added + store.add(batch)
 
 
-def diff_text(body):
-    """Removed and added lines from an Action API compare table."""
-    removed, added = [], []
-    for side, cell in CELL.findall(body or ""):
-        text = html.unescape(TAG.sub("", cell)).strip()
-        if text:
-            (removed if side == "deleted" else added).append(text[:MAX_LINE])
+def _cell_text(cell):
+    return " ".join(html.unescape(TAG.sub("", cell)).split())
+
+
+def diff_text(body, context=False):
+    """Removed and added lines from an Action API compare table.
+
+    With `context`, each line is prefixed by its section heading, as Wikibase diffs label their
+    rows (`Property / date of birth: 3 March 1961`)."""
+    removed, added, heading = [], [], ""
+    for row in ROW.findall(body or "") if context else [body or ""]:
+        headings = [_cell_text(c) for c in LINENO.findall(row)]
+        if context and headings:
+            heading = next((h for h in reversed(headings) if h), "")
+            continue
+        for side, cell in CELL.findall(row):
+            text = _cell_text(cell) if context else html.unescape(TAG.sub("", cell)).strip()
+            if text:
+                line = f"{heading}: {text}" if context and heading else text
+                (removed if side == "deleted" else added).append(line[:MAX_LINE])
     return removed[:MAX_LINES], added[:MAX_LINES]
 
 
 def _api(http, url, params):
+    """One Action API request: paced, retried after `maxlag` and after HTTP 429 (Retry-After)."""
     params = {**params, "format": "json", "formatversion": "2", "maxlag": "5"}
-    for attempt in range(4):
+    lagged = limited = 0
+    while True:
         status, body, headers = http.get_json(url, params=params)
         if status == 429:
-            raise RateLimited("HTTP 429")
+            if limited >= LIMIT_RETRIES:
+                raise RateLimited("HTTP 429")
+            limited += 1
+            if hasattr(http, "gap"):  # slow this client down for the rest of the run
+                http.gap = min(http.gap * 2, MAX_GAP)
+            wait = float(headers.get("retry-after") or LIMIT_WAIT)
+            sleep(max(wait, min(2**limited, LIMIT_WAIT)))
+            continue
         error = (body or {}).get("error") or {}
         if error.get("code") != "maxlag":
+            if hasattr(http, "base_gap") and http.gap > http.base_gap:
+                http.gap = max(http.base_gap, http.gap * 0.9)  # recover after a limit passes
             return status, body
-        if attempt < 3:
-            sleep(float(headers.get("retry-after", 5)))
-    raise RateLimited("replication lag stayed high")
+        lagged += 1
+        if lagged >= 4:
+            raise RateLimited("replication lag stayed high")
+        sleep(float(headers.get("retry-after", 5)))
+
+
+def api_url(wiki):
+    """The Action API of a wiki database name (enwiki, dewiki, wikidatawiki, ...)."""
+    if wiki == WIKIDATA:
+        return "https://www.wikidata.org/w/api.php"
+    return f"https://{wiki.removesuffix('wiki').replace('_', '-')}.wikipedia.org/w/api.php"
+
+
+def _rc_event(change, wiki):
+    """A recentchanges entry in the shape of an EventStreams event, for `record`."""
+    server = api_url(wiki).removesuffix("/w/api.php")
+    moment = parse_time(change["timestamp"])
+    return {
+        "meta": {"domain": server.removeprefix("https://"), "dt": change["timestamp"]},
+        "type": change.get("type", "edit"),
+        "namespace": change.get("ns"),
+        "title": change.get("title", ""),
+        "comment": change.get("comment") or "",
+        "timestamp": int(moment.timestamp()),
+        "user": change.get("user") or "",
+        "bot": bool(change.get("bot")),
+        "minor": bool(change.get("minor")),
+        "length": {"old": change.get("oldlen"), "new": change.get("newlen")},
+        "revision": {"old": change.get("old_revid"), "new": change.get("revid")},
+        "server_url": server,
+        "server_script_path": "/w",
+        "wiki": wiki,
+    }
+
+
+def _spread(samples, min_days, max_days, now):
+    """`samples` moments between max_days and min_days ago, in an order that covers the range
+    evenly from the start (golden-ratio steps), so a run stopped early is still spread out."""
+    span = (max_days - min_days) * 86400
+    newest = now - timedelta(days=min_days)
+    return [newest - timedelta(seconds=((i * 0.6180339887) % 1) * span) for i in range(samples)]
+
+
+def collect_recent(
+    store,
+    http,
+    now,
+    *,
+    wikis=None,
+    samples=48,
+    min_days=2,
+    max_days=14,
+    negatives_per_positive=1,
+    target_positives=None,
+):
+    """Bulk pull of edits whose revert outcome is already recorded.
+
+    `list=recentchanges` returns up to 500 human main-namespace edits older than a moment,
+    with their change tags, so each request labels 500 edits at once. Each wiki is read at
+    `samples` moments between `max_days` and `min_days` ago (the `mw-reverted` tag needs time:
+    keep `min_days` at 2 or more). Every reverted edit is kept, plus `negatives_per_positive`
+    not-reverted edits per reverted one, chosen by hashed id; the rest are not stored. The
+    kept edits enter the waiting room as usual, already past the waiting period, and `resolve`
+    fetches only their diffs (the text before the outcome). A wiki stops early once it has
+    `target_positives` reverted edits."""
+    added, positives, calls, skipped = 0, {}, 0, {}
+    for wiki in wikis or DEFAULT_WIKIS:
+        found = 0
+        for moment in _spread(samples, min_days, max_days, now):
+            if target_positives and found >= target_positives:
+                break
+            try:
+                status, body = _recent_page(http, wiki, moment)
+            except (RateLimited, OSError) as error:
+                skipped[wiki] = f"{type(error).__name__}: {error}"
+                break
+                (http,)
+            calls += 1
+            changes = (body.get("query") or {}).get("recentchanges") or [] if status == 200 else []
+            rows, reverted = [], set()
+            for change in changes:
+                tags = set(change.get("tags") or [])
+                if tags & REVERT_TAGS or change.get("bot"):
+                    continue
+                row = record(_rc_event(change, wiki), {wiki}, iso(now))
+                if row:
+                    rows.append(row)
+                    if "mw-reverted" in tags:
+                        reverted.add(row["id"])
+            negatives = sorted(
+                (r["id"] for r in rows if r["id"] not in reverted),
+                key=lambda i: hashlib.sha256(i.encode()).hexdigest(),
+            )[: int(len(reverted) * negatives_per_positive)]
+            keep = reverted | set(negatives)
+            added += store.add([r for r in rows if r["id"] in keep])
+            found += len(reverted)
+        positives[wiki] = found
+    return {"added": added, "positives": positives, "calls": calls, "skipped": skipped}
+
+
+def _recent_page(http, wiki, moment):
+    return _api(
+        http,
+        api_url(wiki),
+        {
+            "action": "query",
+            "list": "recentchanges",
+            "rcstart": iso(moment),
+            "rcdir": "older",
+            "rcnamespace": "0",
+            "rctype": "edit",
+            "rcshow": "!bot",
+            "rclimit": "500",
+            "rcprop": "title|ids|sizes|flags|user|comment|timestamp|tags",
+        },
+    )
+
+
+def _precheck(record, revision):
+    """("dropped", record) for hidden or revert edits, else None."""
+    if any(revision.get(flag) for flag in HIDDEN):
+        return "dropped", {**record, "reason": "deleted"}
+    if set(revision.get("tags") or []) & REVERT_TAGS:
+        return "dropped", {**record, "reason": "is-revert"}
+    return None
 
 
 def _resolve_one(record, revision, http, now):
-    if any(revision.get(flag) for flag in HIDDEN):
-        return "dropped", {**record, "reason": "deleted"}
-    tags = set(revision.get("tags") or [])
-    if tags & REVERT_TAGS:
-        return "dropped", {**record, "reason": "is-revert"}
     source = record["source"]
-    status, body = _api(
-        http,
-        source["api"],
-        {
-            "action": "compare",
-            "fromrev": str(source["old_rev_id"]),
-            "torev": str(source["rev_id"]),
-            "prop": "diff",
-            "difftype": "table",
-        },
-    )
+    wikidata = record["data"]["wiki"] == WIKIDATA
+    params = {
+        "action": "compare",
+        "fromrev": str(source["old_rev_id"]),
+        "torev": str(source["rev_id"]),
+        "prop": "diff",
+        "difftype": "table",
+    }
+    status, body = _api(http, source["api"], {**params, "uselang": "en"} if wikidata else params)
     if status != 200 or "error" in body or "compare" not in body:
         return "dropped", {**record, "reason": "deleted"}
     names = [revision.get("user", "")]
-    removed, added = diff_text(body["compare"].get("body"))
+    removed, added = diff_text(body["compare"].get("body"), context=wikidata)
     data = {
         **record["data"],
         "removed": [scrub(s, names) for s in removed],
         "added": [scrub(s, names) for s in added],
     }
-    label = "true" if "mw-reverted" in tags else "false"
+    label = "true" if "mw-reverted" in set(revision.get("tags") or []) else "false"
     return "resolved", {**record, "data": data, "resolved_at": iso(now), "label": label}
 
 
-def resolve(records, http, now, wait_hours=WAIT_HOURS):
-    """Yield (status, record) for edits older than the waiting period; younger ones stay pending."""
+def _sample(rows, revisions, ratio):
+    """Ids of the not-reverted edits to keep: `ratio` per reverted edit, chosen by hashed id."""
+    if ratio is None:
+        return None
+    positive = sum("mw-reverted" in (revisions[r]["tags"] or []) for r in rows)
+    negatives = sorted(
+        (r for r in rows if "mw-reverted" not in (revisions[r]["tags"] or [])),
+        key=lambda r: hashlib.sha256(r.encode()).hexdigest(),
+    )
+    return set(negatives[: int(positive * ratio)])
+
+
+def _labels(http, url, records):
+    """English (or fallback) labels of the Wikidata items behind resolved records."""
+    items = sorted({r["source"]["item"] for r in records})
+    if not items:
+        return {}
+    status, body = _api(
+        http,
+        url,
+        {
+            "action": "wbgetentities",
+            "ids": "|".join(items),
+            "props": "labels",
+            "languages": "en",
+            "languagefallback": "1",
+        },
+    )
+    if status != 200:
+        return {}
+    labels = {}
+    for item, entity in ((body or {}).get("entities") or {}).items():
+        values = (entity or {}).get("labels") or {}
+        value = (values.get("en") or next(iter(values.values()), {})).get("value")
+        if value:
+            labels[item] = value
+    return labels
+
+
+def resolve(records, http, now, wait_hours=WAIT_HOURS, negatives_per_positive=None):
+    """Yield (status, record) for edits older than the waiting period; younger ones stay pending.
+
+    With `negatives_per_positive`, each batch keeps that many not-reverted edits per reverted
+    one and drops the rest as `sampled-out` before any diff is fetched. Reverts are rare, export
+    balances labels anyway, and this saves most of the per-edit diff requests."""
     due = [r for r in records if now - parse_time(r["asked_at"]) >= timedelta(hours=wait_hours)]
     groups = {}
     for row in due:
@@ -217,9 +437,37 @@ def resolve(records, http, now, wait_hours=WAIT_HOURS):
                 for rev in page.get("revisions") or []
             }
             missing = {int(k) for k in query.get("badrevids") or {}}
+            candidates = {}
             for row in chunk:
                 rev_id = row["source"]["rev_id"]
                 if rev_id in missing:
                     yield "dropped", {**row, "reason": "deleted"}
                 elif rev_id in revisions:
-                    yield _resolve_one(row, revisions[rev_id], http, now)
+                    early = _precheck(row, revisions[rev_id])
+                    if early:
+                        yield early
+                    else:
+                        candidates[row["id"]] = row
+            by_id = {i: revisions[r["source"]["rev_id"]] for i, r in candidates.items()}
+            keep = _sample(list(candidates), by_id, negatives_per_positive)
+            done = []
+            for row_id, row in candidates.items():
+                if (
+                    keep is not None
+                    and row_id not in keep
+                    and "mw-reverted" not in (by_id[row_id].get("tags") or [])
+                ):
+                    yield "dropped", {**row, "reason": "sampled-out"}
+                    continue
+                status_, resolved = _resolve_one(row, by_id[row_id], http, now)
+                if status_ == "resolved" and row["data"]["wiki"] == WIKIDATA:
+                    done.append(resolved)
+                else:
+                    yield status_, resolved
+            labels = _labels(http, url, done)
+            for resolved in done:
+                item = resolved["source"]["item"]
+                yield (
+                    "resolved",
+                    {**resolved, "data": {**resolved["data"], "label": labels.get(item)}},
+                )

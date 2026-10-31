@@ -41,8 +41,54 @@ OUTCOME_PHRASES = {
         r"\bwontfix\b",
         r"\b(?:fixed|resolved|addressed) (?:in|by) #\d+",
     ),
-    "wikipedia-revert": (r"\brevert(?:ed|ing|s)?\b", r"\bundid\b", r"\brvv?\b", r"\brollback\b"),
 }
+# Revert wording in the default wikis' languages; the edits themselves are not reverts (those are
+# dropped), but a summary that mentions one gives the outcome away.
+REVERT_PHRASES = (
+    r"\brevert(?:ed|ing|s)?\b",
+    r"\bundid\b",
+    r"\bundo\b",
+    r"\brvv?\b",
+    r"\brollback\b",
+    r"zurückgesetzt|rückgängig|revertiert",
+    r"révoqu|révocation|\bannul(?:é|ation)",
+    r"\brevertid|\bdeshech|\bdeshac|\brevertir",
+    r"\bannullat|\bripristinat",
+    r"\bdesfeit|\bdesfaz|\brevers(?:ão|ao)\b",
+    r"откат|отмен",
+    r"差し戻|取り消|リバート",
+    r"回退|撤销|撤銷|还原|還原",
+)
+SE_CLOSED_PHRASES = (
+    r"\bpossible duplicate\b",
+    r"\bmarked as (?:a )?duplicate\b",
+    r"\balready has answers? here\b",
+    r"\[(?:closed|duplicate|on hold)\]",
+    r"\bclosed as\b",
+    r"\bvot(?:ed|ing) to close\b",
+)
+SE_ACCEPTED_PHRASES = (
+    r"\baccepted answer\b",
+    r"\bthanks? for accepting\b",
+    r"\b(?:OP|asker) (?:has )?confirmed\b",
+    r"\byou accepted\b",
+)
+OUTCOME_PHRASES["wikipedia-afd"] = (
+    r"\bthe result was\b",
+    r"\bspeedil?y deleted\b",
+    r"\b(?:has|have|was|were) been deleted\b|\bwas deleted\b",
+    r"\bdeleted under [AGRU]\d+",
+    r"\bwithdraw(?:n|ing)?\b",
+    r"\bnon-admin closure\b",
+    r"\bclos(?:ed|ing) (?:this )?as\b",
+)
+for _stream in current_items.STREAMS:
+    if _stream.startswith(("wikipedia-revert", "wikidata-revert")):
+        OUTCOME_PHRASES[_stream] = REVERT_PHRASES
+    elif _stream.startswith("stackexchange-closed-"):
+        OUTCOME_PHRASES[_stream] = SE_CLOSED_PHRASES
+    elif _stream.startswith("stackexchange-accepted-"):
+        OUTCOME_PHRASES[_stream] = SE_ACCEPTED_PHRASES
 OUTCOME = {s: re.compile("|".join(p), re.I) for s, p in OUTCOME_PHRASES.items()}
 SHINGLE_WORDS = 16
 SHINGLE_KEEP = 4  # keep one shingle in four, chosen by hash, so both sides keep the same ones
@@ -54,10 +100,17 @@ TEMPLATE_LABELS = {
     "Pull request title",
     "Wiki",
     "Article",
+    "Item",
     "Edit summary",
+    "Site",
+    "Title",
+    "Tags",
+    "Deletion discussion",
 }
 TEMPLATE_FIELDS = {"Size change", "Minor edit", "Editor"}
-TEMPLATE_LINES = {"Removed:", "Added:", "(nothing)", "[truncated]"}
+TEMPLATE_LINES = {"Removed:", "Added:", "(nothing)", "[truncated]", "Question:", "(empty)"}
+TEMPLATE_LINES |= {"Deletion discussion:"}
+TEMPLATE_LINES |= {f"Answer {chr(65 + i)}:" for i in range(26)}
 
 
 def leak_reason(record, text):
@@ -256,7 +309,10 @@ def prepare(
                 continue
             cases.append(case)
         outcomes = {r["id"]: r["label"] for r in rows}
-        chosen = _balance(cases, outcomes, seed, stream) if balance else cases
+        # Options shuffled per item (accepted answers) are already balanced by the shuffle;
+        # downsampling to the rarest letter would keep only items with the most options.
+        shuffled = current_items.STREAMS[stream].get("per_record_options")
+        chosen = _balance(cases, outcomes, seed, stream) if balance and not shuffled else cases
         spec = current_items.STREAMS[stream]
         stats[stream] = {
             "licence": spec["licence"],
@@ -353,6 +409,8 @@ def export_bank(
         if any(not c["source"].get("url") for c in cases):
             raise ValueError("publishable cases need an attribution URL in source.url")
     folder.mkdir(parents=True, exist_ok=True)
+    for stale in ("items.unchecked.jsonl", "crosscheck.json", "spotcheck.md"):
+        (folder / stale).unlink(missing_ok=True)  # a rewritten day needs a new check
     text = "".join(json.dumps(c, ensure_ascii=False, sort_keys=True) + "\n" for c in cases)
     _write(folder / "items.jsonl", text)
     asked = [c["asked_at"] for c in cases]

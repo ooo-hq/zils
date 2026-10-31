@@ -13,7 +13,7 @@ import traceback
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import current_bank, current_github, current_wikimedia
+from . import current_bank, current_check, current_github, current_items, current_wikimedia
 from .current_items import iso, parse_time
 
 DAY = "%Y-%m-%d"
@@ -92,8 +92,22 @@ def _wikimedia(store, http, cursor, now, first_hours, max_hours, minutes, wikis)
     return {"hours": sampled, "added": added}
 
 
-def _exports(store, bank, cursor, now, options):
-    """Every finished UTC day after the export cursor, oldest first (yesterday on a first run)."""
+def _afd(store, http, cursor, now, first_days):
+    """Every Articles for deletion log day after the cursor that is old enough to be closed."""
+    from . import current_afd
+
+    days = current_afd.log_days(now, cursor.get("afd"), first_days or current_afd.FIRST_DAYS)
+    added = 0
+    for day in days:
+        added += current_afd.collect(store, http, now, days=[day])["added"]
+        cursor.set("afd", day)
+    return {"days": days, "added": added}
+
+
+def _exports(store, bank, cursor, now, options, check=None):
+    """Every finished UTC day after the export cursor, oldest first (yesterday on a first run).
+
+    `check(folder)` runs the proof and cross-check gates on each written day."""
     yesterday = (now.astimezone(UTC) - timedelta(days=1)).date()
     done = cursor.get("export")
     day = datetime.strptime(done, DAY).date() + timedelta(days=1) if done else yesterday
@@ -101,8 +115,12 @@ def _exports(store, bank, cursor, now, options):
     while day <= yesterday:
         date = day.strftime(DAY)
         manifest = current_bank.export_bank(store, bank, date, **options)
+        entry = {"date": date, "exported": manifest["files"]["items.jsonl"]["rows"]}
+        if check:
+            report = check(Path(bank) / date)
+            entry["crosscheck"] = {"excluded": report.get("excluded", [])}
         cursor.set("export", date)
-        written.append({"date": date, "exported": manifest["files"]["items.jsonl"]["rows"]})
+        written.append(entry)
         day += timedelta(days=1)
     return written
 
@@ -121,6 +139,13 @@ def run(
     wiki_max_hours=48,
     wiki_minutes=2,
     wikis=None,
+    wiki_source="stream",
+    wiki_samples=48,
+    negatives_per_positive=None,
+    afd_first_days=None,
+    se_sites=None,
+    se_pages=None,
+    crosscheck_sample=0,
     max_age_days=14,
     export_options=None,
 ):
@@ -152,21 +177,62 @@ def run(
         result["collected"]["gharchive"] = step(
             "gharchive", lambda: _gharchive(store, http, cursor, now, gh_first_hours, gh_max_hours)
         )
-        result["collected"]["wikimedia"] = step(
-            "wikimedia",
-            lambda: _wikimedia(
-                store, http, cursor, now, wiki_first_hours, wiki_max_hours, wiki_minutes, wikis
+        recent = {"samples": wiki_samples, "min_days": 2, "max_days": 3, "wikis": wikis}
+        result["collected"]["wikimedia"] = (
+            step(
+                "wikimedia",
+                lambda: current_wikimedia.collect_recent(store, http, now, **recent),
+            )
+            if wiki_source == "recentchanges"
+            else step(
+                "wikimedia",
+                lambda: _wikimedia(
+                    store, http, cursor, now, wiki_first_hours, wiki_max_hours, wiki_minutes, wikis
+                ),
+            )
+        )
+        if afd_first_days != 0:
+            result["collected"]["afd"] = step(
+                "afd", lambda: _afd(store, http, cursor, now, afd_first_days)
+            )
+        if se_pages != 0:
+            result["collected"]["stackexchange"] = step(
+                "stackexchange",
+                lambda: current.stackexchange(store, http, now, sites=se_sites, pages=se_pages),
+            )
+        result["resolve"] = step(
+            "resolve",
+            lambda: current.resolve(
+                store, http, now, max_age_days, negatives_per_positive=negatives_per_positive
             ),
         )
-        result["resolve"] = step("resolve", lambda: current.resolve(store, http, now, max_age_days))
         options = {
             "references": references,
             "check_overlap": check_overlap,
             **(export_options or {}),
         }
+        held = current_check.paused(state)
+        if held:
+            known = set(current_items.STREAMS) - set(held)
+            if options.get("publishable"):
+                known &= set(current_bank.publishable_streams())
+            options["streams"] = sorted(known & set(options.get("streams") or known))
+
+        def check(folder):
+            report = current_check.run(folder, http, sample=crosscheck_sample, now=now)
+            current_check.update_paused(state, report)
+            return report
+
         result["exports"] = (
-            step("export", lambda: _exports(store, bank, cursor, now, options)) or []
+            step(
+                "export",
+                lambda: _exports(
+                    store, bank, cursor, now, options, check if crosscheck_sample else None
+                ),
+            )
+            or []
         )
+        result["paused"] = current_check.paused(state)
         _, streams, _ = current_bank.prepare(store, balance=False)
         stats = {"at": iso(now), "streams": streams}
         (state / "stats.json").write_text(json.dumps(stats, indent=1, sort_keys=True) + "\n")

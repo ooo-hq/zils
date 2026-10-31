@@ -61,6 +61,8 @@ class NightlyTest(unittest.TestCase):
             "wiki_first_hours": 2,
             "wiki_minutes": 2,
             "check_overlap": False,
+            "se_pages": 0,
+            "afd_first_days": 0,
         }
 
     def tearDown(self):
@@ -84,7 +86,8 @@ class NightlyTest(unittest.TestCase):
         self.assertEqual(cursor["export"], "2026-10-30")
         self.assertTrue((self.bank / "2026-10-30" / "manifest.json").exists())
         self.assertEqual(result["collected"]["gharchive"]["added"], 5)
-        self.assertEqual(result["collected"]["wikimedia"]["added"], 4)
+        # Four English edits and one German edit: the default wiki list reads both.
+        self.assertEqual(result["collected"]["wikimedia"]["added"], 5)
         self.assertGreater(result["resolve"]["resolved"], 0)
         log = [json.loads(line) for line in (self.state / "runs.jsonl").read_text().splitlines()]
         self.assertEqual(len(log), 1)
@@ -158,6 +161,12 @@ class NightlyTest(unittest.TestCase):
                     "2",
                     "--wiki-minutes",
                     "2",
+                    "--se-pages",
+                    "0",
+                    "--afd-first-days",
+                    "0",
+                    "--wiki-source",
+                    "stream",
                 ],
                 http=NightlyHttp(["2026-10-31-9", "2026-10-31-10"]),
                 now=NOW,
