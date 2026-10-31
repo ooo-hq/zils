@@ -36,7 +36,7 @@ def public_record(private_round):
         raise ValueError(f"unknown categories: {len(unknown)}")
     crown = r.get("crown")
     seed = r["seed"]
-    return {
+    record = {
         "round_id": r["round_id"],
         "pool_id": r["pool_id"],
         "seed": seed.hex() if isinstance(seed, bytes) else seed,
@@ -50,6 +50,9 @@ def public_record(private_round):
         "subset_sha256": _sha256(sorted(r["subset_ids"])),
         "predictions_sha256": _sha256(r["predictions"]),
     }
+    if "decision" in r:  # the rounds whose items the seats and crown were scored on
+        record["decision"] = {k: r["decision"][k] for k in ("rounds", "items")}
+    return record
 
 
 def verify_public(public, private_round):

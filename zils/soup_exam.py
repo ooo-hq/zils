@@ -26,8 +26,11 @@ def _allocate(counts, size, minimum):
     return quota
 
 
-def subset(bank, seed: bytes, size: int, *, exclude=(), minimum=FAMILY_MINIMUM):
-    """Return a deterministic, family- and label-stratified subset sorted by id."""
+def subset(bank, seed: bytes, size: int, *, exclude=(), minimum=FAMILY_MINIMUM, whole=True):
+    """Return a deterministic, family- and label-stratified subset sorted by id.
+
+    ``whole=False`` skips the check that the subset is a whole base exam (every category and block
+    cell), for a part that is completed by other items (``soup_current``)."""
     if type(seed) is not bytes or not seed or type(size) is not int or size < 1:
         raise ValueError("seed must be non-empty bytes and size a positive integer")
     exclude = set(exclude)
@@ -46,7 +49,8 @@ def subset(bank, seed: bytes, size: int, *, exclude=(), minimum=FAMILY_MINIMUM):
             )
             chosen += rows[: per_label[label]]
     chosen.sort(key=lambda c: c["id"])
-    base_metrics.baselines(chosen)
+    if whole:
+        base_metrics.baselines(chosen)
     return chosen
 
 
@@ -61,6 +65,10 @@ class UseLedger:
             return {}
         rows = (json.loads(line) for line in self.path.read_text().splitlines() if line)
         return {row["round"]: row["ids"] for row in rows}
+
+    def rounds(self):
+        """[(round id, item ids)] in the order the rounds were recorded."""
+        return list(self._rounds().items())
 
     def record(self, round_id, ids):
         """Count each id once for this round; a round already recorded adds nothing."""

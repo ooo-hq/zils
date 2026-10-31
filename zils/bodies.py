@@ -1,5 +1,6 @@
 """Soup bodies: a miner or scout uploads a full model body (the chassis's language and vision tensors)
-to Hugging Face and commits `zilsb2:<body sha256>:<revision>:<repo id>` with its hotkey.
+to Hugging Face and commits `zilsb2:<body sha256>:<revision>:<repo id>` (a d3-mini body) or
+`zilsb3:<pool>:<body sha256>:<revision>:<repo id>` (a body for another soup pool) with its hotkey.
 
 The body hash covers only the chassis tensors after name mapping (name, shape, raw bf16 bytes, sorted
 by name), so the same weights hash the same whatever the shard layout or `model.` prefix. Tensors are
@@ -15,8 +16,36 @@ from pathlib import Path
 
 from . import commitments, models
 
-PREFIX = "zilsb2"
+PREFIX = "zilsb2"  # a d3-mini body; validators route it to the d3-mini pool only
+POOL_PREFIX = "zilsb3"  # zilsb3:<pool>:... names any other soup pool
+MINI_POOL = "d3-mini"
 MAX_BYTES = models.MAX_CANDIDATE_BYTES
+GiB = 1024**3
+# Each soup pool's body parent (every body is a fine-tune of it; the change check measures from it),
+# the byte cap on a body repo's safetensors (about 1.15 to 1.35 times the parent's Hugging Face
+# upload, so a bf16 fine-tune with lm_head and mtp tensors fits) and its download deadline.
+BODY_POOLS = {
+    "d3-lite": {
+        "parent": ("Qwen/Qwen3.5-0.8B", "2fc06364715b967f1860aea9cf38778875588b17"),
+        "max_bytes": 2 * GiB,
+        "download_seconds": 3600,
+    },
+    MINI_POOL: {
+        "parent": ("Qwen/Qwen3.5-4B", "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"),
+        "max_bytes": None,  # MAX_BYTES, read at call time
+        "download_seconds": None,  # commitments.DOWNLOAD_SECONDS
+    },
+    "d3-flash": {
+        "parent": ("Qwen/Qwen3.5-9B", "c202236235762e1c871ad0ccb60c8ee5ba337b9a"),
+        "max_bytes": 24 * GiB,
+        "download_seconds": 3600,
+    },
+    "d3": {  # z3 27B: vllm-sr/d3-ultra is a fine-tune of Qwen3.8-27B (not Qwen3.5-27B)
+        "parent": ("Qwen/Qwen3.8-27B", "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"),
+        "max_bytes": 64 * GiB,
+        "download_seconds": 3 * 3600,
+    },
+}
 LICENSES = {"apache-2.0", "mit", "bsd-3-clause", "bsd-2-clause"}
 KEEP = ("language_model.", "visual.")
 DROP = ("lm_head", "mtp.")
@@ -43,6 +72,67 @@ def parse_commitment(text):
     if format_commitment(sha256, revision, repo) != text:
         raise ValueError("commitment is not canonical")
     return {"sha256": sha256, "revision": revision, "repo": repo}
+
+
+def _pool(pool):
+    if pool not in BODY_POOLS:
+        raise ValueError(f"no soup body pool {pool!r}")
+    return BODY_POOLS[pool]
+
+
+def parent(pool):
+    """(repo, revision) of the pool's body parent."""
+    return _pool(pool)["parent"]
+
+
+def max_bytes(pool):
+    """The byte cap on one body repo's safetensors for `pool`."""
+    return _pool(pool)["max_bytes"] or MAX_BYTES
+
+
+def download_seconds(pool):
+    from . import commitments
+
+    return _pool(pool)["download_seconds"] or commitments.DOWNLOAD_SECONDS
+
+
+def format_pool_commitment(pool, sha256, revision, repo):
+    """The commitment text for a body of `pool`: zilsb2 for d3-mini, zilsb3:<pool>:... otherwise."""
+    text = format_commitment(sha256, revision, repo)
+    _pool(pool)
+    return text if pool == MINI_POOL else f"{POOL_PREFIX}:{pool}:{text.split(':', 1)[1]}"
+
+
+def parse_pool_commitment(text):
+    """(pool, {sha256, revision, repo}) of a zilsb2 or zilsb3 commitment; ValueError otherwise."""
+    if isinstance(text, str) and text.startswith(POOL_PREFIX + ":"):
+        pool = text.split(":")[1]
+        if pool == MINI_POOL or pool not in BODY_POOLS:
+            raise ValueError(f"{POOL_PREFIX} names an unknown pool (d3-mini bodies use {PREFIX})")
+        claim = parse_commitment(as_zilsb2(text))
+        if format_pool_commitment(pool, **claim) != text:
+            raise ValueError("commitment is not canonical")
+        return pool, claim
+    return MINI_POOL, parse_commitment(text)
+
+
+def body_pool(text):
+    """The soup pool a commitment is addressed to, without validating the rest: d3-mini for any
+    zilsb2 text (soup intake reports a malformed one), a known pool for zilsb3, else None."""
+    text = str(text)
+    if text.startswith(PREFIX + ":"):
+        return MINI_POOL
+    parts = text.split(":")
+    if parts[0] == POOL_PREFIX and len(parts) > 1 and parts[1] in BODY_POOLS:
+        return None if parts[1] == MINI_POOL else parts[1]
+    return None
+
+
+def as_zilsb2(text):
+    """A zilsb3 commitment rewritten as the zilsb2 text soup intake reads (its pool dropped)."""
+    if str(text).startswith(POOL_PREFIX + ":"):
+        return PREFIX + ":" + text.split(":", 2)[2]
+    return text
 
 
 def map_names(keys, chassis_names):
@@ -294,7 +384,15 @@ def check_layout(folder, chassis):
 
 
 def validate_body(
-    folder, chassis, *, hotkey, base=None, max_change=0.15, sha256=None, trusted=False
+    folder,
+    chassis,
+    *,
+    hotkey,
+    base=None,
+    max_change=0.15,
+    sha256=None,
+    trusted=False,
+    max_bytes=None,
 ):
     """Check a downloaded body against the chassis and return its body hash. `chassis` is the chassis
     checkpoint folder or a mapping name -> shape; `base`, when given, is the parent (Qwen) folder whose
@@ -304,8 +402,10 @@ def validate_body(
     raise ValueError; failures of weights that hash to `sha256` (shape, finiteness, change) raise
     `WeightError`, so only the latter condemn the hash itself. The chassis and base are trusted
     references (symlinks into a snapshot are followed); the body's files must be regular unless
-    `trusted` (a miner checking its own folder or its own snapshot download)."""
+    `trusted` (a miner checking its own folder or its own snapshot download). `max_bytes` caps the
+    body's safetensors (default `MAX_BYTES`, the d3-mini cap; see `max_bytes(pool)`)."""
     folder = Path(folder)
+    limit = MAX_BYTES if max_bytes is None else max_bytes
     owner = _owner(folder, trusted)
     if owner != hotkey:
         raise ValueError(
@@ -315,8 +415,8 @@ def validate_body(
     if license not in LICENSES:
         raise ValueError(f"body license {license!r} is not one of {', '.join(sorted(LICENSES))}")
     total = sum(p.stat().st_size for p in folder.rglob("*.safetensors"))
-    if total > MAX_BYTES:
-        raise ValueError(f"body safetensors total {total} bytes, over the {MAX_BYTES} byte limit")
+    if total > limit:
+        raise ValueError(f"body safetensors total {total} bytes, over the {limit} byte limit")
     shapes = _shapes(chassis)
     tensors = sorted(_tensors(folder, shapes, trusted=trusted).items())
     for name, (_, info) in tensors:
