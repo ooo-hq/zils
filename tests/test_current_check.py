@@ -143,7 +143,9 @@ class WikiCheckTest(unittest.TestCase):
         self.assertEqual(
             [r["derived"] for r in results], ["true", "true", "false", "false", "false"]
         )
-        self.assertEqual([r["agree"] for r in results], [True, True, True, True, False])
+        self.assertEqual(
+            [r["agree"] for r in results], [True, True, True, True, False, True, False]
+        )
         self.assertIn("102", results[0]["evidence"])
 
 
@@ -249,6 +251,7 @@ class StackExchangeCheckTest(unittest.TestCase):
             items = [
                 {"question_id": 1, "closed_date": 5, "score": -3},
                 {"question_id": 2, "score": 5, "accepted_answer_id": 21},
+                {"question_id": 3, "score": 3},
             ]
             return 200, {"items": items, "quota_remaining": 200}, {}
 
@@ -268,6 +271,8 @@ class StackExchangeCheckTest(unittest.TestCase):
             se("stackexchange-score-tools", 2, "3"),
             se("stackexchange-accepted-tools", 2, "B", accepted_text),
             se("stackexchange-accepted-tools", 2, "A", accepted_text),
+            se("stackexchange-score-tools", 3, "2"),  # 1 or 2 then, 3 now: within one vote
+            se("stackexchange-score-tools", 2, "1"),  # 0 then, 5 now: a real difference
         ]
         from unittest.mock import patch
 
@@ -275,7 +280,9 @@ class StackExchangeCheckTest(unittest.TestCase):
 
         with patch.object(current_stackexchange, "sleep", lambda s: None):
             results = current_check.check_stackexchange(cases, FakeHttp(handler))
-        self.assertEqual([r["agree"] for r in results], [True, True, True, True, False])
+        self.assertEqual(
+            [r["agree"] for r in results], [True, True, True, True, False, True, False]
+        )
 
 
 class NightlyPauseTest(unittest.TestCase):

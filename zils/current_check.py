@@ -248,7 +248,9 @@ def check_stackexchange(cases, http, key=None):
             evidence = f"closed_date={question.get('closed_date')}"
         elif family.startswith("stackexchange-score-"):
             level = current_stackexchange.score_level(question["score"])
-            derived = str(level) if abs(level - int(case["label"])) > 0 else case["label"]
+            # Votes keep arriving: a score within one vote of the label's range agrees.
+            near = {current_stackexchange.score_level(question["score"] + d) for d in (-1, 0, 1)}
+            derived = case["label"] if int(case["label"]) in near else str(level)
             evidence = f"score now {question['score']} (level {level})"
         else:
             options = _answers(case["state"]["text"])
