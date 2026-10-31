@@ -1,10 +1,13 @@
 # Model pools
 
-Zils registers five d3 lineages: `d3-lite`, `d3-nano`, `d3-mini`, `d3-flash`
-and `d3`. Each improves against its own incumbent, with its own sealed draws,
-king history, allocation and exact model profiles. Registration does not make a
-pool available for training or serving. New pools start disabled and unallocated;
-qualification, channel configuration and healthy capacity are separate requirements.
+Zils runs four base pools, one per model size: `d3-lite` (0.8B), `d3-mini`
+(4.5B), `d3-flash` (9B) and `d3` (z3, 27B). Each is a [soup pool](#soup-pools)
+with its own bodies, rounds, house list, allocation and exact model profile.
+(The `d3-nano` lineage stays registered so older records stay readable; it has no
+pool.) Registration does not make a pool available for training or serving;
+qualification, channel configuration and healthy capacity are separate
+requirements. `zils/data/base-pools-launch.json` is the launch `base_pools`
+block for all four pools.
 
 The `d3` pool's pinned base is `vllm-sr/d3-ultra` (profile `d3-ultra-26b-v1`,
 `zils/d3-ultra-pins.json`), which replaced `vllm-sr/d3` (`d3-26b-v1`). It uses
@@ -40,8 +43,8 @@ distinct submissions to that pool, measured between commitment blocks (12 s per
 block). With the budgeted queue, a commitment inside the cooldown is refused and
 recorded on that hotkey's queue row; the miner commits again after it has passed.
 A retry or the confirmation run of an accepted submission is never refused. Fractions must
-sum to one. Disabled or unowned pools burn their fraction; another pool cannot
-inherit it. Last-five-distinct registered kings split each earned allocation.
+total at most one; an unassigned remainder burns. Disabled or unowned pools burn
+their fraction; another pool cannot inherit it. Last-five-distinct registered kings split each earned allocation.
 Burn publication checks that `burn_uid` is the subnet owner's uid.
 
 `base_pool_rounds` maps each enabled pool to `base_reference`, `base_round_dir`,
@@ -51,10 +54,53 @@ sealed draw. Runtime state goes under `base-pools/<pool>/base-tier`; prior legac
 state is preserved. Each pending validator round freezes the pool config and
 results. A changed config cannot replay that pending round.
 
+## Emission schedule
+
+A soup pool entry may add an opening block and a boost:
+
+```json
+"d3-flash": {
+  "type": "soup",
+  "model": "d3-flash-8.4b-v1",
+  "enabled": true,
+  "share": 0.20,
+  "opens_block": 7300000,
+  "boost": [{"share": 0.30, "blocks": 100800}, {"share": 0.25, "blocks": 100800}],
+  "house": "zils/data/soup-house-flash.json",
+  "schedule": {"deadline_utc": "12:00"}
+}
+```
+
+- `opens_block` is the chain block at which the pool opens, or `null` for a pool
+  that stays closed until a block is set. Before it the pool runs no rounds,
+  accepts no decision and pays nothing; its share burns. A pool without
+  `opens_block` is open.
+- `boost` (it needs `opens_block`) is a list of 1 to 8 steps paid in order from
+  the opening block: each pays `share` for `blocks` blocks (7,200 blocks is about
+  a day at 12 s per block), then the pool pays its own `share`.
+- The pools' own shares must total at most one, and so must the shares paid at
+  every block: a boost is paid out of budget that closed pools and the
+  unassigned remainder leave unpaid, never out of another pool's share. A
+  configuration that would overfill the budget at any block is refused at
+  startup, naming the block.
+- Shares depend only on the chain block. Each validator round freezes the block
+  of its chain snapshot into its `base-pools.json` (as `block`), and the published
+  weights use the shares at that block, so validators running the same
+  configuration agree on every pool's share. A configuration without any
+  `opens_block` or `boost` pays exactly as before and freezes no block.
+- Only soup pools take a schedule.
+
+The launch configuration gives lite 35% and mini 30% from the start, and flash
+20% and z3 10% once they open; 5% is unassigned and burns. Flash is boosted to
+30% for two weeks and 25% for two more; z3 to 15% for two weeks. Both opening
+blocks are `null` in `zils/data/base-pools-launch.json` and must be set to the
+same values on every validator before they open. z3 cannot open while flash is
+still boosted to 30%: 35 + 30 + 30 + 15 would exceed 100%.
+
 ## Soup pools
 
 A pool entry with `"type": "soup"` pays from daily soup rounds instead of a king
-history (omit `type` for a king pool). Each round admits `zilsb2` body
+history (omit `type` for a king pool). Each round admits the pool's body
 commitments, grades the pool's bodies alone and as uniform averages ("soups") on
 a seeded subset of a private round bank, and pays the soup's seats and the best
 solo body (the crown). The mechanism and its constants live in
@@ -72,8 +118,8 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
 `schedule`, and optionally `subset_size` (default 3,000), `screen_size` (300),
 `max_pool` (20, at least 5), `max_new_per_round` (6), `max_claims_per_round`
 (12), `max_download_bytes_per_round` (60 GiB), `failed_claim_backoff_rounds` (3),
-`others_max` (0.3), `house_mix_max` (0.05), `max_decision_age_days` (3) and
-`sketch_seed`:
+`others_max` (0.3), `house_mix_max` (0.05), `max_decision_age_days` (3),
+`decision_rounds` (3, from 1 to 7) and `sketch_seed`:
 
 ```json
 "d3-mini": {
@@ -112,15 +158,118 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
   remade, so a round whose seed differs from the pool's recorded seed stops with
   an error until the original seed is restored.
 
+- `decision_rounds` sets how many rounds' items each seat and crown decision is
+  scored on. A body's measured gain moves by about 0.4 to 0.6 points from one
+  3,000-item subset to the next, more than the 0.3-point margin, so a single
+  subset seats a body with no real gain on a large share of nights. With the
+  default of 3, the round scores every pool body, every soup it tries, each
+  leave-one-out soup, the current soup (the crown bar) and the chassis baseline
+  on the union of its own subset and the subsets of the validator's last two
+  finished rounds that drew items. The greedy margin, the contribution floor,
+  the house-mix rule and the crown bar all use those pooled scores. The earlier
+  items are read from each round's own record of the cases it drew
+  (`rounds/<round id>/subset-cases.json`), not from the bank, so an item that has
+  since left the bank still counts. An earlier item is dropped, for every body
+  alike, if the use ledger has retired it since or if the current bank holds a
+  different case under the same id. A round that failed, was skipped or has no
+  record of its cases is not pooled. Predictions are cached per body or soup and
+  item, so only missing rows are graded: in practice the soups the round tries,
+  and new bodies on the earlier items. The use ledger still counts only each
+  round's own subset. If the estimated grading would not finish within the
+  round's 6-hour deadline (less 30 minutes), the round pools fewer rounds, down
+  to its own subset alone. The private round record names the pooled rounds, the
+  item count, any rounds that could not be pooled and any fallback. The public
+  record carries the pooled round ids and item count. With `decision_rounds` 1 a
+  round behaves exactly as a single-subset round. Cached soup predictions are
+  kept for at least `decision_rounds` rounds.
+
 `base_pool_rounds` names a soup pool with `round_bank` (the private bank, JSON
 list or JSONL of exam cases) and `base` (the vendor parent folder the body change
-is measured against). The chassis is the pool model's pinned parent.
+is measured against). The chassis is the pool model's pinned parent. Bank items
+longer than the pool's input cap are left out of its rounds.
+
+Each pool reads only the body commitments addressed to it: `zilsb2:…` for
+`d3-mini` and `zilsb3:<pool>:<body sha256>:<revision>:<repo>` for `d3-lite`,
+`d3-flash` and `d3`. Body parents, byte caps and download deadlines per pool are
+in `zils/bodies.py` (`BODY_POOLS`) and [mining](mining.md#four-pools). A
+validator grades the pools its `soup_grading` setting allows
+([validators](validators.md#soup-pools-hardware-disk-and-the-emission-schedule));
+a pool it does not grade burns its share in that validator's weights.
+
+### Round items from Zils Current
+
+By default every round draws its subset from `round_bank`. The optional `exam`
+setting points the pool at [Zils Current](current.md) dated exports instead:
+
+```json
+"exam": {
+  "source": "current",
+  "current_bank": "/var/lib/zils-current/bank",
+  "max_age_days": 14,
+  "max_uses": 3,
+  "current_items": 1000,
+  "min_items": 300,
+  "min_streams": 3,
+  "stream_max": 0.4
+}
+```
+
+`current_bank` is the `--bank` directory of `python -m zils.current nightly` (or
+`export --bank`). A relative path is read from under the validator directory.
+Only `source` and `current_bank` are required. The rest are shown with their
+defaults. `{"source": "bank"}`, or no `exam` at all, keeps the fixed bank.
+
+Each round's subset (`subset_size` items, 3,000 by default) has two parts:
+
+- **The Current part:** `current_items` items from the dated folders.
+  - A folder is used only if its `manifest.json` checks out. The SHA-256 and row
+    count of `items.jsonl` must match the manifest, the overlap check must have
+    run, and the mode must be `local` or `publishable`. Any other folder is
+    skipped and logged, and the round goes on.
+  - An item is eligible when all of these hold:
+    - it resolved in the `max_age_days` before the round's commit deadline;
+    - earlier rounds drew it fewer than `max_uses` times (the use ledger);
+    - with the question, it fits the pool model's input cap (8,192 tokens for
+      d3-mini). The estimate is the same one Zils Current uses.
+  - Each stream's labels are balanced. No stream may hold more than `stream_max`
+    of the part, and at least `min_streams` streams must contribute.
+  - Newer resolution days are drawn first. Within a day, items are ranked under
+    the validator's private `sketch_seed`, because anyone can rebuild Current
+    items from the public sources.
+- **The bank part:** the rest of the subset, drawn from `round_bank` as before.
+  Each Current stream is a family in its category and block cell of the base
+  score. In the cells the Current part covers, its streams replace the bank's
+  families. The bank fills every other cell, so the score keeps all ten cells.
+
+If the Current part cannot meet these rules (too few streams, fewer than
+`min_items` items, or an unreadable bank), the whole round draws from
+`round_bank` exactly as it would without `exam`. The round record says so.
+
+The private round record (`rounds/<round id>/private.json`) holds `bank_source`:
+- the dated folders used, with each manifest's and items file's SHA-256;
+- the folders skipped, and why;
+- the items excluded, by reason;
+- each stream's drawn, available and per-label counts;
+- the cells Current replaced;
+- the fallback reason, if there was one.
+
+The same record is saved as `bank-source.json`, next to `subset.json` and
+`current-items.jsonl` (the Current items drawn). A resumed round reuses all
+three. The Current items of the last eight rounds stay loadable after they leave
+the freshness window, so a round can still score earlier rounds' items.
+
+Pooled decisions (`decision_rounds`) work the same way on a Current exam: each
+earlier round's items come from its `subset-cases.json`, item by item, so a bank
+that changes every day still pools. Cached predictions are scoped to the round
+bank's hash, though. On a day the bank changes, each pool body and soup is graded
+again on the earlier rounds' items, not only on the new subset. That is about
+twice the grading of a fixed bank. The deadline fallback above still bounds it.
 
 Payout: the latest round's public record pays each seated hotkey its seat
 weight and the crown its crown weight, as fractions of the pool's share. The
 crown (20%) goes to the best non-house solo body only if its solo score beats
-every house body's solo score and the current soup's score on the same subset
-by at least the greedy margin (0.3 points); otherwise it burns. If the current
+every house body's solo score and the current soup's score on the same pooled
+items by at least the greedy margin (0.3 points); otherwise it burns. If the current
 soup cannot be graded that round, the crown burns too. Before the first
 soup only the house bodies set the bar. Whatever a round does not pay goes to
 `burn_uid`; before the first round the whole share burns. A failed round keeps
@@ -151,7 +300,8 @@ rounds loses its folder (its hash and sketch stay); cached soup predictions
 unused for three rounds are deleted.
 When the round bank has too few unretired items, the round is skipped and logged.
 Only the public record (members, rates, rounded contributions, category scores and
-hashes of the subset, predictions and soup) enters the published report.
+hashes of the subset, predictions and soup, all on the round's own subset, plus
+the pooled round ids and item count) enters the published report.
 
 ### Submitting a body
 
@@ -164,21 +314,34 @@ repo) fails only that hotkey's commitment of that repo revision; a download that
 times out is retried next round. The first valid commitment of a hash wins.
 
 Fine-tunes are welcome, including fine-tunes of house models, the current soup
-or the release; they are paid at the trainer rate. A house mix is paid at the
-scout rate (0.25): a body whose change from the base, fitted on the house
-bodies' changes (non-negative least squares on the sketches), leaves a residual
-share under `house_mix_max` (default 0.05, settable from 0 to 0.5). The dry
-run's two real fine-tunes of a house body left about 0.10 to 0.12. The copy check rejects a
-body that is a near-exact copy (cosine at least 0.999 between weight-change
-sketches) of an earlier body by another hotkey, a house body, the current soup
-or the release. The body is also fitted on earlier other-hotkey bodies and
-house bodies together; if the other hotkeys' bodies add
-`others_max` (default 0.3, settable from 0.1 to 0.9) or more of the body's
-squared norm beyond what the house bodies explain alone, it is a copy. So
-merging another hotkey's body with a house body (or averaging other hotkeys'
-bodies) is rejected, while a fine-tune of a house body, two independent
-fine-tunes of the same house body, or a merge with your own earlier bodies are
-not. A behavioural twin of a pool body is also refused.
+or the release (the pool's served model, whose body is the chassis body); they
+are paid at the trainer rate. These three are the allowed bases: what a body
+changes beyond them is its own work.
+
+The copy check rejects a body that is a near-exact copy (cosine at least 0.999
+between weight-change sketches) of an earlier body by another hotkey, a house
+body, the current soup or the release. The body is also fitted (non-negative
+least squares on the sketches) on the allowed bases alone, and on the allowed
+bases plus earlier other-hotkey bodies. If those other bodies explain
+`others_max` (default 0.3, settable from 0.1 to 0.9) or more of the part the
+allowed bases leave unexplained, it is a copy. The soup is mostly seated miners'
+bodies, so a fine-tune of the soup is still not refused because those miners'
+bodies resemble it. A near-copy of another hotkey's body, a merge of it with a
+house body, and a re-weighted mix of the seated bodies are all rejected. A
+fine-tune of a house body, two independent fine-tunes of the same house body,
+and a merge with your own earlier bodies are not. On the weight changes of four
+public 4B decision models and two fine-tunes of one of them, independent pairs
+scored at most 0.10 on this measure, and copies and re-weighted mixes scored
+0.36 or more. A behavioural twin of a pool body is also refused.
+
+A house mix is paid at the scout rate (0.25): a body whose change from the base,
+fitted on the house bodies' changes, leaves a residual share under
+`house_mix_max` (default 0.05, settable from 0 to 0.5). So is a body that, when
+admitted, was almost all allowed bases: fitted on the house bodies, the current
+soup and the release, it left a residual under the same bar (a near-pure
+re-weighting of the soup). The dry run's two real fine-tunes of a house body
+left about 0.07 to 0.12, so a real fine-tune of the soup or release keeps the
+trainer rate.
 
 Only a near-exact re-upload (or a body with no change from the base) bans the
 body hash. "Explained by earlier" and behavioural twins judge the current pool:
@@ -191,7 +354,7 @@ is recorded in the private round record.
 Commitments are public on chain the moment they are made, and a public repo can
 be copied and committed by someone else before the deadline. To avoid
 front-running, upload the body to a **private** Hugging Face repo, commit
-`zilsb2:<body sha256>:<revision>:<repo>` while the repo is still private, then make
+the body (`zilsb2:…` or `zilsb3:<pool>:…`) while the repo is still private, then make
 the repo public before the round's commit deadline. Validators download at the
 round, after the deadline; a repo that is still private then fails the download
 and is retried in a later round.
@@ -206,7 +369,7 @@ It does not discover or enable live competitions; verify the accepted incumbent
 and allocation with the validator before training.
 
 The existing `zils1` commitment format is unchanged: one active candidate per
-hotkey. A hotkey's one commitment slot is shared with `zilsb2` soup bodies
+hotkey. A hotkey's one commitment slot is shared with soup bodies of every pool
 ([soup pools](#soup-pools)). The validator reads at most 16 KiB of metadata at the committed revision,
 resolves its exact parent, and refuses a stale or wrong-pool profile before weight
 downloads. Full download still verifies the committed checkpoint hash, files and

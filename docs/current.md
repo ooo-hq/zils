@@ -12,9 +12,9 @@ Because every item describes an event that happened after a model was trained, n
 seen it. Any validator or miner can run the tool on a laptop or server with network access and
 rebuild the same items from the same public sources.
 
-This is a pilot. It writes local files only and never uploads or publishes anything. Teacher
-labels and validator integration are not part of it yet (see
-[Extension points](#extension-points)).
+It writes local files only and never uploads or publishes anything. A soup pool can draw its
+round items from the dated exports (see [Validators](#validators)). Teacher labels are not part
+of it yet (see [Extension points](#extension-points)).
 
 ## Streams
 
@@ -552,6 +552,26 @@ after the check are missed, and so are removals that do not restore an earlier v
 - **Deletion discussions** are read as archived. Edits after the close are against convention
   but possible.
 
+## Validators
+
+To grade a soup pool on Zils Current items:
+
+1. Run the nightly job on the validator host (or anywhere that writes to a directory the
+   validator can read). Pass the validator's exam draws and round bank as references, so the
+   overlap check runs against them.
+2. Set the pool's `exam` setting to `{"source": "current", "current_bank": "<the --bank
+   directory>"}`.
+
+Each round then reads every dated folder whose manifest checks out, and draws its Current part
+under the freshness, reuse, breadth and token rules in
+[model pools](model-pools.md#round-items-from-zils-current). The round falls back to the fixed
+round bank when those rules cannot be met. The four streams cover two cells of the base score:
+`reasoning`/`new` and `language`/`new`. The fixed bank still fills the other cells.
+
+Every resolved item is public and can be rebuilt by anyone, labels included. A body committed
+after an item resolved could have been trained on it. A short `max_age_days` narrows that
+window but does not close it.
+
 ## Extension points
 
 - **New sources.** A module with `collect(store, http, ...)` and a
@@ -566,6 +586,5 @@ after the check are missed, and so are removals that do not restore an earlier v
 - **Publishing.** A publishable dated folder (items, manifest and hashes) is the input for an
   upload with a rebuild script. Upload is not implemented. Only publishable streams may ever be
   uploaded.
-- **Teacher labels and exams.** Cases accept `target_probabilities`, and `soup_exam.subset`
-  draws family- and label-stratified subsets, so dated exports can feed teacher distributions or
-  fresh exam rounds without changing the format.
+- **Teacher labels.** Cases accept `target_probabilities`, so dated exports can feed teacher
+  distributions without changing the format.

@@ -221,6 +221,58 @@ rechecks the window against the active configuration and proposes the king/profi
 change. Upload, live config installation and chain publication remain separate
 operator actions. Stable migration cannot be inferred from an election result.
 
+#### Soup pools: hardware, disk and the emission schedule
+
+Every base pool at launch is a [soup pool](model-pools.md#soup-pools): `d3-lite`,
+`d3-mini`, `d3-flash` and `d3` (z3). `zils/data/base-pools-launch.json` is the
+launch `base_pools` block: shares, house lists, daily commit deadlines, intake
+caps and the [emission schedule](model-pools.md#emission-schedule). Every
+validator must run the same `base_pools` block, including the same opening
+blocks, or its weights disagree with the others'.
+
+A soup round loads one model at a time on the GPU. Approximate memory for one
+grading in bf16, and disk for the pool's state at its launch caps:
+
+| Pool | GPU memory | Body size | Bodies kept (pool cap + house) | Disk for bodies |
+|---|---|---|---|---|
+| `d3-lite` | 4 GiB | 1.7 GB | 20 + 2 | about 40 GB |
+| `d3-mini` | 12 GiB (9.5 GB measured) | 9.1 GB | 20 + 5 | about 230 GB |
+| `d3-flash` | 20 GiB | 17 GB | 10 + 1 | about 190 GB |
+| `d3` (z3) | 56 GiB | 52 GB | 5 + 1 | about 320 GB |
+
+Add the pool's chassis and Qwen parent (each about one body) and the round's
+scratch soup (one more body). Only the mini figure is measured; the others are
+estimates from the weights' size. FP8 grading is not supported, so z3 needs a
+card with at least 56 GiB free (an 80 GB card). Rounds of different pools share
+the validator's GPU lock and run one after another; the launch deadlines are
+staggered (mini 00:00, lite 06:00, flash 12:00, z3 18:00 UTC). A round has a
+6-hour limit; a z3 round's duration has not been measured.
+
+Declare what this validator can grade with a local `soup_grading` setting (it
+is not part of `base_pools` and is never published):
+
+```json
+"soup_grading": {"pools": ["d3-lite", "d3-mini", "d3-flash"], "gpu_mib": 24564}
+```
+
+`pools` lists the soup pools to grade (default: all); `gpu_mib` is the card's
+memory, and a pool needing more is skipped. A skipped pool runs no rounds, needs
+no `base_pool_rounds` entry, and is logged in the round's `soup-pools.json` with
+its reason. Its share burns in this validator's weights, while the pools it
+grades pay as usual. A validator that skips a pool other validators grade
+disagrees with them on that pool's share, so run the pools your hardware fits
+and add the others when you can. Without `soup_grading`, every enabled soup pool
+is graded.
+
+Each graded pool's `base_pool_rounds` entry names `round_bank` and `base`, the
+folder of the pool's Qwen parent at its pinned revision (`Qwen/Qwen3.5-0.8B`,
+`Qwen/Qwen3.5-4B`, `Qwen/Qwen3.5-9B` or `Qwen/Qwen3.8-27B`; revisions in
+[mining](mining.md#four-pools)). Round items longer than a pool's input cap
+(4,096 tokens for lite, flash and z3; 8,192 for mini) are left out of that pool's
+rounds and counted in the round log. The cap is checked with the chassis
+tokenizer on the fixed round bank; Zils Current items are filtered by an
+estimated token count ([current](current.md)).
+
 ### 7. Pay the adapter track from hosted-queue work
 
 Off by default. With an `adapter_evidence` section the adapter share pays real

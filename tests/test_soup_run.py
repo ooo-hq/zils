@@ -53,6 +53,8 @@ BODIES = {
     "scout": strengths(0.25, 0.25, 0.25, 0.25, 0.5),
     "housemix": strengths(0.25, 0.25, 0.25, 0.25, 0.3125),
     "t1copy": strengths(1, 1, 0, 0, 0, norm=2),
+    # A fine-tune of the house model whose own change no other body explains.
+    "tuned": strengths(0.25, 0.25, 0.375, 0.125, 0.25),
 }
 
 
@@ -161,8 +163,8 @@ class Round:
             self.state,
             round_id=round_id,
             snapshot=kwargs.pop("snapshot", self.snapshot()),
-            block_hash="0x" + "ab" * 32,
-            bank=self.bank,
+            block_hash=kwargs.pop("block_hash", "0x" + "ab" * 32),
+            bank=kwargs.pop("bank", self.bank),
             ledger=self.ledger,
             cache=soup_grade.PredictionCache(self.state / "cache"),
             runner_for=self.runner,
@@ -1043,10 +1045,13 @@ class SoupRunTest(unittest.TestCase):
         self.assertEqual(record["rates"][sha["t1"]], 1.0)
         self.assertEqual(record["rates"][sha["house"]], 0.0)
         self.assertEqual(set(self.by_body(record)), {sha["t1"], sha["t2"]})
-        # One fixed sketch seed per pool: each body is sketched once, whatever the round's seed.
-        self.assertEqual(len(list((self.r.state / "sketches").glob("*.npz"))), 6)
+        # One fixed sketch seed per pool: each body is sketched once, whatever the round's seed,
+        # and so is the release (the chassis body).
+        sketches = self.r.state / "sketches"
+        self.assertEqual(len(list(sketches.glob("[0-9a-f]*.npz"))), 6)
+        self.assertEqual(len(list(sketches.glob("release-*.npz"))), 1)
         self.r.run(round_id="d3-mini-2026-11-04")
-        self.assertEqual(len(list((self.r.state / "sketches").glob("*.npz"))), 6)
+        self.assertEqual(len(list(sketches.glob("*.npz"))), 7)
 
     def test_a_house_mix_is_paid_at_the_scout_rate(self):
         self.r.commits[5] = ("housemix", 50)
@@ -1069,6 +1074,59 @@ class SoupRunTest(unittest.TestCase):
         record = own.run(round_id="d3-mini-2026-11-04")
         self.assertEqual(record["rejected"], {})
         self.assertIn(own.sha["merge"], record["new"])
+
+    def seated_round(self, name, tensors):
+        """Trainers 1 and 2 hold the soup's seats over a house body far from both; then hotkey 6
+        commits `name`."""
+        BODIES[name] = tensors
+        self.addCleanup(BODIES.pop, name)
+        r = Round(self.tmp / name)
+        r.commits = {1: ("t1", 100), 2: ("t2", 101)}
+        house = [{"name": "weak", "repo": "open/weak", "revision": REVISION, "body_sha256": None}]
+        config = r.config(house=house)
+        first = r.run(config=config)
+        self.assertEqual(set(self.by_body(first)), {r.sha["t1"], r.sha["t2"]})
+        r.commits[6] = (name, 150)
+        return r, r.run(round_id="d3-mini-2026-11-04", config=config)
+
+    def test_a_fine_tune_of_the_soup_by_another_hotkey_is_admitted_at_the_trainer_rate(self):
+        # The soup (t1 + t2) / 2 plus a change of its own: 7% of its change is beyond the soup.
+        r, record = self.seated_round("souptune", strengths(0.5, 0.5, 0.8125, 0.375, 0.5))
+        sha = r.sha["souptune"]
+        self.assertNotIn("6", record["refused"])
+        self.assertIn(sha, record["new"])
+        self.assertEqual(record["rates"][sha], 1.0)
+        state = json.loads((r.state / "pool.json").read_text())
+        self.assertGreater(state["bodies"][sha]["base_residual"], 0.05)
+
+    def test_a_near_pure_soup_tweak_is_paid_at_the_scout_rate(self):
+        r, record = self.seated_round("souptweak", strengths(0.5, 0.5, 0.5625, 0.4375, 0.5))
+        sha = r.sha["souptweak"]
+        self.assertIn(sha, record["new"])
+        self.assertEqual(record["rates"][sha], 0.25)
+
+    def test_a_re_weighted_mix_of_the_seated_bodies_is_refused(self):
+        r, record = self.seated_round("reweight", strengths(0.75, 0.75, 0.25, 0.25, 0.25))
+        self.assertIn("explained by earlier", record["refused"]["6"])
+        self.assertNotIn(r.sha["reweight"], record["new"])
+
+    def test_copy_checks_see_the_release_body(self):
+        from zils import soup_copies
+
+        seen, is_copy = [], soup_copies.is_copy
+
+        def spy(*args, **kwargs):
+            seen.append(kwargs)
+            return is_copy(*args, **kwargs)
+
+        with patch("zils.soup_copies.is_copy", side_effect=spy):
+            self.r.run()
+        self.assertTrue(seen)
+        for kwargs in seen:
+            self.assertIsNotNone(kwargs["release"])
+            self.assertTrue(kwargs["release"].any())
+        release = list((self.r.state / "sketches").glob("release-*.npz"))
+        self.assertEqual(len(release), 1)  # sketched once, under the pinned files' digest
 
     def merge_round(self):
         BODIES["merge"] = strengths(0.625, 0.625, 0.125, 0.125, 0.125)  # (t1 + house) / 2

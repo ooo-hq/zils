@@ -192,6 +192,83 @@ class IsCopyTest(unittest.TestCase):
             soup_copies.is_copy(self.fresh + other, [other], house=[house]), "explained by earlier"
         )
 
+    # Allowed bases: house bodies, the current soup and the release. Once miners hold seats the
+    # soup and release are mostly other hotkeys' bodies; a fine-tune of them is the miner's own
+    # work (owner decision 10), while copying or re-weighting the seated bodies is not.
+
+    def test_a_fine_tune_of_a_soup_of_other_hotkeys_bodies_is_allowed(self):
+        soup = sum(self.earlier) / 3
+        tuned = soup + 0.3 * self.fresh
+        self.assertGreater(soup_copies.explained_share(tuned, self.earlier), 0.5)
+        self.assertIsNone(soup_copies.is_copy(tuned, self.earlier, soup=soup))
+
+    def test_a_fine_tune_of_a_release_of_other_hotkeys_bodies_is_allowed(self):
+        release = (self.earlier[0] + self.earlier[1]) / 2
+        tuned = release + 0.3 * self.fresh
+        self.assertIsNone(soup_copies.is_copy(tuned, self.earlier, release=release))
+
+    def test_a_near_copy_of_a_seated_body_is_still_a_copy(self):
+        soup = sum(self.earlier) / 3
+        near = self.earlier[0] + 0.15 * self.fresh
+        self.assertLess(soup_copies.cosine(near, self.earlier[0]), 0.999)
+        self.assertEqual(soup_copies.is_copy(near, self.earlier, soup=soup), "explained by earlier")
+
+    def test_a_re_weighted_mix_of_seated_bodies_is_a_copy(self):
+        soup = sum(self.earlier) / 3
+        mixes = [
+            0.6 * self.earlier[0] + 0.3 * self.earlier[1] + 0.1 * self.earlier[2],
+            soup + 0.2 * self.earlier[0],  # the soup with one member's weight raised
+        ]
+        for mix in mixes:
+            with self.subTest():
+                self.assertLess(soup_copies.cosine(mix, soup), 0.999)
+                self.assertEqual(
+                    soup_copies.is_copy(mix + self.noise, self.earlier, soup=soup),
+                    "explained by earlier",
+                )
+
+    def test_a_near_copy_of_another_hotkeys_house_fine_tune_is_a_copy(self):
+        # Real fine-tunes share about 93% of their change with the house body they start from
+        # (dry run), so the copied part is a small share of the whole body but all of the part
+        # beyond the house.
+        rng = np.random.default_rng(11)
+        house = 10 * rng.standard_normal(4096)
+        other = house + 3 * rng.standard_normal(4096)
+        near = other + rng.standard_normal(4096)
+        self.assertLess(soup_copies.cosine(near, other), 0.999)
+        self.assertEqual(
+            soup_copies.is_copy(near, [other], house=[house], soup=(other + house) / 2),
+            "explained by earlier",
+        )
+
+    def test_two_house_fine_tunes_stay_allowed_with_one_seated_in_the_soup(self):
+        rng = np.random.default_rng(7)
+        house, pplx = 10 * rng.standard_normal(4096), 5 * rng.standard_normal(4096)
+        first = house + 3 * rng.standard_normal(4096)
+        second = house + 3 * rng.standard_normal(4096)
+        soup = (first + pplx) / 2
+        self.assertIsNone(soup_copies.is_copy(second, [first], house=[house, pplx], soup=soup))
+
+    def test_near_exact_re_uploads_of_house_soup_or_release_stay_banned(self):
+        soup, release, house = sum(self.earlier) / 3, self.earlier[0], self.earlier[2]
+        for target, want in (
+            (house + self.noise, "house re-upload"),
+            (soup + self.noise, "soup re-upload"),
+            (release * 1.01, "release re-upload"),
+        ):
+            with self.subTest(want=want):
+                got = soup_copies.is_copy(target, [], house=[house], soup=soup, release=release)
+                self.assertEqual(got, want)
+
+    def test_base_residual_is_the_share_beyond_house_soup_and_release(self):
+        soup = sum(self.earlier) / 3
+        self.assertLess(soup_copies.base_residual(soup * 2, house=[], soup=soup), 1e-9)
+        tuned = soup + 0.3 * self.fresh
+        expected = 1 - soup_copies.explained_share(tuned, [self.earlier[2], soup])
+        got = soup_copies.base_residual(tuned, house=[self.earlier[2]], soup=soup)
+        self.assertAlmostEqual(got, expected)
+        self.assertAlmostEqual(soup_copies.base_residual(self.fresh, house=[]), 1.0)
+
     def test_zero_change_is_rejected(self):
         self.assertEqual(
             soup_copies.is_copy(np.zeros(4096), self.earlier), "no change from the base"

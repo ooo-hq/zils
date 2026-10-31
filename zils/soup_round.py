@@ -19,6 +19,7 @@ import os
 import re
 import shutil
 import sys
+import time
 import traceback
 from pathlib import Path
 
@@ -162,6 +163,10 @@ MAX_NEW_PER_ROUND = (
 )
 PRUNE_ROUNDS = 3  # a body out of the pool this many rounds loses its folder (hash and sketch kept)
 SOUP_CACHE_ROUNDS = 3  # a soup's cached predictions are dropped after this many rounds unused
+DECISION_ROUNDS = 3  # seats and the crown are scored on the items of this round and the last two
+ITEM_SECONDS = 0.065  # GPU time to predict one item (54-62 ms measured on a 48 GB card)
+KEY_SECONDS = 35  # GPU time to build and load one body or soup before it predicts
+RESERVE_SECONDS = 1800  # kept free under the round deadline for the final soup and the records
 MAX_CLAIMS_PER_ROUND = 12  # commitments downloaded per round, failed ones included
 MAX_DOWNLOAD_BYTES_PER_ROUND = 60 * 1024**3  # bytes downloaded per round, failed claims included
 OTHERS_MAX = 0.3  # share other hotkeys' bodies may add to a body's fit beyond the house bodies
@@ -294,7 +299,7 @@ def _folder_bytes(path, pattern="*"):
 
 def _intake(
     state, snapshot, *, chassis, base, download, copies, folder, limits=None, progress=None,
-    save=lambda progress: None, round_id=None,
+    save=lambda progress: None, round_id=None, residual=None,
 ):  # fmt: skip
     """Admit new zilsb2 commitments in commitment order. Returns (new, rejected, refused, failed).
 
@@ -309,7 +314,9 @@ def _intake(
     and the bytes downloaded (``max_download_bytes_per_round``); later claims wait for the next
     round. Only a claim that downloaded weight bytes counts toward the claims cap, so dead repos
     cannot starve intake; a claim whose download fails in ``TRANSPORT_STRIKES`` separate rounds
-    (``round_id``) is retired as failed (the claim, never the hash). ``progress`` holds the outcome of each claim so far and is passed to ``save`` after every
+    (``round_id``) is retired as failed (the claim, never the hash). ``residual(sha256, folder, *,
+    soup)``, when given, measures an admitted body's share beyond the house bodies, soup and
+    release (``soup_copies.base_residual``), kept as ``base_residual`` for its rate. ``progress`` holds the outcome of each claim so far and is passed to ``save`` after every
     claim, so a round cut off by its deadline resumes without downloading a claim twice.
     """
     from . import bodies
@@ -403,9 +410,15 @@ def _intake(
                 progress["bytes"] += _folder_bytes(partial)
             bodies.check_layout(partial, chassis)
             progress["claims"] += 1  # only a claim with a readable chassis layout uses a slot
-            bodies.validate_body(partial, chassis, hotkey=claim["hotkey"], base=base, sha256=sha)
+            bodies.validate_body(
+                partial, chassis, hotkey=claim["hotkey"], base=base, sha256=sha,
+                max_bytes=limits.get("max_body_bytes"),
+            )  # fmt: skip
             soup = tuple(s for s in state["members"] if s in known)
             reason = copies(sha, partial, earlier, soup=soup) if copies is not None else None
+            measured = None
+            if not reason and residual is not None:
+                measured = residual(sha, partial, soup=soup)
             if reason == "explained by earlier":
                 # A judgement on today's pool, not on the weights: never a hash ban.
                 refused[uid] = f"copy: {reason}; retried when the claim changes or one of the "
@@ -434,11 +447,102 @@ def _intake(
                     "revision": claim["revision"], "block": claim["block"], "house": False,
                     "solo": None,
                 }  # fmt: skip
+                if measured is not None:
+                    new[sha]["base_residual"] = measured
         finally:
             shutil.rmtree(partial, ignore_errors=True)
         progress["done"].append(uid)
         save(progress)
     return new, rejected, refused, failed
+
+
+def _previous_rounds(state_dir, ledger, round_id, wanted):
+    """The ``wanted`` latest finished rounds before ``round_id`` that drew items, oldest first.
+
+    Returns ([(round id, the cases it drew)] that can be pooled, {round id: reason} for rounds in
+    that window that cannot be). Cases come from the round's own record
+    (``rounds/<id>/subset-cases.json``), never from the bank, which may have dropped them since. A
+    round that failed or was skipped has no items in the ledger, so it never enters the window.
+    """
+    if wanted < 1:
+        return [], {}
+    window = [(r, ids) for r, ids in ledger.rounds() if r != round_id and ids][-wanted:]
+    usable, skipped = [], {}
+    for previous, _ in window:
+        path = Path(state_dir) / "rounds" / previous / "subset-cases.json"
+        if not _ROUND_ID.fullmatch(previous) or not path.exists():
+            skipped[previous] = "no recorded items"
+            continue
+        usable.append((previous, json.loads(path.read_text())))
+    return usable, skipped
+
+
+def _grading_seconds(cache, body_keys, soups, ids):
+    """Estimated GPU seconds to finish grading ``body_keys`` (from their cached rows) and up to
+    ``soups`` soups (assumed uncached) on ``ids``."""
+    items, keys = soups * len(ids), soups
+    for key in body_keys:
+        missing = len(ids) - len(cache.get(key, ids))
+        items, keys = items + missing, keys + (missing > 0)
+    return round(items * ITEM_SECONDS + keys * KEY_SECONDS, 1)
+
+
+def _decision_plan(
+    state_dir, ledger, cache, *, round_id, bank, subset, requested, body_keys,
+    deadline, clock,
+):  # fmt: skip
+    """The cases this round's seats and crown are scored on: this round's subset plus the cases
+    up to ``requested`` - 1 earlier rounds drew, as they recorded them (``_previous_rounds``).
+
+    Every body is scored on the same cases. An earlier case is dropped for all of them when the
+    use ledger has retired it since, or when the current bank holds a different case under its id
+    (cached rows are keyed by id). A case that has only left the bank is kept. With a
+    ``deadline``, the most rounds whose estimated grading fits before it (less
+    ``RESERVE_SECONDS``) are used; this round's own subset is always used, as with one round."""
+    from .soup_publish import canonical_json
+
+    previous, skipped = _previous_rounds(state_dir, ledger, round_id, requested - 1)
+    retired, in_bank = ledger.retired(), {c["id"]: canonical_json(c) for c in bank}
+    own = {c["id"]: c for c in subset}
+    options = []
+    for n in range(1, len(previous) + 2):
+        extra = {}
+        for _, cases in previous[len(previous) - (n - 1) :]:  # oldest first: the newest wins
+            extra.update((c["id"], c) for c in cases if c["id"] not in own)
+        kept = {
+            i: c
+            for i, c in extra.items()
+            if i not in retired and in_bank.get(i, canonical_json(c)) == canonical_json(c)
+        }
+        chosen = [r for r, _ in previous[len(previous) - (n - 1) :]] + [round_id]
+        cases = sorted({**own, **kept}.values(), key=lambda c: c["id"])
+        options.append((chosen, cases, len(extra) - len(kept)))
+    soups = (len(body_keys) - 1) + min(len(body_keys), MAX_MEMBERS) + 1  # trials, LOO, current
+    estimates = {
+        str(n): _grading_seconds(cache, body_keys, soups, [c["id"] for c in cases])
+        for n, (_, cases, _) in enumerate(options, 1)
+    }
+    n, fallback = len(options), None
+    if deadline is not None:
+        left = deadline - clock() - RESERVE_SECONDS
+        while n > 1 and estimates[str(n)] > left:
+            n -= 1
+        if n < len(options):
+            fallback = (
+                f"deadline: {len(options)} rounds needed about {estimates[str(len(options))]:.0f} s"
+                f" of grading and {max(0, left):.0f} s were left; used {n}"
+            )
+    rounds, cases, dropped = options[n - 1]
+    return {
+        "requested": requested,
+        "rounds": rounds,
+        "items": len(cases),
+        "dropped_items": dropped,
+        "skipped": skipped,
+        "fallback": fallback,
+        "estimates": estimates,
+        "cases": cases,
+    }
 
 
 def sketch_seed(config, state_dir):
@@ -479,7 +583,7 @@ class _Sketches:
         self.root, self.base, self.names, self.seed = Path(root), base, names, seed
         self.tag = sketch_tag(seed)
 
-    def __call__(self, sha, folder):
+    def __call__(self, sha, folder, *, trusted=False):
         import numpy as np
 
         from . import soup_copies
@@ -490,7 +594,7 @@ class _Sketches:
                 if str(stored["tag"]) != self.tag:
                     raise ValueError(SEED_CHANGED)
                 return stored["sketch"]
-        value = soup_copies.sketch(folder, self.base, self.names, seed=self.seed)
+        value = soup_copies.sketch(folder, self.base, self.names, seed=self.seed, trusted=trusted)
         self.root.mkdir(parents=True, exist_ok=True)
         partial = path.with_name(f".{sha}.partial.npz")
         np.savez(partial, sketch=value, tag=np.array(self.tag))
@@ -515,6 +619,9 @@ def run(
     copies=None,
     twins=None,
     rates=None,
+    bank_source=None,
+    deadline=None,
+    clock=time.time,
 ):
     """One soup round for one pool. Returns the private round record (also written to disk).
 
@@ -533,7 +640,18 @@ def run(
     its member hashes) before screening; ``twins(rows, other_rows) -> bool`` rejects a behavioural
     twin of a pool body on the screen items (default ``soup_copies.is_twin``);
     ``rates(sha256, info, house) -> 0.0 | 0.25 | 1.0`` sets each pool body's pay rate (default
-    ``soup_rates.rate`` against the house sketches; without ``base``, house 0.0 and others 1.0).
+    ``soup_rates.rate`` against the house sketches and the body's ``base_residual``; without
+    ``base``, house 0.0 and others 1.0). The release is the chassis's own body (the pool's served
+    model), so the default checks treat the house bodies, the current soup and the chassis body
+    as allowed bases.
+
+    ``bank_source`` (``soup_current.prepare``'s record of where the subset's items came from) is
+    stored in the private round record when given.
+
+    Seats, contributions and the crown are scored on the items of this round and of up to
+    ``decision_rounds`` - 1 earlier rounds (``_decision_plan``); ``deadline`` (a ``clock()`` time,
+    None for none) lowers that number when the grading would not fit. The use ledger counts only
+    this round's own subset.
 
     State lives under ``state_dir``: ``pool.json`` (known bodies, rejections, members), ``bodies/``,
     ``sketches/``, ``rounds/<round_id>/`` (subset, intake, private and public records, the final
@@ -594,6 +712,9 @@ def run(
             return None
         subset = soup_exam.subset(bank, seed, size, exclude=retired)
         _write_json(round_dir / "subset.json", [c["id"] for c in subset])
+    if not (round_dir / "subset-cases.json").exists():
+        # The cases as drawn, so later rounds can pool them after they leave the bank.
+        _write_json(round_dir / "subset-cases.json", subset)
     ids = [c["id"] for c in subset]
 
     state = _read_json(
@@ -615,14 +736,34 @@ def run(
         def sketch(sha):
             return sketches(sha, folder(sha))
 
+        # The release is the chassis's body; its sketch is keyed by the pinned files, so a new
+        # release (a new pinned parent) is sketched once.
+        pinned = hashlib.sha256(json.dumps(d3.pins(model)["files"], sort_keys=True).encode())
+        release_key = f"release-{pinned.hexdigest()[:32]}"
+
+        def release():
+            return sketches(release_key, chassis, trusted=True)
+
+        def soup_sketch(soup):
+            members = [sketch(s) for s in soup]
+            return sum(members) / len(members) if members else None
+
+        def residual(sha, body, *, soup):
+            return soup_copies.base_residual(
+                sketches(sha, body),
+                house=[sketch(s) for s in sorted(house)],
+                soup=soup_sketch(soup),
+                release=release(),
+            )
+
         if copies is None:
 
             def copies(sha, body, earlier, *, soup):
-                members = [sketch(s) for s in soup]
                 return soup_copies.is_copy(
                     sketches(sha, body),
                     [sketch(s) for s in earlier],
-                    soup=sum(members) / len(members) if members else None,
+                    soup=soup_sketch(soup),
+                    release=release(),
                     house=[sketch(s) for s in sorted(house)],
                     # Explained shares count only earlier bodies still in the pool.
                     explained=[sketch(s) for s in earlier if not known.get(s, {}).get("pruned")],
@@ -641,8 +782,11 @@ def run(
                     hotkey=info["hotkey"],
                     house_sketches=[sketch(s) for s in sorted(house)],
                     house_mix_max=config.get("house_mix_max", soup_rates.HOUSE_MIX_MAX),
+                    base_residual=info.get("base_residual"),
                 )
 
+    else:
+        residual = None
     twins = soup_copies.is_twin if twins is None else twins
     rates = rates or default_rate
 
@@ -658,9 +802,10 @@ def run(
             )
             if k in config
         }
+        limits["max_body_bytes"] = bodies.max_bytes(pool_id)  # each pool's own body size
         new, rejected, refused, failed = _intake(
             state, snapshot, chassis=chassis, base=base, download=download, copies=copies,
-            folder=folder, limits=limits, round_id=round_id,
+            folder=folder, limits=limits, round_id=round_id, residual=residual,
             progress=_read_json(round_dir / "intake-progress.json", None),
             save=lambda progress: _write_json(round_dir / "intake-progress.json", progress),
         )  # fmt: skip
@@ -810,6 +955,23 @@ def run(
             solo[sha] = soup_grade.score(subset, grade(sha, subset))
         except Exception as error:
             strike(sha, "solo", error)
+    plan = _read_json(round_dir / "decision-items.json", None)
+    if plan is None:  # chosen once, so a resumed round scores on the same items
+        plan = _decision_plan(
+            state_dir, ledger, cache, round_id=round_id, bank=bank,
+            subset=subset, requested=config.get("decision_rounds", DECISION_ROUNDS),
+            body_keys=[body_key(s) for s in solo], deadline=deadline, clock=clock,
+        )  # fmt: skip
+        _write_json(round_dir / "decision-items.json", plan)
+    decision_cases = subset
+    if len(plan["rounds"]) > 1:
+        decision_cases = plan["cases"]
+        for sha in list(solo):  # rescored on the pooled items; cached rows are never regraded
+            try:
+                solo[sha] = soup_grade.score(decision_cases, grade(sha, decision_cases))
+            except Exception as error:
+                del solo[sha]
+                strike(sha, "solo", error)
     pool = list(solo)
     if not pool:
         raise ValueError("soup pool has no bodies")
@@ -822,10 +984,10 @@ def run(
         soup_keys.add(key)
         return key
 
-    def soup_rows(members):
+    def soup_rows(members, items):
         if len(members) == 1:
-            return grade(members[0], subset)
-        return graded(soup_key(members), subset, members_of(members))
+            return grade(members[0], items)
+        return graded(soup_key(members), items, members_of(members))
 
     scores = {}
 
@@ -834,10 +996,11 @@ def run(
         if len(members) == 1:
             return solo[members[0]]
         if members not in scores:
-            scores[members] = soup_grade.score(subset, soup_rows(members))
+            rows = soup_rows(members, decision_cases)
+            scores[members] = soup_grade.score(decision_cases, rows)
         return scores[members]
 
-    # The crown bar: the current (previous round's) soup on this round's subset, if one exists.
+    # The crown bar: the current (previous round's) soup on the decision items, if one exists.
     # If it cannot be graded the crown burns this round; only a GPU or disk fault fails the round.
     current = tuple(sorted(s for s in state["members"] if s in known))
     soup_bar, bar_missing = None, False
@@ -856,7 +1019,8 @@ def run(
     baseline = None
     if len(members) == 1:
         key = f"chassis-{soup.soup_hash(chassis)[:32]}-{scope}"
-        baseline = soup_grade.score(subset, graded(key, subset, chassis_body))
+        rows = graded(key, decision_cases, chassis_body)
+        baseline = soup_grade.score(decision_cases, rows)
     contributions = leave_one_out(members, evaluate, baseline=baseline)
     rate_map = {sha: rates(sha, known[sha], house) for sha in pool}
     seats = seat_weights(members, contributions, rate_map)
@@ -874,7 +1038,7 @@ def run(
             partial, chassis, [(folder(s), _rename(folder(s))) for s in members], model=model
         )
         os.replace(partial, final)
-    rows = soup_rows(members)
+    rows = soup_rows(members, subset)  # published predictions and scores: this round's subset
     metrics = base_metrics.score(subset, rows)
     crown_body = next(iter(crown), None)
     private = {
@@ -884,6 +1048,8 @@ def run(
         "block_hash": block_hash,
         "bank_sha256": bank_key,
         "subset_ids": ids,
+        "decision": {k: v for k, v in plan.items() if k != "cases"},
+        "decision_ids": [c["id"] for c in plan["cases"]],
         "members": [
             {
                 "hotkey": known[s]["hotkey"],
@@ -921,6 +1087,7 @@ def run(
         "new": sorted(intake["new"]),
         "soup_keys": sorted(soup_keys),
         "round_index": state.get("rounds", 0) + 1,
+        **({"bank_source": bank_source} if bank_source is not None else {}),
     }
     _write_json(round_dir / "private.json", private)
     return _finish(state_dir, round_dir, ledger)
@@ -978,8 +1145,10 @@ def _finish(state_dir, round_dir, ledger):
             info["pruned"] = True
     soups = state.setdefault("soup_cache", {})
     soups.update(dict.fromkeys(private["soup_keys"], index))
+    # Kept at least as long as a later round can still pool the items they were graded on.
+    keep = max(SOUP_CACHE_ROUNDS, private.get("decision", {}).get("requested", 1))
     for key, last in list(soups.items()):
-        if index - last >= SOUP_CACHE_ROUNDS:
+        if index - last >= keep:
             (state_dir / "cache" / f"{key}.jsonl").unlink(missing_ok=True)
             del soups[key]
     state["rounds"] = index

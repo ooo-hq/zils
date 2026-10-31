@@ -7,8 +7,9 @@ defaults to the saved value. `doctor` checks the setup step by step and prints t
 that fixes the first failing step. `commit-candidate` validates a candidate, uploads it (or takes
 an uploaded revision), prints the commitment and, with --yes, writes it with the hotkey. `update`
 reinstalls at the stable release, the commit release/stable on main names. `commit-body` checks a
-soup-pool body (a full Qwen3.5-4B fine-tune in the chassis layout) already uploaded to Hugging Face,
-prints its body hash and `zilsb2` commitment and, with --yes, writes it with the hotkey (docs/mining.md,
+soup-pool body (a full fine-tune of the pool's Qwen parent in its chassis layout; d3-mini by default,
+--pool for lite, flash or z3) already uploaded to Hugging Face, prints its body hash and `zilsb2` (or
+`zilsb3:<pool>`) commitment and, with --yes, writes it with the hotkey (docs/mining.md,
 "Soup pool"). A hotkey has one commitment slot, shared by `zils1` and `zilsb2`. `announce-serving`
 writes the miner's public endpoint on chain and `serve` answers signed requests for public z3
 checkpoints there, from its own worker or, with --runtime, from the box's adapter runtime
@@ -37,10 +38,11 @@ SAVED = ("wallet_name", "wallet_hotkey", "wallet_path", "model", "candidate", "r
 RUNTIME_TOKEN_ENV = "ZILS_RUNTIME_TOKEN"
 INSTALL = "curl -fsSL https://zils.ai/install.sh | sh"
 STABLE_URL = "https://raw.githubusercontent.com/ooo-hq/zils/main/release/stable"
-# Every soup body is a fine-tune of this parent; its change from it is bounded (bodies.validate_body).
-BODY_PARENT = ("Qwen/Qwen3.5-4B", "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a")
+# Every d3-mini soup body is a fine-tune of this parent; its change from it is bounded
+# (bodies.validate_body). Other pools' parents are in bodies.BODY_POOLS.
+BODY_PARENT = bodies.parent(bodies.MINI_POOL)
 BODY_FILES = ("*.safetensors", "model.safetensors.index.json", "README.md", "zils-owner.json")
-SLOT_NOTE = "a hotkey has one commitment slot, shared by zils1 base candidates and zilsb2 bodies"
+SLOT_NOTE = "a hotkey has one commitment slot, shared by zils1 base candidates and soup bodies"
 
 
 def paint(code, text):
@@ -286,19 +288,24 @@ def hf_cache():
     return str(Path(os.environ.get("HF_HOME", str(zils.ROOT / ".cache/huggingface"))) / "hub")
 
 
+def body_pool(args):
+    return getattr(args, "pool", None) or bodies.MINI_POOL
+
+
 def body_references(args):
-    """The chassis (pinned d3-mini release) and parent (Qwen) folders: given paths, else downloaded."""
+    """The chassis (the pool's pinned release) and parent (Qwen) folders: given paths, else downloaded."""
+    pool = body_pool(args)
     if args.chassis:
         chassis = Path(args.chassis).expanduser().resolve(strict=True)
     else:
         from . import d3
 
-        chassis = d3.pinned_base_path(download=True, model=models.D3)
+        chassis = d3.pinned_base_path(download=True, model=models.D3_POOL_MODELS[pool])
     if args.base:
         return chassis, Path(args.base).expanduser().resolve(strict=True)
     from huggingface_hub import snapshot_download
 
-    repo, revision = BODY_PARENT
+    repo, revision = bodies.parent(pool)
     base = snapshot_download(
         repo_id=repo,
         revision=revision,
@@ -316,15 +323,17 @@ def owner_missing(repo, hotkey):
     )
 
 
-def download_body(repo, revision, hotkey):
+def download_body(repo, revision, hotkey, pool=bodies.MINI_POOL):
     """The body files at exactly this commit, after checking the listing for the ownership file and
-    the byte budget so a refused body is not downloaded."""
+    the pool's byte budget so a refused body is not downloaded."""
     listed = commitments.revision_files(repo, revision)
     if "zils-owner.json" not in listed:
         raise owner_missing(repo, hotkey)
     total = sum(v["size"] or 0 for k, v in listed.items() if k.endswith(".safetensors"))
-    if total > bodies.MAX_BYTES:
-        raise ValueError(f"{repo} holds {total} bytes of safetensors, over {bodies.MAX_BYTES}")
+    if total > bodies.max_bytes(pool):
+        raise ValueError(
+            f"{repo} holds {total} bytes of safetensors, over {bodies.max_bytes(pool)}"
+        )
     from huggingface_hub import snapshot_download
 
     folder = snapshot_download(
@@ -367,7 +376,7 @@ def commit_body(args):
     if args.path:
         folder = Path(args.path).expanduser().resolve(strict=True)
     else:
-        folder = download_body(args.repo, args.revision, hotkey)
+        folder = download_body(args.repo, args.revision, hotkey, body_pool(args))
     owner = folder / "zils-owner.json"
     if args.write_owner:
         owner.write_text(json.dumps({"hotkey": hotkey}) + "\n")
@@ -377,20 +386,24 @@ def commit_body(args):
     chassis, base = body_references(args)
     # The miner's own folder or snapshot download (symlinks into the HF blob store) is trusted here;
     # validators download the files themselves and check them strictly.
-    sha256 = bodies.validate_body(folder, chassis, hotkey=hotkey, base=base, trusted=True)
+    pool = body_pool(args)
+    sha256 = bodies.validate_body(
+        folder, chassis, hotkey=hotkey, base=base, trusted=True, max_bytes=bodies.max_bytes(pool)
+    )
     if args.write_owner:
         print(
             f"body {sha256} passes the local checks. Upload the folder, then commit that"
             f" revision:\n  hf upload {args.repo} {folder} .\n"
-            f"  zils commit-body --repo {args.repo} --revision <the new commit> --path {folder}",
+            f"  zils commit-body --pool {pool} --repo {args.repo} --revision <the new commit>"
+            f" --path {folder}",
             flush=True,
         )
         return None
-    text = bodies.format_commitment(sha256, args.revision, args.repo)
+    text = bodies.format_pool_commitment(pool, sha256, args.revision, args.repo)
     state = registered_state(args, hotkey)
     current = (state["commitment"] or {}).get("data")
     print(
-        f"miner {state['uid']}: body {sha256}\n"
+        f"miner {state['uid']}: body {sha256} for pool {pool}\n"
         f"  repo {args.repo} at {args.revision}\n"
         f"  commitment {text}\n"
         f"  current on chain: {current or 'none'}",
@@ -778,9 +791,11 @@ def main(argv=None):
     body = commands.add_parser(
         "commit-body",
         help="check a soup-pool body on Hugging Face and commit it on chain",
-        description="Check a soup-pool body uploaded to Hugging Face (a bf16 fine-tune of"
-        f" {BODY_PARENT[0]}@{BODY_PARENT[1][:7]} in the d3-mini chassis layout), print its body hash"
-        f" and zilsb2 commitment and, with --yes, write it. Note: {SLOT_NOTE}; committing a body"
+        description="Check a soup-pool body uploaded to Hugging Face (a bf16 fine-tune of the"
+        " pool's parent in its chassis layout: "
+        + ", ".join(f"{p} {bodies.parent(p)[0]}" for p in bodies.BODY_POOLS)
+        + "), print its body hash and commitment (zilsb2 for d3-mini, zilsb3:<pool> otherwise)"
+        f" and, with --yes, write it. Note: {SLOT_NOTE}; committing a body"
         " replaces whatever the hotkey committed before.",
     )
     body.add_argument("--repo", required=True, help="your public Hugging Face model repo")
@@ -788,8 +803,14 @@ def main(argv=None):
         "--revision", help="40-hex commit sha of the uploaded body (not needed with --write-owner)"
     )
     body.add_argument("--path", help="local copy of the body at --revision (skips the download)")
-    body.add_argument("--chassis", help="local pinned d3-mini release (skips the download)")
-    body.add_argument("--base", help=f"local {BODY_PARENT[0]} at the pinned revision")
+    body.add_argument(
+        "--pool",
+        choices=tuple(bodies.BODY_POOLS),
+        default=bodies.MINI_POOL,
+        help="soup pool the body is for (default %(default)s; d3 is the z3 27B pool)",
+    )
+    body.add_argument("--chassis", help="local pinned release of the pool (skips the download)")
+    body.add_argument("--base", help="local copy of the pool's Qwen parent at its pinned revision")
     body.add_argument(
         "--write-owner",
         action="store_true",
