@@ -122,6 +122,8 @@ def run(
     wiki_minutes=2,
     wikis=None,
     negatives_per_positive=None,
+    se_sites=None,
+    se_pages=None,
     max_age_days=14,
     export_options=None,
 ):
@@ -159,6 +161,11 @@ def run(
                 store, http, cursor, now, wiki_first_hours, wiki_max_hours, wiki_minutes, wikis
             ),
         )
+        if se_pages != 0:
+            result["collected"]["stackexchange"] = step(
+                "stackexchange",
+                lambda: current.stackexchange(store, http, now, sites=se_sites, pages=se_pages),
+            )
         result["resolve"] = step(
             "resolve",
             lambda: current.resolve(

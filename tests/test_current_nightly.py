@@ -61,6 +61,7 @@ class NightlyTest(unittest.TestCase):
             "wiki_first_hours": 2,
             "wiki_minutes": 2,
             "check_overlap": False,
+            "se_pages": 0,
         }
 
     def tearDown(self):
@@ -159,6 +160,8 @@ class NightlyTest(unittest.TestCase):
                     "2",
                     "--wiki-minutes",
                     "2",
+                    "--se-pages",
+                    "0",
                 ],
                 http=NightlyHttp(["2026-10-31-9", "2026-10-31-10"]),
                 now=NOW,

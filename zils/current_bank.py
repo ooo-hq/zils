@@ -59,9 +59,27 @@ REVERT_PHRASES = (
     r"差し戻|取り消|リバート",
     r"回退|撤销|撤銷|还原|還原",
 )
+SE_CLOSED_PHRASES = (
+    r"\bpossible duplicate\b",
+    r"\bmarked as (?:a )?duplicate\b",
+    r"\balready has answers? here\b",
+    r"\[(?:closed|duplicate|on hold)\]",
+    r"\bclosed as\b",
+    r"\bvot(?:ed|ing) to close\b",
+)
+SE_ACCEPTED_PHRASES = (
+    r"\baccepted answer\b",
+    r"\bthanks? for accepting\b",
+    r"\b(?:OP|asker) (?:has )?confirmed\b",
+    r"\byou accepted\b",
+)
 for _stream in current_items.STREAMS:
     if _stream.startswith(("wikipedia-revert", "wikidata-revert")):
         OUTCOME_PHRASES[_stream] = REVERT_PHRASES
+    elif _stream.startswith("stackexchange-closed-"):
+        OUTCOME_PHRASES[_stream] = SE_CLOSED_PHRASES
+    elif _stream.startswith("stackexchange-accepted-"):
+        OUTCOME_PHRASES[_stream] = SE_ACCEPTED_PHRASES
 OUTCOME = {s: re.compile("|".join(p), re.I) for s, p in OUTCOME_PHRASES.items()}
 SHINGLE_WORDS = 16
 SHINGLE_KEEP = 4  # keep one shingle in four, chosen by hash, so both sides keep the same ones
@@ -75,9 +93,13 @@ TEMPLATE_LABELS = {
     "Article",
     "Item",
     "Edit summary",
+    "Site",
+    "Title",
+    "Tags",
 }
 TEMPLATE_FIELDS = {"Size change", "Minor edit", "Editor"}
-TEMPLATE_LINES = {"Removed:", "Added:", "(nothing)", "[truncated]"}
+TEMPLATE_LINES = {"Removed:", "Added:", "(nothing)", "[truncated]", "Question:", "(empty)"}
+TEMPLATE_LINES |= {f"Answer {chr(65 + i)}:" for i in range(26)}
 
 
 def leak_reason(record, text):

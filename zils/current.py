@@ -19,7 +19,15 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import ROOT, current_bank, current_github, current_items, current_wikimedia, settings
+from . import (
+    ROOT,
+    current_bank,
+    current_github,
+    current_items,
+    current_stackexchange,
+    current_wikimedia,
+    settings,
+)
 
 VERSION = current_items.COLLECTOR
 DEFAULT_DIR = ROOT / "runs" / "current"
@@ -131,6 +139,11 @@ class Store:
         self._append("pending.jsonl", fresh)
         return len(fresh)
 
+    def drop(self, records):
+        """Record items that will never be used (with a reason) without passing the waiting room."""
+        known = self.known_ids()
+        self._append("dropped.jsonl", [r for r in records if r["id"] not in known])
+
     def save(self, pending, resolved, dropped):
         """Replace the waiting room and append newly resolved and dropped items."""
         self._append("resolved.jsonl", resolved)
@@ -146,6 +159,7 @@ RESOLVERS = {
     "github-": current_github.resolve,
     "wikipedia-revert": current_wikimedia.resolve,
     "wikidata-": current_wikimedia.resolve,
+    "stackexchange-": current_stackexchange.resolve,
 }
 WIKIMEDIA = ("wikipedia-revert", "wikidata-")
 
@@ -210,6 +224,27 @@ def export(store, out, *, seed=0, balance=True, max_tokens=4096, leak_filters=Tr
     }
 
 
+def stackexchange(store, http, now, *, sites=None, pages=None, cursor_path=None):
+    """Collect Stack Exchange questions, keeping per-site cursors next to the store."""
+    path = Path(cursor_path or store.root / "stackexchange-cursor.json")
+    cursors = json.loads(path.read_text()) if path.exists() else {}
+    try:
+        return current_stackexchange.collect(
+            store,
+            http,
+            now,
+            sites=sites,
+            cursors=cursors,
+            pages=pages or current_stackexchange.PAGES_PER_SITE,
+            key=settings.get("ZILS_STACKEXCHANGE_KEY"),
+        )
+    except RateLimited as error:
+        return {"status": "rate-limited", "error": str(error)}
+    finally:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cursors, indent=1, sort_keys=True) + "\n")
+
+
 def _references(values):
     if values:
         return values
@@ -266,7 +301,13 @@ def _parser():
     parser.add_argument("--dir", default=settings.get("ZILS_CURRENT_DIR") or str(DEFAULT_DIR))
     commands = parser.add_subparsers(dest="command", required=True)
     collect = commands.add_parser("collect", help="add new events to the waiting room")
-    collect.add_argument("--source", choices=("gharchive", "wikimedia"), required=True)
+    collect.add_argument(
+        "--source", choices=("gharchive", "wikimedia", "stackexchange"), required=True
+    )
+    collect.add_argument("--site", action="append", help="Stack Exchange site (default: all)")
+    collect.add_argument(
+        "--pages", type=int, default=current_stackexchange.PAGES_PER_SITE, help="per site"
+    )
     collect.add_argument("--hour", action="append", default=[], help="GH Archive hour YYYY-MM-DD-H")
     collect.add_argument("--start", help="first GH Archive hour YYYY-MM-DD-H")
     collect.add_argument("--hours", type=int, default=1, help="consecutive GH Archive hours")
@@ -311,6 +352,13 @@ def _parser():
     )
     nightly.add_argument("--wiki", action="append", help="wiki database name (default: all)")
     _sampling_option(nightly, NEGATIVES_PER_POSITIVE)
+    nightly.add_argument("--se-site", action="append", help="Stack Exchange site (default: all)")
+    nightly.add_argument(
+        "--se-pages",
+        type=int,
+        default=current_stackexchange.PAGES_PER_SITE,
+        help="question pages per Stack Exchange site per run (0 skips Stack Exchange)",
+    )
     nightly.add_argument("--max-age-days", type=float, default=max_age)
     nightly.add_argument("--publishable", action="store_true")
     _export_options(nightly)
@@ -380,6 +428,8 @@ def main(argv=None, http=None, now=None):
             wiki_minutes=args.wiki_minutes,
             wikis=_wikis(args.wiki),
             negatives_per_positive=args.negatives_per_positive,
+            se_sites=args.se_site,
+            se_pages=args.se_pages,
             max_age_days=args.max_age_days,
             export_options={**_export_settings(args), "publishable": args.publishable},
         )
@@ -439,6 +489,10 @@ def main(argv=None, http=None, now=None):
         if not hours:
             raise SystemExit("give --hour or --start")
         added = current_github.collect(store, http, hours, now=now)
+    elif args.source == "stackexchange":
+        result = stackexchange(store, http, now, sites=args.site, pages=args.pages)
+        print(json.dumps({"source": args.source, **result}))
+        return 0
     else:
         added = current_wikimedia.collect(
             store,

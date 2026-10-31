@@ -7,6 +7,8 @@ import re
 import unicodedata
 from datetime import UTC, datetime
 
+from . import settings
+
 # d3 counts state and question together against the profile cap (4,096 for lite and nano, 8,192
 # for mini). Without a tokenizer dependency, estimate tokens conservatively: wiki tables and code
 # measured 1.6 ASCII characters per token on the d3 tokenizer (31 Oct 2026), CJK text about one
@@ -127,6 +129,87 @@ for _db in WIKIS:
     if _db != "enwiki":
         STREAMS[wiki_stream(_db)] = _revert_spec("Wikipedia article")
 STREAMS["wikidata-revert"] = _revert_spec("Wikidata item")
+
+# Stack Exchange: sites grouped by subject, one exam category per group. Each group has three
+# streams (closed: yes/no, score: ordered levels, accepted: choice), so every category gets every
+# question type.
+SE_SITES = {
+    "tools": ("stackoverflow", "superuser", "serverfault", "askubuntu", "unix", "dba"),
+    "reasoning": ("math", "physics", "stats", "cs", "chemistry", "electronics"),
+    "language": ("english", "ell", "german", "french", "spanish", "japanese", "chinese"),
+    "retrieval": ("history", "travel", "law", "biology", "money", "academia", "skeptics"),
+    "arts": ("movies", "scifi", "music", "literature", "photo", "graphicdesign", "writing"),
+}
+SE_NAMES = {
+    "stackoverflow": "Stack Overflow",
+    "superuser": "Super User",
+    "serverfault": "Server Fault",
+    "askubuntu": "Ask Ubuntu",
+    "ell": "English Language Learners Stack Exchange",
+}
+# Question score a week or more after asking: (inclusive upper bound, description), ordered.
+SCORE_LEVELS = (
+    (-1, "Negative score (-1 or lower)"),
+    (0, "Score of 0"),
+    (2, "Score of 1 or 2"),
+    (None, "Score of 3 or higher"),
+)
+SE_TERMS = "CC-BY-SA-4.0: attribute via source.url (the post and its authors); share-alike applies"
+for _group in SE_SITES:
+    _se = {"category": _group, "licence": SE_TERMS, "publishable": True}
+    STREAMS[f"stackexchange-closed-{_group}"] = {
+        **_se,
+        "block": "known",
+        "question": {
+            "type": "noul",
+            "instructions": "Will this newly asked Stack Exchange question be closed "
+            "(as a duplicate, off-topic, unclear, too broad or opinion-based)?",
+            "criteria": {"true": "Closed", "false": "Still open at least a week later"},
+        },
+    }
+    STREAMS[f"stackexchange-score-{_group}"] = {
+        **_se,
+        "block": "new",
+        "ordered_equally_spaced": True,
+        "question": {
+            "type": "score",
+            "instructions": "What score (upvotes minus downvotes) will this newly asked Stack "
+            "Exchange question have a week or more later?",
+            "criteria": [f"Level {i}: {text}" for i, (_, text) in enumerate(SCORE_LEVELS)],
+        },
+    }
+    STREAMS[f"stackexchange-accepted-{_group}"] = {
+        **_se,
+        "block": "new",
+        "per_record_options": True,
+        "question": {
+            "type": "choice",
+            "instructions": "The asker of this Stack Exchange question accepted one of these "
+            "answers. Which one?",
+            "criteria": {},
+        },
+    }
+# Blocks: `known` for task types with an established public benchmark (Wikipedia vandalism,
+# PAN-WVC; Wikidata vandalism, WSDM Cup 2017; Stack Overflow closed questions, Kaggle 2012;
+# Articles for deletion outcomes), `new` for the rest. ZILS_CURRENT_BLOCKS overrides them:
+# comma-separated `stream-prefix=block` pairs, longest prefix first.
+for _stream, _spec in STREAMS.items():
+    if _stream.startswith(("wikipedia-revert", "wikidata-revert")):
+        _spec.setdefault("block", "known")
+    _spec.setdefault("block", "new")
+BLOCKS = ("known", "new")
+
+
+def block_of(stream):
+    overrides = {}
+    for pair in (settings.get("ZILS_CURRENT_BLOCKS") or "").split(","):
+        prefix, _, block = pair.partition("=")
+        if prefix.strip() and block.strip() in BLOCKS:
+            overrides[prefix.strip()] = block.strip()
+    for prefix in sorted(overrides, key=len, reverse=True):
+        if stream.startswith(prefix):
+            return overrides[prefix]
+    return STREAMS[stream]["block"]
 
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 IPV4 = re.compile(r"(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.]*\d)")
@@ -262,8 +345,30 @@ def _wiki_state(record, limit):
     return truncate(f"{head}\nRemoved:\n{removed}\n\nAdded:\n{added}", limit)
 
 
+def _se_state(record, limit):
+    data = record["data"]
+    site = data["site"]
+    name = SE_NAMES.get(site, site.replace("-", " ").title() + " Stack Exchange")
+    head = (
+        f"Site: {name}\nTitle: {data['title']}\nTags: {', '.join(data['tags']) or '(none)'}\n"
+        f"\nQuestion:\n"
+    )
+    answers = data.get("answers") or []
+    if not answers:
+        return truncate(head + (data["body"] or "(empty)"), limit)
+    # The question takes up to a third of the room; the answers share the rest equally.
+    room = max(0, limit - len(head))
+    labels = [f"\n\nAnswer {chr(65 + i)}:\n" for i in range(len(answers))]
+    question = truncate(data["body"] or "(empty)", max(room // 3, 200))
+    each = max(0, (room - len(question) - sum(map(len, labels))) // len(answers))
+    parts = [label + truncate(a or "(empty)", each) for label, a in zip(labels, answers, strict=True)]
+    return head + question + "".join(parts)
+
+
 def state_text(record, max_tokens=4096):
     limit = state_chars(max_tokens)
+    if record["stream"].startswith("stackexchange-"):
+        return fit(_se_state(record, limit), max_tokens)
     if record["stream"].startswith(("wikipedia-revert", "wikidata-revert")):
         return fit(_wiki_state(record, limit), max_tokens)
     head, body = _github_state(record)
@@ -279,6 +384,11 @@ def _question(record):
     spec = STREAMS[record["stream"]]
     question = json.loads(json.dumps(spec["question"]))
     label = record["label"]
+    if spec.get("per_record_options"):
+        # Options were shuffled at collection and are named in the state text (Answer A, ...).
+        count = len(record["data"]["answers"])
+        question["criteria"] = {chr(65 + i): f"Answer {chr(65 + i)}" for i in range(count)}
+        return question, label
     if question["type"] == "choice":
         # As in authored exams: shuffle (order carries no signal), then rename keys A, B, ...
         pairs = list(question["criteria"].items())
@@ -300,7 +410,7 @@ def build(record, max_tokens=4096):
         "id": record["id"],
         "family": record["stream"],
         "category": spec["category"],
-        "block": "new",
+        "block": block_of(record["stream"]),
         "source_id": record["id"],
         "state": {"text": text},
         "question": question,
