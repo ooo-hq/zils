@@ -499,8 +499,11 @@ commercial AI models; read the current terms before any training use.
 **Wikimedia etiquette** is built in: an identifying User-Agent with a contact
 (`ZILS_CURRENT_CONTACT`), one stream connection, a resume from `Last-Event-ID` after the server's
 15-minute disconnect, replay of only the window asked for, serial Action API requests at least
-0.25 seconds apart per host, batches of 50 revision ids, `maxlag=5` with back-off, waiting for
-`Retry-After` after HTTP 429 (four times before the pass stops), and gzip. See the
+0.5 seconds apart across all Wikimedia sites (Wikimedia rate-limits a client across its wikis, as
+one IP address running nine parallel clients found on 31 Oct 2026), batches of 50 revision ids,
+`maxlag=5` with back-off, and after HTTP 429 a wait for `Retry-After` (eight times before the
+source stops) with the gap doubled up to 5 seconds and recovering as requests succeed, and gzip.
+Run one collector per IP address. See the
 [API etiquette](https://www.mediawiki.org/wiki/API:Etiquette),
 [User-Agent policy](https://foundation.wikimedia.org/wiki/Policy:User-Agent_policy) and
 [Robot policy](https://wikitech.wikimedia.org/wiki/Robot_policy).
