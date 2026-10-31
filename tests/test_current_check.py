@@ -208,9 +208,13 @@ class AfdCheckTest(unittest.TestCase):
             afd("Here", "keep"),
             afd("Merged", "merge-redirect"),
             afd("Here", "delete"),
+            {
+                **afd("Gone", "B"),
+                "question": {"type": "choice", "criteria": {"A": "Kept", "B": "Deleted"}},
+            },
         ]
         results = current_check.check_afd(cases, FakeHttp(handler))
-        self.assertEqual([r["agree"] for r in results], [True, True, True, False])
+        self.assertEqual([r["agree"] for r in results], [True, True, True, False, True])
 
 
 class StackExchangeCheckTest(unittest.TestCase):

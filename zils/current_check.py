@@ -114,6 +114,17 @@ def _article(case):
     return match.group(1).strip() if match else None
 
 
+def _afd_class(case):
+    """The result class of an AfD case, whose label may be a shuffled letter."""
+    from .current_items import STREAMS
+
+    label, criteria = case["label"], (case.get("question") or {}).get("criteria") or {}
+    if label in STREAMS["wikipedia-afd"]["question"]["criteria"]:
+        return label
+    names = {text: key for key, text in STREAMS["wikipedia-afd"]["question"]["criteria"].items()}
+    return names[criteria[label]]
+
+
 def check_afd(cases, http):
     """Compare each closing result with whether the article exists today."""
     from .current_afd import API, _get
@@ -146,10 +157,15 @@ def check_afd(cases, http):
             "keep": {"article"},
             "no-consensus": {"article"},
             "merge-redirect": {"redirect", "article"},
-        }[case["label"]]
+        }[_afd_class(case)]
         derived = case["label"] if state in allowed else f"page is {state}"
+        evidence_class = _afd_class(case)
         results.append(
-            {"derived": derived, "agree": state in allowed, "evidence": f"article is now: {state}"}
+            {
+                "derived": derived,
+                "agree": state in allowed,
+                "evidence": f"result {evidence_class}; article is now: {state}",
+            }
         )
     return results
 
