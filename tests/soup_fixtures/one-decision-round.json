@@ -1,0 +1,387 @@
+[
+ {
+  "category_scores": {
+   "arts": 100.0,
+   "language": 100.0,
+   "reasoning": 100.0,
+   "retrieval": 100.0,
+   "tools": 100.0
+  },
+  "crown": {
+   "body_sha256": "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed",
+   "hotkey": "5Trainer1",
+   "rate": 1.0,
+   "weight": 0.2
+  },
+  "members": [
+   {
+    "body_sha256": "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+    "contribution": 48.3,
+    "hotkey": "5Trainer2",
+    "rate": 1.0,
+    "seat_weight": 0.4
+   },
+   {
+    "body_sha256": "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed",
+    "contribution": 51.7,
+    "hotkey": "5Trainer1",
+    "rate": 1.0,
+    "seat_weight": 0.4
+   }
+  ],
+  "new": [
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1",
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+  ],
+  "pool": [
+   "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079",
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed",
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1"
+  ],
+  "predictions_sha256": "86eb84c6709bb5a7a1786b9fe5d5f8aa1958893ff71c79916de7bb25c8386c39",
+  "rates": {
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9": 1.0,
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1": 1.0,
+   "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079": 0.0,
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed": 1.0
+  },
+  "screen": {
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9": 0.6,
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1": 0.06666666666666667,
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed": 0.4
+  },
+  "solo": {
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9": 48.3,
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1": 0.3999999999999999,
+   "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079": 22.07740384615385,
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed": 51.7
+  },
+  "soup_bar": null,
+  "soup_keys": [
+   "soup-3e87198e53b27168ef5ed656e86e7aae-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-877697eb0a80209dd38e5bc0411542f6-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-f84383bfa757e6cc2ee3337820838445-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd"
+  ],
+  "subset_sha256": "de1516f372180b0936a544f56f7b18d2d712ce394a38e6f5417423500d6685ee",
+  "trace": [
+   {
+    "accepted": true,
+    "best_before": 51.7,
+    "score": 100.0,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   },
+   {
+    "accepted": false,
+    "best_before": 100.0,
+    "score": 81.46233846153847,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   },
+   {
+    "accepted": false,
+    "best_before": 100.0,
+    "score": 45.9801282051282,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   }
+  ]
+ },
+ {
+  "category_scores": {
+   "arts": 100.0,
+   "language": 100.0,
+   "reasoning": 100.0,
+   "retrieval": 100.0,
+   "tools": 100.0
+  },
+  "crown": null,
+  "members": [
+   {
+    "body_sha256": "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+    "contribution": 48.3,
+    "hotkey": "5Trainer2",
+    "rate": 1.0,
+    "seat_weight": 0.4
+   },
+   {
+    "body_sha256": "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed",
+    "contribution": 51.7,
+    "hotkey": "5Trainer1",
+    "rate": 1.0,
+    "seat_weight": 0.4
+   }
+  ],
+  "new": [],
+  "pool": [
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed",
+   "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079",
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1"
+  ],
+  "predictions_sha256": "46e6d607573870d7f9619905d2eecf1f5a5095349b88f52bf4ccbc0f68dfedf3",
+  "rates": {
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9": 1.0,
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1": 1.0,
+   "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079": 0.0,
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed": 1.0
+  },
+  "screen": {},
+  "solo": {
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9": 48.3,
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1": 0.0,
+   "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079": 17.294316666666667,
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed": 51.7
+  },
+  "soup_bar": 100.0,
+  "soup_keys": [
+   "soup-3e87198e53b27168ef5ed656e86e7aae-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-877697eb0a80209dd38e5bc0411542f6-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-f84383bfa757e6cc2ee3337820838445-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd"
+  ],
+  "subset_sha256": "7ba6aeef9d35d5be52a58899ad20ec7d72bbb7c7a837d63fb84f6d3ef32142d8",
+  "trace": [
+   {
+    "accepted": true,
+    "best_before": 51.7,
+    "score": 100.0,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   },
+   {
+    "accepted": false,
+    "best_before": 100.0,
+    "score": 77.41653717948718,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   },
+   {
+    "accepted": false,
+    "best_before": 100.0,
+    "score": 41.138401282051284,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   }
+  ]
+ },
+ {
+  "category_scores": {
+   "arts": 100.0,
+   "language": 100.0,
+   "reasoning": 100.0,
+   "retrieval": 100.0,
+   "tools": 100.0
+  },
+  "crown": null,
+  "members": [
+   {
+    "body_sha256": "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+    "contribution": 48.3,
+    "hotkey": "5Trainer2",
+    "rate": 1.0,
+    "seat_weight": 0.4
+   },
+   {
+    "body_sha256": "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed",
+    "contribution": 51.7,
+    "hotkey": "5Trainer1",
+    "rate": 1.0,
+    "seat_weight": 0.4
+   }
+  ],
+  "new": [
+   "decd83d92308729b16c74330f711ff8d1b455c42d7638956028d964a15ef4330"
+  ],
+  "pool": [
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed",
+   "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079",
+   "decd83d92308729b16c74330f711ff8d1b455c42d7638956028d964a15ef4330",
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1"
+  ],
+  "predictions_sha256": "7d7a67ddb847bae030a71a8a611a9511a83fc4cb57f724a27a350d45de525201",
+  "rates": {
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9": 1.0,
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1": 1.0,
+   "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079": 0.0,
+   "decd83d92308729b16c74330f711ff8d1b455c42d7638956028d964a15ef4330": 1.0,
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed": 1.0
+  },
+  "screen": {
+   "decd83d92308729b16c74330f711ff8d1b455c42d7638956028d964a15ef4330": 0.6333333333333333
+  },
+  "solo": {
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9": 48.3,
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1": 0.0,
+   "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079": 23.647906410256407,
+   "decd83d92308729b16c74330f711ff8d1b455c42d7638956028d964a15ef4330": 32.18893205128205,
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed": 51.7
+  },
+  "soup_bar": 100.0,
+  "soup_keys": [
+   "soup-32536e756de8c18726ca76c2286c0191-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-3e87198e53b27168ef5ed656e86e7aae-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-877697eb0a80209dd38e5bc0411542f6-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-f84383bfa757e6cc2ee3337820838445-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd"
+  ],
+  "subset_sha256": "2322b908f0ff7572e940cb84fe4ddec5401a4a2ddf569981b084adee7f782ac8",
+  "trace": [
+   {
+    "accepted": true,
+    "best_before": 51.7,
+    "score": 100.0,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   },
+   {
+    "accepted": false,
+    "best_before": 100.0,
+    "score": 86.45305897435898,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "decd83d92308729b16c74330f711ff8d1b455c42d7638956028d964a15ef4330",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   },
+   {
+    "accepted": false,
+    "best_before": 100.0,
+    "score": 84.94536666666667,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   },
+   {
+    "accepted": false,
+    "best_before": 100.0,
+    "score": 43.179410256410264,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   }
+  ]
+ },
+ {
+  "category_scores": {
+   "arts": 100.0,
+   "language": 100.0,
+   "reasoning": 100.0,
+   "retrieval": 100.0,
+   "tools": 100.0
+  },
+  "crown": null,
+  "members": [
+   {
+    "body_sha256": "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+    "contribution": 48.3,
+    "hotkey": "5Trainer2",
+    "rate": 1.0,
+    "seat_weight": 0.4
+   },
+   {
+    "body_sha256": "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed",
+    "contribution": 51.7,
+    "hotkey": "5Trainer1",
+    "rate": 1.0,
+    "seat_weight": 0.4
+   }
+  ],
+  "new": [],
+  "pool": [
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed",
+   "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079",
+   "decd83d92308729b16c74330f711ff8d1b455c42d7638956028d964a15ef4330",
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1"
+  ],
+  "predictions_sha256": "1264dbb7e7cd44937e461a9e2da7ddadb1dba6c5d7f51367ca0bea04cd3d5660",
+  "rates": {
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9": 1.0,
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1": 1.0,
+   "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079": 0.0,
+   "decd83d92308729b16c74330f711ff8d1b455c42d7638956028d964a15ef4330": 1.0,
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed": 1.0
+  },
+  "screen": {},
+  "solo": {
+   "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9": 48.3,
+   "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1": 0.0,
+   "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079": 17.919871794871796,
+   "decd83d92308729b16c74330f711ff8d1b455c42d7638956028d964a15ef4330": 25.017307692307693,
+   "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed": 51.7
+  },
+  "soup_bar": 100.0,
+  "soup_keys": [
+   "soup-32536e756de8c18726ca76c2286c0191-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-3e87198e53b27168ef5ed656e86e7aae-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-877697eb0a80209dd38e5bc0411542f6-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-f84383bfa757e6cc2ee3337820838445-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd"
+  ],
+  "subset_sha256": "a929ca144b31d7b10dcf470ae210fa80ddc37fafa78c646c05bbf3a70571ae41",
+  "trace": [
+   {
+    "accepted": true,
+    "best_before": 51.7,
+    "score": 100.0,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   },
+   {
+    "accepted": false,
+    "best_before": 100.0,
+    "score": 82.86844230769232,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "decd83d92308729b16c74330f711ff8d1b455c42d7638956028d964a15ef4330",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   },
+   {
+    "accepted": false,
+    "best_before": 100.0,
+    "score": 79.24921153846154,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "da14096981853ac2a4a9d696808bb6c911c8ffb2a180e5ced1690b25c2120079",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   },
+   {
+    "accepted": false,
+    "best_before": 100.0,
+    "score": 40.25030897435898,
+    "try": [
+     "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
+     "cd7bc4ba58e4ca2ac3957c9ad64447ed4bc0a7f619f94919bfab709bb70160c1",
+     "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed"
+    ]
+   }
+  ]
+ }
+]

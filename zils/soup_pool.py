@@ -330,6 +330,7 @@ def main(argv=None):
     config, root = request["config"], Path(request["state_dir"])
     model = config["model"]["id"]
     device = "cuda"
+    deadline = time.time() + ROUND_SECONDS  # run_locked kills this process at that point
     bank, ledger = _bank(request["round_bank"]), soup_exam.UseLedger(root / "uses.jsonl")
     bank_source = None
     if config.get("exam", {}).get("source") == "current":
@@ -357,6 +358,7 @@ def main(argv=None):
         chassis=d3.pinned_base_path(model=model),
         base=request["base"],
         bank_source=bank_source,
+        deadline=deadline,
     )
     if record is not None:
         print(f"soup round {record['round_id']}: {len(record['members'])} members", flush=True)
