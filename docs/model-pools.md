@@ -116,6 +116,68 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
 list or JSONL of exam cases) and `base` (the vendor parent folder the body change
 is measured against). The chassis is the pool model's pinned parent.
 
+### Round items from Zils Current
+
+By default every round draws its subset from `round_bank`. The optional `exam`
+setting points the pool at [Zils Current](current.md) dated exports instead:
+
+```json
+"exam": {
+  "source": "current",
+  "current_bank": "/var/lib/zils-current/bank",
+  "max_age_days": 14,
+  "max_uses": 3,
+  "current_items": 1000,
+  "min_items": 300,
+  "min_streams": 3,
+  "stream_max": 0.4
+}
+```
+
+`current_bank` is the `--bank` directory of `python -m zils.current nightly` (or
+`export --bank`). A relative path is read from under the validator directory.
+Only `source` and `current_bank` are required. The rest are shown with their
+defaults. `{"source": "bank"}`, or no `exam` at all, keeps the fixed bank.
+
+Each round's subset (`subset_size` items, 3,000 by default) has two parts:
+
+- **The Current part:** `current_items` items from the dated folders.
+  - A folder is used only if its `manifest.json` checks out. The SHA-256 and row
+    count of `items.jsonl` must match the manifest, the overlap check must have
+    run, and the mode must be `local` or `publishable`. Any other folder is
+    skipped and logged, and the round goes on.
+  - An item is eligible when all of these hold:
+    - it resolved in the `max_age_days` before the round's commit deadline;
+    - earlier rounds drew it fewer than `max_uses` times (the use ledger);
+    - with the question, it fits the pool model's input cap (8,192 tokens for
+      d3-mini). The estimate is the same one Zils Current uses.
+  - Each stream's labels are balanced. No stream may hold more than `stream_max`
+    of the part, and at least `min_streams` streams must contribute.
+  - Newer resolution days are drawn first. Within a day, items are ranked under
+    the validator's private `sketch_seed`, because anyone can rebuild Current
+    items from the public sources.
+- **The bank part:** the rest of the subset, drawn from `round_bank` as before.
+  Each Current stream is a family in its category and block cell of the base
+  score. In the cells the Current part covers, its streams replace the bank's
+  families. The bank fills every other cell, so the score keeps all ten cells.
+
+If the Current part cannot meet these rules (too few streams, fewer than
+`min_items` items, or an unreadable bank), the whole round draws from
+`round_bank` exactly as it would without `exam`. The round record says so.
+
+The private round record (`rounds/<round id>/private.json`) holds `bank_source`:
+- the dated folders used, with each manifest's and items file's SHA-256;
+- the folders skipped, and why;
+- the items excluded, by reason;
+- each stream's drawn, available and per-label counts;
+- the cells Current replaced;
+- the fallback reason, if there was one.
+
+The same record is saved as `bank-source.json`, next to `subset.json` and
+`current-items.jsonl` (the Current items drawn). A resumed round reuses all
+three. The Current items of the last eight rounds stay loadable after they leave
+the freshness window, so a round can still score earlier rounds' items.
+
 Payout: the latest round's public record pays each seated hotkey its seat
 weight and the crown its crown weight, as fractions of the pool's share. The
 crown (20%) goes to the best non-house solo body only if its solo score beats

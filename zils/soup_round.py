@@ -515,6 +515,7 @@ def run(
     copies=None,
     twins=None,
     rates=None,
+    bank_source=None,
 ):
     """One soup round for one pool. Returns the private round record (also written to disk).
 
@@ -534,6 +535,9 @@ def run(
     twin of a pool body on the screen items (default ``soup_copies.is_twin``);
     ``rates(sha256, info, house) -> 0.0 | 0.25 | 1.0`` sets each pool body's pay rate (default
     ``soup_rates.rate`` against the house sketches; without ``base``, house 0.0 and others 1.0).
+
+    ``bank_source`` (``soup_current.prepare``'s record of where the subset's items came from) is
+    stored in the private round record when given.
 
     State lives under ``state_dir``: ``pool.json`` (known bodies, rejections, members), ``bodies/``,
     ``sketches/``, ``rounds/<round_id>/`` (subset, intake, private and public records, the final
@@ -921,6 +925,7 @@ def run(
         "new": sorted(intake["new"]),
         "soup_keys": sorted(soup_keys),
         "round_index": state.get("rounds", 0) + 1,
+        **({"bank_source": bank_source} if bank_source is not None else {}),
     }
     _write_json(round_dir / "private.json", private)
     return _finish(state_dir, round_dir, ledger)

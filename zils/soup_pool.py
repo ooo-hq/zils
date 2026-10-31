@@ -205,6 +205,9 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
                 if int(item["block"]) < block
             }
             secret = config["base_pools"]["pools"][pool].get(model_pools.SOUP_SECRET)
+            exam = entry.get("exam")
+            if exam:  # a relative Zils Current bank is read from under the validator directory
+                exam = {**exam, "current_bank": str((Path(directory) / exam["current_bank"]))}
             request = {
                 "round_id": round_id,
                 "seed_block": block,
@@ -212,6 +215,7 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
                 "snapshot": {"members": snapshot["members"], "commitments": commitments},
                 "config": {
                     **{k: v for k, v in entry.items() if k != "house"},
+                    **({"exam": exam} if exam else {}),
                     "pool_id": pool,
                     "house": house(entry, directory),
                     **({model_pools.SOUP_SECRET: secret} if secret else {}),
@@ -326,19 +330,33 @@ def main(argv=None):
     config, root = request["config"], Path(request["state_dir"])
     model = config["model"]["id"]
     device = "cuda"
+    bank, ledger = _bank(request["round_bank"]), soup_exam.UseLedger(root / "uses.jsonl")
+    bank_source = None
+    if config.get("exam", {}).get("source") == "current":
+        from . import soup_current
+
+        bank, bank_source = soup_current.prepare(
+            config,
+            root,
+            round_id=request["round_id"],
+            block_hash=request["block_hash"],
+            bank=bank,
+            ledger=ledger,
+        )
     record = soup_round.run(
         config,
         root,
         round_id=request["round_id"],
         snapshot=request["snapshot"],
         block_hash=request["block_hash"],
-        bank=_bank(request["round_bank"]),
-        ledger=soup_exam.UseLedger(root / "uses.jsonl"),
+        bank=bank,
+        ledger=ledger,
         cache=soup_grade.PredictionCache(root / "cache"),
         runner_for=lambda folder: soup_grade.production_runner(folder, device),
         fetch_body=fetch_body,
         chassis=d3.pinned_base_path(model=model),
         base=request["base"],
+        bank_source=bank_source,
     )
     if record is not None:
         print(f"soup round {record['round_id']}: {len(record['members'])} members", flush=True)
