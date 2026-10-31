@@ -316,6 +316,77 @@ class ReplayRetryTest(unittest.TestCase):
         self.assertEqual(added, 3)
 
 
+class PoliteApiTest(unittest.TestCase):
+    def test_too_many_requests_waits_for_retry_after_then_continues(self):
+        answers = [(429, {}, {"retry-after": "7"}), (200, {"ok": 1}, {})]
+        http = FakeHttp(lambda url, params: answers.pop(0))
+        waits = []
+        with patch.object(current_wikimedia, "sleep", waits.append):
+            status, body = current_wikimedia._api(http, "https://x/api.php", {})
+        self.assertEqual((status, body), (200, {"ok": 1}))
+        self.assertIn(7.0, waits)
+
+    def test_requests_are_spaced_and_a_lasting_limit_stops_the_pass(self):
+        http = FakeHttp(lambda url, params: (429, {}, {}))
+        waits = []
+        with patch.object(current_wikimedia, "sleep", waits.append), self.assertRaises(
+            current_items.RateLimited
+        ):
+            current_wikimedia._api(http, "https://x/api.php", {})
+        self.assertEqual(len(http.calls), current_wikimedia.LIMIT_RETRIES + 1)
+
+    def test_the_http_client_spaces_requests_to_one_host(self):
+        class Response:
+            status_code, headers = 200, {}
+
+            def json(self):
+                return {}
+
+        class Session:
+            headers = {}
+
+            def get(self, url, **kwargs):
+                return Response()
+
+        waits = []
+        times = iter([0.0, 0.0, 0.1, 0.1, 0.1, 0.1])
+        with patch.object(current.time, "sleep", waits.append), patch.object(
+            current.time, "monotonic", lambda: next(times)
+        ):
+            http = current.Http(session=Session(), gap=0.5)
+            http.get_json("https://en.wikipedia.org/w/api.php")
+            http.get_json("https://en.wikipedia.org/w/api.php")
+            http.get_json("https://www.wikidata.org/w/api.php")
+        self.assertEqual(len(waits), 1)
+        self.assertAlmostEqual(waits[0], 0.4)
+        self.assertIn("zils-current/", Session.headers["User-Agent"])
+
+
+class CheckpointTest(unittest.TestCase):
+    def test_a_long_pass_saves_what_it_has_resolved_as_it_goes(self):
+        records = [current_wikimedia.record(event("enwiki", 700 + i), WIKIS) for i in range(5)]
+
+        seen_saved = []
+
+        def resolver(rows, http, now, **options):
+            for i, row in enumerate(rows[:3]):
+                if i == 2:
+                    seen_saved.append(len(store.resolved()))
+                yield "resolved", {**row, "label": "false", "resolved_at": "2026-10-31T00:00:00Z"}
+            raise RuntimeError("killed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = current.Store(tmp)
+            store.add(records)
+            with patch.dict(current.RESOLVERS, {"wikipedia-revert": resolver}), patch.object(
+                current, "CHECKPOINT", 2
+            ), self.assertRaises(RuntimeError):
+                current.resolve(store, FakeHttp(), at("2026-10-31T12:00:00Z"))
+            self.assertEqual(seen_saved, [2], "saved at the checkpoint, during the pass")
+            self.assertEqual(len(store.resolved()), 3, "and again when the pass stops")
+            self.assertEqual(len(store.pending()), 2)
+
+
 class SettingsTest(unittest.TestCase):
     def test_nightly_defaults_sample_more_and_read_every_wiki(self):
         args = current._parser().parse_args(["nightly", "--state", "s", "--bank", "b"])

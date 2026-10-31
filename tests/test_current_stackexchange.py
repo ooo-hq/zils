@@ -214,6 +214,7 @@ class WiringTest(unittest.TestCase):
                 check_overlap=False,
                 gh_max_hours=0,
                 wiki_max_hours=0,
+                afd_first_days=0,
                 se_sites=["stackoverflow"],
             )
         self.assertEqual(result["collected"]["stackexchange"]["status"], "rate-limited")

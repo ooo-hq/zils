@@ -189,6 +189,23 @@ for _group in SE_SITES:
             "criteria": {},
         },
     }
+STREAMS["wikipedia-afd"] = {
+    "category": "reasoning",
+    "licence": WIKIMEDIA_TERMS,
+    "publishable": True,
+    "block": "known",
+    "question": {
+        "type": "choice",
+        "instructions": "This English Wikipedia article was nominated for deletion. "
+        "How did the deletion discussion close?",
+        "criteria": {
+            "keep": "Kept",
+            "delete": "Deleted",
+            "merge-redirect": "Merged into, or redirected to, another article",
+            "no-consensus": "No consensus (the article stays by default)",
+        },
+    },
+}
 # Blocks: `known` for task types with an established public benchmark (Wikipedia vandalism,
 # PAN-WVC; Wikidata vandalism, WSDM Cup 2017; Stack Overflow closed questions, Kaggle 2012;
 # Articles for deletion outcomes), `new` for the rest. ZILS_CURRENT_BLOCKS overrides them:
@@ -367,6 +384,10 @@ def _se_state(record, limit):
 
 def state_text(record, max_tokens=4096):
     limit = state_chars(max_tokens)
+    if record["stream"] == "wikipedia-afd":
+        data = record["data"]
+        head = f"Wiki: English Wikipedia\nArticle: {data['article']}\n\nDeletion discussion:\n"
+        return fit(truncate(head + (data["text"] or "(empty)"), limit), max_tokens)
     if record["stream"].startswith("stackexchange-"):
         return fit(_se_state(record, limit), max_tokens)
     if record["stream"].startswith(("wikipedia-revert", "wikidata-revert")):

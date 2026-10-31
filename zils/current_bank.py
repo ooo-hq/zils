@@ -73,6 +73,15 @@ SE_ACCEPTED_PHRASES = (
     r"\b(?:OP|asker) (?:has )?confirmed\b",
     r"\byou accepted\b",
 )
+OUTCOME_PHRASES["wikipedia-afd"] = (
+    r"\bthe result was\b",
+    r"\bspeedil?y deleted\b",
+    r"\b(?:has|have|was|were) been deleted\b|\bwas deleted\b",
+    r"\bdeleted under [AGRU]\d+",
+    r"\bwithdraw(?:n|ing)?\b",
+    r"\bnon-admin closure\b",
+    r"\bclos(?:ed|ing) (?:this )?as\b",
+)
 for _stream in current_items.STREAMS:
     if _stream.startswith(("wikipedia-revert", "wikidata-revert")):
         OUTCOME_PHRASES[_stream] = REVERT_PHRASES
@@ -96,9 +105,11 @@ TEMPLATE_LABELS = {
     "Site",
     "Title",
     "Tags",
+    "Deletion discussion",
 }
 TEMPLATE_FIELDS = {"Size change", "Minor edit", "Editor"}
 TEMPLATE_LINES = {"Removed:", "Added:", "(nothing)", "[truncated]", "Question:", "(empty)"}
+TEMPLATE_LINES |= {"Deletion discussion:"}
 TEMPLATE_LINES |= {f"Answer {chr(65 + i)}:" for i in range(26)}
 
 

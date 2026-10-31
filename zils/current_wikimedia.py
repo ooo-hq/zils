@@ -35,6 +35,7 @@ LINENO = re.compile(r'<td[^>]*class="diff-lineno"[^>]*>(.*?)</td>', re.S)
 # Wikidata edits made in bulk by tools; their outcome says little about the edit itself.
 TOOL_EDIT = re.compile(r"toollabs:|quickstatements|#openrefine|#mix'n'match|\[\[:toollabs", re.I)
 DEFAULT_WIKIS = (*WIKIS, WIKIDATA)
+LIMIT_RETRIES, LIMIT_WAIT = 4, 60  # HTTP 429: retries, and the wait without Retry-After
 sleep = time.sleep
 
 
@@ -184,17 +185,24 @@ def diff_text(body, context=False):
 
 
 def _api(http, url, params):
+    """One Action API request: paced, retried after `maxlag` and after HTTP 429 (Retry-After)."""
     params = {**params, "format": "json", "formatversion": "2", "maxlag": "5"}
-    for attempt in range(4):
+    lagged = limited = 0
+    while True:
         status, body, headers = http.get_json(url, params=params)
         if status == 429:
-            raise RateLimited("HTTP 429")
+            if limited >= LIMIT_RETRIES:
+                raise RateLimited("HTTP 429")
+            limited += 1
+            sleep(float(headers.get("retry-after") or LIMIT_WAIT * limited))
+            continue
         error = (body or {}).get("error") or {}
         if error.get("code") != "maxlag":
             return status, body
-        if attempt < 3:
-            sleep(float(headers.get("retry-after", 5)))
-    raise RateLimited("replication lag stayed high")
+        lagged += 1
+        if lagged >= 4:
+            raise RateLimited("replication lag stayed high")
+        sleep(float(headers.get("retry-after", 5)))
 
 
 def _precheck(record, revision):

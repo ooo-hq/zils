@@ -92,6 +92,18 @@ def _wikimedia(store, http, cursor, now, first_hours, max_hours, minutes, wikis)
     return {"hours": sampled, "added": added}
 
 
+def _afd(store, http, cursor, now, first_days):
+    """Every Articles for deletion log day after the cursor that is old enough to be closed."""
+    from . import current_afd
+
+    days = current_afd.log_days(now, cursor.get("afd"), first_days or current_afd.FIRST_DAYS)
+    added = 0
+    for day in days:
+        added += current_afd.collect(store, http, now, days=[day])["added"]
+        cursor.set("afd", day)
+    return {"days": days, "added": added}
+
+
 def _exports(store, bank, cursor, now, options):
     """Every finished UTC day after the export cursor, oldest first (yesterday on a first run)."""
     yesterday = (now.astimezone(UTC) - timedelta(days=1)).date()
@@ -122,6 +134,7 @@ def run(
     wiki_minutes=2,
     wikis=None,
     negatives_per_positive=None,
+    afd_first_days=None,
     se_sites=None,
     se_pages=None,
     max_age_days=14,
@@ -161,6 +174,10 @@ def run(
                 store, http, cursor, now, wiki_first_hours, wiki_max_hours, wiki_minutes, wikis
             ),
         )
+        if afd_first_days != 0:
+            result["collected"]["afd"] = step(
+                "afd", lambda: _afd(store, http, cursor, now, afd_first_days)
+            )
         if se_pages != 0:
             result["collected"]["stackexchange"] = step(
                 "stackexchange",

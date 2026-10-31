@@ -18,9 +18,11 @@ import sys
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from . import (
     ROOT,
+    current_afd,
     current_bank,
     current_github,
     current_items,
@@ -34,6 +36,8 @@ DEFAULT_DIR = ROOT / "runs" / "current"
 MAX_AGE_DAYS = 14
 WIKI_MINUTES = 10  # stream minutes per hour: about 3,000 balanced edits a day over the wiki list
 NEGATIVES_PER_POSITIVE = 3
+GAP_SECONDS = 0.25  # between requests to one host
+CHECKPOINT = 2000  # outcomes between saves during a resolution pass
 CONTACT = "https://github.com/ooo-hq/zils"
 FILES = ("pending.jsonl", "resolved.jsonl", "dropped.jsonl")
 
@@ -53,14 +57,25 @@ def user_agent():
 class Http:
     """requests with an identifying User-Agent; every call returns (status, body[, headers])."""
 
-    def __init__(self, timeout=30):
-        import requests
+    def __init__(self, timeout=30, gap=GAP_SECONDS, session=None):
+        if session is None:
+            import requests
 
-        self.session = requests.Session()
+            session = requests.Session()
+        self.session = session
         self.session.headers["User-Agent"] = user_agent()
-        self.timeout = timeout
+        self.timeout, self.gap, self.last = timeout, gap, {}
+
+    def _pace(self, url):
+        """Space requests to one host at least `gap` seconds apart (serial, polite clients)."""
+        host = urlsplit(url).netloc
+        moment = time.monotonic()
+        if host in self.last and moment - self.last[host] < self.gap:
+            time.sleep(self.gap - (moment - self.last[host]))
+        self.last[host] = time.monotonic()
 
     def get_json(self, url, params=None, headers=None):
+        self._pace(url)
         response = self.session.get(url, params=params, headers=headers, timeout=self.timeout)
         try:
             body = response.json()
@@ -69,6 +84,7 @@ class Http:
         return response.status_code, body, {k.lower(): v for k, v in response.headers.items()}
 
     def post_json(self, url, payload, headers=None):
+        self._pace(url)
         response = self.session.post(url, json=payload, headers=headers, timeout=self.timeout)
         try:
             body = response.json()
@@ -160,6 +176,7 @@ RESOLVERS = {
     "wikipedia-revert": current_wikimedia.resolve,
     "wikidata-": current_wikimedia.resolve,
     "stackexchange-": current_stackexchange.resolve,
+    "wikipedia-afd": current_stackexchange.resolve,  # collected with the outcome: label now
 }
 WIKIMEDIA = ("wikipedia-revert", "wikidata-")
 
@@ -172,9 +189,32 @@ def resolve(
     wiki_wait_hours=None,
     negatives_per_positive=None,
 ):
-    """One resolution pass over the waiting room; returns counts of what happened."""
+    """One resolution pass over the waiting room; returns counts of what happened.
+
+    Finished items are saved every CHECKPOINT outcomes, so a stopped pass keeps its work."""
     pending = store.pending()
-    outcomes, limited = {}, False
+    outcomes, saved, limited = {}, set(), False
+    totals = {"resolved": 0, "dropped": 0}
+
+    def save(final=False):
+        oldest = now - timedelta(days=max_age_days)
+        keep, resolved, dropped = [], [], []
+        for record in pending:
+            if record["id"] in saved:
+                continue
+            status, record = outcomes.get(record["id"], ("pending", record))
+            if final and status == "pending" and parse_time(record["asked_at"]) < oldest:
+                status, record = "dropped", {**record, "reason": "expired"}
+            if status == "dropped":
+                dropped.append({**record, "dropped_at": iso(now)})
+            else:
+                (resolved if status == "resolved" else keep).append(record)
+        store.save(keep, resolved, dropped)
+        saved.update(r["id"] for r in resolved + dropped)
+        totals["resolved"] += len(resolved)
+        totals["dropped"] += len(dropped)
+        return len(keep)
+
     for prefix, resolver in RESOLVERS.items():
         records = [r for r in pending if r["stream"].startswith(prefix)]
         options = {}
@@ -183,26 +223,24 @@ def resolve(
             if wiki_wait_hours:
                 options["wait_hours"] = wiki_wait_hours
         try:
+            since = 0
             for status, record in resolver(records, http, now, **options):
                 outcomes[record["id"]] = (status, record)
+                since += status != "pending"
+                if since >= CHECKPOINT:
+                    save()
+                    since = 0
         except RateLimited as error:
             print(
                 f"{prefix.rstrip('-')}: rate limited, will continue later ({error})",
                 file=sys.stderr,
             )
             limited = True
-    keep, resolved, dropped = [], [], []
-    oldest = now - timedelta(days=max_age_days)
-    for record in pending:
-        status, record = outcomes.get(record["id"], ("pending", record))
-        if status == "pending" and parse_time(record["asked_at"]) < oldest:
-            status, record = "dropped", {**record, "reason": "expired"}
-        if status == "dropped":
-            dropped.append({**record, "dropped_at": iso(now)})
-        else:
-            (resolved if status == "resolved" else keep).append(record)
-    store.save(keep, resolved, dropped)
-    counts = {"resolved": len(resolved), "dropped": len(dropped), "pending": len(keep)}
+        except BaseException:
+            save()
+            raise
+    counts = {**totals, "pending": save(final=True)}
+    counts.update(totals)
     return {**counts, "rate_limited": True} if limited else counts
 
 
@@ -302,8 +340,9 @@ def _parser():
     commands = parser.add_subparsers(dest="command", required=True)
     collect = commands.add_parser("collect", help="add new events to the waiting room")
     collect.add_argument(
-        "--source", choices=("gharchive", "wikimedia", "stackexchange"), required=True
+        "--source", choices=("gharchive", "wikimedia", "stackexchange", "afd"), required=True
     )
+    collect.add_argument("--day", action="append", default=[], help="AfD log day YYYY-MM-DD")
     collect.add_argument("--site", action="append", help="Stack Exchange site (default: all)")
     collect.add_argument(
         "--pages", type=int, default=current_stackexchange.PAGES_PER_SITE, help="per site"
@@ -352,6 +391,12 @@ def _parser():
     )
     nightly.add_argument("--wiki", action="append", help="wiki database name (default: all)")
     _sampling_option(nightly, NEGATIVES_PER_POSITIVE)
+    nightly.add_argument(
+        "--afd-first-days",
+        type=int,
+        default=current_afd.FIRST_DAYS,
+        help="AfD log days a first run reads (0 skips AfD)",
+    )
     nightly.add_argument("--se-site", action="append", help="Stack Exchange site (default: all)")
     nightly.add_argument(
         "--se-pages",
@@ -428,6 +473,7 @@ def main(argv=None, http=None, now=None):
             wiki_minutes=args.wiki_minutes,
             wikis=_wikis(args.wiki),
             negatives_per_positive=args.negatives_per_positive,
+            afd_first_days=args.afd_first_days,
             se_sites=args.se_site,
             se_pages=args.se_pages,
             max_age_days=args.max_age_days,
@@ -489,6 +535,12 @@ def main(argv=None, http=None, now=None):
         if not hours:
             raise SystemExit("give --hour or --start")
         added = current_github.collect(store, http, hours, now=now)
+    elif args.source == "afd":
+        if not args.day:
+            raise SystemExit("give --day")
+        result = current_afd.collect(store, http, now, days=args.day)
+        print(json.dumps({"source": args.source, **result}))
+        return 0
     elif args.source == "stackexchange":
         result = stackexchange(store, http, now, sites=args.site, pages=args.pages)
         print(json.dumps({"source": args.source, **result}))
