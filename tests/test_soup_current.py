@@ -566,3 +566,67 @@ class EpochTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+CELL_STREAMS = {
+    f"cell-{category}-{block}": (category, block)
+    for category in ("reasoning", "language", "retrieval", "tools", "arts")
+    for block in ("known", "new")
+}
+
+
+def cell_items(day, per_stream):
+    resolved = datetime.fromisoformat(day).replace(hour=12, tzinfo=UTC)
+    rows = []
+    for stream, (category, block) in CELL_STREAMS.items():
+        for i in range(per_stream):
+            row = item("gh-merge", i, resolved)
+            identity = f"{stream}-{resolved:%Y%m%d}-{i}"
+            row.update(
+                id=identity,
+                source_id=identity,
+                family=stream,
+                category=category,
+                block=block,
+                state={"text": f"{identity} state"},
+                content_sha256=hashlib.sha256(identity.encode()).hexdigest(),
+            )
+            rows.append(row)
+    return rows
+
+
+class AllCellsTest(unittest.TestCase):
+    """Current streams in every category/block cell leave the fixed bank nothing to fill."""
+
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+    def fixture(self, per_stream, **exam):
+        f = Fixture(self.root / str(per_stream), days=(), min_streams=3, **exam)
+        export(f.current, "2026-11-02", cell_items("2026-11-02", per_stream))
+        return f
+
+    def test_the_whole_subset_comes_from_current_when_it_covers_every_cell(self):
+        f = self.fixture(60)
+        bank, record = f.prepare()
+        self.assertIsNone(record["fallback"])
+        ids = f.subset()
+        self.assertEqual(len(ids), 400)
+        by_id = {c["id"]: c for c in bank}
+        self.assertTrue(all(by_id[i]["family"] in CELL_STREAMS for i in ids))
+        self.assertEqual(record["current_items"], 400)
+        self.assertEqual(record["bank_items"], 0)
+        self.assertEqual(len(record["replaced_cells"]), 10)
+        base_metrics.baselines([by_id[i] for i in ids])
+
+    def test_too_few_current_items_for_every_cell_falls_back(self):
+        f = self.fixture(20)  # 200 items cover every cell but cannot fill 400
+        _, record = f.prepare()
+        self.assertIsNotNone(record["fallback"])
+        self.assertEqual(record["bank_items"], 400)
+
+    def test_current_items_never_exceed_the_subset(self):
+        f = self.fixture(60, current_items=1000, min_items=40)
+        _, record = f.prepare()
+        self.assertIsNone(record["fallback"])
+        self.assertEqual(len(f.subset()), 400)
