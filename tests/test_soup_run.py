@@ -53,6 +53,8 @@ BODIES = {
     "scout": strengths(0.25, 0.25, 0.25, 0.25, 0.5),
     "housemix": strengths(0.25, 0.25, 0.25, 0.25, 0.3125),
     "t1copy": strengths(1, 1, 0, 0, 0, norm=2),
+    # A fine-tune of the house model whose own change no other body explains.
+    "tuned": strengths(0.25, 0.25, 0.375, 0.125, 0.25),
 }
 
 

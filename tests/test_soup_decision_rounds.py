@@ -95,7 +95,7 @@ class DecisionRoundsTest(unittest.TestCase):
         expected = json.loads(FIXTURE.read_text())
         for day, want in enumerate(expected):
             if day == 2:
-                self.r.commits[5] = ("scout", 104)
+                self.r.commits[5] = ("tuned", 104)
             record = self.round(day, rounds=1)
             got = {k: record[k] for k in want if k in record}
             got["subset_sha256"] = hashlib.sha256(
@@ -156,12 +156,12 @@ class DecisionRoundsTest(unittest.TestCase):
     def test_a_new_body_is_graded_on_every_pooled_item(self):
         for day in range(2):
             self.round(day)
-        self.r.commits[5] = ("scout", 104)
+        self.r.commits[5] = ("tuned", 104)
         record = self.round(2)
-        self.assertIn(self.r.sha["scout"], record["pool"])
+        self.assertIn(self.r.sha["tuned"], record["pool"])
         self.assert_decided_on(record, record["decision_ids"])
-        scout = {i for k, i in self.recording.calls if k.startswith(self.r.sha["scout"][:32])}
-        self.assertEqual(scout, set(record["decision_ids"]))
+        tuned = {i for k, i in self.recording.calls if k.startswith(self.r.sha["tuned"][:32])}
+        self.assertEqual(tuned, set(record["decision_ids"]))
 
     def test_house_predictions_missing_from_the_cache_are_graded(self):
         for day in range(2):
