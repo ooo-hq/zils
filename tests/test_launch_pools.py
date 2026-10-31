@@ -58,7 +58,7 @@ Z3 = {"opens_block": 1000 + 2 * TWO_WEEKS, "boost": [{"share": 0.15, "blocks": T
 
 
 class NoScheduleIsUnchangedTest(unittest.TestCase):
-    """Digests recorded from origin/main (822bc54) before the schedule existed."""
+    """Digests recorded on a clean checkout of origin/main (10553a6), without the schedule code."""
 
     def test_weights_records_and_validated_configs_are_byte_identical(self):
         from tests.promoted_profile import promoted_profile
@@ -66,13 +66,13 @@ class NoScheduleIsUnchangedTest(unittest.TestCase):
 
         crown = {"hotkey": "b", "body_sha256": "f" * 64, "rate": 1.0, "weight": 0.2}
         cases = {
-            "c9106d5d638d05b562e41540ff8e428f5d8a0a6a33c414296bf31355eaf69a33": (
+            "a819ba1fccca53c7768ce9d1917d68ea9b3b00286184af82f096d8686b04eb8b": (
                 {"d3-mini": decision([("c", 0.4)])}
             ),
-            "082d29e42aee31c5dd85139d1ed6ae5f8273c9ab8f1a84d54cc0b7ccef3a6ad4": (
+            "77f98886dc48d86308c43c0e90ffbe762616a12bfc4735b4ebd5e6991ef36d20": (
                 {"d3-mini": decision([("b", 0.4), ("gone", 0.4)], crown)}
             ),
-            "2bd539db82638516deac988a93917e3d8ecc207e0de296ec5b0c394a76f85ce0": {},
+            "2fe46e5037216850b83cccdf4337977c2a0b002d1c8667ffb26cf0159b91ff07": {},
         }
         for expected, decisions in cases.items():
             for block in (None, 10**9):
@@ -81,7 +81,7 @@ class NoScheduleIsUnchangedTest(unittest.TestCase):
                     self.assertEqual(digest([sorted(weights.items()), record]), expected)
         self.assertEqual(
             digest(model_pools.validate(pools())),
-            "04bfc26c250bb52d311a470f101127b94ed25e4a376aadd24bb9fcd01917d3d9",
+            "8893c1a648bee6ed1ace029b28ed85a5cc360b56eda3dda41e0bdd5c606102db",
         )
         with promoted_profile():
             weights, record = model_pools.weights(king_pools(), {}, KING_MEMBERS)
