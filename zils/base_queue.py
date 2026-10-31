@@ -40,11 +40,13 @@ def policy(config):
     if any(type(v) is not int or v <= 0 for v in value.values()):
         raise ValueError("base validation budgets must be positive integers")
     pools = model_pools.validate(config["base_pools"])["pools"]
+    # Only enabled king pools take zils1 candidates through this queue; soup pools (open or closed)
+    # take bodies in their own rounds, so their candidate sizes never bound these budgets.
     largest = max(
         (
             models.artifact_budget("candidate", models.validate_spec(p["model"]))
             for p in pools.values()
-            if p["enabled"]
+            if p["enabled"] and not model_pools.is_soup(p)
         ),
         default=0,
     )

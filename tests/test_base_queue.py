@@ -491,6 +491,28 @@ class BaseQueueTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fit"):
             queue.policy(cfg)
 
+    def test_budgets_count_only_pools_the_queue_evaluates(self):
+        # The queue never evaluates soup pools (they take zilsb2/zilsb3 bodies), so a soup pool's
+        # candidate size must not size its budgets: the launch base_pools, with flash and z3
+        # enabled but closed (z3 candidates are about 52 GB), runs under the 24 GiB budget.
+        launch = json.loads(
+            (Path(zils.__file__).parent / "data/base-pools-launch.json").read_text()
+        )
+        cfg = {**copy.deepcopy(self.cfg), "base_pools": launch}
+        self.assertLess(
+            cfg["base_validation_queue"]["max_download_bytes"],
+            models.artifact_budget("candidate", models.spec("d3-ultra-26b-v1")["id"]),
+        )
+        self.assertEqual(queue.policy(cfg), cfg["base_validation_queue"])
+        # An open soup pool (opening block set) is still not a queue candidate.
+        launch["pools"]["d3-flash"]["opens_block"] = 0
+        self.assertEqual(queue.policy(cfg), cfg["base_validation_queue"])
+        # Enabled king pools still size the budgets.
+        king = copy.deepcopy(self.cfg)
+        king["base_validation_queue"]["max_download_bytes"] = 1
+        with self.assertRaisesRegex(ValueError, "fit"):
+            queue.policy(king)
+
 
 if __name__ == "__main__":
     unittest.main()
