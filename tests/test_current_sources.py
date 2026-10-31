@@ -297,6 +297,24 @@ class ReplayRetryTest(unittest.TestCase):
         self.assertEqual(added, 3)
         self.assertEqual(len(waits), 1)
 
+    def test_a_burst_of_later_events_from_the_other_datacentre_does_not_end_the_replay(self):
+        lines = (FIXTURES / "recentchange.sse").read_text().splitlines()
+        later = []
+        for i in range(current_wikimedia.LATE_RUN + 100):
+            row = event("enwiki", 5000 + i)
+            row["meta"]["dt"] = "2026-10-30T09:00:00Z"
+            later += ["event: message", "id: x", "data: " + json.dumps(row), ""]
+        with tempfile.TemporaryDirectory() as tmp:
+            added = current_wikimedia.collect(
+                current.Store(tmp),
+                FakeHttp(sse=[later + lines]),
+                5,
+                since="2026-10-28T12:00:00Z",
+                now=at("2026-10-31T12:00:00Z"),
+                wikis=["enwiki"],
+            )
+        self.assertEqual(added, 3)
+
 
 class SettingsTest(unittest.TestCase):
     def test_nightly_defaults_sample_more_and_read_every_wiki(self):

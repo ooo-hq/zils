@@ -24,6 +24,10 @@ HIDDEN = ("texthidden", "commenthidden", "userhidden", "suppressed")
 MAX_LINES, MAX_LINE = 40, 2000
 RETRIES, RETRY_SECONDS = 3, 10  # connections that deliver nothing, e.g. a timed-out replay
 LATE_RUN = 500  # consecutive replayed events past the window before a replay stops
+# ...once the window has delivered something. Before that, a run of late events is the other
+# datacentre's topic arriving first (after a switchover it holds days of later events), so keep
+# reading, up to this many late events in all.
+LATE_LIMIT = 200_000
 CELL = re.compile(r'<td class="diff-(deleted|added)line[^"]*">\s*<div>(.*?)</div>\s*</td>', re.S)
 TAG = re.compile(r"<[^>]+>")
 ROW = re.compile(r"<tr\b.*?</tr>", re.S)
@@ -113,7 +117,8 @@ def collect(store, http, minutes, *, now, wikis=None, since=None, limit=None, cl
     """Read the stream for `minutes` of wall time, or of stream time from `since`."""
     wikis, batch, added, last_id, done = set(wikis or DEFAULT_WIKIS), [], 0, None, False
     end = parse_time(since) + timedelta(minutes=minutes) if since else None
-    failures = 0
+    failures = late_total = 0
+    inside = False
     deadline = clock() + minutes * 60
     while not done:
         headers = {"Last-Event-ID": last_id} if last_id else {}
@@ -126,8 +131,10 @@ def collect(store, http, minutes, *, now, wikis=None, since=None, limit=None, cl
                 meta = event.get("meta") or {}
                 if end and meta.get("domain") != "canary":
                     # Two datacentres' topics interleave out of order: stop after a run of late events.
-                    late = late + 1 if parse_time(meta.get("dt", since)) > end else 0
-                    if late >= LATE_RUN:
+                    is_late = parse_time(meta.get("dt", since)) > end
+                    late, late_total = (late + 1, late_total + 1) if is_late else (0, late_total)
+                    inside = inside or not is_late
+                    if (late >= LATE_RUN and inside) or late_total >= LATE_LIMIT:
                         done = True
                         break
                     if late:
