@@ -229,5 +229,35 @@ class WiringTest(unittest.TestCase):
         self.assertEqual(result["errors"], [])
 
 
+class AcceptedBalanceTest(unittest.TestCase):
+    def test_shuffled_answer_letters_are_not_downsampled_to_the_rarest_letter(self):
+        rows = []
+        for number in range(1, 13):
+            count = 4 if number == 1 else 2
+            label = "D" if number == 1 else "AB"[number % 2]
+            rows.append(
+                {
+                    "id": f"stackexchange-accepted-tools-{number}",
+                    "stream": "stackexchange-accepted-tools",
+                    "asked_at": "2026-10-20T10:00:00Z",
+                    "resolved_at": "2026-10-31T10:00:00Z",
+                    "label": label,
+                    "source": {"url": f"u{number}", "question_id": number, "site": "stackoverflow"},
+                    "data": {
+                        "site": "stackoverflow",
+                        "title": f"T{number}",
+                        "tags": [],
+                        "body": f"Body {number}",
+                        "answers": [f"answer {number}-{i}" for i in range(count)],
+                    },
+                }
+            )
+        with tempfile.TemporaryDirectory() as tmp:
+            store = current.Store(tmp)
+            store.save([], rows, [])
+            cases, stats, _ = current_bank.prepare(store)
+        self.assertEqual(stats["stackexchange-accepted-tools"]["exported"], 12)
+
+
 if __name__ == "__main__":
     unittest.main()

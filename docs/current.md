@@ -452,7 +452,10 @@ the cap. Long bodies are cut at a paragraph or line break and marked `[truncated
 - **Duplicates.** Export keeps the first case for each content hash (stream plus normalized
   state text).
 - **Balance.** Export downsamples every label of a stream to the rarest label's count, with a
-  seeded random choice. A stream that has seen only one outcome exports nothing.
+  seeded random choice. A stream that has seen only one outcome exports nothing. Accepted-answer
+  items are the exception: their answer order is shuffled per item, so every letter is equally
+  likely in expectation, and downsampling to the rarest letter (D, from the few questions with
+  four answers) would discard most of them.
 - **Rebuilding.** Each case keeps its source ids and links: repository, number, GH Archive event
   id and URL for GitHub; wiki, revision ids and diff URL for Wikipedia.
 

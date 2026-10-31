@@ -309,7 +309,10 @@ def prepare(
                 continue
             cases.append(case)
         outcomes = {r["id"]: r["label"] for r in rows}
-        chosen = _balance(cases, outcomes, seed, stream) if balance else cases
+        # Options shuffled per item (accepted answers) are already balanced by the shuffle;
+        # downsampling to the rarest letter would keep only items with the most options.
+        shuffled = current_items.STREAMS[stream].get("per_record_options")
+        chosen = _balance(cases, outcomes, seed, stream) if balance and not shuffled else cases
         spec = current_items.STREAMS[stream]
         stats[stream] = {
             "licence": spec["licence"],
