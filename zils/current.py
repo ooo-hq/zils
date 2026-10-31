@@ -171,12 +171,13 @@ class Store:
         os.replace(temporary, path)
 
 
+# Sources collected with their outcome come first: they need no network and finish at once.
 RESOLVERS = {
+    "stackexchange-": current_stackexchange.resolve,
+    "wikipedia-afd": current_stackexchange.resolve,  # collected with the outcome: label now
     "github-": current_github.resolve,
     "wikipedia-revert": current_wikimedia.resolve,
     "wikidata-": current_wikimedia.resolve,
-    "stackexchange-": current_stackexchange.resolve,
-    "wikipedia-afd": current_stackexchange.resolve,  # collected with the outcome: label now
 }
 WIKIMEDIA = ("wikipedia-revert", "wikidata-")
 
@@ -230,15 +231,17 @@ def resolve(
                 if since >= CHECKPOINT:
                     save()
                     since = 0
-        except RateLimited as error:
+        except (RateLimited, OSError) as error:  # OSError: network failures (requests too)
             print(
-                f"{prefix.rstrip('-')}: rate limited, will continue later ({error})",
+                f"{prefix.rstrip('-')}: stopped, will continue later ({error})",
                 file=sys.stderr,
             )
             limited = True
         except BaseException:
             save()
             raise
+        if since:
+            save()  # each source's work is kept before the next, slower one starts
     counts = {**totals, "pending": save(final=True)}
     counts.update(totals)
     return {**counts, "rate_limited": True} if limited else counts

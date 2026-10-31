@@ -274,27 +274,18 @@ def collect_recent(
     kept edits enter the waiting room as usual, already past the waiting period, and `resolve`
     fetches only their diffs (the text before the outcome). A wiki stops early once it has
     `target_positives` reverted edits."""
-    added, positives, calls = 0, {}, 0
+    added, positives, calls, skipped = 0, {}, 0, {}
     for wiki in wikis or DEFAULT_WIKIS:
         found = 0
         for moment in _spread(samples, min_days, max_days, now):
             if target_positives and found >= target_positives:
                 break
-            status, body = _api(
-                http,
-                api_url(wiki),
-                {
-                    "action": "query",
-                    "list": "recentchanges",
-                    "rcstart": iso(moment),
-                    "rcdir": "older",
-                    "rcnamespace": "0",
-                    "rctype": "edit",
-                    "rcshow": "!bot",
-                    "rclimit": "500",
-                    "rcprop": "title|ids|sizes|flags|user|comment|timestamp|tags",
-                },
-            )
+            try:
+                status, body = _recent_page(http, wiki, moment)
+            except (RateLimited, OSError) as error:
+                skipped[wiki] = f"{type(error).__name__}: {error}"
+                break
+                (http,)
             calls += 1
             changes = (body.get("query") or {}).get("recentchanges") or [] if status == 200 else []
             rows, reverted = [], set()
@@ -315,7 +306,25 @@ def collect_recent(
             added += store.add([r for r in rows if r["id"] in keep])
             found += len(reverted)
         positives[wiki] = found
-    return {"added": added, "positives": positives, "calls": calls}
+    return {"added": added, "positives": positives, "calls": calls, "skipped": skipped}
+
+
+def _recent_page(http, wiki, moment):
+    return _api(
+        http,
+        api_url(wiki),
+        {
+            "action": "query",
+            "list": "recentchanges",
+            "rcstart": iso(moment),
+            "rcdir": "older",
+            "rcnamespace": "0",
+            "rctype": "edit",
+            "rcshow": "!bot",
+            "rclimit": "500",
+            "rcprop": "title|ids|sizes|flags|user|comment|timestamp|tags",
+        },
+    )
 
 
 def _precheck(record, revision):

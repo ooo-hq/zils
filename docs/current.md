@@ -104,7 +104,9 @@ python -m zils.current collect --source wikimedia --minutes 5
 python -m zils.current collect --source wikimedia --minutes 5 --since 2026-10-28T12:00:00Z
 python -m zils.current collect --source afd --day 2026-10-04 --day 2026-10-05
 python -m zils.current collect --source stackexchange [--site math] [--pages 2]
+python -m zils.current collect --source recentchanges [--samples 48] [--min-days 2] [--max-days 14]
 python -m zils.current resolve --negatives-per-positive 3
+python -m zils.current crosscheck --folder BANK/2026-10-31 [--sample 100] [--threshold 0.97]
 GITHUB_TOKEN=... python -m zils.current resolve
 python -m zils.current export --out items.jsonl --stats
 python -m zils.current export --bank BANK --date 2026-10-30 --reference EXAMS/ --reference POOL.jsonl
@@ -120,6 +122,15 @@ python -m zils.current grade --items BANK/2026-10-30/items.jsonl --model CHECKPO
   `--wiki` chooses wikis by database name (`enwiki`, `dewiki`, `wikidatawiki`, ...). The default
   is the nine Wikipedias above plus Wikidata, or the comma-separated `ZILS_CURRENT_WIKIS`.
   Wikidata edits made in bulk by tools (QuickStatements, OpenRefine, Mix'n'match) are skipped.
+- `--source recentchanges` is the fast path for Wikipedia and Wikidata: a bulk pull of edits
+  whose outcome is already recorded. Each `list=recentchanges` request returns up to 500 human
+  main-namespace edits with their change tags, so `mw-reverted` labels 500 edits at once. Each
+  wiki is read at `--samples` moments spread between `--max-days` and `--min-days` ago (keep
+  `--min-days` at 2 or more so reverts have happened and been tagged; recent changes keep 30
+  days). Every reverted edit is kept, plus `--negatives-per-positive` (default 1) others per
+  revert, and `--target-positives` stops a wiki early. The kept edits enter the waiting room
+  already past the waiting period, and `resolve` fetches only their diffs: the text before the
+  outcome, from the revision itself, never the current page.
 - `--source afd` reads the named Articles for deletion log days. Read days that are at least ten
   days old, when nearly all of their discussions are closed. Open ones are skipped; relisted
   discussions also appear on a later day's log.
@@ -184,6 +195,42 @@ The manifest records:
 
 An existing day is left untouched, so reruns are idempotent. `--force` rewrites it. Every
 resolved item belongs to exactly one day, so no item appears in two exports.
+
+## Proof and cross-check
+
+`crosscheck --folder BANK/<date>` runs two gates on a written export and rewrites its
+`items.jsonl` (the original stays as `items.unchecked.jsonl`; a forced re-export removes both
+the copy and the reports):
+
+1. **Proof.** Each item needs `source.url`, its source ids (revision and parent revision,
+   question id, or discussion page), `asked_at`, and `outcome_at` later than `asked_at`.
+   `outcome_at` is the time of the outcome where the source records it (a close or merge,
+   `outcome_time: "event"`), otherwise the time this tool observed it (a revert tag, or a
+   question still open, at the resolution pass, `outcome_time: "checked"`). Items without proof
+   are removed and counted in `proof_rejected`.
+2. **Cross-check.** For a seeded random sample per stream (`--sample`, default 100, or all if
+   fewer), the label is derived again by a different method:
+   - reverts: the page history after the edit, up to the time of the label. The edit is
+     reverted if a later revision has the content hash (`sha1`) of the parent or an earlier
+     revision, or if a later undo, rollback or manual revert names the revision in its summary;
+   - Articles for deletion: whether the article exists today (delete: missing or a redirect;
+     keep or no consensus: an article; merge or redirect: a redirect or an article). Merges are
+     often carried out late, so this check is weak for them;
+   - Stack Exchange: a second fetch of the questions (`closed_date`, the score level) and of
+     accepted items' answers (`is_accepted`, matched to our options by their text).
+
+   A stream under `--threshold` agreement (default 0.97) is removed from the export.
+
+The folder gets `crosscheck.json` (per stream: items, sample size, method, agreement, pass or
+fail, and up to 25 disagreements with links and evidence) and `spotcheck.md`, a sheet of 20
+random items per stream with the link, the start of the input, the label and its evidence, for
+a person to check by hand. The manifest records the gate's result.
+
+The nightly job runs the same gates on every day it exports, with a smaller sample
+(`--crosscheck-sample`, default 20; `0` skips it). A stream that fails is added to
+`STATE/paused.json`, and later exports leave it out until a person removes it from that file.
+GitHub streams have no cross-check yet, so with the nightly gate on they are paused after their
+first export.
 
 ## Leak filters
 
@@ -255,7 +302,10 @@ GitHub text needs legal review before any commercial use or release (see
    archive publishes each hour shortly after it ends). A first run starts `--gh-first-hours`
    back (default 24). A run takes at most `--gh-max-hours` (default 48). An hour not yet
    published ends the step, and the next run tries it again.
-2. **Wikimedia:** for every hour after the `wikimedia` cursor, up to the last full hour,
+2. **Wikimedia:** with `--wiki-source recentchanges` (the default), a bulk pull of
+   `--wiki-samples` (default 48) recentchanges requests per wiki over edits two to three days old
+   (see `--source recentchanges`). With `--wiki-source stream`, for every hour after the
+   `wikimedia` cursor, up to the last full hour,
    replays the first `--wiki-minutes` (default 10, or `ZILS_CURRENT_WIKI_MINUTES`) of that
    hour's stream, for every wiki in the list. This samples about four hours a day, spread evenly
    over the day, instead of every edit. It stays within the
@@ -268,7 +318,8 @@ GitHub text needs legal review before any commercial use or release (see
    an error.
 5. **Resolve:** one resolution pass over the waiting room, keeping `--negatives-per-positive`
    (default 3) not-reverted edits per reverted one.
-6. **Export:** writes every finished UTC day after the `export` cursor, oldest first. A first
+6. **Export and gates:** writes every finished UTC day after the `export` cursor, leaving out
+   paused streams, then runs the proof and cross-check gates on it, oldest first. A first
    run writes yesterday. The overlap and leak options are the same as for `export`.
 
 Each cursor in `DIR/cursor.json` is saved after each hour or day, so a stopped run resumes where

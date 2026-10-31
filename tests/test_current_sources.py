@@ -509,6 +509,54 @@ class RecentChangesTest(unittest.TestCase):
         self.assertEqual(result["collected"]["wikimedia"]["added"], 4)
 
 
+class NetworkFailureTest(unittest.TestCase):
+    def test_a_network_failure_ends_one_source_and_the_others_still_resolve(self):
+        def broken(rows, http, now, **options):
+            raise OSError("Temporary failure in name resolution")
+            yield
+
+        ready = {
+            "id": "wikipedia-afd-1",
+            "stream": "wikipedia-afd",
+            "asked_at": "2026-10-04T09:25:00Z",
+            "source": {"url": "u", "title": "t"},
+            "data": {"article": "A", "text": "x"},
+            "outcome": {"label": "keep", "outcome_at": "2026-10-12T00:00:00Z"},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            store = current.Store(tmp)
+            store.add([current_wikimedia.record(event("enwiki", 900), WIKIS), ready])
+            with patch.dict(current.RESOLVERS, {"wikipedia-revert": broken}):
+                counts = current.resolve(store, FakeHttp(), at("2026-10-31T12:00:00Z"))
+        self.assertEqual(counts["resolved"], 1)
+        self.assertTrue(counts["rate_limited"])
+        self.assertEqual(list(current.RESOLVERS)[:2], ["stackexchange-", "wikipedia-afd"])
+
+    def test_a_bulk_pull_skips_a_wiki_that_stays_lagged(self):
+        def handler(url, params):
+            if "wikidata" in url:
+                return 200, {"error": {"code": "maxlag"}}, {"retry-after": "1"}
+            return (
+                200,
+                {"query": {"recentchanges": [change(5000, ["mw-reverted"]), change(5001)]}},
+                {},
+            )
+
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(current_wikimedia, "sleep", lambda s: None),
+        ):
+            result = current_wikimedia.collect_recent(
+                current.Store(tmp),
+                FakeHttp(handler),
+                at("2026-10-31T12:00:00Z"),
+                wikis=["wikidatawiki", "enwiki"],
+                samples=1,
+            )
+        self.assertEqual(result["positives"], {"wikidatawiki": 0, "enwiki": 1})
+        self.assertIn("wikidatawiki", result["skipped"])
+
+
 class SettingsTest(unittest.TestCase):
     def test_nightly_defaults_sample_more_and_read_every_wiki(self):
         args = current._parser().parse_args(["nightly", "--state", "s", "--bank", "b"])
