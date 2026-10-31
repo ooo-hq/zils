@@ -40,11 +40,12 @@ class Sketch:
         digest = hashlib.sha256(self.seed + b"\0" + name.encode()).digest()
         return np.uint64(int.from_bytes(digest[:8], "little"))
 
-    def sketch(self, folder, base_folder, chassis_names) -> np.ndarray:
+    def sketch(self, folder, base_folder, chassis_names, *, trusted=False) -> np.ndarray:
+        """``trusted`` reads a pinned reference folder (the chassis), whose shards may be links."""
         names = [n for n in sorted(chassis_names) if n.startswith(PREFIX)]
         if not names:
             raise ValueError(f"no chassis tensors start with {PREFIX!r}")
-        body = bodies._tensors(folder, chassis_names)
+        body = bodies._tensors(folder, chassis_names, trusted=trusted)
         base = bodies._tensors(base_folder, chassis_names, trusted=True)
         out = np.zeros(self.dims, dtype=np.float64)
         for name in names:
@@ -63,8 +64,10 @@ class Sketch:
         return out
 
 
-def sketch(folder, base_folder, chassis_names, *, seed: bytes, dims: int = 4096) -> np.ndarray:
-    return Sketch(seed, dims).sketch(folder, base_folder, chassis_names)
+def sketch(
+    folder, base_folder, chassis_names, *, seed: bytes, dims: int = 4096, trusted=False
+) -> np.ndarray:
+    return Sketch(seed, dims).sketch(folder, base_folder, chassis_names, trusted=trusted)
 
 
 def _read(path, info, offset, count):
@@ -130,6 +133,17 @@ def explained_share(target, others) -> float:
     return min(1.0, max(0.0, float(fit @ fit) / norm))
 
 
+def _allowed(house, soup, release):
+    return [*house, *(base for base in (soup, release) if base is not None)]
+
+
+def base_residual(target, *, house=(), soup=None, release=None) -> float:
+    """The share of a body's change (squared norm) left after fitting it on the allowed bases: the
+    house bodies, the current soup and the release (non-negative least squares). A body that is
+    almost all allowed bases has little of its own; a real fine-tune of one keeps about 10%."""
+    return 1.0 - explained_share(target, _allowed(house, soup, release))
+
+
 def is_copy(
     target,
     earlier,
@@ -142,20 +156,20 @@ def is_copy(
     others_max=0.3,
 ):
     """Why a body sketch is a copy, or None. `earlier` are sketches of earlier commitments by other
-    hotkeys: a near-exact copy of one is a copy. `house`
-    (house bodies) and `soup` and `release` (the current soup and release bodies) reject only
-    near-exact re-uploads (cosine at least `cosine_max`): fine-tuning them is allowed.
+    hotkeys: a near-exact copy of one is a copy. `house` (house bodies), `soup` and `release` (the
+    current soup and release bodies) are the allowed bases: they reject only near-exact re-uploads
+    (cosine at least `cosine_max`), and fine-tuning them is allowed.
 
-    The body is also fitted on the earlier and house sketches jointly. The share the earlier
-    (other-hotkey) bodies add to that fit beyond the house bodies alone must stay under
-    `others_max`, so merging another hotkey's body with a house body (or averaging other hotkeys'
-    bodies) is a copy, while a body explained by house bodies alone is not, and neither are two
-    independent fine-tunes of the same house body, which share most of their change through it.
-    There is no rule on the earlier bodies alone, which would ignore that shared house change.
-    `explained`, when given, replaces `earlier` in the joint fit (for example only the earlier
-    bodies still in the pool);
-    near-exact copies are always checked against all of `earlier`. Only "explained by earlier" is a
-    judgement on the current pool rather than on the weights themselves."""
+    What a body adds beyond the allowed bases is its own work, unless other hotkeys' bodies explain
+    it. The body is fitted on the allowed bases alone and on the allowed bases plus the earlier
+    bodies. If the earlier bodies explain `others_max` or more of the part the allowed bases leave
+    unexplained, it is a copy. So a fine-tune of the soup or release is not a copy even though both
+    are mostly seated miners' bodies, and neither are two independent fine-tunes of one house body;
+    a near-copy of another hotkey's body, a merge of it with a house body, or a re-weighted mix of
+    the seated bodies is. `explained`, when given, replaces `earlier` in the joint fit (for example
+    only the earlier bodies still in the pool); near-exact copies are always checked against all of
+    `earlier`. Only "explained by earlier" is a judgement on the current pool rather than on the
+    weights themselves."""
     target = np.asarray(target, dtype=np.float64)
     if not np.any(target):
         return "no change from the base"
@@ -168,9 +182,12 @@ def is_copy(
             return label
     explained = list(earlier if explained is None else explained)
     if explained:
-        joint = explained_share(target, [*explained, *house])
-        if joint - explained_share(target, list(house)) >= others_max:
-            return "explained by earlier"
+        allowed = _allowed(house, soup, release)
+        own = 1.0 - explained_share(target, allowed)  # the share beyond the allowed bases
+        if own > 1e-9:
+            beyond = explained_share(target, [*explained, *allowed]) - (1.0 - own)
+            if beyond / own >= others_max:
+                return "explained by earlier"
     return None
 
 

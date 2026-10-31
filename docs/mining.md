@@ -404,11 +404,15 @@ Validators run one soup round per day for each soup pool:
 3. **Reject copies:** a re-upload, whose change from Qwen is nearly identical
    (cosine ≥ 0.999) to an earlier commitment's, a house ingredient's, the current
    soup's or the release's; a body built largely from other miners' bodies (other
-   hotkeys' bodies explain at least 30% of its change beyond what the house
-   ingredients explain; two fine-tunes of the same house ingredient share that
-   change and are not copies of each other); and a behavioural twin of a pool body
-   (near-identical answers, temperature-scaled copies included). Fine-tunes of a
-   house ingredient, the soup or a release are allowed and paid as trainer bodies.
+   hotkeys' bodies explain at least 30% of the part of its change that the house
+   ingredients, the current soup and the release leave unexplained; two
+   fine-tunes of the same house ingredient share that change and are not copies of
+   each other); and a behavioural twin of a pool body (near-identical answers,
+   temperature-scaled copies included). **You may fine-tune the current soup or
+   the release**, as well as a house ingredient: the change you add is measured
+   from them, so a fine-tune is not refused because the soup contains other
+   miners' bodies, and it is paid as a trainer body. Re-weighting the seated
+   bodies, or re-uploading one with small changes, is refused.
    Only a near-exact re-upload or a broken body (shape, non-finite weights, change
    bound) bans its hash. A body built from other miners' bodies, or a behavioural
    twin, refuses only that commitment: it is evaluated again when you commit a new
@@ -440,7 +444,9 @@ earning at once.
   similarity threshold of a listed open model released after launch (the list is
   empty at launch), and for a house mix, a body whose change from Qwen is almost
   entirely a mix of house ingredients' changes (less than 5% of it is left over;
-  real fine-tunes of a house ingredient leave about 10%); **0** for house
+  real fine-tunes of a house ingredient leave about 10%), or, when it was
+  admitted, almost entirely a mix of house ingredients, the soup and the release
+  (a near-pure re-weighting of the soup); **0** for house
   ingredients, the open Qwen3.5-4B decision models already public at launch, which
   the pool includes unpaid.
 
