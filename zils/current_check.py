@@ -236,8 +236,19 @@ def crosscheck(cases, http, *, sample=SAMPLE, seed=0, threshold=THRESHOLD):
     for case in cases:
         groups[case["family"]].append(case)
     streams = {}
+    # Stack Exchange samples of every stream are fetched together, a site at a time, to spend
+    # as few of the day's 300 keyless requests as possible.
+    se_chosen = {
+        s: _sample(rows, sample, seed, s)
+        for s, rows in groups.items()
+        if s.startswith("stackexchange-")
+    }
+    flat = [c for rows in se_chosen.values() for c in rows]
+    se_results = (
+        dict(zip(map(id, flat), check_stackexchange(flat, http), strict=True)) if flat else {}
+    )
     for stream, rows in sorted(groups.items()):
-        chosen = _sample(rows, sample, seed, stream)
+        chosen = se_chosen.get(stream) or _sample(rows, sample, seed, stream)
         if stream.startswith(("wikipedia-revert", "wikidata-revert")):
             results = [check_wiki(c, http) for c in chosen]
             method = "page history (identity revert or a revert naming the revision)"
@@ -245,7 +256,7 @@ def crosscheck(cases, http, *, sample=SAMPLE, seed=0, threshold=THRESHOLD):
             results = check_afd(chosen, http)
             method = "article exists now"
         elif stream.startswith("stackexchange-"):
-            results = check_stackexchange(chosen, http)
+            results = [se_results[id(c)] for c in chosen]
             method = "second fetch of the question and its answers"
         else:
             streams[stream] = {"sample": 0, "agreement": None, "method": "none", "passed": False}
