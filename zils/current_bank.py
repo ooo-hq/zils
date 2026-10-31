@@ -406,6 +406,8 @@ def export_bank(
         if any(not c["source"].get("url") for c in cases):
             raise ValueError("publishable cases need an attribution URL in source.url")
     folder.mkdir(parents=True, exist_ok=True)
+    for stale in ("items.unchecked.jsonl", "crosscheck.json", "spotcheck.md"):
+        (folder / stale).unlink(missing_ok=True)  # a rewritten day needs a new check
     text = "".join(json.dumps(c, ensure_ascii=False, sort_keys=True) + "\n" for c in cases)
     _write(folder / "items.jsonl", text)
     asked = [c["asked_at"] for c in cases]

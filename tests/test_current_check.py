@@ -341,5 +341,22 @@ class NightlyGateTest(unittest.TestCase):
         self.assertEqual(report["agreement"], {"wikipedia-revert": 1.0})
 
 
+class ReexportTest(unittest.TestCase):
+    def test_a_forced_export_removes_the_previous_check(self):
+        from tests.test_current_bank import store_with, window_records
+        from zils import current_bank
+
+        with tempfile.TemporaryDirectory() as tmp:
+            store = store_with(tmp, window_records())
+            bank = Path(tmp) / "bank"
+            folder = bank / "2026-10-30"
+            folder.mkdir(parents=True)
+            for name in ("items.unchecked.jsonl", "crosscheck.json", "spotcheck.md"):
+                (folder / name).write_text("old")
+            current_bank.export_bank(store, bank, "2026-10-30", check_overlap=False, force=True)
+            left = sorted(p.name for p in folder.iterdir())
+        self.assertEqual(left, ["items.jsonl", "manifest.json"])
+
+
 if __name__ == "__main__":
     unittest.main()
