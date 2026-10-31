@@ -8,6 +8,7 @@ Resolution reads the issue or pull request's current state: maintainer labels, c
 
 import gzip
 import hashlib
+import itertools
 import json
 import re
 from datetime import datetime, timedelta
@@ -120,13 +121,13 @@ def collect(store, http, hours, now):
             raise ValueError(f"GH Archive hour {hour} is not published yet")
         if status != 200:
             raise ValueError(f"GH Archive hour {hour} returned HTTP {status}")
-        lines = gzip.decompress(raw).decode("utf-8").splitlines()
+        lines = gzip.decompress(raw).decode("utf-8").split("\n")
         added += store.add(records((json.loads(line) for line in lines if line), iso(now)))
     return added
 
 
 def _headers():
-    token = settings.get("ZILS_GITHUB_TOKEN") or settings.get("GITHUB_TOKEN")
+    token = _token()
     headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
     return {**headers, "Authorization": f"Bearer {token}"} if token else headers
 
@@ -211,17 +212,119 @@ def _outcome(record, body, now):
     return "pending", record
 
 
-def resolve(records, http, now):
-    """Yield (status, record); one API request serves every stream built from the same issue."""
-    groups = {}
-    for record in records:
-        groups.setdefault(record["source"]["api"], []).append(record)
+GRAPHQL = "https://api.github.com/graphql"
+GRAPHQL_BATCH = 50  # issues and pull requests per GraphQL query
+REPO_NAME = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
+ACTOR = "{ __typename login }"
+FRAGMENT = f"""fragment item on IssueOrPullRequest {{
+  __typename
+  ... on Issue {{ state stateReason closedAt labels(first: 50) {{ nodes {{ name }} }} author {ACTOR}
+    timelineItems(last: 1, itemTypes: [CLOSED_EVENT]) {{ nodes {{ ... on ClosedEvent {{ actor {ACTOR} }} }} }} }}
+  ... on PullRequest {{ state merged mergedAt closedAt title body author {ACTOR} }}
+}}"""
+
+
+def _token():
+    return settings.get("ZILS_GITHUB_TOKEN") or settings.get("GITHUB_TOKEN")
+
+
+def _user(actor):
+    if not actor:
+        return None
+    return {
+        "login": actor.get("login", ""),
+        "type": "Bot" if actor.get("__typename") == "Bot" else "User",
+    }
+
+
+def _rest_shape(node):
+    """A GraphQL issue or pull request in the REST fields that _outcome reads."""
+    state = "open" if node.get("state") == "OPEN" else "closed"
+    if node.get("__typename") == "PullRequest":
+        return {
+            "state": state,
+            "merged": bool(node.get("merged")),
+            "merged_at": node.get("mergedAt"),
+            "closed_at": node.get("closedAt"),
+            "title": node.get("title"),
+            "body": node.get("body"),
+            "user": _user(node.get("author")) or {},
+        }
+    closes = (node.get("timelineItems") or {}).get("nodes") or []
+    return {
+        "state": state,
+        "state_reason": (node.get("stateReason") or "").lower() or None,
+        "closed_at": node.get("closedAt"),
+        "labels": [{"name": n["name"]} for n in (node.get("labels") or {}).get("nodes") or []],
+        "closed_by": _user(closes[-1].get("actor")) if closes else None,
+        "user": _user(node.get("author")) or {},
+    }
+
+
+def _query(keys):
+    repos = {}
+    for repo, number in keys:
+        repos.setdefault(repo, []).append(number)
+    aliases, parts = {}, []
+    for r, (repo, numbers) in enumerate(repos.items()):
+        owner, name = repo.split("/", 1)
+        items = " ".join(f"n{n}: issueOrPullRequest(number: {n}) {{ ...item }}" for n in numbers)
+        parts.append(f'r{r}: repository(owner: "{owner}", name: "{name}") {{ {items} }}')
+        aliases.update({(repo, n): (f"r{r}", f"n{n}") for n in numbers})
+    return FRAGMENT + "\nquery { " + " ".join(parts) + " }", aliases
+
+
+def _graphql(groups, http, token):
+    """Yield (key, status, body) per issue or pull request, GRAPHQL_BATCH keys per request."""
+    keys = list(groups)
+    headers = {"Authorization": f"Bearer {token}"}
+    for start in range(0, len(keys), GRAPHQL_BATCH):
+        chunk = keys[start : start + GRAPHQL_BATCH]
+        query, aliases = _query(chunk)
+        status, body, response_headers = http.post_json(GRAPHQL, {"query": query}, headers=headers)
+        errors = (body or {}).get("errors") or []
+        if _limited(status, body, response_headers) or any(
+            e.get("type") == "RATE_LIMITED" for e in errors
+        ):
+            raise RateLimited(f"GraphQL HTTP {status}")
+        if status != 200 or not isinstance((body or {}).get("data"), dict):
+            continue  # a timeout or server error: these stay pending
+        missing = {tuple(e.get("path") or ())[:2] for e in errors if e.get("type") == "NOT_FOUND"}
+        for key in chunk:
+            repo_alias, item_alias = aliases[key]
+            repository = body["data"].get(repo_alias)
+            node = (repository or {}).get(item_alias)
+            if node:
+                yield key, 200, _rest_shape(node)
+            elif (repo_alias,) in missing or (repo_alias, item_alias) in missing:
+                yield key, 404, {}
+
+
+def _rest(groups, http):
     headers = _headers()
-    for url, group in groups.items():
-        status, body, response_headers = http.get_json(url, headers=headers)
+    for key, group in groups.items():
+        status, body, response_headers = http.get_json(group[0]["source"]["api"], headers=headers)
         if _limited(status, body, response_headers):
             raise RateLimited(f"HTTP {status}; set GITHUB_TOKEN for 5,000 requests an hour")
-        for record in group:
+        yield key, status, body
+
+
+def resolve(records, http, now):
+    """Yield (status, record); one lookup serves every stream built from the same issue.
+
+    With a token, lookups go GRAPHQL_BATCH at a time through GraphQL (one request instead of
+    fifty); without one, through the REST API, which allows 60 unauthenticated requests an hour.
+    """
+    groups = {}
+    for record in records:
+        source = record["source"]
+        groups.setdefault((source["repo"], source["number"]), []).append(record)
+    token = _token()
+    batched = token and hasattr(http, "post_json")
+    graphql = {k: v for k, v in groups.items() if batched and REPO_NAME.fullmatch(k[0])}
+    rest = {k: v for k, v in groups.items() if k not in graphql}
+    for key, status, body in itertools.chain(_graphql(graphql, http, token), _rest(rest, http)):
+        for record in groups[key]:
             if status in (404, 410, 451):
                 yield "dropped", {**record, "reason": "deleted"}
             elif status == 200:
