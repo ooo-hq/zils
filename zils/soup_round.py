@@ -412,8 +412,8 @@ def _intake(
     round. Only a claim that downloaded weight bytes counts toward the claims cap, so dead repos
     cannot starve intake; a claim whose download fails in ``TRANSPORT_STRIKES`` separate rounds
     (``round_id``) is retired as failed (the claim, never the hash). ``residual(sha256, folder, *,
-    soup)``, when given, measures an admitted body's share beyond the house bodies, soup and
-    release (``soup_copies.base_residual``), kept as ``base_residual`` for its rate. ``progress`` holds the outcome of each claim so far and is passed to ``save`` after every
+    soup)``, when given, measures an admitted body's share beyond the house bodies, listed models,
+    soup and release (``soup_copies.base_residual``), kept as ``base_residual`` for its rate. ``progress`` holds the outcome of each claim so far and is passed to ``save`` after every
     claim, so a round cut off by its deadline resumes without downloading a claim twice.
     """
     from . import bodies
@@ -874,9 +874,10 @@ def run(
             return sum(members) / len(members) if members else None
 
         def residual(sha, body, *, soup):
+            # Listed public models count as bases, so a mix of the soup and one is not a trainer's.
             return soup_copies.base_residual(
                 sketches(sha, body),
-                house=[sketch(s) for s in sorted(house)],
+                house=[*(sketch(s) for s in sorted(house)), *(e["sketch"] for e in public)],
                 soup=soup_sketch(soup),
                 release=release(),
             )

@@ -429,11 +429,12 @@ scored at most 0.10 on this measure, and copies and re-weighted mixes scored
 0.36 or more. A behavioural twin of a pool body is also refused.
 
 A house mix is paid at the scout rate (0.25): a body whose change from the base,
-fitted on the house bodies' changes, leaves a residual share under
-`house_mix_max` (default 0.05, settable from 0 to 0.5). So is a body that, when
-admitted, was almost all allowed bases: fitted on the house bodies, the current
-soup and the release, it left a residual under the same bar (a near-pure
-re-weighting of the soup). The dry run's two real fine-tunes of a house body
+fitted on the house bodies' and listed public models' changes, leaves a residual
+share under `house_mix_max` (default 0.05, settable from 0 to 0.5). So is a body
+that, when admitted, was almost all allowed bases: fitted on the house bodies,
+the listed models, the current soup and the release, it left a residual under
+the same bar (a near-pure re-weighting of the soup, or a mix of the soup with a
+listed model). The dry run's two real fine-tunes of a house body
 left about 0.07 to 0.12, so a real fine-tune of the soup or release keeps the
 trainer rate.
 
@@ -449,9 +450,9 @@ model is allowed, since that is the scout's work. The first commitment that is a
 near re-upload (cosine at least 0.9) of a listed model wins: a later near
 re-upload of the same model by another hotkey is refused as explained by that
 earlier body while it stays in the pool, and a near-exact copy of any earlier
-body is refused as before. Listed models are not part of the house-mix residual
-(`base_residual`), so a mix of several listed models is paid by the cosine rule
-alone. House bodies stay at 0.
+body is refused as before. Listed models are part of the house-mix fit, so a mix of
+several listed models (whose cosine to each one is under 0.9) is still a scout's,
+not a trainer's. House bodies stay at 0.
 
 The validator resolves each list entry once: it downloads the pinned revision
 through the same fetch path as a body (within twice the pool's body size cap,

@@ -484,10 +484,10 @@ earning at once.
 - **Rates:** **1.0** for a trainer's body; **0.25** for a scout's body, an
   unchanged or near re-upload (sketch cosine at least 0.9) of a public model on
   the pool's known-public list, and for a house mix, a body whose change from Qwen is almost
-  entirely a mix of house ingredients' changes (less than 5% of it is left over;
-  real fine-tunes of a house ingredient leave about 10%), or, when it was
-  admitted, almost entirely a mix of house ingredients, the soup and the release
-  (a near-pure re-weighting of the soup); **0** for house
+  entirely a mix of house ingredients' and listed models' changes (less than 5% of
+  it is left over; real fine-tunes of a house ingredient leave about 10%), or, when
+  it was admitted, almost entirely a mix of house ingredients, listed models, the
+  soup and the release (a near-pure re-weighting of the soup); **0** for house
   ingredients, the open Qwen3.5-4B decision models already public at launch, which
   the pool includes unpaid.
 

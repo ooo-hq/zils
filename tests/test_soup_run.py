@@ -1450,6 +1450,40 @@ class SoupRunTest(unittest.TestCase):
         self.assertNotIn(plain.sha["far"], record["pool"])
         self.assertIn("explained by earlier", record["refused"]["5"])
 
+    def test_a_mix_of_two_listed_models_is_paid_at_the_scout_rate(self):
+        r = self.known_round(
+            "listedmix",
+            a=strengths(0.5, 0, 0.5, 0, 0),
+            b=strengths(0, 0.5, 0, 0, 0.5),
+            ab=strengths(0.25, 0.25, 0.25, 0, 0.25),  # (a + b) / 2, cosine 0.71 to each
+        )
+        r.commits[5] = ("ab", 50)
+        record = r.run(config=r.config(known_public=[known("a"), known("b")]))
+        self.assertIn(r.sha["ab"], record["pool"])
+        self.assertEqual(record["rates"][r.sha["ab"]], 0.25)
+        plain = self.known_round("listedmix-unlisted")
+        plain.commits[5] = ("ab", 50)
+        self.assertEqual(plain.run()["rates"][plain.sha["ab"]], 1.0)
+
+    def test_a_mix_of_the_soup_and_a_listed_model_is_paid_at_the_scout_rate(self):
+        BODIES["c"] = strengths(0.5, 0, 0.5, 0, 0)
+        BODIES["soupc"] = strengths(0.5, 0.25, 0.5, 0.25, 0.25)  # ((t1 + t2) / 2 + c) / 2
+        for key in ("c", "soupc"):
+            self.addCleanup(BODIES.pop, key, None)
+        r = Round(self.tmp / "soupc")
+        r.commits = {1: ("t1", 100), 2: ("t2", 101)}
+        house = [{"name": "weak", "repo": "open/weak", "revision": REVISION, "body_sha256": None}]
+        config = r.config(house=house, known_public=[known("c")])
+        first = r.run(config=config)
+        self.assertEqual(set(self.by_body(first)), {r.sha["t1"], r.sha["t2"]})
+        r.commits[6] = ("soupc", 150)
+        record = r.run(round_id="d3-mini-2026-11-04", config=config)
+        sha = r.sha["soupc"]
+        self.assertIn(sha, record["new"])
+        self.assertEqual(record["rates"][sha], 0.25)
+        state = json.loads((r.state / "pool.json").read_text())
+        self.assertLess(state["bodies"][sha]["base_residual"], 0.05)
+
     def test_known_public_resolution_has_a_time_budget_and_degrades_to_what_it_resolved(self):
         r = self.known_round(
             "slow", cousin=strengths(0.5, 0, 0.5, 0, 0), other=strengths(0, 0.5, 0, 0.5, 0)
