@@ -90,12 +90,10 @@ A soup pool entry may add an opening block and a boost:
   `opens_block` or `boost` pays exactly as before and freezes no block.
 - Only soup pools take a schedule.
 
-The launch configuration gives lite 35% and mini 30% from the start, and flash
-20% and z3 10% once they open; 5% is unassigned and burns. Flash is boosted to
-30% for two weeks and 25% for two more; z3 to 15% for two weeks. Both opening
-blocks are `null` in `zils/data/base-pools-launch.json` and must be set to the
-same values on every validator before they open. z3 cannot open while flash is
-still boosted to 30%: 35 + 30 + 30 + 15 would exceed 100%.
+The launch configuration gives lite, mini, flash and z3 25% each, with no
+boosts. Lite and mini pay from the start; flash and z3 burn their shares until
+they open. Both opening blocks are `null` in `zils/data/base-pools-launch.json`
+and must be set to the same values on every validator before they open.
 
 ## Soup pools
 
@@ -368,8 +366,9 @@ again on the earlier rounds' items, not only on the new subset. That is about
 twice the grading of a fixed bank. The deadline fallback above still bounds it.
 
 Payout: the latest round's public record pays each seated hotkey its seat
-weight and the crown its crown weight, as fractions of the pool's share. The
-crown (20%) goes to the best non-house solo body only if its solo score beats
+weight and the crown its crown weight, as fractions of the pool's share. A seat
+is a fixed fifth of 80% (16%) times its rate, however many members are seated;
+empty and unpaid seats burn. The crown (20%) goes to the best non-house solo body only if its solo score beats
 every house body's solo score and the current soup's score on the same pooled
 items by at least the greedy margin (0.3 points); otherwise it burns. If the current
 soup cannot be graded that round, the crown burns too. Before the first

@@ -2,8 +2,8 @@
 
 Each round, validators build a fresh uniform-weight average ("soup") of up to five model bodies from the
 round's pool, chosen greedily (Wortsman et al. 2022, with a minimum gain per added member). The pool's
-emission share splits 80% among soup seats and 20% to the round's best single body (the crown); any share
-nobody earns burns. The selection and pay functions are pure: grading is passed in as ``evaluate``.
+emission share pays five fixed seats of 16% each (80% in all) and 20% to the round's best single body (the
+crown); any seat or crown nobody earns burns. The selection and pay functions are pure: grading is passed in as ``evaluate``.
 ``run`` orchestrates one round on a validator; its model, download and chain dependencies are injected.
 
 A body is any hashable id (a body sha256 in production). ``evaluate(members)`` grades the uniform soup of a
@@ -142,12 +142,13 @@ def _check_rate(rate):
 def seat_weights(members, contributions, rates, *, share=SEAT_SHARE, floor=FLOOR):
     """Seat pay as fractions of the pool's share.
 
-    Members whose contribution is at least ``floor`` split ``share`` equally; each slice is multiplied by
-    the member's rate, so a house ingredient keeps its seat at 0.0 and a scout gets a quarter. Members
-    below the floor are omitted. Whatever is not paid burns; if nobody clears the floor the result is {}.
+    Each member whose contribution is at least ``floor`` holds one fixed seat worth ``share`` /
+    MAX_MEMBERS, however many others are seated, multiplied by the member's rate: a house ingredient
+    keeps its seat at 0.0 and a scout gets a quarter. Members below the floor are omitted. Unfilled and
+    unpaid seats burn; if nobody clears the floor the result is {}.
     """
     paid = [m for m in members if contributions[m] >= floor - _EPS]
-    return {m: share / len(paid) * _check_rate(rates[m]) for m in paid}
+    return {m: share / MAX_MEMBERS * _check_rate(rates[m]) for m in paid}
 
 
 def crown_weight(

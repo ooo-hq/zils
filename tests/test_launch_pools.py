@@ -294,8 +294,10 @@ class LaunchDataTest(unittest.TestCase):
         self.assertTrue(all(model_pools.is_soup(e) and e["enabled"] for e in checked.values()))
         self.assertEqual(
             {p: e["share"] for p, e in checked.items()},
-            {"d3-lite": 0.35, "d3-mini": 0.30, "d3-flash": 0.20, "d3": 0.10},
+            {"d3-lite": 0.25, "d3-mini": 0.25, "d3-flash": 0.25, "d3": 0.25},
         )
+        # No boosts: a pool pays its plain share from the block it opens.
+        self.assertTrue(all("boost" not in e for e in checked.values()))
         self.assertIsNone(checked["d3-flash"]["opens_block"])
         self.assertIsNone(checked["d3"]["opens_block"])
         shares = model_pools.shares_at(model_pools.validate(config), 0)
@@ -303,6 +305,29 @@ class LaunchDataTest(unittest.TestCase):
         # Download caps fit at least one body of the pool's own size.
         for pool, entry in checked.items():
             self.assertGreaterEqual(entry["max_download_bytes_per_round"], bodies.max_bytes(pool))
+
+
+class LaunchSpotValueTest(unittest.TestCase):
+    """At launch every pool is 25%: a trainer seat is 4% of all emissions and a crown 5%."""
+
+    def config(self):
+        return json.loads((DATA / "base-pools-launch.json").read_text())
+
+    def test_a_lone_mini_seat_is_four_percent_of_emissions(self):
+        seat = soup_round.seat_weights(("x",), {"x": 1.0}, {"x": soup_round.TRAINER_RATE})["x"]
+        weights, record = model_pools.weights(
+            self.config(), {"d3-mini": decision([("c", seat)])}, MEMBERS, block=0
+        )
+        self.assertAlmostEqual(weights[3], 0.04)
+        self.assertAlmostEqual(weights[0], 0.96)  # lite unearned, flash and z3 closed
+
+    def test_a_crown_is_five_percent_of_emissions(self):
+        crown = {"hotkey": "c", "body_sha256": "f" * 64, "rate": 1.0}
+        crown["weight"] = soup_round.CROWN_SHARE * crown["rate"]
+        weights, _ = model_pools.weights(
+            self.config(), {"d3-mini": decision([], crown=crown)}, MEMBERS, block=0
+        )
+        self.assertAlmostEqual(weights[3], 0.05)
 
 
 class BodyCommitmentTest(unittest.TestCase):

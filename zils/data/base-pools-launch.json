@@ -6,7 +6,7 @@
       "type": "soup",
       "model": "d3-lite-0.8b-v1",
       "enabled": true,
-      "share": 0.35,
+      "share": 0.25,
       "house": "zils/data/soup-house-lite.json",
       "known_public": "zils/data/soup-known-lite.json",
       "max_known_public_bytes_per_round": 34359738368,
@@ -19,7 +19,7 @@
       "type": "soup",
       "model": "d3-mini-4.5b-v1",
       "enabled": true,
-      "share": 0.3,
+      "share": 0.25,
       "house": "zils/data/soup-house.json",
       "known_public": "zils/data/soup-known-mini.json",
       "max_known_public_bytes_per_round": 85899345920,
@@ -31,22 +31,12 @@
       "type": "soup",
       "model": "d3-flash-8.4b-v1",
       "enabled": true,
-      "share": 0.2,
+      "share": 0.25,
       "house": "zils/data/soup-house-flash.json",
       "schedule": {
         "deadline_utc": "12:00"
       },
       "opens_block": null,
-      "boost": [
-        {
-          "share": 0.3,
-          "blocks": 100800
-        },
-        {
-          "share": 0.25,
-          "blocks": 100800
-        }
-      ],
       "max_pool": 10,
       "max_new_per_round": 4,
       "max_claims_per_round": 6,
@@ -56,18 +46,12 @@
       "type": "soup",
       "model": "d3-ultra-26b-v1",
       "enabled": true,
-      "share": 0.1,
+      "share": 0.25,
       "house": "zils/data/soup-house-z3.json",
       "schedule": {
         "deadline_utc": "18:00"
       },
       "opens_block": null,
-      "boost": [
-        {
-          "share": 0.15,
-          "blocks": 100800
-        }
-      ],
       "max_pool": 5,
       "max_new_per_round": 2,
       "max_claims_per_round": 3,

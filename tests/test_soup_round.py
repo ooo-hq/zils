@@ -112,26 +112,37 @@ class LeaveOneOutTest(unittest.TestCase):
 class SeatWeightsTest(unittest.TestCase):
     T, S, H = soup_round.TRAINER_RATE, soup_round.SCOUT_RATE, soup_round.HOUSE_RATE
 
-    def test_members_above_the_floor_split_the_seat_share_equally(self):
+    def test_each_seat_is_a_fixed_fifth_of_the_seat_share(self):
+        # A seat pays SEAT_SHARE / MAX_MEMBERS whoever else is seated; unfilled seats burn.
         got = soup_round.seat_weights(
             ("a", "b", "c"),
             {"a": 1.0, "b": 0.3, "c": 0.29},
             {"a": self.T, "b": self.T, "c": self.T},
         )
         self.assertEqual(set(got), {"a", "b"})
-        self.assertAlmostEqual(got["a"], 0.4)
-        self.assertAlmostEqual(got["b"], 0.4)
+        self.assertAlmostEqual(got["a"], 0.16)
+        self.assertAlmostEqual(got["b"], 0.16)
+
+    def test_a_lone_seat_is_still_one_fifth(self):
+        got = soup_round.seat_weights(("a",), {"a": 1.0}, {"a": self.T})
+        self.assertAlmostEqual(got["a"], soup_round.SEAT_SHARE / soup_round.MAX_MEMBERS)
+
+    def test_a_full_soup_pays_the_whole_seat_share(self):
+        names = tuple("abcde")
+        got = soup_round.seat_weights(
+            names, dict.fromkeys(names, 1.0), dict.fromkeys(names, self.T)
+        )
+        self.assertAlmostEqual(sum(got.values()), soup_round.SEAT_SHARE)
 
     def test_scout_is_paid_a_quarter_of_a_trainer_seat(self):
         got = soup_round.seat_weights(("a", "b"), {"a": 1.0, "b": 1.0}, {"a": self.T, "b": self.S})
-        self.assertAlmostEqual(got["a"], 0.4)
-        self.assertAlmostEqual(got["b"], 0.1)
-        self.assertLess(sum(got.values()), soup_round.SEAT_SHARE)
+        self.assertAlmostEqual(got["a"], 0.16)
+        self.assertAlmostEqual(got["b"], 0.04)
 
     def test_house_ingredient_takes_a_seat_but_earns_nothing(self):
         got = soup_round.seat_weights(("h", "a"), {"h": 2.0, "a": 1.0}, {"h": self.H, "a": self.T})
         self.assertEqual(got["h"], 0.0)
-        self.assertAlmostEqual(got["a"], 0.4)
+        self.assertAlmostEqual(got["a"], 0.16)
 
     def test_nobody_above_the_floor_pays_nothing(self):
         got = soup_round.seat_weights(("a", "b"), {"a": 0.2, "b": -1.0}, {"a": self.T, "b": self.T})
