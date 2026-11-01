@@ -27,6 +27,17 @@ FIRST_DAYS = 28  # recent changes keep 30 days
 BATCH = 50
 MIN_CHARS = 200
 DECLINE = re.compile(r"^(?:Declining|Rejecting) submission\b")
+# Reviews whose draft text is not ours to keep or publish (AFCH's own reason codes, from
+# WPAFC/afch-rewrite tpl-submissions.html): copyright violations, unsourced or attack content about
+# living people, vandalism, contentious topics under an editing restriction, jokes and hoaxes.
+# AFCH writes the codes after the colon ("Declining submission: nn, blp - ..."); the words catch
+# a custom reason that names the same problem.
+SENSITIVE = {
+    "Declining": {"cv", "blp", "van", "ilc", "ecr", "joke"},
+    "Rejecting": {"blp", "j"},
+}
+REASON_CODES = re.compile(r"[:,]\s*([a-z0-9-]+)(?=\s*(?:,|-\s))")
+SENSITIVE_WORDS = re.compile(r"copyright|copyvio|attack page|\bhoax", re.I)
 ACCEPT = "Publishing accepted"
 PENDING_TS = re.compile(r"\{\{\s*AfC submission\s*\|\s*\|[^{}]*?\bts\s*=\s*(\d{14})", re.I)
 CITE = re.compile(r"\{\{\s*cite[^{}]*\}\}", re.I)
@@ -168,6 +179,13 @@ def record(review, revision, now):
     return "ready", {**row, "outcome": {"label": review["label"], "outcome_at": review["at"]}}
 
 
+def sensitive(comment):
+    """True when a decline or rejection summary gives a reason in ``SENSITIVE``."""
+    kind = comment.split(" ", 1)[0]
+    codes = set(REASON_CODES.findall(comment.split(" - ", 1)[0] + " - "))
+    return bool(SENSITIVE.get(kind, set()) & codes or SENSITIVE_WORDS.search(comment))
+
+
 def _reviews(http, day):
     start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=UTC)
     end = start + timedelta(days=1) - timedelta(seconds=1)
@@ -187,6 +205,8 @@ def _reviews(http, day):
         },
         "recentchanges",
     )
+    declines = [e for e in edits if DECLINE.match(e.get("comment") or "") and e.get("old_revid")]
+    skipped = sum(sensitive(e["comment"]) for e in declines)  # never fetched, stored or published
     reviews = [
         {
             "title": e["title"],
@@ -195,8 +215,8 @@ def _reviews(http, day):
             "at": e["timestamp"],
             "label": "false",
         }
-        for e in edits
-        if DECLINE.match(e.get("comment") or "") and e.get("old_revid")
+        for e in declines
+        if not sensitive(e["comment"])
     ]
     moves = _listing(
         http,
@@ -233,15 +253,16 @@ def _reviews(http, day):
                     "label": "true",
                 }
             )
-    return reviews
+    return reviews, skipped
 
 
 def collect(store, http, now, *, days):
     """Read each day's reviews; add the reviewed drafts, ready to resolve."""
-    added = reviewed = 0
+    added = reviewed = skipped = 0
     for day in days:
-        reviews = _reviews(http, day)
+        reviews, sensitive_reviews = _reviews(http, day)
         reviewed += len(reviews)
+        skipped += sensitive_reviews
         revisions = _revisions(http, [r["reviewed"] for r in reviews], "ids|timestamp|content")
         ready, dropped = [], []
         for review in reviews:
@@ -252,4 +273,4 @@ def collect(store, http, now, *, days):
             (ready if status == "ready" else dropped).append(row)
         added += store.add(ready)
         store.drop(dropped)
-    return {"added": added, "reviews": reviewed}
+    return {"added": added, "reviews": reviewed, "skipped_sensitive": skipped}
