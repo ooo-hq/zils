@@ -82,6 +82,11 @@ OUTCOME_PHRASES["wikipedia-afd"] = (
     r"\bnon-admin closure\b",
     r"\bclos(?:ed|ing) (?:this )?as\b",
 )
+OUTCOME_PHRASES["wikipedia-afc"] = (
+    r"\b(?:submission|draft) (?:was |has been |is )?(?:declined|rejected|accepted)\b",
+    r"\b(?:declin|reject)(?:ed|ing) (?:this |the )?(?:submission|draft)\b",
+    r"\bwas declined\b",
+)
 for _stream in current_items.STREAMS:
     if _stream.startswith(("wikipedia-revert", "wikidata-revert")):
         OUTCOME_PHRASES[_stream] = REVERT_PHRASES
@@ -106,10 +111,11 @@ TEMPLATE_LABELS = {
     "Title",
     "Tags",
     "Deletion discussion",
+    "Draft",
 }
 TEMPLATE_FIELDS = {"Size change", "Minor edit", "Editor"}
 TEMPLATE_LINES = {"Removed:", "Added:", "(nothing)", "[truncated]", "Question:", "(empty)"}
-TEMPLATE_LINES |= {"Deletion discussion:"}
+TEMPLATE_LINES |= {"Deletion discussion:", "Draft text:", "Abstract:"}
 TEMPLATE_LINES |= {f"Answer {chr(65 + i)}:" for i in range(26)}
 
 

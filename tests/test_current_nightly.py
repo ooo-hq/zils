@@ -69,6 +69,8 @@ class NightlyTest(unittest.TestCase):
             "check_overlap": False,
             "se_pages": 0,
             "afd_first_days": 0,
+            "afc_first_days": 0,
+            "arxiv_first_days": 0,
         }
 
     def tearDown(self):
@@ -170,6 +172,10 @@ class NightlyTest(unittest.TestCase):
                     "--se-pages",
                     "0",
                     "--afd-first-days",
+                    "0",
+                    "--afc-first-days",
+                    "0",
+                    "--arxiv-first-days",
                     "0",
                     "--wiki-source",
                     "stream",

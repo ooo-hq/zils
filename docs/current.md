@@ -26,6 +26,8 @@ of it yet (see [Extension points](#extension-points)).
 | `wikipedia-revert` (English), `wikipedia-revert-<lang>` | Will this article edit be reverted? | yes/no | `mw-reverted` tag | MediaWiki change tags after a waiting period | language | known |
 | `wikidata-revert` | Will this Wikidata item edit be reverted? | yes/no | `mw-reverted` tag | as for Wikipedia | retrieval | known |
 | `wikipedia-afd` | How did this deletion discussion close? | choice | `keep` / `delete` / `merge-redirect` / `no-consensus` | the closing result of an English Wikipedia Articles for deletion discussion | reasoning | known |
+| `wikipedia-afc` | Will the reviewer accept this Articles for Creation draft? | yes/no | accepted or declined/rejected | the AFCH review: a decline or rejection edit, or the move that publishes the draft | reasoning | new |
+| `arxiv-category-<group>` | Which category was this new paper announced under? | choice (4 categories) | `A`..`D` | the paper's primary category in the arXiv API | the group | known |
 | `stackexchange-closed-<group>` | Will this new question be closed? | yes/no | closed or still open | `closed_date` a week or more after asking | the group | known |
 | `stackexchange-score-<group>` | What score will this new question have? | score (4 ordered levels) | `0`..`3` | the question's score a week or more after asking | the group | new |
 | `stackexchange-accepted-<group>` | Which of these answers did the asker accept? | choice (2 to 4 answers) | `A`..`D` | `accepted_answer_id` | the group | new |
@@ -46,17 +48,27 @@ category gets all three question types:
 | `retrieval` | history, travel, law, biology, money, academia, skeptics |
 | `arts` | movies, scifi, music, literature, photo, graphicdesign, writing |
 
+arXiv papers are grouped by their primary category: `cs` (computer science, `tools`), `math`
+(mathematics, `reasoning`), `physics` (every physics archive, `retrieval`) and `other`
+(statistics, electrical engineering, economics, quantitative biology and finance, `retrieval`).
+The four options are the primary category and three distractors: categories other papers of the
+same day were filed under, in the same group, picked in proportion to how often they occur (so
+the common neighbours of a paper are the likely distractors). A paper's own cross-lists, and
+their aliases (`math.IT` = `cs.IT`, ...), are never distractors, so exactly one option is a
+category the paper is listed in.
+
 ### Categories and blocks
 
 Each stream has one exam category from `base_metrics.CATEGORY_WEIGHTS` and one block:
 
 - **Categories.** Reverts test how well a model reads edits in a language, so they are
   `language`. Wikidata edits are claims about facts, so they are `retrieval`. Deletion
-  discussions are judgements of arguments against policy, so they are `reasoning`. Stack
-  Exchange streams take their site group's category.
+  discussions and Articles for Creation reviews are judgements against policy, so they are
+  `reasoning`. Stack Exchange and arXiv streams take their group's category.
 - **Blocks.** `known` marks a task type with an established public benchmark: Wikipedia
   vandalism (PAN-WVC), Wikidata vandalism (WSDM Cup 2017), closed Stack Overflow questions
-  (Kaggle, 2012) and Articles for deletion outcomes. `new` marks the rest. The items themselves
+  (Kaggle, 2012), Articles for deletion outcomes and arXiv subject classification. `new` marks
+  the rest. The items themselves
   are always new events. The blocks are a proposal. `ZILS_CURRENT_BLOCKS` overrides them with
   comma-separated `stream-prefix=block` pairs, for example
   `ZILS_CURRENT_BLOCKS=stackexchange-=new,wikipedia-afd=new`. The longest matching prefix wins.
@@ -66,13 +78,13 @@ Coverage of the ten exam cells (category by block) and the three question types:
 | Category | yes/no | choice | score |
 | --- | --- | --- | --- |
 | language | Wikipedia reverts (known), SE language closed (known) | SE language accepted (new) | SE language score (new) |
-| reasoning | SE reasoning closed (known) | AfD result (known), SE reasoning accepted (new) | SE reasoning score (new) |
-| retrieval | Wikidata reverts (known), SE retrieval closed (known) | SE retrieval accepted (new) | SE retrieval score (new) |
-| tools | SE tools closed (known) | SE tools accepted (new) | SE tools score (new) |
+| reasoning | SE reasoning closed (known), AfC review (new) | AfD result (known), arXiv math (known), SE reasoning accepted (new) | SE reasoning score (new) |
+| retrieval | Wikidata reverts (known), SE retrieval closed (known) | arXiv physics and other (known), SE retrieval accepted (new) | SE retrieval score (new) |
+| tools | SE tools closed (known) | arXiv cs (known), SE tools accepted (new) | SE tools score (new) |
 | arts | SE arts closed (known) | SE arts accepted (new) | SE arts score (new) |
 
-With the default blocks, every category has both blocks. `known` has only yes/no items (plus the
-AfD choice in reasoning), and `new` has only choice and score items. GitHub streams are local-only
+With the default blocks, every category has both blocks. `known` has yes/no items plus the AfD
+and arXiv choices, and `new` has the AfC yes/no and the Stack Exchange choice and score items. GitHub streams are local-only
 and are not counted here.
 
 The state text holds only what was known when the event happened:
@@ -92,6 +104,13 @@ The state text holds only what was known when the event happened:
 - **Deletion discussions:** the article title, the nomination and the discussion up to the
   close, with signatures, templates and markup removed. The closing statement is above the
   discussion heading and is never included.
+- **Articles for Creation drafts:** the draft title and the draft as the reviewer saw it (the
+  revision before the decline edit, or the last one before the publishing move). Templates
+  (the submission box, earlier declines and reviewer comments, infoboxes), HTML comments, files
+  and categories are removed; citations become `[ref: title, publication]`; links become their
+  text; editor names are scrubbed.
+- **arXiv papers:** the title and the abstract. Authors, comments, journal references, dates and
+  the categories themselves are never shown.
 - **Stack Exchange questions:** the site, the title, the tags and the body. Accepted-answer items
   add the answers, shuffled once per question and named `Answer A`, `Answer B`, ... Scores,
   votes, view counts, dates and user names are never shown.
@@ -103,6 +122,8 @@ python -m zils.current collect --source gharchive --start 2026-10-26-15 --hours 
 python -m zils.current collect --source wikimedia --minutes 5
 python -m zils.current collect --source wikimedia --minutes 5 --since 2026-10-28T12:00:00Z
 python -m zils.current collect --source afd --day 2026-10-04 --day 2026-10-05
+python -m zils.current collect --source afc --day 2026-10-29
+python -m zils.current collect --source arxiv --day 2026-10-27
 python -m zils.current collect --source stackexchange [--site math] [--pages 2]
 python -m zils.current collect --source recentchanges [--samples 48] [--min-days 2] [--max-days 14]
 python -m zils.current resolve --negatives-per-positive 3
@@ -134,6 +155,18 @@ python -m zils.current grade --items BANK/2026-10-30/items.jsonl --model CHECKPO
 - `--source afd` reads the named Articles for deletion log days. Read days that are at least ten
   days old, when nearly all of their discussions are closed. Open ones are skipped; relisted
   discussions also appear on a later day's log.
+- `--source afc` reads the Articles for Creation reviews of the named UTC days: decline and
+  rejection edits (`list=recentchanges`, Draft namespace, `AFCH` tag) and publishing moves
+  (`list=logevents`, `AFCH` tag, into the article space), then the reviewed revisions, 50 per
+  request. Recent changes keep 30 days. The ask time is the `ts` of the pending submission box
+  in the reviewed text, or that revision's time. Drafts under 200 characters are dropped.
+  English Wikipedia sees roughly 150 to 200 reviews a day, about one in eight an acceptance;
+  export balances the labels, so a day gives about 30 to 50 items.
+- `--source arxiv` reads every paper submitted on the named UTC days, one API request per 2,000
+  papers (about 1,600 a weekday), at least 3 seconds apart as arXiv's API terms ask. Read days
+  that are at least three days old, when their papers have been announced. The API sometimes
+  answers with no entries; a page is retried, and a day with no papers at all is an error, so
+  the nightly cursor stays on it. Withdrawn papers are dropped.
 - `--source stackexchange` reads questions asked at least 8 days ago, up to `--pages` pages of
   100 per site, from a per-site cursor in `DIR/stackexchange-cursor.json` (a first run starts 22
   days back). Without a key the API allows 300 requests a day per IP address. A run of every
@@ -219,7 +252,13 @@ the copy and the reports):
      keep or no consensus: an article; merge or redirect: a redirect or an article). Merges are
      often carried out late, so this check is weak for them;
    - Stack Exchange: a second fetch of the questions (`closed_date`, the score level) and of
-     accepted items' answers (`is_accepted`, matched to our options by their text).
+     accepted items' answers (`is_accepted`, matched to our options by their text);
+   - Articles for Creation: a decline or rejection needs the review edit's own text to hold a
+     declined or rejected submission box (`{{AfC submission|d|...}}` or `|r|`); an acceptance
+     needs the article to exist now, or a deletion log entry after the review;
+   - arXiv: the paper's OAI-PMH record (`oaipmh.arxiv.org`, `metadataPrefix=arXiv`), whose
+     first category is the primary. One request per item, 3 seconds apart: a 20-item sample of
+     the four arXiv streams takes about four minutes.
 
    A stream under `--threshold` agreement (default 0.97) is removed from the export.
 
@@ -290,7 +329,8 @@ rebuild-only datasets, are compared on that hash alone, and the manifest counts 
 ## Licence gate
 
 `--publishable` exports only streams whose licence allows republishing: the Wikipedia,
-Articles for deletion and Stack Exchange streams (CC BY-SA 4.0) and Wikidata (CC0), and every
+Articles for deletion, Articles for Creation and Stack Exchange streams (CC BY-SA 4.0), and
+Wikidata and arXiv (CC0), and every
 case must carry its attribution link in `source.url`. The GitHub streams are local-only. Asking for one in a publishable export, or
 any GitHub case reaching one, is an error and writes nothing. The manifest records the mode.
 GitHub text needs legal review before any commercial use or release (see
@@ -315,12 +355,16 @@ GitHub text needs legal review before any commercial use or release (see
    GH Archive.
 3. **Articles for deletion:** every log day after the `afd` cursor that is at least ten days
    old (a first run reads `--afd-first-days`, default 45; `0` skips the step).
-4. **Stack Exchange:** `--se-pages` pages per site (default 2; `0` skips the step) for
+4. **Articles for Creation:** every finished UTC day after the `afc` cursor (a first run reads
+   `--afc-first-days`, default 28; `0` skips the step).
+5. **arXiv:** every submission day after the `arxiv` cursor that is at least three days old (a
+   first run reads `--arxiv-first-days`, default 14; `0` skips the step).
+6. **Stack Exchange:** `--se-pages` pages per site (default 2; `0` skips the step) for
    `--se-site` sites (default all), from the per-site cursors. A rate limit ends the step without
    an error.
-5. **Resolve:** one resolution pass over the waiting room, keeping `--negatives-per-positive`
+7. **Resolve:** one resolution pass over the waiting room, keeping `--negatives-per-positive`
    (default 3) not-reverted edits per reverted one.
-6. **Export and gates:** writes every finished UTC day after the `export` cursor, leaving out
+8. **Export and gates:** writes every finished UTC day after the `export` cursor, leaving out
    paused streams, then runs the proof and cross-check gates on it, oldest first. A first
    run writes yesterday. The overlap and leak options are the same as for `export`.
 
@@ -498,6 +542,13 @@ post's `content_license`). Attribution means linking the post, whose page names 
 quota floor. Stack Exchange has also published restrictions on using its content to train
 commercial AI models; read the current terms before any training use.
 
+**arXiv** metadata (titles, abstracts, categories) is CC0 1.0, by arXiv's
+[licence page](https://info.arxiv.org/help/license/index.html) and
+[API terms](https://info.arxiv.org/help/api/tou.html). The terms ask for no more than one
+request every three seconds on a single connection, and an acknowledgement ("Thank you to arXiv
+for use of its open access interoperability"), which each case carries in its `licence` field.
+Paper full texts carry their own licences and are never read.
+
 **Wikimedia etiquette** is built in: an identifying User-Agent with a contact
 (`ZILS_CURRENT_CONTACT`), one stream connection, a resume from `Last-Event-ID` after the server's
 15-minute disconnect, replay of only the window asked for, serial Action API requests at least
@@ -602,8 +653,8 @@ window but does not close it.
   `resolve(records, http, now)` generator that yields `("pending" | "resolved" | "dropped", record)`,
   plus an entry in `current.RESOLVERS` and `current_items.STREAMS` (with `licence`,
   `publishable`, `category` and `block`). Sources whose outcome is known at collection
-  (Stack Exchange, Articles for deletion) store it in `outcome`, and their resolver labels them
-  straight away.
+  (Stack Exchange, Articles for deletion and for Creation, arXiv) store it in `outcome`, and
+  their resolver labels them straight away.
 - **Token-free GitHub resolution.** Merge and close events also appear in later GH Archive hours,
   so a resolver could replay those hours instead of calling the API. Pull request text would
   still need the API.
