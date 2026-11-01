@@ -404,6 +404,11 @@ Only the public record (members, rates, rounded contributions, category scores a
 hashes of the subset, predictions and soup, all on the round's own subset, plus
 the pooled round ids and item count, the pool's scoring and the soup's fitted
 temperature) enters the published report.
+Every validator also serves these records, signed, at `GET /soup`: for each
+enabled soup pool, its newest 60 public records (newest first, each with a UTC
+`finished_at`) and, for every body those rounds seat or crown, its house name
+and repo when the validator knows them (null otherwise). Private round records,
+exam items and labels are never served.
 
 ### Submitting a body
 

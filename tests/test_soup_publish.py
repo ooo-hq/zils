@@ -1,9 +1,13 @@
 import copy
 import hashlib
 import json
+import os
+import tempfile
 import unittest
+from datetime import datetime
+from pathlib import Path
 
-from zils import soup_publish
+from zils import models, soup_publish
 
 SECRET_IDS = ["zz-secret-item-alpha", "zz-secret-item-beta", "zz-secret-item-gamma"]
 SECRET_LABELS = ["zz-label-approve-xyz", "zz-label-deny-xyz"]
@@ -195,6 +199,183 @@ class SoupPublishTest(unittest.TestCase):
         for secret in SECRET_IDS:
             self.assertNotIn(secret, json.dumps(public))
         self.assertNotIn("decision", soup_publish.public_record(private_round()))
+
+
+HOUSE_SHA = "e" * 64
+FEED_HOUSE = [
+    {"name": "house-pinned", "repo": "open/pinned", "revision": "1" * 40, "body_sha256": HOUSE_SHA},
+    {"name": "house-unpinned", "repo": "open/unpinned", "revision": "2" * 40, "body_sha256": None},
+]
+
+
+def soup_entry(**changes):
+    return {
+        "type": "soup",
+        "model": models.D3,
+        "enabled": True,
+        "share": 0.25,
+        "house": FEED_HOUSE,
+        "schedule": {"deadline_utc": "00:00"},
+        "sketch_seed": "5e" * 32,
+        **changes,
+    }
+
+
+def feed_config(pools):
+    return {"base_pools": {"share": 1.0, "burn_uid": 0, "pools": pools}}
+
+
+def public_round(round_id, members, crown=None):
+    private = private_round()
+    private["round_id"] = round_id
+    private["pool_id"] = "d3-mini"
+    private["members"] = [
+        {
+            "hotkey": f"5H{i}",
+            "body_sha256": sha,
+            "rate": 1.0,
+            "contribution": 1.0,
+            "seat_weight": 0.1,
+        }
+        for i, sha in enumerate(members)
+    ]
+    private["crown"] = None if crown is None else {
+        "hotkey": "5Hc", "body_sha256": crown, "rate": 1.0, "weight": 0.05,
+    }  # fmt: skip
+    return soup_publish.public_record(private)
+
+
+class SoupFeedTest(unittest.TestCase):
+    def setUp(self):
+        self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.state = self.directory / "base-pools" / "d3-mini" / "soup"
+
+    def write_round(self, round_id, record, mtime, private=None):
+        folder = self.state / "rounds" / round_id
+        folder.mkdir(parents=True)
+        (folder / "public.json").write_text(
+            record if isinstance(record, str) else json.dumps(record)
+        )
+        os.utime(folder / "public.json", (mtime, mtime))
+        if private is not None:
+            (folder / "private.json").write_text(json.dumps(private))
+
+    def write_pool(self, bodies, house=None):
+        self.state.mkdir(parents=True, exist_ok=True)
+        state = {"bodies": bodies, "rejected": {}, "members": [], "soup": None}
+        if house is not None:
+            state["house"] = house
+        (self.state / "pool.json").write_text(json.dumps(state))
+
+    def test_every_enabled_soup_pool_appears_even_without_rounds(self):
+        config = feed_config({
+            "d3-mini": soup_entry(),
+            "d3-lite": soup_entry(model=models.D3_POOL_MODELS["d3-lite"]),
+            "d3-flash": soup_entry(model=models.D3_POOL_MODELS["d3-flash"], enabled=False),
+        })  # fmt: skip
+        feed = soup_publish.feed(config, self.directory)
+        self.assertEqual(feed["kind"], "soup")
+        self.assertEqual(
+            feed["pools"],
+            {
+                "d3-mini": {"bodies": {}, "rounds": []},
+                "d3-lite": {"bodies": {}, "rounds": []},
+            },
+        )
+
+    def test_no_base_pools_is_an_empty_feed(self):
+        self.assertEqual(soup_publish.feed({}, self.directory), {"kind": "soup", "pools": {}})
+
+    def test_rounds_are_newest_first_with_finished_at_and_capped_at_sixty(self):
+        base = datetime.fromisoformat("2026-01-01T00:00:00+00:00").timestamp()
+        for day in range(65):
+            round_id = f"d3-mini-r{day:03d}"
+            self.write_round(round_id, public_round(round_id, ["a" * 64]), base + day * 86400)
+        feed = soup_publish.feed(feed_config({"d3-mini": soup_entry()}), self.directory)
+        rounds = feed["pools"]["d3-mini"]["rounds"]
+        self.assertEqual(len(rounds), 60)
+        self.assertEqual(rounds[0]["round_id"], "d3-mini-r064")
+        self.assertEqual(rounds[-1]["round_id"], "d3-mini-r005")
+        self.assertEqual(rounds[0]["finished_at"], "2026-03-06T00:00:00+00:00")
+        expected = public_round("d3-mini-r064", ["a" * 64])
+        self.assertEqual({k: v for k, v in rounds[0].items() if k != "finished_at"}, expected)
+
+    def test_bodies_name_house_and_repo_and_never_invent(self):
+        resolved = "d" * 64  # the unpinned house entry, resolved by the validator's download
+        miner, unknown, crown = "a" * 64, "b" * 64, "c" * 64
+        self.write_pool(
+            {
+                miner: {
+                    "hotkey": "5H1",
+                    "repo": "miner/body",
+                    "revision": "3" * 40,
+                    "house": False,
+                },
+                resolved: {
+                    "hotkey": None,
+                    "repo": "open/unpinned",
+                    "house": True,
+                    "name": "house-unpinned",
+                },
+                crown: {"hotkey": "5Hc", "repo": "crown/body", "house": False},
+            },
+            house={"open/unpinned@" + "2" * 40: resolved},
+        )
+        self.write_round(
+            "d3-mini-2026-11-03",
+            public_round("d3-mini-2026-11-03", [HOUSE_SHA, resolved, miner, unknown], crown),
+            1_800_000_000,
+        )
+        feed = soup_publish.feed(feed_config({"d3-mini": soup_entry()}), self.directory)
+        self.assertEqual(
+            feed["pools"]["d3-mini"]["bodies"],
+            {
+                HOUSE_SHA: {"house": "house-pinned", "repo": "open/pinned"},
+                resolved: {"house": "house-unpinned", "repo": "open/unpinned"},
+                miner: {"house": None, "repo": "miner/body"},
+                unknown: {"house": None, "repo": None},
+                crown: {"house": None, "repo": "crown/body"},
+            },
+        )
+
+    def test_bodies_only_cover_published_rounds(self):
+        self.write_pool({"9" * 64: {"repo": "not/seated", "house": False}})
+        self.write_round("r1", public_round("r1", ["a" * 64]), 1_800_000_000)
+        bodies = soup_publish.feed(feed_config({"d3-mini": soup_entry()}), self.directory)
+        self.assertEqual(
+            bodies["pools"]["d3-mini"]["bodies"], {"a" * 64: {"house": None, "repo": None}}
+        )
+
+    def test_malformed_rounds_are_skipped_and_private_records_never_read(self):
+        secret = private_round()
+        self.write_round(
+            "r-good", public_round("r-good", ["a" * 64]), 1_800_000_000, private=secret
+        )
+        self.write_round("r-bad", "{not json", 1_800_000_100, private=secret)
+        self.write_round("r-list", "[1, 2]", 1_800_000_200)
+        (self.state / "rounds" / "r-empty").mkdir()
+        (self.state / "pool.json").write_text("{broken")
+        feed = soup_publish.feed(feed_config({"d3-mini": soup_entry()}), self.directory)
+        rounds = feed["pools"]["d3-mini"]["rounds"]
+        self.assertEqual([r["round_id"] for r in rounds], ["r-good"])
+        text = json.dumps(feed)
+        for value in [*SECRET_IDS, *SECRET_LABELS, *SECRET_FAMILIES, *SECRET_TEXT]:
+            self.assertNotIn(value, text)
+
+    def test_an_unreadable_house_path_leaves_house_names_null(self):
+        self.write_pool({HOUSE_SHA: {"repo": "open/pinned", "house": True, "name": "house-pinned"}})
+        self.write_round("r1", public_round("r1", [HOUSE_SHA]), 1_800_000_000)
+        config = feed_config({"d3-mini": soup_entry(house="missing-house.json")})
+        feed = soup_publish.feed(config, self.directory)
+        self.assertEqual(
+            feed["pools"]["d3-mini"]["bodies"],
+            {HOUSE_SHA: {"house": "house-pinned", "repo": "open/pinned"}},
+        )
+
+    def test_the_feed_is_json_serialisable(self):
+        self.write_round("r1", public_round("r1", ["a" * 64], "c" * 64), 1_800_000_000)
+        feed = soup_publish.feed(feed_config({"d3-mini": soup_entry()}), self.directory)
+        self.assertEqual(json.loads(json.dumps(feed, allow_nan=False)), feed)
 
 
 if __name__ == "__main__":
