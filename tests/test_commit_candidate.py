@@ -269,19 +269,30 @@ class CommitCandidateTest(unittest.TestCase):
         self.assertEqual(out.count("✓ "), 1)
         self.assertIn("✗ d3 runtime\n  " + f"{self.d3}: OSError: d3 requires X", out)
         self.d3.unlink()
-        code, out = self.run_miner("doctor")
-        self.assertIn("✗ d3 runtime\n  no d3 training runtime", out)
+        with (
+            patch("zils.miner.platform.system", return_value="Linux"),
+            patch("zils.miner.platform.machine", return_value="x86_64"),
+        ):  # on a GPU host; tests/test_miner_setup_ui.py covers machines that can't mine
+            code, out = self.run_miner("doctor")
+        self.assertIn("✗ d3 runtime\n  no d3 training runtime yet", out)
         self.assertIn("install.sh | sh", out)
 
     def test_setup_saves_answers_that_later_commands_default_to(self):
         code, out = self.run_miner("doctor", wallet=False)
         self.assertEqual(code, 1)
         self.assertIn("no wallet configured; run zils-miner setup", out)
+        wordmark = miner.LOGO.splitlines()[
+            1
+        ].strip()  # setup opens with the Zils wordmark; doctor doesn't
+        self.assertNotIn(wordmark, out)
 
         repo = "alice/d3"
         answers = iter([self.wallet["path"], "", "", str(self.candidate), "", repo])
         with patch("builtins.input", lambda prompt: next(answers)):
             code, out = self.run_miner("setup", wallet=False)
+        self.assertIn(wordmark, out)
+        self.assertLess(out.index(wordmark), out.index("Zils miner setup"))
+        self.assertNotIn("\033[", out)  # no colour when output is not a terminal
         self.assertIn("wallets there: fixture", out)
         self.assertIn("hotkeys: miner", out)
         self.assertIn("✗ hugging face\n  not uploaded yet", out)

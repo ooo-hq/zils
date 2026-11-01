@@ -20,7 +20,9 @@ import hashlib
 import importlib
 import json
 import os
+import platform
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -50,6 +52,37 @@ def paint(code, text):
     if not os.isatty(1) or os.environ.get("NO_COLOR"):
         return text
     return f"\033[{code}m{text}\033[0m"
+
+
+# The Zils wordmark, as the customer CLI shows it (zils-sdk fit_guide.LOGO); kept in sync by hand.
+LOGO = """\
+                   ▄███  ▄▄▄▄▄
+  ████████████▀ ▄█ ▀██▀  ▀████
+  ███    ████▀ ██         ████
+  ▀▀    ████ ▄██  ▄███▄   ████   ▄▄██████▄
+  ▄▄▄▄▄███▀ ▄██▄▄  ████   ████  ███▀ ▀▀██
+  ███████▀ ██▀▀▀▀  ████   ████  ████▄▄
+    ████ ▄██       ████   ████   ▀██████▄
+   ████ ▄█▀    ██  ████   ████  ▄▄  ▀█████
+  ███▀ ███    ▄██  ████   ████  ██▄   ████
+  ██▀ ███████████  ▀████  █████ ████████▀"""
+SPECTRUM = (
+    "38;5;209",
+    "38;5;216",
+    "38;5;211",
+    "38;5;183",
+    "38;5;111",
+)  # orange to periwinkle, 256-colour
+
+
+def wordmark():
+    """The wordmark in brand purple over a spectrum rule, as `zils` and `zils fit` open."""
+    print()
+    for line in LOGO.splitlines():
+        print(paint("38;5;105", line))
+    rule = 42
+    print("  " + "".join(paint(SPECTRUM[i * len(SPECTRUM) // rule], "─") for i in range(rule)))
+    print(flush=True)
 
 
 def config_path():
@@ -596,10 +629,7 @@ def doctor(args):
     def d3_runtime():
         python = d3_python()
         if not python.exists():
-            return (
-                f"no d3 training runtime at {python}; it needs Linux x86_64 with an NVIDIA GPU."
-                f" On that host rerun the installer\n  {INSTALL}"
-            )
+            return missing_runtime(python)
         check = (
             "import sys, torch; from zils import d3; d3.verify_runtime(sys.argv[1]);"
             " assert torch.cuda.is_available() and torch.cuda.is_bf16_supported(),"
@@ -723,6 +753,86 @@ def doctor(args):
     return True
 
 
+KEYS = {"\x1b[A": "up", "\x1b[B": "down", "\r": "enter", "\n": "enter", "\x03": "ctrl-c"}
+
+
+def menu_key(index, key, count):
+    """(new index, chosen) after one key: arrows or j/k move and wrap, a number jumps, Enter chooses."""
+    if key == "ctrl-c":
+        raise KeyboardInterrupt
+    if key in ("up", "k"):
+        return (index - 1) % count, False
+    if key in ("down", "j"):
+        return (index + 1) % count, False
+    if key.isdigit() and 1 <= int(key) <= count:
+        return int(key) - 1, False
+    return index, key == "enter"
+
+
+def read_key():
+    """One key from a raw terminal, with arrow escape sequences read whole."""
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        key = os.read(fd, 1).decode(errors="ignore")
+        if key == "\x1b":
+            key += os.read(fd, 2).decode(errors="ignore")
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+    return KEYS.get(key, key)
+
+
+def choose(question, options, default=None):
+    """Pick one of `options` ([(value, label)]): an arrow-key menu on a terminal, else a numbered prompt."""
+    values = [value for value, _ in options]
+    index = values.index(default) if default in values else 0
+    if not (sys.stdin.isatty() and os.isatty(1)) or os.name == "nt":
+        for n, (_, label) in enumerate(options, 1):
+            print(f"  {n}. {label}")
+        while True:
+            answer = ask(question, values[index])
+            if answer in values:
+                return answer
+            if answer.isdigit() and 1 <= int(answer) <= len(options):
+                return values[int(answer) - 1]
+            print(f"  pick 1 to {len(options)}, or type a name from the list")
+    print(f"{paint('36', '?')} {question} {paint('2', '(↑/↓ and Enter)')}")
+    chosen = False
+    while True:
+        for i, (_, label) in enumerate(options):
+            line = f"{paint('36', '❯')} {paint('1', label)}" if i == index else f"  {label}"
+            print(f"\x1b[2K  {line}")
+        if chosen:
+            break
+        index, chosen = menu_key(index, read_key(), len(options))
+        print(f"\x1b[{len(options)}F", end="")
+    print(
+        f"\x1b[{len(options) + 1}F\x1b[J{paint('36', '?')} {question}: {paint('1', options[index][1])}"
+    )
+    return values[index]
+
+
+def missing_runtime(python):
+    """Why doctor can't find the d3 training runtime, and what to do on this kind of machine."""
+    system, machine = platform.system(), platform.machine().lower()
+    if system != "Linux" or machine not in ("x86_64", "amd64"):
+        name = {"Darwin": "Mac", "Windows": "Windows machine"}.get(
+            system, f"{system} {machine} machine"
+        )
+        return (
+            f"This {name} can't mine: training and checking a candidate need Linux x86_64 with an"
+            f" NVIDIA GPU. Run the installer on that machine; it sets up zils-miner and starts this"
+            f" setup there:\n  {INSTALL}"
+        )
+    return (
+        f"no d3 training runtime yet at {python}; rerun the installer on this machine\n  {INSTALL}"
+    )
+
+
 def ask(question, default=None):
     hint = paint("2", f" [{default}]") if default else ""
     answer = input(f"{paint('36', '?')} {question}{hint}: ").strip()
@@ -732,6 +842,7 @@ def ask(question, default=None):
 def setup(args):
     """Ask for each saved value (Enter keeps the shown one), save them, then run doctor."""
     config = load_config()
+    wordmark()
     print(
         f"{paint('1;32', '◆ Zils miner setup')}  {paint('2', 'Enter keeps the value in brackets')}"
     )
@@ -752,14 +863,14 @@ def setup(args):
         "Candidate folder from zils.d3 candidate (Enter if not trained yet)",
         config.get("candidate"),
     )
-    print("Base profiles (availability depends on the validator):")
-    for profile in models.d3_family():
-        print(f"  {models.pool_id(profile)}: {profile}")
-    model = selected_model(
-        args.model
-        or ask("Base profile (Enter to read it from the candidate)", config.get("model")),
-        candidate,
-    )
+    if args.model:
+        model = selected_model(args.model, candidate)
+    else:
+        found = models.checkpoint_model(Path(candidate).expanduser()) if candidate else None
+        profiles = [(p, f"{models.pool_id(p):<9} {p}") for p in models.d3_family()]
+        print("Validators decide which base profiles are open.")
+        choice = choose("Base profile", profiles, found or config.get("model"))
+        model = selected_model(choice, candidate)
     repo = ask("Public Hugging Face repo for it, owner/name", config.get("repo"))
     if not name:
         raise ValueError("a wallet name is needed; create one with btcli wallet create")
