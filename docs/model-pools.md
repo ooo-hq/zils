@@ -120,7 +120,8 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
 (12), `max_download_bytes_per_round` (60 GiB), `failed_claim_backoff_rounds` (3),
 `others_max` (0.3), `house_mix_max` (0.05), `max_decision_age_days` (3),
 `decision_rounds` (3, from 1 to 7), `known_public` (empty),
-`max_known_public_bytes_per_round` (16 GiB) and `sketch_seed`:
+`max_known_public_bytes_per_round` (16 GiB), `max_known_public_seconds_per_round`
+(7,200) and `sketch_seed`:
 
 ```json
 "d3-mini": {
@@ -357,10 +358,16 @@ weight-change sketch has cosine at least 0.9 to the sketch of a model on the
 pool's `known_public` list. The check looks at the body as committed, so an
 unchanged or lightly changed re-upload is a scout's, while a fine-tune that
 moves well away from the public model (cosine under 0.9) keeps the trainer rate.
-Known public models are not allowed bases: the copy checks and the house-mix
-residual treat them like any other outside model, and a body committed by one
-hotkey can still make a later near-copy by another hotkey a copy. House bodies
-stay at 0.
+Listed models are also allowed bases in the copy check, like the house bodies,
+the soup and the release: a real fine-tune of one is never refused as a copy of
+another hotkey's re-upload of it. Unlike the other bases, re-uploading a listed
+model is allowed, since that is the scout's work. The first commitment that is a
+near re-upload (cosine at least 0.9) of a listed model wins: a later near
+re-upload of the same model by another hotkey is refused as explained by that
+earlier body while it stays in the pool, and a near-exact copy of any earlier
+body is refused as before. Listed models are not part of the house-mix residual
+(`base_residual`), so a mix of several listed models is paid by the cosine rule
+alone. House bodies stay at 0.
 
 The validator resolves each list entry once: it downloads the pinned revision
 through the same fetch path as a body (within twice the pool's body size cap,
@@ -369,9 +376,17 @@ is pinned, sketches the language layers with its own `sketch_seed`, keeps only
 the sketch and deletes the files. A text-only checkpoint (no vision tower, with
 `layers.*`, `model.layers.*` or `model.language_model.layers.*` names) is
 sketched on its language layers alone; it has no body hash, so its entry must
-leave `body_sha256` `null`. Downloads for the list stop once
-`max_known_public_bytes_per_round` is spent, separately from the miners'
-`max_download_bytes_per_round`, and the remaining entries wait for a later round.
+leave `body_sha256` `null`. The list is resolved before intake. No new download
+for it starts once `max_known_public_bytes_per_round` is spent (separate from the
+miners' `max_download_bytes_per_round`), after `max_known_public_seconds_per_round`
+(default 7,200 s, at most 21,600), or within four hours of the round's deadline;
+the remaining entries wait for a later round, and that round's copy and scout
+checks use the entries resolved so far (each skipped entry is logged). The launch
+byte budgets (32 GiB for lite, 80 GiB for mini) cover each packaged list: about
+26 GB for lite and 73 GB for mini, which takes about 1.6 hours at 100 Mbit/s, so
+the mini list resolves in the first round on a link of roughly that speed or
+faster. A pool's first round also downloads its house bodies before the list, and
+on a slower link the rest of the list resolves in later rounds.
 An entry that fails for its contents (a malformed file, a wrong pinned hash) is
 skipped until its pin changes; a transport error is retried next round. Neither
 stops the round; both are recorded in the private round record. A list file that

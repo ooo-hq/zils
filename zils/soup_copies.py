@@ -197,9 +197,11 @@ def is_copy(
     release=None,
     *,
     house=(),
+    public=(),
     explained=None,
     cosine_max=0.999,
     others_max=0.3,
+    scout_cosine=0.9,
 ):
     """Why a body sketch is a copy, or None. `earlier` are sketches of earlier commitments by other
     hotkeys: a near-exact copy of one is a copy. `house` (house bodies), `soup` and `release` (the
@@ -215,7 +217,13 @@ def is_copy(
     the seated bodies is. `explained`, when given, replaces `earlier` in the joint fit (for example
     only the earlier bodies still in the pool); near-exact copies are always checked against all of
     `earlier`. Only "explained by earlier" is a judgement on the current pool rather than on the
-    weights themselves."""
+    weights themselves.
+
+    `public` (sketches of the pool's listed known-public models) are allowed bases too, so a real
+    fine-tune of one is never a copy of another hotkey's re-upload of it. Unlike the other bases,
+    re-uploading one is allowed (it is a scout's work, paid at the scout rate): a body within
+    `scout_cosine` of a listed model is refused only when an earlier body still in the pool is a
+    near re-upload of the same model, as explained by that earlier body (the first scout wins)."""
     target = np.asarray(target, dtype=np.float64)
     if not np.any(target):
         return "no change from the base"
@@ -227,8 +235,13 @@ def is_copy(
         if other is not None and cosine(target, other) >= cosine_max:
             return label
     explained = list(earlier if explained is None else explained)
+    for listed in public:
+        if cosine(target, listed) >= scout_cosine and any(
+            cosine(e, listed) >= scout_cosine for e in explained
+        ):
+            return "explained by earlier"
     if explained:
-        allowed = _allowed(house, soup, release)
+        allowed = _allowed([*house, *public], soup, release)
         own = 1.0 - explained_share(target, allowed)  # the share beyond the allowed bases
         if own > 1e-9:
             beyond = explained_share(target, [*explained, *allowed]) - (1.0 - own)

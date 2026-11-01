@@ -19,7 +19,7 @@ from tests.test_soup_run import (
     pools,
     soup_entry,
 )
-from zils import bodies, model_pools, models, soup_pool, testnet, validator
+from zils import bodies, model_pools, models, soup_pool, soup_round, testnet, validator
 
 DATA = Path(zils.__file__).with_name("data")
 BLOCKS_PER_DAY = 7200
@@ -268,6 +268,21 @@ class LaunchDataTest(unittest.TestCase):
                 pinned = {(h["repo"], h["revision"]) for h in house}
                 self.assertFalse(pinned & {(e["repo"], e["revision"]) for e in listed})
                 self.assertTrue(all(len(e["revision"]) == 40 for e in listed))
+        # Each packaged list resolves in the first round: every download starts within the byte
+        # budget (safetensors sizes at the pinned revisions, read from the Hub on 31 Oct 2026).
+        gb = {
+            "d3-lite": [1.51, 1.51, 1.71, 1.71, 2.21, 2.21, 1.5, 1.71, 1.71, 1.72, 1.72, 1.71,
+                        1.71, 1.5, 1.84],
+            "d3-mini": [9.21, 9.08, 9.08, 9.32, 9.32, 8.41, 8.41, 10.35],
+        }  # fmt: skip
+        for pool, sizes in gb.items():
+            with self.subTest(budget=pool):
+                listed = soup_rates.load_house(DATA / expected[pool][0])
+                self.assertEqual(len(sizes), len(listed))
+                budget = checked[pool]["max_known_public_bytes_per_round"]
+                self.assertGreaterEqual(budget, sum(sizes) * 1e9)
+                cap = soup_round.KNOWN_PUBLIC_CAP_FACTOR * bodies.max_bytes(pool)
+                self.assertTrue(all(size * 1e9 <= cap for size in sizes))
         # Pools without a list resolve nothing.
         self.assertNotIn("known_public", checked["d3-flash"])
         self.assertNotIn("known_public", checked["d3"])
