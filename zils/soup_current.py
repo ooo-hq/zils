@@ -129,46 +129,137 @@ def _excluded(items, patterns):
     return kept, dict(sorted(dropped.items()))
 
 
-def _group(current, minimum):
-    """(Current items in families of at least ``minimum`` items, record of the merges).
+def _family_draw(items, secret, settings):
+    """(chosen items, stream counts, merges, families) under ``min_family_items``.
 
-    A stream that drew fewer than ``minimum`` items joins the other small streams of its category,
-    block and question type in one family, ``current-<category>-<block>-<type>-small``. A merged
-    family still below ``minimum`` is left out of the round. Each merged item keeps its stream name
-    in ``current_stream``."""
-    streams = defaultdict(list)
-    for item in current:
-        streams[item["family"]].append(item)
-    kept, small = [], defaultdict(list)
-    for stream, rows in sorted(streams.items()):
-        if len(rows) >= minimum:
-            kept += rows
-        else:
-            first = rows[0]
-            small[first["category"], first["block"], first["question"]["type"]].append(stream)
-    merges = {}
-    for (category, block, kind), names in sorted(small.items()):
-        family = f"current-{category}-{block}-{kind}-small"
-        rows = [item for name in names for item in streams[name]]
-        dropped = len(rows) < minimum
-        merges[family] = {"streams": names, "items": len(rows), "dropped": dropped}
-        if not dropped:
-            kept += [{**item, "family": family, "current_stream": item["family"]} for item in rows]
-    return kept, merges
+    Families are chosen before the budget (``current_items``) is spread, so no kept family is cut
+    below the minimum:
+
+    1. Each usable stream (two labels or more) can give its balanced supply, capped by
+       ``stream_max`` of the budget. A stream whose supply is below ``min_family_items`` joins the
+       other small streams of its category, block and question type in one family,
+       ``current-<category>-<block>-<type>-small``; each merged item keeps its stream name in
+       ``current_stream``.
+    2. Only families whose supply reaches ``min_family_items`` qualify.
+    3. While the budget leaves room for another family's floor, families are kept in this order:
+       first the largest family of each category/block/type group (larger groups first), then
+       the family in the category/block cell with the fewest kept families (larger supply, then
+       name, breaking ties).
+    4. Every kept family gets ``min_family_items`` items. The rest of the budget is spread over
+       the kept families as evenly as their supply allows, and over a family's streams likewise.
+    """
+    size, minimum = settings["current_items"], settings["min_family_items"]
+    cap = int(settings["stream_max"] * size)
+    streams = defaultdict(lambda: defaultdict(list))
+    for item in items:
+        streams[item["family"]][item["label"]].append(item)
+    usable = {s: labels for s, labels in sorted(streams.items()) if len(labels) >= 2}
+    if len(usable) < settings["min_streams"]:
+        raise ValueError(
+            f"{len(usable)} usable streams (two labels or more), {settings['min_streams']} needed"
+        )
+
+    def rank(item):
+        day = item["resolved_at"][:10]
+        tag = hmac.new(secret, item["id"].encode(), hashlib.sha256).digest()
+        return (-int(day.replace("-", "")), tag)
+
+    def tags(labels):
+        first = next(iter(labels.values()))[0]
+        return first["category"], first["block"], first["question"]["type"]
+
+    def balanced(labels):  # yes/no labels are kept balanced; choice and score are chance-corrected
+        if tags(labels)[2] != "noul":
+            return sum(map(len, labels.values()))
+        floor = min(len(rows) for rows in labels.values())
+        return sum(min(len(rows), floor) for rows in labels.values())
+
+    supply = {s: min(cap, balanced(labels)) for s, labels in usable.items()}
+    members, group = {}, {}
+    for stream, labels in usable.items():
+        category, block, kind = tags(labels)
+        family = stream
+        if supply[stream] < minimum:
+            family = f"current-{category}-{block}-{kind}-small"
+        members.setdefault(family, []).append(stream)
+        group[family] = (category, block, kind)
+    available = {f: sum(supply[s] for s in names) for f, names in members.items()}
+    qualified = [f for f in sorted(members) if available[f] >= minimum]
+
+    def larger(family):
+        return (-available[family], family)
+
+    best = {}
+    for family in sorted(qualified, key=larger):
+        best.setdefault(group[family], family)
+    kept, budget = [], size
+    for family in sorted(best.values(), key=larger):
+        if budget >= minimum:
+            kept.append(family)
+            budget -= minimum
+    while budget >= minimum:
+        left = [f for f in qualified if f not in kept]
+        if not left:
+            break
+        per_cell = Counter(group[f][:2] for f in kept)
+        family = min(left, key=lambda f: (per_cell[group[f][:2]], *larger(f)))
+        kept.append(family)
+        budget -= minimum
+    if not kept:
+        raise ValueError(f"no Current family reaches min_family_items {minimum}")
+    extra = _fill({f: available[f] - minimum for f in sorted(kept)}, budget)
+    chosen, counts, families, merges = [], {}, {}, {}
+    for family in sorted(members):
+        quota = minimum + extra[family] if family in kept else 0
+        per_stream = _fill({s: supply[s] for s in members[family]}, quota)
+        drawn = 0
+        for stream in members[family]:
+            if not per_stream[stream]:
+                continue
+            labels = usable[stream]
+            per_label = _fill({k: len(v) for k, v in labels.items()}, per_stream[stream])
+            picked = []
+            for label, rows in sorted(labels.items()):
+                picked += sorted(rows, key=rank)[: per_label[label]]
+            drawn += len(picked)
+            if family != stream:
+                picked = [{**c, "family": family, "current_stream": stream} for c in picked]
+            chosen += picked
+            counts[stream] = {
+                "drawn": len(picked),
+                "available": sum(map(len, labels.values())),
+                "labels": dict(sorted(Counter(c["label"] for c in picked).items())),
+                "resolved_from": min(c["resolved_at"] for c in picked),
+                "resolved_until": max(c["resolved_at"] for c in picked),
+            }
+        families[family] = {
+            "streams": members[family],
+            "available": available[family],
+            "drawn": drawn,
+            "kept": family in kept,
+        }
+        if members[family] != [family]:
+            merges[family] = {
+                "streams": members[family],
+                "items": drawn,
+                "available": available[family],
+                "dropped": family not in kept,
+            }
+    if len(counts) < settings["min_streams"]:
+        raise ValueError(f"{len(counts)} streams contribute, {settings['min_streams']} needed")
+    if len(chosen) < settings["min_items"]:
+        raise ValueError(
+            f"{len(chosen)} items in families of {minimum} or more, {settings['min_items']} needed"
+        )
+    return chosen, counts, merges, families
 
 
 def _drawn(items, secret, settings, size):
-    """(Current part, stream counts, merges) of ``size`` items, small streams merged if asked."""
-    current, streams = draw(items, secret, {**settings, "current_items": size})
+    """(Current part, stream counts, merges, families) of ``size`` items."""
+    settings = {**settings, "current_items": size}
     if "min_family_items" not in settings:
-        return current, streams, {}
-    current, merges = _group(current, settings["min_family_items"])
-    if len(current) < settings["min_items"]:
-        raise ValueError(
-            f"{len(current)} items in families of {settings['min_family_items']} or more, "
-            f"{settings['min_items']} needed"
-        )
-    return current, streams, merges
+        return (*draw(items, secret, settings), {}, {})
+    return _family_draw(items, secret, settings)
 
 
 def _cells(chosen, current_ids, minimum):
@@ -428,13 +519,13 @@ def _blend(items, bank, secret, settings, *, size, seed, retired):
     from . import soup_exam
 
     target = min(settings["current_items"], int(settings["current_share"] * size))
-    current, streams, merges = _drawn(items, secret, settings, target)
+    current, streams, merges, families = _drawn(items, secret, settings, target)
     clash = {c["family"] for c in current} & {c["family"] for c in bank}
     if clash:
         raise ValueError("Current families share a name with the bank: " + ", ".join(sorted(clash)))
     part = soup_exam.subset(bank, seed, size - len(current), exclude=retired)
     cells = sorted({(c["category"], c["block"]) for c in current})
-    return current, streams, merges, cells, part
+    return current, streams, merges, families, cells, part
 
 
 def _parts(items, bank, secret, settings, *, size, seed, retired):
@@ -447,7 +538,7 @@ def _parts(items, bank, secret, settings, *, size, seed, retired):
 
     target = min(settings["current_items"], size)
     for _ in range(4):  # a larger draw can only cover more cells, so this settles quickly
-        current, streams, merges = _drawn(items, secret, settings, target)
+        current, streams, merges, families = _drawn(items, secret, settings, target)
         cells = sorted({(c["category"], c["block"]) for c in current})
         rest = [c for c in bank if (c.get("category"), c.get("block")) not in set(cells)]
         need = size - len(current)
@@ -461,7 +552,7 @@ def _parts(items, bank, secret, settings, *, size, seed, retired):
         part = []
     else:
         raise ValueError("internal: the Current part is larger than the subset")
-    return current, streams, merges, cells, part
+    return current, streams, merges, families, cells, part
 
 
 def prepare(config, state_dir, *, round_id, block_hash, bank, ledger, log=print):
@@ -499,7 +590,8 @@ def prepare(config, state_dir, *, round_id, block_hash, bank, ledger, log=print)
     }
     quality = "min_family_items" in settings
     if quality:
-        record.update(excluded_streams={}, merged_families={}, added_cells=[], cells={})
+        record.update(excluded_streams={}, merged_families={}, current_families={}, added_cells=[])
+        record["cells"] = {}
         record["thin_cells"] = {}
     chosen = []
     try:
@@ -526,7 +618,7 @@ def prepare(config, state_dir, *, round_id, block_hash, bank, ledger, log=print)
         if quality:
             items, record["excluded_streams"] = _excluded(items, settings["exclude_streams"])
         blend = quality and settings["current_share"] < 1
-        current, streams, merges, cells, part = (_blend if blend else _parts)(
+        current, streams, merges, families, cells, part = (_blend if blend else _parts)(
             items, bank, secret, settings, size=size, seed=seed, retired=retired
         )
         chosen = sorted([*part, *current], key=lambda c: c["id"])
@@ -540,6 +632,7 @@ def prepare(config, state_dir, *, round_id, block_hash, bank, ledger, log=print)
         )
         if quality:
             record["merged_families"] = merges
+            record["current_families"] = families
             record["added_cells"] = named if blend else []
         drawn = {c["id"]: c for c in current}
     except (OSError, ValueError, KeyError, TypeError) as error:

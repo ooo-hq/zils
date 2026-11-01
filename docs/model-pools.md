@@ -272,13 +272,24 @@ predict adds only noise. Three optional settings guard against both:
 }
 ```
 
-- **`min_family_items`** (default 100): a Current stream that draws fewer items
-  joins the other small streams of its cell and question type in one family,
-  `current-<category>-<block>-<type>-small` (yes/no, choice and score streams
-  never share a family). Each merged item keeps its stream name in
-  `current_stream`. A merged family still below the minimum is left out, and
-  that cell is filled from `round_bank` instead. If what remains is fewer than
-  `min_items` items, the round falls back to `round_bank`.
+- **`min_family_items`** (default 100): families are chosen before the Current
+  budget is spread, so no kept family falls below this size.
+  - A stream's supply is what it can give: yes/no streams balanced, and at most
+    `stream_max` of the budget. A stream whose supply is below the minimum joins
+    the other small streams of its cell and question type in one family,
+    `current-<category>-<block>-<type>-small` (yes/no, choice and score streams
+    never share a family). Each merged item keeps its stream name in
+    `current_stream`.
+  - Only families whose supply reaches the minimum qualify. While the budget
+    has room for another family's minimum, families are kept in this order:
+    first the largest family of each category, block and question type, then
+    the family whose cell has the fewest kept families (larger supply, then
+    name, breaking ties).
+  - Each kept family gets the minimum, and the rest of the budget is spread
+    over the kept families as evenly as their supply allows.
+  - A cell with no kept Current family is filled from `round_bank`. If fewer
+    than `min_items` items or `min_streams` streams remain, the round falls
+    back to `round_bank`.
 - **`exclude_streams`** (default `["stackexchange-score-*"]`): glob patterns of
   stream names that are never drawn. Stack Exchange score streams show close to
   zero skill for every body measured, so they are excluded by default. `[]`
@@ -294,8 +305,9 @@ that sets any of them gets the defaults above for the others; set
 `"min_family_items": 1` or `"exclude_streams": []` to turn one off.
 
 With any quality setting the round record also holds the excluded streams and
-their item counts (`excluded_streams`), each merged family with its streams,
-item count and whether it was left out (`merged_families`), the cells a blend
+their item counts (`excluded_streams`), every Current family with its streams,
+supply, items drawn and whether it was kept (`current_families`), the merged
+families among them (`merged_families`), the cells a blend
 added Current families to (`added_cells`), the items, families and Current
 items per cell (`cells`), and every cell resting on fewer than
 `min_family_items` items (`thin_cells`, also logged). A thin cell is still

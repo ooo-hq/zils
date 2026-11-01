@@ -472,8 +472,14 @@ class RoundTest(unittest.TestCase):
         public = json.loads((self.r.state / "rounds" / ROUND / "public.json").read_text())
         self.assertNotIn("bank_source", public)
 
-    def test_a_blend_round_grades_merged_families(self):
-        self.f.exam = {**self.f.exam, "current_items": 1000, "current_share": 0.25}
+    def test_a_blend_round_grades_its_current_families(self):
+        self.f.exam = {
+            **self.f.exam,
+            "current_items": 1000,
+            "current_share": 0.25,
+            "min_streams": 2,
+            "stream_max": 0.5,
+        }
         config = self.r.config(
             subset_size=800, schedule={"deadline_utc": "03:00"}, exam=self.f.config()["exam"]
         )
@@ -487,7 +493,8 @@ class RoundTest(unittest.TestCase):
             log=lambda message: None,
         )
         self.assertIsNone(source["fallback"])
-        self.assertIn("current-reasoning-new-noul-small", source["merged_families"])
+        kept = {f for f, v in source["current_families"].items() if v["kept"]}
+        self.assertEqual(kept, {"gh-close", "gh-type"})  # 100-item floors fill the 200 budget
         self.r.bank = bank
         private = self.r.run(config=config, bank_source=source)
         self.assertEqual(private["subset_ids"], self.f.subset())
@@ -873,25 +880,36 @@ class QualityTest(unittest.TestCase):
         self.assertEqual(len(record["replaced_cells"]), 9)
         base_metrics.baselines(cases)
 
-    def test_blend_keeps_every_bank_family_and_caps_the_current_share(self):
-        f = Fixture(
-            self.root / "blend", current_items=1000, current_share=0.25, min_family_items=100
+    def blend_fixture(self, name):
+        rows = []
+        for stream in ("gh-close", "gh-merge", "gh-label"):
+            rows += stream_rows(stream, "reasoning", "new", "noul", 120)
+        rows += stream_rows("gh-type", "language", "new", "choice", 120)
+        rows += stream_rows("wiki-revert", "language", "new", "noul", 120)
+        return self.fixture(
+            name, rows, current_items=1000, current_share=0.25, min_family_items=100
         )
+
+    def test_blend_keeps_every_bank_family_and_caps_the_current_share(self):
+        f = self.blend_fixture("blend")
         bank, record = f.prepare(subset_size=800)
         self.assertIsNone(record["fallback"])
         cases = self.cases(f, bank)
         self.assertEqual(len(cases), 800)
         families = Counter(c["family"] for c in cases)
         self.assertLessEqual(set(c["family"] for c in f.bank), set(families))  # every bank family
-        current = [c for c in cases if c["family"].startswith("current-") or c["family"] in STREAMS]
-        self.assertLessEqual(len(current), 200)
+        current = [c for c in cases if "-2026" in c["id"]]
+        self.assertEqual(len(current), 200)
         self.assertEqual(record["current_items"], len(current))
         self.assertEqual(record["bank_items"], 800 - len(current))
         self.assertEqual(record["replaced_cells"], [])
         self.assertEqual(record["added_cells"], ["reasoning/new"])
-        # 50 items a stream under the 0.25 x 800 cap: the two reasoning yes/no streams merge (100);
-        # the language streams, one choice and one yes/no, stay below 100 and are left out.
-        self.assertEqual(families["current-reasoning-new-noul-small"], 100)
+        # Each stream can give at most 80 items (0.4 x the 200-item Current budget), below 100:
+        # the three reasoning yes/no streams merge (240 available, 200 drawn); the language
+        # streams, one choice and one yes/no, stay below 100 apiece and are left out.
+        self.assertEqual(families["current-reasoning-new-noul-small"], 200)
+        merged = record["merged_families"]["current-reasoning-new-noul-small"]
+        self.assertEqual(merged["available"], 240)
         self.assertTrue(record["merged_families"]["current-language-new-choice-small"]["dropped"])
         base_metrics.baselines(cases)
 
@@ -908,14 +926,12 @@ class QualityTest(unittest.TestCase):
         self.assertTrue({"gh-close", "gh-merge", "reasoning-new-noul"} <= reasoning_new)
 
     def test_the_record_counts_items_per_cell_and_flags_thin_cells(self):
-        f = Fixture(
-            self.root / "noise", current_items=1000, current_share=0.25, min_family_items=100
-        )
+        f = self.blend_fixture("noise")
         bank, record = f.prepare(subset_size=800)
         cases = self.cases(f, bank)
         per_cell = Counter(f"{c['category']}/{c['block']}" for c in cases)
         self.assertEqual({k: v["items"] for k, v in record["cells"].items()}, dict(per_cell))
-        self.assertEqual(record["cells"]["reasoning/new"]["current_items"], 100)
+        self.assertEqual(record["cells"]["reasoning/new"]["current_items"], 200)
         thin = {k for k, n in per_cell.items() if n < 100}
         self.assertEqual(set(record["thin_cells"]), thin)
         self.assertNotIn("reasoning/new", record["thin_cells"])
@@ -929,6 +945,121 @@ class QualityTest(unittest.TestCase):
         self.assertIsNotNone(record["fallback"])
         self.assertEqual(record["current_items"], 0)
         self.assertEqual(len(f.subset()), 400)
+
+
+# A Current bank shaped like a real gated export: (stream, category, block, type, available).
+REAL_BANK = [
+    *(
+        (f"wiki-revert-{name}", "language", "known", "noul", n)
+        for name, n in zip(
+            "abcdefghi", (580, 640, 700, 760, 820, 880, 940, 1000, 1066), strict=True
+        )
+    ),
+    ("afd", "reasoning", "known", "noul", 511),
+    ("stackexchange-closed-tools", "tools", "known", "noul", 148),
+    ("stackexchange-closed-reasoning", "reasoning", "known", "noul", 146),
+    ("stackexchange-closed-language", "language", "new", "noul", 54),
+    ("stackexchange-closed-retrieval", "retrieval", "known", "noul", 30),
+    ("stackexchange-closed-arts", "arts", "known", "noul", 20),
+    ("stackexchange-accepted-reasoning", "reasoning", "known", "choice", 31),
+    ("stackexchange-accepted-tools", "tools", "known", "choice", 22),
+    ("stackexchange-accepted-language", "language", "known", "choice", 21),
+    ("stackexchange-accepted-retrieval", "retrieval", "known", "choice", 15),
+    ("stackexchange-accepted-arts", "arts", "known", "choice", 13),
+]
+
+
+def big_bank():
+    """A fixed round bank large enough for 3,000-item subsets (30 families of 120)."""
+    labels = {
+        "choice": ["a", "b"] * 60,
+        "noul": ["false", "true"] * 60,
+        "score": ["0", "1", "3", "4"] * 30,
+    }
+    from tests.test_base_metrics import exam
+
+    return [row for kind in labels for row in exam(kind, labels[kind], prefix="bank")]
+
+
+class FamilyFirstTest(unittest.TestCase):
+    """Families and their floors are chosen before the budget is spread, so a large stream in a
+    cell of its own is not cut below the minimum by many large streams elsewhere."""
+
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        rows = []
+        for stream, category, block, kind, n in REAL_BANK:
+            rows += stream_rows(stream, category, block, kind, n)
+        self.f = Fixture(
+            self.root / "real",
+            days=(),
+            current_items=1000,
+            min_items=300,
+            current_share=0.33,
+            min_family_items=100,
+        )
+        export(self.f.current, "2026-11-02", rows)
+        self.f.bank = big_bank()
+
+    def test_the_draw_covers_afd_and_the_closed_streams(self):
+        bank, record = self.f.prepare(subset_size=3000)
+        self.assertIsNone(record["fallback"])
+        by_id = {c["id"]: c for c in bank}
+        cases = [by_id[i] for i in self.f.subset()]
+        self.assertEqual(len(cases), 3000)
+        current = Counter(
+            c["family"] for c in cases if c["id"] in {r for r in by_id if "-2026" in r}
+        )
+        cell = {stream: (category, block) for stream, category, block, _, _ in REAL_BANK}
+        self.assertGreaterEqual(current["afd"], 100)
+        self.assertGreaterEqual(current["stackexchange-closed-tools"], 100)
+        self.assertGreaterEqual(current["stackexchange-closed-reasoning"], 100)
+        self.assertEqual(cell["afd"], ("reasoning", "known"))
+        self.assertTrue(all(n >= 100 for n in current.values()), current)
+        self.assertTrue(any(f.startswith("wiki-revert-") for f in current))
+        self.assertGreaterEqual(sum(current.values()), 980)
+        self.assertLessEqual(sum(current.values()), 990)
+        self.assertEqual(record["current_items"], sum(current.values()))
+        self.assertEqual(
+            record["added_cells"], ["language/known", "reasoning/known", "tools/known"]
+        )
+        families = record["current_families"]
+        self.assertTrue(families["afd"]["kept"])
+        self.assertFalse(families["current-language-new-noul-small"]["kept"])
+        self.assertEqual({f for f, v in families.items() if v["kept"]}, set(current))
+        base_metrics.baselines(cases)
+
+    def test_the_draw_is_deterministic(self):
+        self.f.prepare(subset_size=3000)
+        first = self.f.subset()
+        other = Fixture(
+            self.root / "again",
+            days=(),
+            **{k: v for k, v in self.f.exam.items() if k not in ("source", "current_bank")},
+        )
+        other.current = self.f.current
+        other.exam["current_bank"] = str(self.f.current)
+        other.bank = self.f.bank
+        other.prepare(subset_size=3000)
+        self.assertEqual(other.subset(), first)
+
+    def test_without_room_for_every_cell_the_largest_cells_come_first(self):
+        settings = {
+            "current_items": 250,
+            "min_items": 100,
+            "min_streams": 1,
+            "stream_max": 1.0,
+            "min_family_items": 100,
+        }
+        rows = []
+        for stream, category, block, kind, n in REAL_BANK:
+            rows += stream_rows(stream, category, block, kind, n)
+        chosen, _, merges, families = soup_current._family_draw(rows, b"k", settings)
+        kept = sorted(f for f, v in families.items() if v["kept"])
+        # Room for two families, one per cell. Every wiki stream is capped at the 250-item budget,
+        # so the tie between them goes to the first name.
+        self.assertEqual(kept, ["afd", "wiki-revert-a"])
+        self.assertEqual(len(chosen), 250)
 
 
 if __name__ == "__main__":
