@@ -210,6 +210,42 @@ class CollectTest(unittest.TestCase):
         )
         self.assertIsNone(current_check.proof_reason(case))
 
+    def test_drafts_declined_as_unsafe_are_never_read(self):
+        # Copyright violations, unsourced claims about living people, vandalism and attack pages:
+        # their text is not ours to keep or publish, so the draft is not even fetched.
+        unsafe = {
+            "Draft:Copied": "Declining submission: cv - Submission is a copyright violation (AFCH)",
+            "Draft:Gossip": "Declining submission: blp - Submission is in violation of the "
+            "biographies of living persons policy (AFCH)",
+            "Draft:Junk": "Rejecting submission: van - Submission is vandalism (AFCH)",
+            "Draft:Mixed": "Declining submission: v, cv - Submission is improperly sourced, "
+            "Submission is a copyright violation (AFCH)",
+            "Draft:Mean": "Declining submission: reason - This draft is an attack page (AFCH)",
+        }
+        edits = [
+            {"title": title, "revid": 900 + 2 * i, "old_revid": 901 + 2 * i,
+             "timestamp": f"{DAY}T16:00:00Z", "comment": comment}
+            for i, (title, comment) in enumerate(unsafe.items())
+        ]  # fmt: skip
+        extra = {
+            e["old_revid"]: {"timestamp": "2026-10-20T00:00:00Z", "content": DRAFT} for e in edits
+        }
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(REVISIONS, extra):
+            http = FakeHttp(handler(rc_pages=[RC + edits]))
+            store, _, result = collect(tmp, http)
+            titles = {r["source"]["title"] for r in store.resolved()}
+            fetched = {
+                int(revid)
+                for _, params in http.calls
+                if params.get("prop") == "revisions"
+                for revid in params["revids"].split("|")
+            }
+        self.assertEqual(titles, {"Draft:Frog Pond", "Draft:Spam Co", "Draft:Lake Inn"})
+        self.assertEqual(result["added"], 3)
+        self.assertFalse(fetched & set(extra))
+        # An ordinary decline that merely mentions sources is kept.
+        self.assertFalse(current_afc.unsafe_decline(RC[0]["comment"]))
+
     def test_recent_changes_are_paged(self):
         with tempfile.TemporaryDirectory() as tmp:
             http = FakeHttp(handler(rc_pages=[RC[:1], RC[1:]]))

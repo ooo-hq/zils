@@ -27,6 +27,12 @@ FIRST_DAYS = 28  # recent changes keep 30 days
 BATCH = 50
 MIN_CHARS = 200
 DECLINE = re.compile(r"^(?:Declining|Rejecting) submission\b")
+# Declines whose draft text is not ours to keep or publish: copyright violations, breaches of the
+# biographies of living persons policy, vandalism and attack pages. AFCH writes the reason codes
+# after the colon ("Declining submission: v, cv - ..."); the words catch custom reasons.
+UNSAFE_CODES = {"cv", "blp", "van"}
+REASON_CODES = re.compile(r"[:,]\s*([a-z0-9-]+)(?=\s*(?:,|-\s))")
+UNSAFE_WORDS = re.compile(r"copyright|copyvio|living person|\bblp\b|attack page|vandal", re.I)
 ACCEPT = "Publishing accepted"
 PENDING_TS = re.compile(r"\{\{\s*AfC submission\s*\|\s*\|[^{}]*?\bts\s*=\s*(\d{14})", re.I)
 CITE = re.compile(r"\{\{\s*cite[^{}]*\}\}", re.I)
@@ -168,6 +174,12 @@ def record(review, revision, now):
     return "ready", {**row, "outcome": {"label": review["label"], "outcome_at": review["at"]}}
 
 
+def unsafe_decline(comment):
+    """True when a decline or rejection summary gives an unsafe reason (see ``UNSAFE_CODES``)."""
+    head = comment.split(" - ", 1)[0] + " - "
+    return bool(UNSAFE_CODES & set(REASON_CODES.findall(head)) or UNSAFE_WORDS.search(comment))
+
+
 def _reviews(http, day):
     start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=UTC)
     end = start + timedelta(days=1) - timedelta(seconds=1)
@@ -196,7 +208,9 @@ def _reviews(http, day):
             "label": "false",
         }
         for e in edits
-        if DECLINE.match(e.get("comment") or "") and e.get("old_revid")
+        if DECLINE.match(e.get("comment") or "")
+        and not unsafe_decline(e["comment"])
+        and e.get("old_revid")
     ]
     moves = _listing(
         http,
