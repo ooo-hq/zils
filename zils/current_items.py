@@ -217,6 +217,17 @@ STREAMS["wikipedia-afc"] = {
         "criteria": {"true": "Accepted as an article", "false": "Declined or rejected"},
     },
 }
+STREAMS["gerrit-merge"] = {
+    "category": "tools",
+    "licence": "unreviewed: commit messages from public Gerrit servers (OpenDev, Wikimedia, AOSP); "
+    "local only until their licence is checked; link source.url",
+    "publishable": False,
+    "question": {
+        "type": "noul",
+        "instructions": "This code change was just proposed for review. Will it be merged?",
+        "criteria": {"true": "Merged", "false": "Abandoned without merging"},
+    },
+}
 # arXiv: one stream per subject group, each an exam category. Options are four categories named
 # per paper (the primary and three distractors), so they are listed per record.
 ARXIV_TERMS = (
@@ -431,6 +442,13 @@ def state_text(record, max_tokens=4096):
         data = record["data"]
         head = f"Wiki: English Wikipedia\nDraft: {data['title']}\n\nDraft text:\n"
         return fit(truncate(head + data["text"], limit), max_tokens)
+    if record["stream"] == "gerrit-merge":
+        data = record["data"]
+        head = (
+            f"Code review: {data['host']}\nProject: {data['project']}\nBranch: {data['branch']}\n"
+            "\nCommit message:\n"
+        )
+        return fit(truncate(head + data["message"], limit), max_tokens)
     if record["stream"].startswith("arxiv-"):
         data = record["data"]
         return fit(

@@ -333,6 +333,7 @@ class NightlyGateTest(unittest.TestCase):
                     afd_first_days=0,
                     afc_first_days=0,
                     arxiv_first_days=0,
+                    gerrit_first_days=0,
                     crosscheck_sample=20,
                 )
             finally:

@@ -87,6 +87,7 @@ OUTCOME_PHRASES["wikipedia-afc"] = (
     r"\b(?:declin|reject)(?:ed|ing) (?:this |the )?(?:submission|draft)\b",
     r"\bwas declined\b",
 )
+OUTCOME_PHRASES["gerrit-merge"] = OUTCOME_PHRASES["github-pr-merge"] + (r"\babandon",)
 for _stream in current_items.STREAMS:
     if _stream.startswith(("wikipedia-revert", "wikidata-revert")):
         OUTCOME_PHRASES[_stream] = REVERT_PHRASES
@@ -112,10 +113,12 @@ TEMPLATE_LABELS = {
     "Tags",
     "Deletion discussion",
     "Draft",
+    "Code review",
+    "Project",
 }
 TEMPLATE_FIELDS = {"Size change", "Minor edit", "Editor"}
 TEMPLATE_LINES = {"Removed:", "Added:", "(nothing)", "[truncated]", "Question:", "(empty)"}
-TEMPLATE_LINES |= {"Deletion discussion:", "Draft text:", "Abstract:"}
+TEMPLATE_LINES |= {"Deletion discussion:", "Draft text:", "Abstract:", "Commit message:"}
 TEMPLATE_LINES |= {f"Answer {chr(65 + i)}:" for i in range(26)}
 
 

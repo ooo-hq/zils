@@ -128,6 +128,15 @@ def _arxiv(store, http, cursor, now, first_days):
     return _days(store, http, cursor, now, first_days, current_arxiv, "arxiv", current_arxiv.days)
 
 
+def _gerrit(store, http, cursor, now, first_days):
+    """Every Gerrit outcome day after the cursor that is old enough to have settled."""
+    from . import current_gerrit
+
+    return _days(
+        store, http, cursor, now, first_days, current_gerrit, "gerrit", current_gerrit.days
+    )
+
+
 def _exports(store, bank, cursor, now, options, check=None):
     """Every finished UTC day after the export cursor, oldest first (yesterday on a first run).
 
@@ -169,6 +178,7 @@ def run(
     afd_first_days=None,
     afc_first_days=None,
     arxiv_first_days=None,
+    gerrit_first_days=None,
     se_sites=None,
     se_pages=None,
     crosscheck_sample=0,
@@ -228,6 +238,10 @@ def run(
         if arxiv_first_days != 0:
             result["collected"]["arxiv"] = step(
                 "arxiv", lambda: _arxiv(store, http, cursor, now, arxiv_first_days)
+            )
+        if gerrit_first_days != 0:
+            result["collected"]["gerrit"] = step(
+                "gerrit", lambda: _gerrit(store, http, cursor, now, gerrit_first_days)
             )
         if se_pages != 0:
             result["collected"]["stackexchange"] = step(

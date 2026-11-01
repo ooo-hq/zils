@@ -71,6 +71,7 @@ class NightlyTest(unittest.TestCase):
             "afd_first_days": 0,
             "afc_first_days": 0,
             "arxiv_first_days": 0,
+            "gerrit_first_days": 0,
         }
 
     def tearDown(self):
@@ -176,6 +177,8 @@ class NightlyTest(unittest.TestCase):
                     "--afc-first-days",
                     "0",
                     "--arxiv-first-days",
+                    "0",
+                    "--gerrit-first-days",
                     "0",
                     "--wiki-source",
                     "stream",

@@ -26,6 +26,7 @@ from . import (
     current_afd,
     current_arxiv,
     current_bank,
+    current_gerrit,
     current_github,
     current_items,
     current_stackexchange,
@@ -182,6 +183,7 @@ RESOLVERS = {
     "wikipedia-afd": current_stackexchange.resolve,  # collected with the outcome: label now
     "wikipedia-afc": current_stackexchange.resolve,
     "arxiv-": current_stackexchange.resolve,
+    "gerrit-": current_stackexchange.resolve,
     "github-": current_github.resolve,
     "wikipedia-revert": current_wikimedia.resolve,
     "wikidata-": current_wikimedia.resolve,
@@ -359,7 +361,16 @@ def _parser():
     collect = commands.add_parser("collect", help="add new events to the waiting room")
     collect.add_argument(
         "--source",
-        choices=("gharchive", "wikimedia", "recentchanges", "stackexchange", "afd", "afc", "arxiv"),
+        choices=(
+            "gharchive",
+            "wikimedia",
+            "recentchanges",
+            "stackexchange",
+            "afd",
+            "afc",
+            "arxiv",
+            "gerrit",
+        ),
         required=True,
     )
     _recent_options(collect)
@@ -374,7 +385,7 @@ def _parser():
         "--day",
         action="append",
         default=[],
-        help="YYYY-MM-DD: AfD log day, AfC review day or arXiv submission day",
+        help="YYYY-MM-DD: AfD log day, AfC review day, arXiv submission day or Gerrit outcome day",
     )
     collect.add_argument("--site", action="append", help="Stack Exchange site (default: all)")
     collect.add_argument(
@@ -451,6 +462,12 @@ def _parser():
         type=int,
         default=current_arxiv.FIRST_DAYS,
         help="arXiv submission days a first run reads (0 skips arXiv)",
+    )
+    nightly.add_argument(
+        "--gerrit-first-days",
+        type=int,
+        default=current_gerrit.FIRST_DAYS,
+        help="Gerrit outcome days a first run reads (0 skips Gerrit)",
     )
     nightly.add_argument("--se-site", action="append", help="Stack Exchange site (default: all)")
     nightly.add_argument(
@@ -566,6 +583,7 @@ def main(argv=None, http=None, now=None):
             afd_first_days=args.afd_first_days,
             afc_first_days=args.afc_first_days,
             arxiv_first_days=args.arxiv_first_days,
+            gerrit_first_days=args.gerrit_first_days,
             se_sites=args.se_site,
             se_pages=args.se_pages,
             crosscheck_sample=args.crosscheck_sample,
@@ -648,10 +666,10 @@ def main(argv=None, http=None, now=None):
         result = current_afd.collect(store, http, now, days=args.day)
         print(json.dumps({"source": args.source, **result}))
         return 0
-    elif args.source in ("afc", "arxiv"):
+    elif args.source in ("afc", "arxiv", "gerrit"):
         if not args.day:
             raise SystemExit("give --day")
-        module = current_afc if args.source == "afc" else current_arxiv
+        module = {"afc": current_afc, "arxiv": current_arxiv, "gerrit": current_gerrit}[args.source]
         result = module.collect(store, http, now, days=args.day)
         print(json.dumps({"source": args.source, **result}))
         return 0
