@@ -10,6 +10,7 @@ so a 4B body never sits in memory whole."""
 
 import hashlib
 import math
+from pathlib import Path
 
 import numpy as np
 
@@ -40,12 +41,19 @@ class Sketch:
         digest = hashlib.sha256(self.seed + b"\0" + name.encode()).digest()
         return np.uint64(int.from_bytes(digest[:8], "little"))
 
-    def sketch(self, folder, base_folder, chassis_names, *, trusted=False) -> np.ndarray:
-        """``trusted`` reads a pinned reference folder (the chassis), whose shards may be links."""
+    def sketch(
+        self, folder, base_folder, chassis_names, *, trusted=False, any_layout=False
+    ) -> np.ndarray:
+        """``trusted`` reads a pinned reference folder (the chassis), whose shards may be links.
+        ``any_layout`` reads only the language layers of a known public checkpoint in any usual
+        layout (``public_layers``); the sketch is the same as the full body's would be."""
         names = [n for n in sorted(chassis_names) if n.startswith(PREFIX)]
         if not names:
             raise ValueError(f"no chassis tensors start with {PREFIX!r}")
-        body = bodies._tensors(folder, chassis_names, trusted=trusted)
+        if any_layout:
+            body = public_layers(folder, chassis_names)
+        else:
+            body = bodies._tensors(folder, chassis_names, trusted=trusted)
         base = bodies._tensors(base_folder, chassis_names, trusted=True)
         out = np.zeros(self.dims, dtype=np.float64)
         for name in names:
@@ -65,9 +73,47 @@ class Sketch:
 
 
 def sketch(
-    folder, base_folder, chassis_names, *, seed: bytes, dims: int = 4096, trusted=False
+    folder,
+    base_folder,
+    chassis_names,
+    *,
+    seed: bytes,
+    dims: int = 4096,
+    trusted=False,
+    any_layout=False,
 ) -> np.ndarray:
-    return Sketch(seed, dims).sketch(folder, base_folder, chassis_names, trusted=trusted)
+    return Sketch(seed, dims).sketch(
+        folder, base_folder, chassis_names, trusted=trusted, any_layout=any_layout
+    )
+
+
+def public_layers(folder, chassis_names):
+    """chassis language-layer name -> (path, header entry) for a known public checkpoint in any usual
+    layout: the chassis's own (``language_model.layers.*``, optionally under ``model.``) or a
+    text-only one (``layers.*`` or ``model.layers.*``). Every other tensor (embeddings, norm, vision
+    tower, heads) is ignored; each chassis language layer must be present exactly once."""
+    folder = Path(folder)
+    index = bodies.load_index(folder)
+    wanted, mapped = {n for n in chassis_names if n.startswith(PREFIX)}, {}
+    for key in index:
+        name = key.removeprefix("model.")
+        name = "language_model." + name if name.startswith("layers.") else name
+        if name not in wanted:
+            continue
+        if name in mapped:
+            raise ValueError(f"checkpoint names {mapped[name]} and {key} map to the same tensor")
+        mapped[name] = key
+    if missing := sorted(wanted - set(mapped)):
+        raise ValueError(f"checkpoint is missing chassis tensor {missing[0]}")
+    headers, out = {}, {}
+    for name, source in mapped.items():
+        file, key = index[source]
+        if file not in headers:
+            headers[file] = bodies._header(folder / file)
+        if key not in headers[file]:
+            raise ValueError(f"{file} has no tensor {key}")
+        out[name] = (bodies._regular(folder / file), headers[file][key])
+    return out
 
 
 def _read(path, info, offset, count):

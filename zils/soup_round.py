@@ -169,6 +169,10 @@ KEY_SECONDS = 35  # GPU time to build and load one body or soup before it predic
 RESERVE_SECONDS = 1800  # kept free under the round deadline for the final soup and the records
 MAX_CLAIMS_PER_ROUND = 12  # commitments downloaded per round, failed ones included
 MAX_DOWNLOAD_BYTES_PER_ROUND = 60 * 1024**3  # bytes downloaded per round, failed claims included
+MAX_KNOWN_PUBLIC_BYTES_PER_ROUND = 16 * 1024**3  # known-public bytes resolved per round
+# A known public repo may carry tensors a body leaves out (an untied lm_head), so it is fetched
+# within this multiple of the pool's body cap; only its language layers are read.
+KNOWN_PUBLIC_CAP_FACTOR = 2
 OTHERS_MAX = 0.3  # share other hotkeys' bodies may add to a body's fit beyond the house bodies
 FAILED_CLAIM_BACKOFF_ROUNDS = (
     3  # rounds a hotkey sits out after a claim fails validation or download
@@ -285,6 +289,83 @@ def _house(config, state, *, names, download, folder, scratch):
             }  # fmt: skip
         house.add(sha)
     return house, failures
+
+
+def _known_public(config, state, *, names, download, scratch, sketches, save=lambda: None):
+    """Resolve the pool's known-public list (public models that are not house ingredients) to
+    ``soup_rates.rate`` ``known`` entries. Returns (entries, {name: reason} for entries skipped).
+
+    Each pinned revision is downloaded through the body fetch path once (within
+    ``KNOWN_PUBLIC_CAP_FACTOR`` times the pool's body cap), hashed, checked against
+    its ``body_sha256`` when pinned, sketched with this validator's own seed and deleted; only the
+    sketch (``sketches/``) and its key (``pool.json`` ``known_public``) are kept. A public body is
+    never a pool body: a miner's re-upload of it is admitted and rated like any other body. A
+    text-only checkpoint (no vision tower) has no body hash; it is keyed by its repo and revision
+    and sketched on its language layers alone, so it cannot carry a pinned hash.
+
+    Downloads stop once ``max_known_public_bytes_per_round`` is spent (the next entry waits for a
+    later round), separate from the miners' intake budget. An entry that fails for its contents
+    (a malformed file, a wrong pinned hash) is skipped until its pin changes; a transport error is
+    retried next round. No entry ever fails the round.
+    """
+    from . import bodies
+
+    resolved = state.setdefault("known_public", {})
+    dead = state.setdefault("known_public_failed", {})
+    budget = config.get("max_known_public_bytes_per_round", MAX_KNOWN_PUBLIC_BYTES_PER_ROUND)
+    entries, failures, spent = [], {}, 0
+    for item in config.get("known_public", []):
+        name, pin = item["name"], item["body_sha256"]
+        ref = f"{item['repo']}@{item['revision']}"
+        done = resolved.get(ref)
+        if done and pin in (None, done["body_sha256"]) and sketches.has(done["key"]):
+            entries.append({
+                "body_sha256": done["body_sha256"], "sketch": sketches(done["key"], None),
+                "hotkey": None, "repo": item["repo"],
+            })  # fmt: skip
+            continue
+        if ref in dead and dead[ref]["body_sha256"] == pin:
+            failures[name] = dead[ref]["reason"]
+            continue
+        if spent >= budget:
+            failures[name] = "waiting: this round's known-public download budget is spent"
+            continue
+        claim = {
+            "repo": item["repo"], "revision": item["revision"], "sha256": pin, "hotkey": None,
+            "max_bytes": KNOWN_PUBLIC_CAP_FACTOR * bodies.max_bytes(config["pool_id"]),
+        }  # fmt: skip
+        partial = scratch / "known.partial"
+        try:
+            try:
+                download(claim, partial)
+            finally:
+                spent += _folder_bytes(partial)
+            try:
+                sha = bodies.body_hash(partial, names)
+            except ValueError:
+                if pin is not None:
+                    raise ValueError(f"{name} has no full body to check its pinned hash") from None
+                sha = None  # a text-only layout: keyed by repo and revision instead
+            if pin not in (None, sha):
+                raise ValueError(f"known public body {name} differs from its pinned hash")
+            key = sha or "public-" + hashlib.sha256(ref.encode()).hexdigest()[:32]
+            value = sketches(key, partial, any_layout=True)
+        except (OSError, http.client.HTTPException) as error:  # retried next round
+            print(f"soup known public: {name} skipped ({type(error).__name__})", flush=True)
+            failures[name] = f"download failed: {_reason(error)}"[:400]
+            continue
+        except Exception as error:  # one broken entry must never abort the round
+            print(f"soup known public: {name} skipped ({type(error).__name__})", flush=True)
+            failures[name] = _reason(error)
+            dead[ref] = {"body_sha256": pin, "reason": failures[name]}
+            continue
+        finally:
+            shutil.rmtree(partial, ignore_errors=True)
+        dead.pop(ref, None)
+        resolved[ref] = {"key": key, "body_sha256": sha}
+        save()  # a round cut short never downloads a resolved entry again
+        entries.append({"body_sha256": sha, "sketch": value, "hotkey": None, "repo": item["repo"]})
+    return entries, failures
 
 
 def claim_key(claim):
@@ -583,7 +664,10 @@ class _Sketches:
         self.root, self.base, self.names, self.seed = Path(root), base, names, seed
         self.tag = sketch_tag(seed)
 
-    def __call__(self, sha, folder, *, trusted=False):
+    def has(self, sha):
+        return (self.root / f"{sha}.npz").exists()
+
+    def __call__(self, sha, folder, *, trusted=False, any_layout=False):
         import numpy as np
 
         from . import soup_copies
@@ -594,7 +678,9 @@ class _Sketches:
                 if str(stored["tag"]) != self.tag:
                     raise ValueError(SEED_CHANGED)
                 return stored["sketch"]
-        value = soup_copies.sketch(folder, self.base, self.names, seed=self.seed, trusted=trusted)
+        value = soup_copies.sketch(
+            folder, self.base, self.names, seed=self.seed, trusted=trusted, any_layout=any_layout
+        )
         self.root.mkdir(parents=True, exist_ok=True)
         partial = path.with_name(f".{sha}.partial.npz")
         np.savez(partial, sketch=value, tag=np.array(self.tag))
@@ -640,7 +726,8 @@ def run(
     its member hashes) before screening; ``twins(rows, other_rows) -> bool`` rejects a behavioural
     twin of a pool body on the screen items (default ``soup_copies.is_twin``);
     ``rates(sha256, info, house) -> 0.0 | 0.25 | 1.0`` sets each pool body's pay rate (default
-    ``soup_rates.rate`` against the house sketches and the body's ``base_residual``; without
+    ``soup_rates.rate`` against the house sketches, the body's ``base_residual`` and the sketches
+    of the pool's ``known_public`` list (``_known_public``), whose re-uploads are scouts'; without
     ``base``, house 0.0 and others 1.0). The release is the chassis's own body (the pool's served
     model), so the default checks treat the house bodies, the current soup and the chassis body
     as allowed bases.
@@ -725,6 +812,7 @@ def run(
     )
     _write_json(state_dir / "pool.json", state)
     known = state["bodies"]
+    known_failures = {}
 
     sketch = None
     if base is not None:
@@ -771,7 +859,15 @@ def run(
                 )
 
         if rates is None:
-            public = []  # known public models other than the house ones (none at launch)
+            # Public models other than the house ones: a re-upload of one earns the scout rate.
+            def save_state():
+                _write_json(state_dir / "pool.json", state)
+
+            public, known_failures = _known_public(
+                config, state, names=names, download=download, scratch=scratch,
+                sketches=sketches, save=save_state,
+            )  # fmt: skip
+            save_state()
 
             def rates(sha, info, house):
                 return soup_rates.rate(
@@ -1082,6 +1178,7 @@ def run(
         "grade_failures": failures,
         "twins": twinned,
         "house_failures": house_failures,
+        "known_public_failures": known_failures,
         "refused": intake["refused"],
         "failed": intake["failed"],
         "new": sorted(intake["new"]),

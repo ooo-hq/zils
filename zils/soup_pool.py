@@ -203,13 +203,24 @@ def paths(config, directory, pool):
     return {k: str((Path(directory) / v).resolve()) for k, v in value.items()}
 
 
-def house(entry, directory):
-    """The pool's house registry: inline, or read from a path relative to the validator directory."""
+def house(entry, directory, key="house"):
+    """The pool's house registry (or, with ``key="known_public"``, its known-public list, empty when
+    absent): inline, or read from a path relative to the validator directory."""
     from . import soup_rates
 
-    if isinstance(entry["house"], str):
-        return soup_rates.load_house(Path(directory) / entry["house"])
-    return soup_rates.validate_house(entry["house"])
+    value = entry.get(key, []) if key == model_pools.SOUP_KNOWN else entry[key]
+    if isinstance(value, str):
+        return soup_rates.load_house(Path(directory) / value)
+    return soup_rates.validate_house(value)
+
+
+def known_public(entry, directory):
+    """The pool's known-public list, or ([], the reason) when it cannot be read: the list only lowers
+    the pay of re-uploads, so a bad file never stops the round."""
+    try:
+        return house(entry, directory, model_pools.SOUP_KNOWN), None
+    except (OSError, ValueError) as error:
+        return [], f"{type(error).__name__}: {error}"[:400]
 
 
 def _started(pid):
@@ -293,6 +304,9 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
             exam = entry.get("exam")
             if exam:  # a relative Zils Current bank is read from under the validator directory
                 exam = {**exam, "current_bank": str((Path(directory) / exam["current_bank"]))}
+            known, known_error = known_public(entry, directory)
+            if known_error:
+                summary[pool]["known_public_error"] = known_error
             request = {
                 "round_id": round_id,
                 "seed_block": block,
@@ -303,6 +317,7 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
                     **({"exam": exam} if exam else {}),
                     "pool_id": pool,
                     "house": house(entry, directory),
+                    model_pools.SOUP_KNOWN: known,
                     **({model_pools.SOUP_SECRET: secret} if secret else {}),
                 },
                 "state_dir": str(state_dir(directory, pool)),
@@ -388,7 +403,9 @@ def _bank(path):
 
 def fetch_body(claim, dest, pool=None):
     """Download a body repo's weights, index, model card and ownership file at the committed revision,
-    within the pool's body byte cap and download deadline (d3-mini's without a pool)."""
+    within the pool's body byte cap and download deadline (d3-mini's without a pool). A claim the
+    validator builds itself for a known public model may carry its own ``max_bytes``; a miner's
+    claim is parsed from its commitment and never does."""
     from . import bodies, commitments
 
     listed = commitments.revision_files(claim["repo"], claim["revision"])
@@ -405,7 +422,7 @@ def fetch_body(claim, dest, pool=None):
         commitments.download_files(claim, dest, names, listed, bodies.MAX_BYTES)
     else:
         commitments.download_files(
-            claim, dest, names, listed, bodies.max_bytes(pool),
+            claim, dest, names, listed, claim.get("max_bytes") or bodies.max_bytes(pool),
             seconds=bodies.download_seconds(pool),
         )  # fmt: skip
     return Path(dest)

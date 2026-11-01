@@ -76,6 +76,30 @@ class SketchTest(unittest.TestCase):
         two = sketcher.sketch(checkpoint(self.root / "twice", twice), self.base, NAMES)
         np.testing.assert_allclose(two, 2 * one, atol=0.02 * np.abs(two).max())
 
+    def test_any_layout_sketches_a_text_only_checkpoint_like_the_full_body(self):
+        # Known public models come in several layouts; only their language layers are sketched.
+        full = checkpoint(self.root / "full", self.body_tensors, prefix="model.")
+        sketcher = soup_copies.Sketch(SEED, dims=64)
+        expected = sketcher.sketch(full, self.base, NAMES)
+        text = {n: t for n, t in self.body_tensors.items() if n.startswith("language_model.")}
+        bare = {n.removeprefix("language_model."): t for n, t in text.items()}
+        layouts = {
+            "text-language": checkpoint(self.root / "tl", text, prefix="model."),
+            "text-bare": checkpoint(self.root / "tb", bare),
+            "text-model": checkpoint(self.root / "tm", bare, prefix="model.", shards=2),
+            "full": full,
+        }
+        for name, folder in layouts.items():
+            with self.subTest(layout=name):
+                got = sketcher.sketch(folder, self.base, NAMES, any_layout=True)
+                np.testing.assert_array_equal(got, expected)
+        with self.assertRaises(ValueError):
+            sketcher.sketch(layouts["text-bare"], self.base, NAMES)  # the strict body path
+        no_layer = {n: t for n, t in bare.items() if n != "layers.1.mlp.weight"}
+        folder = checkpoint(self.root / "short", no_layer)
+        with self.assertRaisesRegex(ValueError, "missing"):
+            sketcher.sketch(folder, self.base, NAMES, any_layout=True)
+
     def test_rejects_shape_mismatch(self):
         wrong = {
             n: torch.zeros(5, 4).bfloat16() if n == LAYERS[0] else t

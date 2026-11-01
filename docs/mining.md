@@ -476,9 +476,9 @@ earning at once.
   the current soup by at least **0.3** points on the pooled items; otherwise the
   crown burns. Since a soup usually beats its members, expect the crown to burn in
   most rounds; it pays for a body that is better than the soup by itself.
-- **Rates:** **1.0** for a trainer's body; **0.25** for a scout's body, one within a
-  similarity threshold of a listed open model released after launch (the list is
-  empty at launch), and for a house mix, a body whose change from Qwen is almost
+- **Rates:** **1.0** for a trainer's body; **0.25** for a scout's body, an
+  unchanged or near re-upload (sketch cosine at least 0.9) of a public model on
+  the pool's known-public list, and for a house mix, a body whose change from Qwen is almost
   entirely a mix of house ingredients' changes (less than 5% of it is left over;
   real fine-tunes of a house ingredient leave about 10%), or, when it was
   admitted, almost entirely a mix of house ingredients, the soup and the release
@@ -491,6 +491,16 @@ already public at launch, listed in `zils/data/`: `soup-house.json` (mini),
 `soup-house-lite.json` (`vllm-sr/d3-lite` and `internlm/Intern-Decision-0.8B`),
 `soup-house-flash.json` (`vllm-sr/d3-flash`) and `soup-house-z3.json`
 (`vllm-sr/d3-ultra`).
+
+The known-public lists name other public decision models of a pool's size:
+`soup-known-lite.json` and `soup-known-mini.json`, each entry a repository at a
+pinned revision. Finding one of them and committing it, unchanged or lightly
+changed, is a scout's work and earns 0.25. Full pay is for real training: a
+fine-tune that moves well away from every listed model (sketch cosine under 0.9)
+earns the trainer rate, whichever model it started from. The first valid
+commitment of a body still wins, and a near-copy of another hotkey's earlier
+body is refused, so a later fine-tune of a listed model that someone has already
+committed must move away from that commitment too.
 
 Every unearned part burns to the subnet owner's uid, as in the base tier. Until
 miners submit new bodies, most of the pool's share burns.

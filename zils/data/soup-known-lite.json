@@ -1,0 +1,92 @@
+[
+  {
+    "name": "cribl-decision-2-0.8B",
+    "repo": "cribl-ai/cribl-decision-2-0.8B",
+    "revision": "fede0fcd51b2fcbace7ed1f1729bb404eddfeb2a",
+    "body_sha256": null
+  },
+  {
+    "name": "jiwo-0.8b",
+    "repo": "eljiwo/jiwo-0.8b",
+    "revision": "71b7911cf68f7df52fdc2dbf07de1e158bb807f2",
+    "body_sha256": null
+  },
+  {
+    "name": "Matilda-Decision-v1-Edge",
+    "repo": "Maincode/Matilda-Decision-v1-Edge",
+    "revision": "90c2cee9c6f607f40a4802a95939857d7eb6dfeb",
+    "body_sha256": null
+  },
+  {
+    "name": "OneJev1.6-0.8B",
+    "repo": "OmniJev/OneJev1.6-0.8B",
+    "revision": "c89933c277629b707895bff752c61d2b0664c85e",
+    "body_sha256": null
+  },
+  {
+    "name": "OneJev1.5-0.8B",
+    "repo": "OmniJev/OneJev1.5-0.8B",
+    "revision": "99d60969338977d3f23a023b1dd7a0fd51946069",
+    "body_sha256": null
+  },
+  {
+    "name": "OneJev-0.8B",
+    "repo": "OmniJev/OneJev-0.8B",
+    "revision": "c02e305b430b56c1e82f9675ba8c293a22646891",
+    "body_sha256": null
+  },
+  {
+    "name": "decider-0.8b",
+    "repo": "Mapika/decider-0.8b",
+    "revision": "a0a01d6f8135298f400a8c856b355793012ae971",
+    "body_sha256": null
+  },
+  {
+    "name": "QEV-0.8B",
+    "repo": "ken-jo/QEV-0.8B",
+    "revision": "3933310d0637b5721c05633cb07b7de5fd11d050",
+    "body_sha256": null
+  },
+  {
+    "name": "saina-helm-0.8b",
+    "repo": "run-saina/saina-helm-0.8b",
+    "revision": "b85231b8ca2f4f66cfd2e177d59635515474c736",
+    "body_sha256": null
+  },
+  {
+    "name": "saina-helm-2-0.8b",
+    "repo": "run-saina/saina-helm-2-0.8b",
+    "revision": "a00e9cda8c5f26d5d403adf9440128d7e85e4251",
+    "body_sha256": null
+  },
+  {
+    "name": "saina-helm-3-0.8b",
+    "repo": "run-saina/saina-helm-3-0.8b",
+    "revision": "bcc9d791ff361b034da2a2b616c1440f90300505",
+    "body_sha256": null
+  },
+  {
+    "name": "Jeff-Qwen3.5-0.8B",
+    "repo": "jeff-legacy/Jeff-Qwen3.5-0.8B",
+    "revision": "d86f657f503245be5291e3c69e573bf48033aa50",
+    "body_sha256": null
+  },
+  {
+    "name": "jeff-base",
+    "repo": "mstrasser/jeff-base",
+    "revision": "398768e9104be9894b48244f87faca4e120186f2",
+    "body_sha256": null
+  },
+  {
+    "name": "Jev-Style-0.8B-Decision-v3",
+    "repo": "chaoliangUNSW/Jev-Style-0.8B-Decision-v3",
+    "revision": "96314bd83d7b51d415ffa1497405f0f919db43e8",
+    "body_sha256": null
+  },
+  {
+    "name": "clef-vision-0.8b",
+    "repo": "FluidInference/clef-vision-0.8b",
+    "revision": "740bf3db034db3cda90fd4abbe4b91b121e129dc",
+    "body_sha256": null
+  }
+]

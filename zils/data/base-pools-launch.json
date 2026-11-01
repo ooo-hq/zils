@@ -8,6 +8,8 @@
       "enabled": true,
       "share": 0.35,
       "house": "zils/data/soup-house-lite.json",
+      "known_public": "zils/data/soup-known-lite.json",
+      "max_known_public_bytes_per_round": 34359738368,
       "schedule": {
         "deadline_utc": "06:00"
       },
@@ -19,6 +21,8 @@
       "enabled": true,
       "share": 0.3,
       "house": "zils/data/soup-house.json",
+      "known_public": "zils/data/soup-known-mini.json",
+      "max_known_public_bytes_per_round": 42949672960,
       "schedule": {
         "deadline_utc": "00:00"
       }

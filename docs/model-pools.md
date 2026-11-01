@@ -119,7 +119,8 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
 `max_pool` (20, at least 5), `max_new_per_round` (6), `max_claims_per_round`
 (12), `max_download_bytes_per_round` (60 GiB), `failed_claim_backoff_rounds` (3),
 `others_max` (0.3), `house_mix_max` (0.05), `max_decision_age_days` (3),
-`decision_rounds` (3, from 1 to 7) and `sketch_seed`:
+`decision_rounds` (3, from 1 to 7), `known_public` (empty),
+`max_known_public_bytes_per_round` (16 GiB) and `sketch_seed`:
 
 ```json
 "d3-mini": {
@@ -135,6 +136,11 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
 - `house` is the house registry inline (a list of `name`, `repo`, `revision`,
   `body_sha256`) or a path to it relative to the validator directory. A
   `body_sha256` of `null` is identified by the hash of the body at its revision.
+- `known_public` lists public models of the pool's size that are not house
+  ingredients, in the same format and forms as `house` (inline or a path). An
+  unchanged or near re-upload of one is paid at the scout rate (see below).
+  `zils/data/soup-known-lite.json` (lite) and `zils/data/soup-known-mini.json`
+  (mini) are the launch lists; flash and z3 have none.
 - `schedule.deadline_utc` is the daily commit deadline. The round for a day uses
   the first block after that deadline as its seed and admits only commitments
   made before that block.
@@ -345,6 +351,32 @@ soup and the release, it left a residual under the same bar (a near-pure
 re-weighting of the soup). The dry run's two real fine-tunes of a house body
 left about 0.07 to 0.12, so a real fine-tune of the soup or release keeps the
 trainer rate.
+
+A known public model's re-upload is also paid at the scout rate: a body whose
+weight-change sketch has cosine at least 0.9 to the sketch of a model on the
+pool's `known_public` list. The check looks at the body as committed, so an
+unchanged or lightly changed re-upload is a scout's, while a fine-tune that
+moves well away from the public model (cosine under 0.9) keeps the trainer rate.
+Known public models are not allowed bases: the copy checks and the house-mix
+residual treat them like any other outside model, and a body committed by one
+hotkey can still make a later near-copy by another hotkey a copy. House bodies
+stay at 0.
+
+The validator resolves each list entry once: it downloads the pinned revision
+through the same fetch path as a body (within twice the pool's body size cap,
+since public repos may carry an untied `lm_head`), checks `body_sha256` when it
+is pinned, sketches the language layers with its own `sketch_seed`, keeps only
+the sketch and deletes the files. A text-only checkpoint (no vision tower, with
+`layers.*`, `model.layers.*` or `model.language_model.layers.*` names) is
+sketched on its language layers alone; it has no body hash, so its entry must
+leave `body_sha256` `null`. Downloads for the list stop once
+`max_known_public_bytes_per_round` is spent, separately from the miners'
+`max_download_bytes_per_round`, and the remaining entries wait for a later round.
+An entry that fails for its contents (a malformed file, a wrong pinned hash) is
+skipped until its pin changes; a transport error is retried next round. Neither
+stops the round; both are recorded in the private round record. A list file that
+cannot be read runs the round with no list and is reported in the epoch summary.
+Public models are never graded, seated or paid themselves.
 
 Only a near-exact re-upload (or a body with no change from the base) bans the
 body hash. "Explained by earlier" and behavioural twins judge the current pool:
