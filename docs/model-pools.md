@@ -261,6 +261,15 @@ Each round's subset (`subset_size` items, 3,000 by default) has two parts:
       d3-mini). The estimate is the same one Zils Current uses.
   - Yes/no streams keep their labels balanced. No stream may hold more than `stream_max`
     of the part, and at least `min_streams` streams must contribute.
+  - Streams in one `group_max` group share one cap. The default,
+    `{"arxiv-category-*": 0.15}`, holds the four arXiv streams together to 15% of the
+    Current part: they give about 1,600 items a day, and arXiv classification has
+    millions of public labelled examples, so uncapped they took 44% of a 990-item part
+    and would reward a specialised classifier. The budget goes to as few streams as
+    possible, in an order the round's secret sets, so one arXiv family can reach
+    `min_family_items` and rounds rotate the subject. A budget below `min_family_items`
+    leaves the group out. Set `group_max` in `exam` to replace the default (`{}` turns
+    it off).
   - Newer resolution days are drawn first. Within a day, items are ranked under
     the validator's private `sketch_seed`, because anyone can rebuild Current
     items from the public sources.

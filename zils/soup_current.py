@@ -16,7 +16,9 @@ The rules for the Current part:
   has been drawn in fewer than ``max_uses`` earlier rounds (the use ledger), and fits the pool
   model's input cap.
 * The draw takes ``current_items`` items. No stream may hold more than ``stream_max`` of them, and at
-  least ``min_streams`` streams must contribute. Yes/no streams keep balanced labels. Newer
+  least ``min_streams`` streams must contribute. Streams in one ``group_max`` group (by default
+  every ``arxiv-category-*`` stream, 15% together) share one cap, spent on as few of them as
+  possible, in an order the round's secret sets. Yes/no streams keep balanced labels. Newer
   resolution days come first. Within a day, items are ranked by an HMAC of the item id under this
   validator's local secret (``soup_round.sketch_seed``), because anyone can rebuild Current items.
 * If the Current part cannot meet these rules, the whole round falls back to the fixed bank. The
@@ -59,6 +61,10 @@ QUALITY_DEFAULTS = {
     "exclude_streams": ["stackexchange-score-*"],
     "current_share": 1.0,
 }
+# Streams that share one cap, as a share of the Current part: arXiv's four subject streams give
+# about 1,600 items a day and the task has millions of public labelled examples, so together they
+# could fill the exam and reward a specialised classifier. A pool's ``group_max`` replaces this.
+GROUP_MAX = {"arxiv-category-*": 0.15}
 KEEP_ROUNDS = 8  # earlier rounds whose drawn Current items stay in the bank (pooled decisions)
 MODES = ("local", "publishable")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -75,7 +81,9 @@ def validate(exam):
         if set(exam) != {"source"}:
             raise ValueError("soup exam settings apply only to the current source")
         return {"source": "bank"}
-    unknown = set(exam) - {"source", "current_bank"} - set(DEFAULTS) - set(QUALITY_DEFAULTS)
+    unknown = (
+        set(exam) - {"source", "current_bank", "group_max"} - set(DEFAULTS) - set(QUALITY_DEFAULTS)
+    )
     if unknown:
         raise ValueError("unknown soup exam settings: " + ", ".join(sorted(unknown)))
     path = exam.get("current_bank")
@@ -101,6 +109,14 @@ def validate(exam):
         raise ValueError("soup exam stream_max x min_streams must reach 1, or no draw can fill")
     if set(QUALITY_DEFAULTS) & set(exam):
         result.update(_quality(exam))
+    if "group_max" in exam:
+        caps = exam["group_max"]
+        if not isinstance(caps, dict) or not all(
+            isinstance(k, str) and k and type(v) in (int, float) and 0 < v <= 1
+            for k, v in caps.items()
+        ):
+            raise ValueError("soup exam group_max must map stream patterns to shares in (0, 1]")
+        result["group_max"] = dict(caps)
     return result
 
 
@@ -116,6 +132,25 @@ def _quality(exam):
     if type(share) not in (int, float) or not 0 < share <= 1:
         raise ValueError("soup exam current_share must be in (0, 1]")
     return {**result, "exclude_streams": list(patterns), "current_share": float(share)}
+
+
+def _group_capped(supply, ties, settings):
+    """Supply per stream once each ``group_max`` group shares one budget of the Current part.
+
+    A group's budget goes to its streams one at a time, in an order set by an HMAC of the stream
+    name under ``ties``, so it lands on as few streams as possible (one family can reach
+    ``min_family_items``) and rounds rotate which of them it lands on."""
+    caps = settings.get("group_max", GROUP_MAX)
+    result = dict(supply)
+    for pattern, share in sorted(caps.items()):
+        budget = int(share * settings["current_items"])
+        members = [s for s in sorted(result) if fnmatch.fnmatchcase(s, pattern)]
+        for stream in sorted(
+            members, key=lambda s: hmac.new(ties, b"group:" + s.encode(), hashlib.sha256).digest()
+        ):
+            result[stream] = min(result[stream], budget)
+            budget -= result[stream]
+    return result
 
 
 def _excluded(items, patterns):
@@ -179,6 +214,8 @@ def _family_draw(items, secret, settings):
         return sum(min(len(rows), floor) for rows in labels.values())
 
     supply = {s: min(cap, balanced(labels)) for s, labels in usable.items()}
+    supply = {s: n for s, n in _group_capped(supply, ties, settings).items() if n}
+    usable = {s: labels for s, labels in usable.items() if s in supply}
     members, group = {}, {}
     for stream, labels in usable.items():
         category, block, kind = tags(labels)
@@ -439,7 +476,8 @@ def draw(items, secret, settings):
         floor = min(len(rows) for rows in labels.values())
         return sum(min(len(rows), floor) for rows in labels.values())
 
-    quota = _fill({s: min(cap, balanced(labels)) for s, labels in usable.items()}, size)
+    supply = {s: min(cap, balanced(labels)) for s, labels in usable.items()}
+    quota = _fill(_group_capped(supply, secret, settings), size)
     chosen, counts = [], {}
     for stream, labels in sorted(usable.items()):
         if not quota[stream]:

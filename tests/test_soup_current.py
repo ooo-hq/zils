@@ -1101,3 +1101,83 @@ class FamilyFirstTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+ARXIV = [
+    ("arxiv-category-cs", "tools", "known", "choice", 1600),
+    ("arxiv-category-math", "reasoning", "known", "choice", 700),
+    ("arxiv-category-physics", "retrieval", "known", "choice", 900),
+    ("arxiv-category-other", "retrieval", "known", "choice", 300),
+]
+
+
+def rows_of(streams):
+    rows = []
+    for stream, category, block, kind, n in streams:
+        rows += stream_rows(stream, category, block, kind, n)
+    return rows
+
+
+class GroupCapTest(unittest.TestCase):
+    """The arXiv streams share one cap, so a large, easily specialised source cannot fill the exam."""
+
+    # The live pools: 3,000-item subsets, current_share 0.33, families of 100 or more.
+    family = {
+        "current_items": 990,
+        "min_items": 300,
+        "min_streams": 3,
+        "stream_max": 0.4,
+        "min_family_items": 100,
+    }
+    budget = int(0.15 * 990)
+
+    def arxiv(self, chosen):
+        return Counter(c["family"] for c in chosen if c["id"].startswith("arxiv-"))
+
+    def test_the_family_draw_caps_arxiv_combined_and_keeps_one_family(self):
+        chosen, _, _, families = soup_current._family_draw(
+            rows_of(REAL_BANK + ARXIV), b"k", self.family
+        )
+        drawn = self.arxiv(chosen)
+        self.assertLessEqual(sum(drawn.values()), self.budget)
+        self.assertGreaterEqual(sum(drawn.values()), 100)
+        self.assertEqual(len(drawn), 1, drawn)
+        self.assertGreaterEqual(len(chosen), 980)  # the rest of the budget goes to other streams
+
+    def test_the_kept_arxiv_subject_rotates_with_the_round_secret(self):
+        kept = set()
+        for secret in (b"a", b"b", b"c", b"d", b"e", b"f", b"g", b"h"):
+            chosen, _, _, _ = soup_current._family_draw(
+                rows_of(REAL_BANK + ARXIV), secret, self.family
+            )
+            kept |= set(self.arxiv(chosen))
+        self.assertGreaterEqual(len(kept), 2)
+
+    def test_the_plain_draw_caps_arxiv_combined(self):
+        settings = {"current_items": 1000, "min_items": 300, "min_streams": 3, "stream_max": 0.4}
+        items = day_items("2026-11-02", 300, streams=["gh-close", "gh-merge", "gh-type"])
+        chosen, counts = soup_current.draw(items + rows_of(ARXIV), b"k", settings)
+        self.assertLessEqual(sum(self.arxiv(chosen).values()), 150)
+        self.assertEqual(len(chosen), 1000)
+
+    def test_a_budget_under_the_family_minimum_leaves_arxiv_out(self):
+        settings = {**self.family, "group_max": {"arxiv-category-*": 0.05}}
+        chosen, _, _, _ = soup_current._family_draw(rows_of(REAL_BANK + ARXIV), b"k", settings)
+        self.assertEqual(self.arxiv(chosen), Counter())
+        self.assertGreaterEqual(len(chosen), 980)
+
+    def test_draws_without_arxiv_are_unchanged(self):
+        rows = rows_of(REAL_BANK)
+        capped = soup_current._family_draw(rows, b"k", self.family)
+        uncapped = soup_current._family_draw(rows, b"k", {**self.family, "group_max": {}})
+        self.assertEqual([c["id"] for c in capped[0]], [c["id"] for c in uncapped[0]])
+        self.assertEqual(capped[3], uncapped[3])
+
+    def test_validate_takes_a_group_cap_and_refuses_bad_ones(self):
+        base = {"source": "current", "current_bank": "/b"}
+        self.assertNotIn("group_max", soup_current.validate(base))
+        exam = soup_current.validate({**base, "group_max": {"arxiv-*": 0.1}})
+        self.assertEqual(exam["group_max"], {"arxiv-*": 0.1})
+        for bad in ({"arxiv-*": 0}, {"arxiv-*": 1.5}, {"": 0.1}, ["arxiv-*"], {"arxiv-*": "x"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                soup_current.validate({**base, "group_max": bad})
