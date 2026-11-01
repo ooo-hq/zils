@@ -136,9 +136,9 @@ class HouseMixTest(unittest.TestCase):
         ]
         self.sketches = [3 * self.e[0], 2 * self.e[1]]
 
-    def rate(self, sketch, **kwargs):
+    def rate(self, sketch, known=(), **kwargs):
         return soup_rates.rate(
-            BODY_HASH, sketch, house=self.house, known=[], hotkey=HOTKEY,
+            BODY_HASH, sketch, house=self.house, known=list(known), hotkey=HOTKEY,
             house_sketches=self.sketches, **kwargs,
         )  # fmt: skip
 
@@ -186,6 +186,36 @@ class HouseMixTest(unittest.TestCase):
             house_sketches=self.sketches,
         )  # fmt: skip
         self.assertEqual(got, soup_rates.HOUSE_RATE)
+
+    def listed(self, sketch, hotkey=None):
+        return {"body_sha256": None, "sketch": sketch, "hotkey": hotkey, "repo": "open/cousin"}
+
+    def test_a_mix_of_listed_models_is_a_scout(self):
+        # Each listed model alone is under the 0.9 cosine bar, so only the mix rule can catch it.
+        a, b = 3 * self.e[3], 2 * self.e[4]
+        average = (a + b) / 2
+        known = [self.listed(a), self.listed(b)]
+        self.assertLess(max(soup_copies.cosine(average, k["sketch"]) for k in known), 0.9)
+        self.assertEqual(self.rate(average), soup_rates.TRAINER_RATE)  # without the list
+        self.assertEqual(self.rate(average, known=known), soup_rates.SCOUT_RATE)
+
+    def test_a_mix_of_a_house_body_and_a_listed_model_is_a_scout(self):
+        mixed = (self.sketches[0] + 3 * self.e[3]) / 2
+        self.assertEqual(
+            self.rate(mixed, known=[self.listed(3 * self.e[3])]), soup_rates.SCOUT_RATE
+        )
+
+    def test_a_real_fine_tune_of_a_listed_model_stays_a_trainer(self):
+        listed = 3 * self.e[3]
+        tuned = listed + 3 * (0.12 / 0.88) ** 0.5 * self.e[6]  # 12% its own, cosine 0.94
+        tuned = tuned + 2.2 * self.e[7]  # moved further: cosine under the scout bar
+        self.assertLess(soup_copies.cosine(tuned, listed), 0.9)
+        self.assertEqual(self.rate(tuned, known=[self.listed(listed)]), soup_rates.TRAINER_RATE)
+
+    def test_a_trainers_own_earlier_body_never_makes_a_mix(self):
+        a, b = 3 * self.e[3], 2 * self.e[4]
+        known = [self.listed(a, hotkey=HOTKEY), self.listed(b, hotkey=HOTKEY)]
+        self.assertEqual(self.rate((a + b) / 2, known=known), soup_rates.TRAINER_RATE)
 
     def test_the_bar_is_a_pool_setting(self):
         from tests.test_soup_run import pools, soup_entry

@@ -1221,6 +1221,44 @@ class SoupRunTest(unittest.TestCase):
         self.assertIn(sha, record["new"])
         self.assertEqual(record["rates"][sha], 0.25)
 
+    def test_a_house_tune_is_seated_only_if_it_beats_the_house_body(self):
+        # A strong house body and a tune of it (7% its own change) that takes its soup seat.
+        BODIES["strong"] = strengths(0.4, 0.4, 0, 0, 0)
+        BODIES["strongtune"] = strengths(0.7, 0.4, 0, 0, 0)
+        for key in ("strong", "strongtune"):
+            self.addCleanup(BODIES.pop, key, None)
+        house = [
+            {"name": "strong", "repo": "open/strong", "revision": REVISION, "body_sha256": None}
+        ]
+        for margin, paid in ((0.3, True), (1000.0, False)):
+            with self.subTest(margin=margin), patch.object(soup_round, "BASE_MARGIN", margin):
+                r = Round(self.tmp / f"strongtune-{margin}")
+                r.commits = {2: ("t2", 101), 5: ("strongtune", 150)}
+                record = r.run(config=r.config(house=house))
+                sha = r.sha["strongtune"]
+                members = self.by_body(record)
+                self.assertIn(sha, members)
+                self.assertNotIn(r.sha["strong"], members)  # the tune took the house body's place
+                self.assertEqual(record["rates"][sha], 1.0)
+                self.assertEqual(members[sha]["seat_weight"] > 0, paid)
+                self.assertEqual(sha in record["gated"], not paid)
+                self.assertGreater(members[r.sha["t2"]]["seat_weight"], 0)
+
+    def test_a_soup_retune_that_does_not_beat_the_soup_is_not_paid_a_seat(self):
+        r, record = self.seated_round("souptune", strengths(0.5, 0.5, 0.8125, 0.375, 0.5))
+        sha = r.sha["souptune"]
+        self.assertLess(record["solo"][sha], record["soup_bar"] + soup_round.BASE_MARGIN)
+        self.assertIn(sha, record["gated"])
+        self.assertIn("soup", record["gated"][sha])
+        self.assertEqual(self.by_body(record).get(sha, {}).get("seat_weight", 0.0), 0.0)
+        # The seated trainers are never compared with a soup built from their own bodies.
+        self.assertNotIn(r.sha["t1"], record["gated"])
+        self.assertNotIn(r.sha["t2"], record["gated"])
+        # Later rounds still compare the retune with the soup it started from.
+        house = [{"name": "weak", "repo": "open/weak", "revision": REVISION, "body_sha256": None}]
+        later = r.run(round_id="d3-mini-2026-11-05", config=r.config(house=house))
+        self.assertIn(sha, later["gated"])
+
     def test_a_re_weighted_mix_of_the_seated_bodies_is_refused(self):
         r, record = self.seated_round("reweight", strengths(0.75, 0.75, 0.25, 0.25, 0.25))
         self.assertIn("explained by earlier", record["refused"]["6"])
@@ -1419,7 +1457,9 @@ class SoupRunTest(unittest.TestCase):
             "near": strengths(0.5, 0, 0.5, 0, 0.0625),  # cosine 0.99 to the public model
             "far": strengths(0.5, -0.5, 0.5, -0.5, 0),  # cosine 0.71: a fine-tune that moved far
         }
-        for name, rate in (("near", 0.25), ("far", 1.0)):
+        # "far" still has half its change from the listed model: under the launch stopgap
+        # (ZIL-117) a fine-tune mostly made of listed models is paid as a scout.
+        for name, rate in (("near", 0.25), ("far", 0.25)):
             with self.subTest(body=name):
                 r = self.known_round(name, **bodies_)
                 r.commits[5] = (name, 50)
@@ -1439,7 +1479,8 @@ class SoupRunTest(unittest.TestCase):
         record = r.run(config=r.config(known_public=[known("cousin")]))
         sha = r.sha
         self.assertEqual(record["rates"][sha["cousin"]], 0.25)
-        self.assertEqual(record["rates"][sha["far"]], 1.0)
+        self.assertIn(sha["far"], record["pool"])  # admitted, not a copy
+        self.assertEqual(record["rates"][sha["far"]], 0.25)  # launch stopgap (ZIL-117)
         self.assertNotIn(sha["near"], record["pool"])
         self.assertIn("explained by earlier", record["refused"]["6"])
         self.assertNotIn(sha["near"], record["rejected"])  # never a hash ban
@@ -1449,6 +1490,40 @@ class SoupRunTest(unittest.TestCase):
         record = plain.run()
         self.assertNotIn(plain.sha["far"], record["pool"])
         self.assertIn("explained by earlier", record["refused"]["5"])
+
+    def test_a_mix_of_two_listed_models_is_paid_at_the_scout_rate(self):
+        r = self.known_round(
+            "listedmix",
+            a=strengths(0.5, 0, 0.5, 0, 0),
+            b=strengths(0, 0.5, 0, 0, 0.5),
+            ab=strengths(0.25, 0.25, 0.25, 0, 0.25),  # (a + b) / 2, cosine 0.71 to each
+        )
+        r.commits[5] = ("ab", 50)
+        record = r.run(config=r.config(known_public=[known("a"), known("b")]))
+        self.assertIn(r.sha["ab"], record["pool"])
+        self.assertEqual(record["rates"][r.sha["ab"]], 0.25)
+        plain = self.known_round("listedmix-unlisted")
+        plain.commits[5] = ("ab", 50)
+        self.assertEqual(plain.run()["rates"][plain.sha["ab"]], 1.0)
+
+    def test_a_mix_of_the_soup_and_a_listed_model_is_paid_at_the_scout_rate(self):
+        BODIES["c"] = strengths(0.5, 0, 0.5, 0, 0)
+        BODIES["soupc"] = strengths(0.5, 0.25, 0.5, 0.25, 0.25)  # ((t1 + t2) / 2 + c) / 2
+        for key in ("c", "soupc"):
+            self.addCleanup(BODIES.pop, key, None)
+        r = Round(self.tmp / "soupc")
+        r.commits = {1: ("t1", 100), 2: ("t2", 101)}
+        house = [{"name": "weak", "repo": "open/weak", "revision": REVISION, "body_sha256": None}]
+        config = r.config(house=house, known_public=[known("c")])
+        first = r.run(config=config)
+        self.assertEqual(set(self.by_body(first)), {r.sha["t1"], r.sha["t2"]})
+        r.commits[6] = ("soupc", 150)
+        record = r.run(round_id="d3-mini-2026-11-04", config=config)
+        sha = r.sha["soupc"]
+        self.assertIn(sha, record["new"])
+        self.assertEqual(record["rates"][sha], 0.25)
+        state = json.loads((r.state / "pool.json").read_text())
+        self.assertLess(state["bodies"][sha]["base_residual"], 0.05)
 
     def test_known_public_resolution_has_a_time_budget_and_degrades_to_what_it_resolved(self):
         r = self.known_round(

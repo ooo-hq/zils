@@ -476,6 +476,11 @@ earning at once.
 - **Seats:** members whose contribution is at least **0.3** points share the 80%
   equally, each share multiplied by its rate. If no member clears the floor, the
   seat share burns.
+- **Fine-tunes (launch rule):** if at least half of your body's change comes from
+  house ingredients, the soup or the release, your seat is paid only if your
+  body alone beats the best of those bases by at least **0.3** points. If part
+  of it (10% or more) comes from a listed public model, it is paid at the scout
+  rate. Train enough to beat what you started from.
 - **Crown:** the round's best single body that is not a house ingredient takes the
   20%, multiplied by its rate, only if it beats every house ingredient alone and
   the current soup by at least **0.3** points on the pooled items; otherwise the
@@ -484,10 +489,10 @@ earning at once.
 - **Rates:** **1.0** for a trainer's body; **0.25** for a scout's body, an
   unchanged or near re-upload (sketch cosine at least 0.9) of a public model on
   the pool's known-public list, and for a house mix, a body whose change from Qwen is almost
-  entirely a mix of house ingredients' changes (less than 5% of it is left over;
-  real fine-tunes of a house ingredient leave about 10%), or, when it was
-  admitted, almost entirely a mix of house ingredients, the soup and the release
-  (a near-pure re-weighting of the soup); **0** for house
+  entirely a mix of house ingredients' and listed models' changes (less than 5% of
+  it is left over; real fine-tunes of a house ingredient leave about 10%), or, when
+  it was admitted, almost entirely a mix of house ingredients, listed models, the
+  soup and the release (a near-pure re-weighting of the soup); **0** for house
   ingredients, the open Qwen3.5-4B decision models already public at launch, which
   the pool includes unpaid.
 
