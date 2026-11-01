@@ -11,6 +11,7 @@ import hashlib
 import itertools
 import json
 import re
+import time
 from datetime import datetime, timedelta
 
 from . import settings
@@ -22,6 +23,11 @@ HOUR = re.compile(r"\d{4}-\d{2}-\d{2}-(?:[1-9]|1\d|2[0-3]|0)")
 ISSUE_STREAMS = ("github-issue-type", "github-issue-close")
 BUG = re.compile(r"\bbugs?\b")
 FEATURE = re.compile(r"\b(?:enhancements?|features?|feature requests?)\b")
+# GitHub's guidance against secondary rate limits: serial requests with a gap between them, and
+# after a limit, wait Retry-After (or a minute, doubling) before retrying.
+GAP_SECONDS = 1.0
+LIMIT_RETRIES, LIMIT_WAIT, MAX_LIMIT_WAIT = 4, 60.0, 900.0
+sleep = time.sleep
 
 
 def hour_url(hour):
@@ -142,6 +148,34 @@ def _limited(status, body, headers):
             or "rate limit" in message
         )
     )
+
+
+def _exhausted(headers):
+    """The hourly quota is spent: waiting could take up to an hour, so the pass stops instead."""
+    return headers.get("x-ratelimit-remaining") == "0" and "retry-after" not in headers
+
+
+class _Paced:
+    """Serial GitHub requests GAP_SECONDS apart; secondary rate limits are waited out and retried."""
+
+    def __init__(self):
+        self.last = None
+
+    def __call__(self, send, label):
+        for attempt in range(LIMIT_RETRIES + 1):
+            if self.last is not None:
+                gap = GAP_SECONDS - (time.monotonic() - self.last)
+                if gap > 0:
+                    sleep(gap)
+            status, body, headers = send()
+            self.last = time.monotonic()
+            if not _limited(status, body, headers):
+                return status, body, headers
+            if _exhausted(headers) or attempt == LIMIT_RETRIES:
+                break
+            wait = float(headers.get("retry-after") or LIMIT_WAIT * 2**attempt)
+            sleep(min(wait, MAX_LIMIT_WAIT))
+        raise RateLimited(f"{label} HTTP {status}")
 
 
 def issue_kind(labels):
@@ -277,15 +311,15 @@ def _query(keys):
 def _graphql(groups, http, token):
     """Yield (key, status, body) per issue or pull request, GRAPHQL_BATCH keys per request."""
     keys = list(groups)
-    headers = {"Authorization": f"Bearer {token}"}
+    headers, paced = {"Authorization": f"Bearer {token}"}, _Paced()
     for start in range(0, len(keys), GRAPHQL_BATCH):
         chunk = keys[start : start + GRAPHQL_BATCH]
         query, aliases = _query(chunk)
-        status, body, response_headers = http.post_json(GRAPHQL, {"query": query}, headers=headers)
+        status, body, _ = paced(
+            lambda: http.post_json(GRAPHQL, {"query": query}, headers=headers), "GraphQL"
+        )
         errors = (body or {}).get("errors") or []
-        if _limited(status, body, response_headers) or any(
-            e.get("type") == "RATE_LIMITED" for e in errors
-        ):
+        if any(e.get("type") == "RATE_LIMITED" for e in errors):  # the hourly GraphQL quota
             raise RateLimited(f"GraphQL HTTP {status}")
         if status != 200 or not isinstance((body or {}).get("data"), dict):
             continue  # a timeout or server error: these stay pending
@@ -301,11 +335,13 @@ def _graphql(groups, http, token):
 
 
 def _rest(groups, http):
-    headers = _headers()
+    headers, paced = _headers(), _Paced()
     for key, group in groups.items():
-        status, body, response_headers = http.get_json(group[0]["source"]["api"], headers=headers)
-        if _limited(status, body, response_headers):
-            raise RateLimited(f"HTTP {status}; set GITHUB_TOKEN for 5,000 requests an hour")
+        url = group[0]["source"]["api"]
+        try:
+            status, body, _ = paced(lambda: http.get_json(url, headers=headers), "REST")
+        except RateLimited as error:
+            raise RateLimited(f"{error}; set GITHUB_TOKEN for 5,000 requests an hour") from None
         yield key, status, body
 
 
