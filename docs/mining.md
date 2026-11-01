@@ -229,7 +229,7 @@ commit named in [`release/stable`](../release/stable); `zils-miner update` moves
 install to a newer one, and the doctor warns when yours is behind.
 
 The miner command is `zils-miner`. The `zils` command belongs to the customer CLI
-(`npm install -g @zils/cli`: sign-in, decisions, training); from version 0.4.7 it
+(`npm install -g @zils/cli`: sign-in, decisions, training); from version 0.4.8 it
 also runs miner commands, so `zils doctor` and `zils-miner doctor` do the same
 thing. Installs from before `zils-miner` linked the miner as `zils`; the
 installer (and `zils-miner update`) removes that old link.

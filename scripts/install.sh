@@ -130,21 +130,26 @@ fi
 
 mkdir -p "$bin"
 # btcli (from bittensor) creates and registers the wallet that doctor asks for.
-for tool in zils-miner btcli; do ln -sf "$dir/.venv-kev/bin/$tool" "$bin/$tool"; done
-ok "zils-miner and btcli commands ready in ~/.local/bin"
+# This script always comes from main, but the release it checks out may predate zils-miner;
+# such a release still installs the miner as `zils`.
+miner=zils-miner
+[ -e "$dir/.venv-kev/bin/zils-miner" ] || miner=zils
+for tool in "$miner" btcli; do ln -sf "$dir/.venv-kev/bin/$tool" "$bin/$tool"; done
+ok "$miner and btcli commands ready in ~/.local/bin"
 # Installs before zils-miner linked the miner as `zils`, which hid the customer CLI; drop only that link.
-if [ -L "$bin/zils" ] && [ "$(readlink "$bin/zils")" = "$dir/.venv-kev/bin/zils" ]; then
+if [ "$miner" = zils-miner ] && [ -L "$bin/zils" ] &&
+  [ "$(readlink "$bin/zils")" = "$dir/.venv-kev/bin/zils" ]; then
   rm "$bin/zils"
   ok "removed the old zils link; the miner command is now zils-miner"
 fi
 path_hint=""
 wire_path
 
-next="zils-miner setup"
-[ -z "${ZILS_SKIP_SETUP:-}" ] || next="zils-miner doctor"
+next="$miner setup"
+[ -z "${ZILS_SKIP_SETUP:-}" ] || next="$miner doctor"
 printf '\n%sZils miner installed.%s Next: %s%s%s\n' "$green$bold" "$reset" "$bold" "$next" "$reset"
 [ -z "$path_hint" ] || printf '%sReload your shell first: %s%s\n' "$cyan" "$path_hint" "$reset"
 if [ -z "${ZILS_SKIP_SETUP:-}" ] && [ -t 1 ] && [ -r /dev/tty ]; then
   printf '\n'
-  "$bin/zils-miner" setup </dev/tty || true
+  "$bin/$miner" setup </dev/tty || true
 fi
