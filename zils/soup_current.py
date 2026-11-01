@@ -143,12 +143,16 @@ def _family_draw(items, secret, settings):
     2. Only families whose supply reaches ``min_family_items`` qualify.
     3. While the budget leaves room for another family's floor, families are kept in this order:
        first the largest family of each category/block/type group (larger groups first), then
-       the family in the category/block cell with the fewest kept families (larger supply, then
-       name, breaking ties).
+       the family in the category/block cell with the fewest kept families (larger supply first).
+       Families of equal supply are ordered by an HMAC of their name under ``secret``, which
+       ``prepare`` derives from the validator's ``sketch_seed`` and the round, so rounds rotate
+       which of them are kept and no one can predict it. That secret is ``settings["ties"]``,
+       or ``secret`` without it.
     4. Every kept family gets ``min_family_items`` items. The rest of the budget is spread over
        the kept families as evenly as their supply allows, and over a family's streams likewise.
     """
     size, minimum = settings["current_items"], settings["min_family_items"]
+    ties = settings.get("ties", secret)
     cap = int(settings["stream_max"] * size)
     streams = defaultdict(lambda: defaultdict(list))
     for item in items:
@@ -187,7 +191,8 @@ def _family_draw(items, secret, settings):
     qualified = [f for f in sorted(members) if available[f] >= minimum]
 
     def larger(family):
-        return (-available[family], family)
+        tag = hmac.new(ties, b"family:" + family.encode(), hashlib.sha256).digest()
+        return (-available[family], tag)
 
     best = {}
     for family in sorted(qualified, key=larger):
@@ -617,6 +622,11 @@ def prepare(config, state_dir, *, round_id, block_hash, bank, ledger, log=print)
         items = loaded["items"]
         if quality:
             items, record["excluded_streams"] = _excluded(items, settings["exclude_streams"])
+            # Equal-supply families are ordered under this secret, so they rotate between rounds.
+            settings = {
+                **settings,
+                "ties": hmac.new(secret, b"round:" + round_id.encode(), hashlib.sha256).digest(),
+            }
         blend = quality and settings["current_share"] < 1
         current, streams, merges, families, cells, part = (_blend if blend else _parts)(
             items, bank, secret, settings, size=size, seed=seed, retired=retired

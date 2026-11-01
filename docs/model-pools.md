@@ -283,8 +283,10 @@ predict adds only noise. Three optional settings guard against both:
   - Only families whose supply reaches the minimum qualify. While the budget
     has room for another family's minimum, families are kept in this order:
     first the largest family of each category, block and question type, then
-    the family whose cell has the fewest kept families (larger supply, then
-    name, breaking ties).
+    the family whose cell has the fewest kept families (larger supply first).
+    Families of equal supply are ordered by a hash of their name under the
+    validator's private `sketch_seed` and the round, so rounds rotate which of
+    them are kept and miners cannot predict it.
   - Each kept family gets the minimum, and the rest of the budget is spread
     over the kept families as evenly as their supply allows.
   - A cell with no kept Current family is filled from `round_bank`. If fewer

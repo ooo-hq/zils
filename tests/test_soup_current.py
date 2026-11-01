@@ -494,7 +494,8 @@ class RoundTest(unittest.TestCase):
         )
         self.assertIsNone(source["fallback"])
         kept = {f for f, v in source["current_families"].items() if v["kept"]}
-        self.assertEqual(kept, {"gh-close", "gh-type"})  # 100-item floors fill the 200 budget
+        self.assertEqual(len(kept), 2)  # two 100-item floors fill the 200 budget
+        self.assertLessEqual(kept, {"gh-close", "gh-merge", "gh-type", "wiki-revert"})
         self.r.bank = bank
         private = self.r.run(config=config, bank_source=source)
         self.assertEqual(private["subset_ids"], self.f.subset())
@@ -1057,9 +1058,45 @@ class FamilyFirstTest(unittest.TestCase):
         chosen, _, merges, families = soup_current._family_draw(rows, b"k", settings)
         kept = sorted(f for f, v in families.items() if v["kept"])
         # Room for two families, one per cell. Every wiki stream is capped at the 250-item budget,
-        # so the tie between them goes to the first name.
-        self.assertEqual(kept, ["afd", "wiki-revert-a"])
+        # so the tie between them goes to the secret, not to the name.
+        self.assertEqual(len(kept), 2)
+        self.assertIn("afd", kept)
+        self.assertTrue(kept[1].startswith("wiki-revert-"))
+        tied = set()
+        for secret in (b"one", b"two", b"three", b"four", b"five", b"six"):
+            _, _, _, families = soup_current._family_draw(rows, secret, settings)
+            tied |= {f for f, v in families.items() if v["kept"] and f != "afd"}
+        self.assertGreater(len(tied), 1)
         self.assertEqual(len(chosen), 250)
+
+    def kept_wiki(self, round_id):
+        _, record = self.f.prepare(round_id, subset_size=3000)
+        self.assertIsNone(record["fallback"])
+        families = record["current_families"]
+        return {f for f, v in families.items() if v["kept"] and f.startswith("wiki-revert-")}
+
+    def test_rounds_rotate_which_tied_families_are_kept(self):
+        first = self.kept_wiki("d3-mini-2026-11-03")
+        other = self.kept_wiki("d3-mini-2026-11-04")
+        self.assertEqual(len(first), 6)
+        self.assertEqual(len(other), 6)
+        self.assertNotEqual(first, other)
+        self.assertNotEqual(first, {f"wiki-revert-{c}" for c in "abcdef"})
+
+    def test_the_same_round_draws_the_same_families(self):
+        first = self.kept_wiki("d3-mini-2026-11-03")
+        ids = self.f.subset("d3-mini-2026-11-03")
+        again = Fixture(
+            self.root / "again",
+            days=(),
+            **{k: v for k, v in self.f.exam.items() if k not in ("source", "current_bank")},
+        )
+        again.exam["current_bank"] = str(self.f.current)
+        again.bank = self.f.bank
+        _, record = again.prepare("d3-mini-2026-11-03", subset_size=3000)
+        kept = {f for f, v in record["current_families"].items() if v["kept"]}
+        self.assertLessEqual(first, kept)
+        self.assertEqual(again.subset("d3-mini-2026-11-03"), ids)
 
 
 if __name__ == "__main__":
