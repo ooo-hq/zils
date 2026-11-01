@@ -10,7 +10,13 @@ import unittest
 from datetime import timedelta
 from pathlib import Path
 
-from tests.test_current import FIXTURES, FakeHttp, at, github_responses
+from tests.test_current import (  # noqa: F401 (setUpModule)
+    FIXTURES,
+    FakeHttp,
+    at,
+    github_responses,
+    setUpModule,
+)
 from zils import current, current_github, current_nightly
 
 NOW = at("2026-10-31T12:30:00Z")

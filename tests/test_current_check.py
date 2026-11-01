@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tests.test_current import FakeHttp, at
+from tests.test_current import FakeHttp, at, setUpModule  # noqa: F401 (setUpModule)
 from zils import current, current_check
 
 NOW = at("2026-10-31T12:00:00Z")
