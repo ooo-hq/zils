@@ -18,7 +18,7 @@ ENDPOINTS = {
 ENDPOINT = ENDPOINTS["test"]
 NAMES = {"test": "testnet", "finney": "mainnet"}
 # Sent as every weight write's version_key. A release that changes scoring bumps it; once validators
-# have had time to `zils update`, the owner raises the subnet's weights_version to match, and the
+# have had time to `zils-miner update`, the owner raises the subnet's weights_version to match, and the
 # chain then rejects weights from older validators. Until then both versions count.
 WEIGHTS_VERSION = 1
 COMMITMENT_FIELD = 128  # bytes per Raw field of the Commitments pallet; the chain allows MaxFields
@@ -501,7 +501,7 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
     if state["required_version"] > WEIGHTS_VERSION:
         raise ValueError(
             f"subnet requires weights version {state['required_version']}, this validator sends"
-            f" {WEIGHTS_VERSION}; run zils update"
+            f" {WEIGHTS_VERSION}; run zils-miner update"
         )
     # Let the pinned SDK clip/quantize and enforce minimum count, stake and chain dispatch errors.
     intent = bt.SetWeights(netuid=netuid, weights=weights, version_key=WEIGHTS_VERSION)

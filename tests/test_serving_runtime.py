@@ -1,4 +1,4 @@
-"""`zils serve --runtime`'s backend against a fake adapter runtime on loopback; no GPU, no platform."""
+"""`zils-miner serve --runtime`'s backend against a fake adapter runtime on loopback; no GPU, no platform."""
 
 import contextlib
 import hashlib

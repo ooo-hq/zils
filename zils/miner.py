@@ -95,7 +95,7 @@ def behind_release():
     if current != stable:
         return (
             f"this install is at {(current or 'an unknown commit')[:12]}, the stable release is"
-            f" {stable[:12]}; run zils update"
+            f" {stable[:12]}; run zils-miner update"
         )
 
 
@@ -143,7 +143,7 @@ def selected_model(model, candidate=None):
     if model is None and candidate:
         model = models.checkpoint_model(Path(candidate).expanduser())
     if model not in models.d3_family():
-        raise ValueError("choose a base profile with zils setup or --model (see --help)")
+        raise ValueError("choose a base profile with zils-miner setup or --model (see --help)")
     return model
 
 
@@ -197,7 +197,7 @@ def wallet(args):
 
 def commit_command(args, revision=None):
     command = [
-        "zils commit-candidate",
+        "zils-miner commit-candidate",
         f"--model {args.model}",
         f"--wallet-name {args.wallet_name} --wallet-hotkey {args.wallet_hotkey}"
         f" --wallet-path {args.wallet_path}",
@@ -318,7 +318,7 @@ def body_references(args):
 def owner_missing(repo, hotkey):
     return ValueError(
         f"the body has no zils-owner.json. Write one naming hotkey {hotkey} with"
-        f" `zils commit-body --repo {repo} --path <local body folder> --write-owner`, upload it"
+        f" `zils-miner commit-body --repo {repo} --path <local body folder> --write-owner`, upload it"
         " to the repo, then commit the new revision"
     )
 
@@ -394,7 +394,7 @@ def commit_body(args):
         print(
             f"body {sha256} passes the local checks. Upload the folder, then commit that"
             f" revision:\n  hf upload {args.repo} {folder} .\n"
-            f"  zils commit-body --pool {pool} --repo {args.repo} --revision <the new commit>"
+            f"  zils-miner commit-body --pool {pool} --repo {args.repo} --revision <the new commit>"
             f" --path {folder}",
             flush=True,
         )
@@ -534,7 +534,7 @@ def serve(args, interval=600.0):
     if announced != endpoint:
         raise ValueError(
             f"the chain shows axon {announced or 'none'} for {hotkey}, not {endpoint}; run"
-            f" zils announce-serving --public-ip {args.public_ip} --port {args.port} --yes first"
+            f" zils-miner announce-serving --public-ip {args.public_ip} --port {args.port} --yes first"
         )
     if args.runtime:
         from . import serving_runtime
@@ -561,11 +561,11 @@ def serve(args, interval=600.0):
         stop.wait()
         server.shutdown()
         raise RuntimeError(
-            f"the adapter runtime's identity changed ({loaded[0].changed}); restart zils serve"
+            f"the adapter runtime's identity changed ({loaded[0].changed}); restart zils-miner serve"
         )
     loaded[0].worker.exited.wait()
     server.shutdown()
-    raise RuntimeError("the inference worker exited; restart zils serve")
+    raise RuntimeError("the inference worker exited; restart zils-miner serve")
 
 
 def doctor(args):
@@ -651,8 +651,8 @@ def doctor(args):
                 f" --out {adapter} --seed 553 --device cuda\n"
                 f"  {d3} candidate --adapter {adapter} --out {merged}"
                 f" > {args.model}-provenance.json\n"
-                "then run zils setup again, or\n"
-                f"  zils doctor --model {args.model} --candidate {merged}"
+                "then run zils-miner setup again, or\n"
+                f"  zils-miner doctor --model {args.model} --candidate {merged}"
             )
         try:
             state["path"], state["sha256"] = local_candidate(args.candidate, args.model)
@@ -663,7 +663,7 @@ def doctor(args):
         if args.repo is None:
             return (
                 "no --repo; pick a public model repo id under your Hugging Face account"
-                " (commit-candidate creates the repo) and run zils setup again"
+                " (commit-candidate creates the repo) and run zils-miner setup again"
             )
         if args.revision is None:
             from huggingface_hub import get_token
@@ -780,7 +780,7 @@ def setup(args):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="zils", description=__doc__)
+    parser = argparse.ArgumentParser(prog="zils-miner", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     start = commands.add_parser("setup", help="choose a base profile, wallet, candidate and repo")
     check = commands.add_parser("doctor", help="check the setup and print the next command")
@@ -891,7 +891,7 @@ def main(argv=None):
                 setattr(args, key, config.get(key))
         args.wallet_path = args.wallet_path or WALLET_PATH
         if args.wallet_name is None or args.wallet_hotkey is None:
-            raise ValueError("no wallet configured; run zils setup (or pass --wallet-name)")
+            raise ValueError("no wallet configured; run zils-miner setup (or pass --wallet-name)")
         if args.command in ("commit-body", "announce-serving", "serve"):
             run = {"commit-body": commit_body, "announce-serving": announce_serving, "serve": serve}
             run[args.command](args)
@@ -902,12 +902,12 @@ def main(argv=None):
                 parser.exit(1)
             return
         if args.candidate is None or args.repo is None:
-            raise ValueError("no candidate or repo configured; run zils setup")
+            raise ValueError("no candidate or repo configured; run zils-miner setup")
         commit_candidate(args)
     except KeyboardInterrupt:
         print("Zils miner stopped.", flush=True)
     except (ValueError, OSError, RuntimeError, KeyError, EOFError) as error:
-        parser.exit(1, f"zils miner: {error}\n")
+        parser.exit(1, f"zils-miner: {error}\n")
 
 
 if __name__ == "__main__":

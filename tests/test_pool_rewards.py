@@ -140,7 +140,9 @@ class PoolRewardsTest(unittest.TestCase):
                 testnet.publish_round({**config, "base_tier": {}}, tmp, report, chain, wallet)
             # Raised on chain after the grace window: this release can no longer write weights.
             state["required_version"] = testnet.WEIGHTS_VERSION + 1
-            with self.assertRaisesRegex(ValueError, "requires weights version 2.*zils update"):
+            with self.assertRaisesRegex(
+                ValueError, "requires weights version 2.*zils-miner update"
+            ):
                 testnet.publish_round(config, tmp, report, chain, wallet)
 
 

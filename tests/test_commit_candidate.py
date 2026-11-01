@@ -1,4 +1,4 @@
-"""`zils setup`, `doctor` and `commit-candidate` against a fake chain and a fake Hugging Face."""
+"""`zils-miner setup`, `doctor` and `commit-candidate` against a fake chain and a fake Hugging Face."""
 
 import contextlib
 import importlib.util
@@ -222,7 +222,7 @@ class CommitCandidateTest(unittest.TestCase):
         flags = ("--candidate", str(self.candidate), "--repo", "alice/d3")
         code, out = self.run_miner("doctor", *flags)
         self.assertIn("✗ hugging face\n  not uploaded yet", out)
-        self.assertIn("zils commit-candidate", out)
+        self.assertIn("zils-miner commit-candidate", out)
         self.assertIn("--repo alice/d3 \\\n    --yes", out)
         with patch("huggingface_hub.get_token", lambda: None):
             code, out = self.run_miner("doctor", *flags)
@@ -276,7 +276,7 @@ class CommitCandidateTest(unittest.TestCase):
     def test_setup_saves_answers_that_later_commands_default_to(self):
         code, out = self.run_miner("doctor", wallet=False)
         self.assertEqual(code, 1)
-        self.assertIn("no wallet configured; run zils setup", out)
+        self.assertIn("no wallet configured; run zils-miner setup", out)
 
         repo = "alice/d3"
         answers = iter([self.wallet["path"], "", "", str(self.candidate), "", repo])

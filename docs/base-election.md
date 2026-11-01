@@ -251,7 +251,7 @@ requires a new untouched validation draw after any retuning. A pilot never crown
    caches cannot qualify. Disabling intake is separate from hosted availability.
 3. Exercise two real bootstrap miners with separate hotkeys, d3-mini on both,
    permitted development data, the existing LoRA/merge recipe and immutable public
-   candidates. Run `zils commit-candidate` as a dry run, inspect it, and submit with
+   candidates. Run `zils-miner commit-candidate` as a dry run, inspect it, and submit with
    `--yes` only when operational submission is authorized. Capture commitment
    readback, discovery, copy rejection, inference and qualification evidence.
 4. Install the reviewed config only after its admission, runtime-capacity and rollout checks;

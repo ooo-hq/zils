@@ -344,7 +344,7 @@ class ServingServerTest(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             response, data = self.post(server, self.message())
         self.assertEqual(response.status, 500)
-        self.assertEqual(err.getvalue(), "zils serve: internal error (KeyError)\n")
+        self.assertEqual(err.getvalue(), "zils-miner serve: internal error (KeyError)\n")
 
     def test_too_many_questions_is_refused_before_inference(self):
         question = {"type": "noul", "instructions": None, "criteria": None}
