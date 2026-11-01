@@ -4,7 +4,7 @@
 public-data training attempt, merges it into a full checkpoint, publishes an
 immutable Hugging Face revision and commits it with the miner's own registered
 hotkey. It uses the same training and candidate validation as `zils.d3` and
-`zils commit-candidate`. It does not elect winners, move channels or migrate
+`zils-miner commit-candidate`. It does not elect winners, move channels or migrate
 customer adapters. Currently restricted to testnet 579.
 
 This is a bootstrap recipe: one epoch of the existing LoRA trainer, with a new
@@ -122,7 +122,7 @@ or failed attempt blocks new training until an operator reconciles its artifacts
 and publication; a service restart alone cannot discard the uncertainty.
 
 Retain the original receipt when repairing an attempt. For a saved uploaded
-revision, use `zils commit-candidate --revision <exact-sha>` with the same
+revision, use `zils-miner commit-candidate --revision <exact-sha>` with the same
 candidate and wallet; it reads the chain first and leaves an existing matching
 commitment alone. Only mark the receipt committed after verified readback.
 Training failures require an explicit operator decision before archiving the

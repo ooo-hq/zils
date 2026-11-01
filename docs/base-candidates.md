@@ -1,7 +1,7 @@
 # Base candidates
 
 Each [model tier](model-pools.md) competes against its own pinned incumbent.
-Use `zils setup` to choose that exact profile; `zils doctor` prints its reference
+Use `zils-miner setup` to choose that exact profile; `zils-miner doctor` prints its reference
 and training commands. The concrete shard layouts, sizes and hardware figures
 below describe the mini recipe, not every tier. Other tiers use their own
 `models.candidate_files(profile, "candidate")` manifest and pinned parent.
@@ -107,16 +107,16 @@ validator reads each registered hotkey's commitment at its round's preflight
 block, freezes it in that round's chain snapshot and pulls the revision itself.
 No validator URL, open port or long-running process is needed.
 
-Install with `scripts/install.sh` ([miner setup](mining.md)); `zils setup` saves
+Install with `scripts/install.sh` ([miner setup](mining.md)); `zils-miner setup` saves
 the wallet, base profile, candidate and repo that the commands below default to.
-`zils doctor` checks each prerequisite in order (requirements, d3 training
+`zils-miner doctor` checks each prerequisite in order (requirements, d3 training
 runtime, hotkey file, registration, candidate, Hugging Face login and repo at the
 revision, the commitment on chain) and prints the first fix or, when all pass,
-the block your commitment landed in. `zils commit-candidate` does the work:
+the block your commitment landed in. `zils-miner commit-candidate` does the work:
 
 ```bash
 hf auth login   # once, with a write token for your account
-zils commit-candidate   # --model, --candidate and --repo override the saved values
+zils-miner commit-candidate   # --model, --candidate and --repo override the saved values
 ```
 
 From a checkout without the installer, `.venv-kev/bin/python -m zils.miner` takes

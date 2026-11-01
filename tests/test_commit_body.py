@@ -1,4 +1,4 @@
-"""`zils commit-body`: a soup body dry run, ownership file, validation and the chain write."""
+"""`zils-miner commit-body`: a soup body dry run, ownership file, validation and the chain write."""
 
 import contextlib
 import importlib.util

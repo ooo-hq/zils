@@ -87,7 +87,7 @@ hash-verified; a TLS terminator provides transport privacy.
 Run `python -m zils.testnet preflight --config CONFIG` before starting the unit.
 Inspect the frozen `chain-snapshot.json` member/commitment maps and each pool's
 intake and decision reports. Miners use
-[`zils commit-candidate`](base-candidates.md#commit); they need neither the
+[`zils-miner commit-candidate`](base-candidates.md#commit); they need neither the
 validator's URL nor its hotkey. One commitment per hotkey remains the submission
 contract. A registration change cannot inherit another hotkey's evidence.
 

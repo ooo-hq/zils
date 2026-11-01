@@ -129,8 +129,8 @@ commit-reveal. Zils uses mechanism 0 and sends `WEIGHTS_VERSION` from
 `zils/testnet.py` (currently 1) as the version key. A release that changes scoring
 bumps it. The chain keeps accepting the older version until the subnet's
 `weights_version` hyperparameter is raised to match, which is the grace period for
-validators to run `zils update`. After that the chain rejects weights from older
-releases, and this client refuses to submit with "run zils update" rather than
+validators to run `zils-miner update`. After that the chain rejects weights from older
+releases, and this client refuses to submit with "run zils-miner update" rather than
 pretending to implement a newer rubric.
 
 ## Read the outcome

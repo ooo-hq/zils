@@ -525,7 +525,7 @@ and is retried in a later round.
 
 ## Submit, evaluate and promote
 
-Run `zils setup` to select the exact base profile to beat in your tier, or pass
+Run `zils-miner setup` to select the exact base profile to beat in your tier, or pass
 `--model <profile-id>` to `setup`, `doctor` or `commit-candidate`. `doctor` prints
 the matching reference/training recipe. The CLI reads older candidates' profiles
 from their metadata and checks uploads against each profile's own file list.

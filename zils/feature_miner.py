@@ -152,7 +152,7 @@ def main(argv=None):
         args.wallet_path = args.wallet_path or miner.WALLET_PATH
         if not args.wallet_name or not args.wallet_hotkey:
             raise ValueError(
-                "pass --wallet-name and --wallet-hotkey, or configure them with zils setup"
+                "pass --wallet-name and --wallet-hotkey, or configure them with zils-miner setup"
             )
         return commit_candidate(args)
     except KeyboardInterrupt:

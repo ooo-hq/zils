@@ -1,7 +1,9 @@
-"""`zils update` and the doctor's stable-release warning, without GitHub or the installer."""
+"""`zils-miner update` and the doctor's stable-release warning, without GitHub or the installer."""
 
 import io
+import tomllib
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -15,6 +17,26 @@ def response(text):
     return patch("zils.miner.urllib.request.urlopen", return_value=io.BytesIO(text.encode()))
 
 
+class CommandNameTest(unittest.TestCase):
+    """The miner command is `zils-miner`; `zils` belongs to the customer CLI (@zils/cli)."""
+
+    def test_console_script_is_zils_miner(self):
+        scripts = tomllib.loads((Path(miner.zils.ROOT) / "pyproject.toml").read_text())["project"][
+            "scripts"
+        ]
+        self.assertEqual(scripts, {"zils-miner": "zils.miner:main"})
+
+    def test_help_and_errors_name_zils_miner(self):
+        out = io.StringIO()
+        with redirect_stdout(out), self.assertRaises(SystemExit):
+            miner.main(["--help"])
+        self.assertTrue(out.getvalue().startswith("usage: zils-miner "))
+        err = io.StringIO()
+        with redirect_stderr(err), self.assertRaises(SystemExit):
+            miner.main(["commit-candidate", "--model", "nope"])
+        self.assertIn("zils-miner", err.getvalue())
+
+
 class UpdateTest(unittest.TestCase):
     def test_stable_pointer_is_a_full_sha(self):
         sha = (Path(miner.zils.ROOT) / "release/stable").read_text().strip()
@@ -25,7 +47,8 @@ class UpdateTest(unittest.TestCase):
     def test_behind_release_warns_only_when_behind(self):
         with response(STABLE + "\n"), patch("zils.miner.installed_release", return_value=OLD):
             self.assertIn(
-                "bbbbbbbbbbbb, the stable release is aaaaaaaaaaaa", miner.behind_release()
+                "bbbbbbbbbbbb, the stable release is aaaaaaaaaaaa; run zils-miner update",
+                miner.behind_release(),
             )
         with response(STABLE), patch("zils.miner.installed_release", return_value=STABLE):
             self.assertIsNone(miner.behind_release())

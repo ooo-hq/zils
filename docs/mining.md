@@ -221,17 +221,24 @@ whoever operates them; find them on the metagraph
 
 Start with the installer on the mining host. It clones Zils into `~/.zils/zils`,
 builds the miner runtime and, on Linux x86_64 with an NVIDIA GPU, the d3 training
-runtime, links `zils` into `~/.local/bin` and starts `zils setup`, which asks for
+runtime, links `zils-miner` and `btcli` into `~/.local/bin` and starts
+`zils-miner setup`, which asks for
 your wallet, base profile, candidate folder and Hugging Face repo, saves them to
 `~/.zils/miner.json` and runs the doctor. It installs the stable release, the
-commit named in [`release/stable`](../release/stable); `zils update` moves an
+commit named in [`release/stable`](../release/stable); `zils-miner update` moves an
 install to a newer one, and the doctor warns when yours is behind.
+
+The miner command is `zils-miner`. The `zils` command belongs to the customer CLI
+(`npm install -g @zils/cli`: sign-in, decisions, training); from version 0.4.7 it
+also runs miner commands, so `zils doctor` and `zils-miner doctor` do the same
+thing. Installs from before `zils-miner` linked the miner as `zils`; the
+installer (and `zils-miner update`) removes that old link.
 
 ```bash
 curl -fsSL https://zils.ai/install.sh | sh
 ```
 
-Every tier has a base to beat. `zils setup` lists the installed d3 profiles:
+Every tier has a base to beat. `zils-miner setup` lists the installed d3 profiles:
 lite, nano, mini, flash and d3, including registered promoted profiles. Choose
 the exact incumbent profile accepted by your validator. A listed profile does
 not mean that its competition is enabled or funded; see [model pools](model-pools.md).
@@ -240,8 +247,8 @@ not mean that its competition is enabled or funded; see [model pools](model-pool
 accepts the stock lite profile:
 
 ```bash
-zils setup --model d3-lite-0.8b-v1
-zils doctor --model d3-lite-0.8b-v1
+zils-miner setup --model d3-lite-0.8b-v1
+zils-miner doctor --model d3-lite-0.8b-v1
 ```
 
 The doctor prints a reference download command with that exact `--model` and
@@ -250,7 +257,7 @@ metadata. Existing candidates supply their profile when no selection is saved;
 without a candidate or selection, the CLI asks you to choose instead of assuming
 mini. A candidate for a different tier or parent profile is rejected before upload.
 
-From then on `zils doctor` names the next step and prints its command; the steps are:
+From then on `zils-miner doctor` names the next step and prints its command; the steps are:
 
 1. **Register a hotkey on testnet subnet 579** following the
    [registration guide](bittensor-registration.md); keep the hotkey file on the
@@ -264,15 +271,15 @@ From then on `zils doctor` names the next step and prints its command; the steps
    passes the candidate contract; the exam is realistic decisions in families you
    have not seen, so what you train on decides everything.
 4. **Upload and commit.** Log in to Hugging Face once (`hf auth login`, a write
-   token), then let `zils commit-candidate` upload the candidate files to
+   token), then let `zils-miner commit-candidate` upload the candidate files to
    your public model repo and commit `zils1:<hash>:<revision>:<repo>` on chain
    with your hotkey (details in [base candidates: commit](base-candidates.md#commit)):
 
    ```bash
-   zils commit-candidate
+   zils-miner commit-candidate
    ```
 
-   It reads the wallet, base profile, candidate and repo saved by `zils setup`;
+   It reads the wallet, base profile, candidate and repo saved by `zils-miner setup`;
    flags such as `--model`, `--candidate` or `--repo` override them for one run.
    Upload and remote verification use the selected candidate's pinned file list,
    including the correct number of weight shards for its tier.
@@ -288,7 +295,7 @@ From then on `zils doctor` names the next step and prints its command; the steps
    failing one with the exact command that fixes it:
 
    ```bash
-   zils doctor
+   zils-miner doctor
    ```
 
    You can run it before step 1 (it tells you to create the wallet), before
@@ -387,7 +394,7 @@ install with `curl -fsSL https://zils.ai/install.sh | sh`. Then:
    that is still private then fails):
 
    ```bash
-   zils commit-body --pool <pool> --repo <you>/<body-repo> --path ./my-body --write-owner
+   zils-miner commit-body --pool <pool> --repo <you>/<body-repo> --path ./my-body --write-owner
    ```
 
    `--pool` is `d3-lite`, `d3-mini` (the default), `d3-flash` or `d3` (z3).
@@ -408,8 +415,8 @@ install with `curl -fsSL https://zils.ai/install.sh | sh`. Then:
    commitment with your hotkey and reads it back:
 
    ```bash
-   zils commit-body --pool <pool> --repo <you>/<body-repo> --revision <upload commit> --path ./my-body
-   zils commit-body --pool <pool> --repo <you>/<body-repo> --revision <upload commit> --path ./my-body --yes
+   zils-miner commit-body --pool <pool> --repo <you>/<body-repo> --revision <upload commit> --path ./my-body
+   zils-miner commit-body --pool <pool> --repo <you>/<body-repo> --revision <upload commit> --path ./my-body --yes
    ```
 
    Without `--path` the command downloads the body at the revision instead. It

@@ -1,4 +1,4 @@
-"""Answer `zils serve` requests from a box's adapter runtime instead of a second model copy.
+"""Answer `zils-miner serve` requests from a box's adapter runtime instead of a second model copy.
 
 A box that already runs the zils-platform adapter runtime with `--serve-base` holds the pinned base
 and answers it as `<profile>-base`. `connect` checks that the runtime serves exactly the base of the
@@ -43,7 +43,7 @@ OVERLOADED = 529
 
 def log(text):
     """Operator log on stderr: fixed text and status codes only, never the token or request content."""
-    print(f"zils serve: {text}", file=sys.stderr, flush=True)
+    print(f"zils-miner serve: {text}", file=sys.stderr, flush=True)
 
 
 def loopback(runtime_url):
@@ -198,7 +198,7 @@ class RuntimeServed:
     def watch(self, stop, interval=HEALTH_SECONDS):
         """Check /health every `interval` seconds on a daemon thread. A paused or unreachable runtime
         is logged and serving goes on (each request answers unavailable); an identity change sets
-        `self.changed` and `stop` so `zils serve` exits for its supervisor."""
+        `self.changed` and `stop` so `zils-miner serve` exits for its supervisor."""
 
         def probe():
             """The runtime's state as fixed text, or None after an identity change (stop is set)."""
@@ -235,7 +235,7 @@ class RuntimeServed:
 
 
 def check(runtime_url, token, model, timeout=10.0):
-    """`zils doctor --runtime`: the runtime is on loopback, reachable, ready and serves `model`'s
+    """`zils-miner doctor --runtime`: the runtime is on loopback, reachable, ready and serves `model`'s
     pinned base; ValueError with the reason otherwise."""
     url = loopback(runtime_url)
     if not isinstance(token, str) or not token:
