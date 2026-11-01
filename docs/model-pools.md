@@ -255,12 +255,60 @@ If the Current part cannot meet these rules (too few streams, fewer than
 `min_items` items, or an unreadable bank), the whole round draws from
 `round_bank` exactly as it would without `exam`. The round record says so.
 
+#### Quality settings
+
+Every category and block cell of the base score has a fixed weight, and the
+families in a cell count equally. A Current stream that contributes a few dozen
+items can therefore move the whole score, and a stream whose labels no body can
+predict adds only noise. Three optional settings guard against both:
+
+```json
+"exam": {
+  "source": "current",
+  "current_bank": "/var/lib/zils-current/bank",
+  "current_share": 0.33,
+  "min_family_items": 100,
+  "exclude_streams": ["stackexchange-score-*"]
+}
+```
+
+- **`min_family_items`** (default 100): a Current stream that draws fewer items
+  joins the other small streams of its cell and question type in one family,
+  `current-<category>-<block>-<type>-small` (yes/no, choice and score streams
+  never share a family). Each merged item keeps its stream name in
+  `current_stream`. A merged family still below the minimum is left out, and
+  that cell is filled from `round_bank` instead. If what remains is fewer than
+  `min_items` items, the round falls back to `round_bank`.
+- **`exclude_streams`** (default `["stackexchange-score-*"]`): glob patterns of
+  stream names that are never drawn. Stack Exchange score streams show close to
+  zero skill for every body measured, so they are excluded by default. `[]`
+  draws every stream.
+- **`current_share`** (default 1, in (0, 1]): below 1 the round **blends**.
+  `round_bank` keeps its families in every cell, and Current families are added
+  next to them, up to `current_share` of the subset (and at most
+  `current_items`). At 1, Current streams replace the bank's families in the
+  cells they cover, as described above.
+
+A pool that sets none of the three draws exactly as before they existed. A pool
+that sets any of them gets the defaults above for the others; set
+`"min_family_items": 1` or `"exclude_streams": []` to turn one off.
+
+With any quality setting the round record also holds the excluded streams and
+their item counts (`excluded_streams`), each merged family with its streams,
+item count and whether it was left out (`merged_families`), the cells a blend
+added Current families to (`added_cells`), the items, families and Current
+items per cell (`cells`), and every cell resting on fewer than
+`min_family_items` items (`thin_cells`, also logged). A thin cell is still
+scored; the warning says its weight rests on few items.
+
 The private round record (`rounds/<round id>/private.json`) holds `bank_source`:
 - the dated folders used, with each manifest's and items file's SHA-256;
 - the folders skipped, and why;
 - the items excluded, by reason;
 - each stream's drawn, available and per-label counts;
 - the cells Current replaced;
+- with the quality settings, the excluded streams, merged families, blended
+  cells and per-cell item counts;
 - the fallback reason, if there was one.
 
 The same record is saved as `bank-source.json`, next to `subset.json` and
