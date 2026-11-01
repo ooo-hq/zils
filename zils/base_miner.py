@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 import time
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -148,6 +149,7 @@ def validate(config):
 def run(config):
     from . import miner
     from .runtime import gpu_ready
+    from .serving_yield import yield_gpu
 
     if time.time() < config.get("start_after", 0):
         print("Waiting for this node's scheduled start", flush=True)
@@ -200,7 +202,9 @@ def run(config):
             record("training")
             flag = Path(config["yield_file"])
             flag.touch(exist_ok=False)
-            try:
+            with ExitStack() as cleanup:
+                cleanup.callback(flag.unlink, missing_ok=True)
+                cleanup.enter_context(yield_gpu("cuda", model=config["model"], minimum_mib=12288))
                 deadline = time.monotonic() + 180
                 need = config.get("gpu_free_mib", 12288)
                 while not gpu_ready("cuda", model=config["model"], minimum_mib=need):
@@ -240,8 +244,6 @@ def run(config):
                         timeout=config["max_training_seconds"],
                         check=True,
                     )
-            finally:
-                flag.unlink(missing_ok=True)
         finally:
             os.close(gpu)
         record("merging")
