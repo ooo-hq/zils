@@ -143,12 +143,25 @@ def map_names(keys, chassis_names):
         name = key.removeprefix("model.")
         if name.startswith(DROP):
             continue
+        if not name.startswith(KEEP) and "language_model." + name in chassis:
+            raise ValueError(
+                f"body is a text-only checkpoint ({key}): a soup body is the full Qwen3.5 model,"
+                " language weights under language_model. plus the vision tower under visual."
+                " To submit a text-only model (such as a listed cousin), add the vision tower of"
+                " the pool's Qwen parent, unchanged; a merge that starts from a full checkpoint"
+                " (the pool's release or its Qwen parent) already has one"
+            )
         if not name.startswith(KEEP) or name not in chassis:
             raise ValueError(f"body has a tensor outside the chassis: {key}")
         if name in mapped:
             raise ValueError(f"body names {mapped[name]} and {key} map to the same tensor")
         mapped[name] = key
     if missing := sorted(chassis - set(mapped)):
+        if all(name.startswith("visual.") for name in missing):
+            raise ValueError(
+                f"body has no vision tower (missing {missing[0]}): a soup body is the full Qwen3.5"
+                " model; keep the visual. tensors of the checkpoint you started from"
+            )
         raise ValueError(f"body is missing chassis tensor {missing[0]}")
     return mapped
 
@@ -406,11 +419,12 @@ def validate_body(
     body's safetensors (default `MAX_BYTES`, the d3-mini cap; see `max_bytes(pool)`)."""
     folder = Path(folder)
     limit = MAX_BYTES if max_bytes is None else max_bytes
-    owner = _owner(folder, trusted)
-    if owner != hotkey:
-        raise ValueError(
-            f"zils-owner.json names hotkey {owner}, not the committing hotkey {hotkey}"
-        )
+    if hotkey is not None:  # None: a miner's `commit-body --check`, before it writes the owner file
+        owner = _owner(folder, trusted)
+        if owner != hotkey:
+            raise ValueError(
+                f"zils-owner.json names hotkey {owner}, not the committing hotkey {hotkey}"
+            )
     license = _license(folder, trusted)
     if license not in LICENSES:
         raise ValueError(f"body license {license!r} is not one of {', '.join(sorted(LICENSES))}")

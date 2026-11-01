@@ -392,9 +392,39 @@ def check_remote_body(repo, revision, folder):
                     raise ValueError(f"{name} on Hugging Face differs from the local body")
 
 
+def check_body(args):
+    """`commit-body --check`: the local body checks on a folder, with no wallet, repo or owner file."""
+    if args.yes or args.write_owner:
+        raise ValueError("--check only reads the folder; run it without --yes and --write-owner")
+    if not args.path:
+        raise ValueError("--check needs --path, the local body folder to check")
+    folder = Path(args.path).expanduser()
+    if not folder.is_dir():
+        raise ValueError(
+            f"{folder} is not a folder; pass the body folder (for example zils merge --out)"
+        )
+    folder = folder.resolve()
+    pool = body_pool(args)
+    chassis, base = body_references(args)
+    sha256 = bodies.validate_body(
+        folder, chassis, hotkey=None, base=base, trusted=True, max_bytes=bodies.max_bytes(pool)
+    )
+    print(
+        f"body {sha256} passes the local checks for pool {pool}. Next, name your hotkey in it,"
+        " upload it and commit that revision:\n"
+        f"  zils-miner commit-body --pool {pool} --repo <you>/<body-repo> --path {folder} --write-owner",
+        flush=True,
+    )
+
+
 def commit_body(args):
     """Validate a soup body at an uploaded revision, print its zilsb2 commitment and, with --yes,
     write it. --write-owner only writes zils-owner.json into --path and checks the body locally."""
+    if args.repo is None:
+        raise ValueError(
+            "commit-body needs --repo, your public Hugging Face model repo"
+            " (or --check --path <folder> to only check a body)"
+        )
     if args.write_owner and args.yes:
         raise ValueError("--write-owner writes a file to upload first; commit after the upload")
     if args.write_owner and not args.path:
@@ -937,7 +967,12 @@ def main(argv=None):
         f" and, with --yes, write it. Note: {SLOT_NOTE}; committing a body"
         " replaces whatever the hotkey committed before.",
     )
-    body.add_argument("--repo", required=True, help="your public Hugging Face model repo")
+    body.add_argument("--repo", help="your public Hugging Face model repo")
+    body.add_argument(
+        "--check",
+        action="store_true",
+        help="only run the local body checks on --path (no wallet, repo or owner file needed)",
+    )
     body.add_argument(
         "--revision", help="40-hex commit sha of the uploaded body (not needed with --write-owner)"
     )
@@ -1019,6 +1054,9 @@ def main(argv=None):
             return
         if args.command == "update":
             update()
+            return
+        if args.command == "commit-body" and args.check:
+            check_body(args)
             return
         config = load_config()
         if args.command == "commit-candidate":

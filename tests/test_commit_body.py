@@ -125,6 +125,58 @@ class CommitBodyTest(unittest.TestCase):
         self.assertEqual(code, 0, out)
         self.assertIn(f"commitment {self.text}", out)
 
+    def check_only(self, *argv):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+            try:
+                miner.main(
+                    [
+                        "commit-body",
+                        "--check",
+                        "--chassis",
+                        str(self.chassis),
+                        "--base",
+                        str(self.base),
+                        *argv,
+                    ]
+                )
+                code = 0
+            except SystemExit as stopped:
+                code = stopped.code
+        return code, output.getvalue()
+
+    def test_check_runs_the_local_checks_without_a_wallet_repo_or_owner_file(self):
+        (self.body / "zils-owner.json").unlink()
+        code, out = self.check_only("--path", str(self.body))
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"body {self.sha256} passes the local checks", out)
+        self.assertIn("--write-owner", out)  # the next step
+        self.assertFalse((self.body / "zils-owner.json").exists())
+        self.assertEqual(self.connects, [])
+
+    def test_check_explains_a_text_only_merge(self):
+        from tests.test_bodies import weights
+
+        text = {
+            n.removeprefix("language_model."): t
+            for n, t in weights(0).items()
+            if n.startswith("language_model.")
+        }
+        folder = checkpoint(self.root / "text-only", text, prefix="model.", owner=None)
+        code, out = self.check_only("--path", str(folder))
+        self.assertEqual(code, 1, out)
+        self.assertIn("text-only checkpoint", out)
+        self.assertNotIn("Traceback", out)
+
+    def test_check_needs_a_path_and_refuses_to_write(self):
+        code, out = self.check_only()
+        self.assertEqual(code, 1, out)
+        self.assertIn("--check needs --path", out)
+        for flag in ("--yes", "--write-owner"):
+            code, out = self.check_only("--path", str(self.body), flag)
+            self.assertEqual(code, 1, out)
+            self.assertIn("--check only reads", out)
+
     def test_refuses_without_an_ownership_file(self):
         (self.body / "zils-owner.json").unlink()
         code, out = self.run_miner("--yes")
