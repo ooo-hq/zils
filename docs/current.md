@@ -412,7 +412,7 @@ Exported cases use the same format as the exam and bank files that `zils.validat
 `base_metrics` and `soup_exam` read:
 
 ```json
-{"id": "wikipedia-revert-…", "family": "wikipedia-revert", "category": "language", "block": "new",
+{"id": "wikipedia-revert-…", "family": "wikipedia-revert", "category": "language", "block": "known",
  "source_id": "wikipedia-revert-…", "state": {"text": "Wiki: English Wikipedia\nArticle: …"},
  "question": {"type": "noul", "instructions": "Will this Wikipedia article edit be reverted by another edit?",
               "criteria": {"true": "Reverted", "false": "Not reverted"}},
@@ -582,8 +582,10 @@ To grade a soup pool on Zils Current items:
 Each round then reads every dated folder whose manifest checks out, and draws its Current part
 under the freshness, reuse, breadth and token rules in
 [model pools](model-pools.md#round-items-from-zils-current). The round falls back to the fixed
-round bank when those rules cannot be met. The four streams cover two cells of the base score:
-`reasoning`/`new` and `language`/`new`. The fixed bank still fills the other cells.
+round bank when those rules cannot be met. With the default blocks the streams reach every cell
+of the base score (see [Categories and blocks](#categories-and-blocks)). The fixed bank fills any
+cell the Current part does not cover; when Current streams cover every cell, the whole subset can
+come from Current.
 
 Each cell of the base score has a fixed weight, and the families in a cell count equally, so a
 stream with a few dozen items can decide a round. `min_family_items` merges small streams of a
