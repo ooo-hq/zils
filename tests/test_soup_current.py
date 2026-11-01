@@ -472,6 +472,35 @@ class RoundTest(unittest.TestCase):
         public = json.loads((self.r.state / "rounds" / ROUND / "public.json").read_text())
         self.assertNotIn("bank_source", public)
 
+    def test_a_blend_round_grades_its_current_families(self):
+        self.f.exam = {
+            **self.f.exam,
+            "current_items": 1000,
+            "current_share": 0.25,
+            "min_streams": 2,
+            "stream_max": 0.5,
+        }
+        config = self.r.config(
+            subset_size=800, schedule={"deadline_utc": "03:00"}, exam=self.f.config()["exam"]
+        )
+        bank, source = soup_current.prepare(
+            config,
+            self.r.state,
+            round_id=ROUND,
+            block_hash=HASH,
+            bank=self.r.bank,
+            ledger=self.r.ledger,
+            log=lambda message: None,
+        )
+        self.assertIsNone(source["fallback"])
+        kept = {f for f, v in source["current_families"].items() if v["kept"]}
+        self.assertEqual(len(kept), 2)  # two 100-item floors fill the 200 budget
+        self.assertLessEqual(kept, {"gh-close", "gh-merge", "gh-type", "wiki-revert"})
+        self.r.bank = bank
+        private = self.r.run(config=config, bank_source=source)
+        self.assertEqual(private["subset_ids"], self.f.subset())
+        self.assertEqual(private["bank_source"], source)
+
     def test_a_round_without_a_bank_source_keeps_its_old_record(self):
         private = self.r.run()
         self.assertNotIn("bank_source", private)
@@ -564,10 +593,6 @@ class EpochTest(unittest.TestCase):
             case.doCleanups()
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 CELL_STREAMS = {
     f"cell-{category}-{block}": (category, block)
     for category in ("reasoning", "language", "retrieval", "tools", "arts")
@@ -643,3 +668,436 @@ class ChoiceBalanceTest(unittest.TestCase):
         _, counts = soup_current.draw(rows, b"k", settings)
         self.assertEqual(counts["gh-type"]["drawn"], 12)  # a choice stream keeps every item
         self.assertEqual(counts["gh-merge"]["labels"], {"false": 2, "true": 2})  # yes/no balanced
+
+
+def stream_rows(stream, category, block, kind, n, day="2026-11-02"):
+    """``n`` items of one Current stream in one cell; labels alternate so yes/no stays balanced."""
+    resolved = datetime.fromisoformat(day).replace(hour=12, tzinfo=UTC)
+    labels = {"noul": ["false", "true"], "choice": ["A", "B"], "score": ["0", "1", "3", "4"]}[kind]
+    criteria = {"noul": None, "choice": {"A": "Bug", "B": "Feature"}, "score": list("01234")}[kind]
+    rows = []
+    for i in range(n):
+        identity = f"{stream}-{resolved:%Y%m%d}-{i}"
+        rows.append(
+            {
+                "id": identity,
+                "source_id": identity,
+                "family": stream,
+                "category": category,
+                "block": block,
+                "state": {"text": f"{identity} state"},
+                "question": {"type": kind, "instructions": "Decide.", "criteria": criteria},
+                "label": labels[i % len(labels)],
+                "source": {"name": "test"},
+                "asked_at": (resolved - timedelta(days=1)).isoformat().replace("+00:00", "Z"),
+                "resolved_at": resolved.isoformat().replace("+00:00", "Z"),
+                "licence": "test",
+                "content_sha256": hashlib.sha256(identity.encode()).hexdigest(),
+            }
+        )
+    return rows
+
+
+def round_files(f, round_id=ROUND):
+    folder = f.state / "rounds" / round_id
+    names = ("subset.json", "bank-source.json", "current-items.jsonl")
+    return [hashlib.sha256((folder / n).read_bytes()).hexdigest()[:16] for n in names]
+
+
+QUALITY_KEYS = {"min_family_items", "exclude_streams", "current_share"}
+
+
+class QualityValidateTest(unittest.TestCase):
+    def test_without_the_quality_settings_none_is_added(self):
+        exam = soup_current.validate({"source": "current", "current_bank": "/b"})
+        self.assertFalse(QUALITY_KEYS & set(exam))
+
+    def test_one_quality_setting_fills_the_launch_defaults(self):
+        exam = soup_current.validate(
+            {"source": "current", "current_bank": "/b", "current_share": 0.33}
+        )
+        self.assertEqual(exam["current_share"], 0.33)
+        self.assertEqual(exam["min_family_items"], 100)
+        self.assertEqual(exam["exclude_streams"], ["stackexchange-score-*"])
+        again = soup_current.validate(
+            {"source": "current", "current_bank": "/b", "exclude_streams": []}
+        )
+        self.assertEqual(again["exclude_streams"], [])
+        self.assertEqual(again["current_share"], 1.0)
+        self.assertEqual(soup_current.validate(exam), exam)  # validating twice changes nothing
+
+    def test_bad_quality_settings_are_refused(self):
+        base = {"source": "current", "current_bank": "/b"}
+        bad = [
+            {"min_family_items": 0},
+            {"min_family_items": 2.5},
+            {"min_family_items": True},
+            {"current_share": 0},
+            {"current_share": 1.5},
+            {"current_share": "half"},
+            {"exclude_streams": "stackexchange-score-*"},
+            {"exclude_streams": [""]},
+            {"exclude_streams": [3]},
+        ]
+        for change in bad:
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                soup_current.validate({**base, **change})
+
+    def test_validate_soup_keeps_the_quality_settings(self):
+        entry = ValidateTest.soup_entry(
+            None,
+            exam={"source": "current", "current_bank": "/b", "current_share": 0.33},
+        )
+        exam = model_pools.validate_soup(entry)["exam"]
+        self.assertEqual(exam["current_share"], 0.33)
+        self.assertEqual(exam["min_family_items"], 100)
+
+
+class UnchangedTest(unittest.TestCase):
+    """Without the quality settings a round is byte for byte what main drew before them."""
+
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+    def test_mixed_cells_round_matches_main(self):
+        f = Fixture(self.root / "mixed")
+        f.prepare()
+        self.assertEqual(
+            round_files(f), ["72a793626319d706", "65e2307383c4d37d", "e9b7e4fa1efdd25e"]
+        )
+
+    def test_all_current_round_matches_main(self):
+        f = Fixture(self.root / "all", days=(), min_streams=3)
+        export(f.current, "2026-11-02", cell_items("2026-11-02", 60))
+        f.prepare()
+        self.assertEqual(
+            round_files(f), ["f5b58e7b41a1b909", "3da24036004288d0", "3adf5643c5ab1e0b"]
+        )
+
+    def test_neutral_quality_settings_draw_the_same_round(self):
+        old = Fixture(self.root / "old")
+        old.prepare()
+        new = Fixture(self.root / "new", current_share=1.0, min_family_items=1, exclude_streams=[])
+        _, record = new.prepare()
+        self.assertEqual(new.subset(), old.subset())
+        self.assertEqual(round_files(new)[2], round_files(old)[2])
+        saved = json.loads((old.state / "rounds" / ROUND / "bank-source.json").read_text())
+        for key, value in saved.items():
+            if key != "settings":
+                self.assertEqual(record[key], value, key)
+
+
+class QualityTest(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+    def fixture(self, name, rows, **exam):
+        f = Fixture(self.root / name, days=(), min_streams=3, **exam)
+        export(f.current, "2026-11-02", rows)
+        return f
+
+    def cases(self, f, bank):
+        by_id = {c["id"]: c for c in bank}
+        return [by_id[i] for i in f.subset()]
+
+    def test_score_streams_are_excluded_by_default(self):
+        rows = stream_rows("gh-close", "reasoning", "new", "noul", 120)
+        rows += stream_rows("wiki-revert", "language", "new", "noul", 120)
+        rows += stream_rows("gh-merge", "tools", "new", "noul", 120)
+        rows += stream_rows("stackexchange-score-math", "reasoning", "known", "score", 120)
+        f = self.fixture("exclude", rows, current_items=400, min_family_items=10)
+        bank, record = f.prepare(subset_size=800)
+        self.assertIsNone(record["fallback"])
+        families = {c["family"] for c in self.cases(f, bank)}
+        self.assertNotIn("stackexchange-score-math", families)
+        self.assertEqual(record["excluded_streams"], {"stackexchange-score-math": 120})
+        self.assertNotIn("stackexchange-score-math", record["streams"])
+
+    def test_exclude_streams_takes_glob_patterns(self):
+        rows = stream_rows("gh-close", "reasoning", "new", "noul", 120)
+        rows += stream_rows("wiki-revert", "language", "new", "noul", 120)
+        rows += stream_rows("gh-merge", "tools", "new", "noul", 120)
+        rows += stream_rows("gh-label", "tools", "known", "noul", 120)
+        f = self.fixture(
+            "glob", rows, current_items=400, min_family_items=10, exclude_streams=["gh-m*"]
+        )
+        bank, record = f.prepare(subset_size=800)
+        self.assertEqual(record["excluded_streams"], {"gh-merge": 120})
+        self.assertNotIn("gh-merge", {c["family"] for c in self.cases(f, bank)})
+
+    def test_small_streams_merge_per_cell_and_question_type(self):
+        rows = stream_rows("big", "reasoning", "new", "noul", 150)
+        rows += stream_rows("s1", "reasoning", "new", "noul", 30)
+        rows += stream_rows("s2", "reasoning", "new", "noul", 30)
+        rows += stream_rows("s3", "reasoning", "new", "noul", 50)
+        rows += stream_rows("tiny-a", "language", "new", "choice", 20)
+        rows += stream_rows("tiny-b", "language", "new", "noul", 20)
+        f = self.fixture("merge", rows, current_items=400, stream_max=0.4, min_family_items=100)
+        bank, record = f.prepare(subset_size=800)
+        self.assertIsNone(record["fallback"])
+        cases = self.cases(f, bank)
+        families = Counter(c["family"] for c in cases)
+        merged = "current-reasoning-new-noul-small"
+        self.assertEqual(families["big"], 150)
+        self.assertEqual(families[merged], 110)
+        for gone in ("s1", "s2", "s3", "tiny-a", "tiny-b"):
+            self.assertNotIn(gone, families)
+        self.assertEqual(
+            {c["current_stream"] for c in cases if c["family"] == merged}, {"s1", "s2", "s3"}
+        )
+        self.assertEqual(record["merged_families"][merged]["streams"], ["s1", "s2", "s3"])
+        self.assertEqual(record["merged_families"][merged]["items"], 110)
+        self.assertFalse(record["merged_families"][merged]["dropped"])
+        for name in ("current-language-new-choice-small", "current-language-new-noul-small"):
+            self.assertTrue(record["merged_families"][name]["dropped"])
+        self.assertEqual(record["current_items"], 260)
+        # The cell whose streams stayed too small is not taken from Current: the bank fills it.
+        self.assertEqual(record["replaced_cells"], ["reasoning/new"])
+        language_new = {
+            c["family"] for c in cases if (c["category"], c["block"]) == ("language", "new")
+        }
+        self.assertTrue(language_new)
+        self.assertTrue(all(name.startswith("language-new-") for name in language_new))
+        base_metrics.baselines(cases)
+        # The round's items carry the merged family, so a resumed round grades the same families.
+        drawn = soup_current._read_jsonl(f.state / "rounds" / ROUND / "current-items.jsonl")
+        self.assertEqual(Counter(c["family"] for c in drawn)[merged], 110)
+
+    def test_under_all_current_a_cell_too_small_falls_back_to_the_bank(self):
+        rows = [r for r in cell_items("2026-11-02", 120) if r["family"] != "cell-arts-known"]
+        rows += stream_rows("cell-arts-known", "arts", "known", "noul", 20)
+        f = self.fixture("allcells", rows, current_items=300, min_items=40, min_family_items=25)
+        bank, record = f.prepare()
+        self.assertIsNone(record["fallback"])
+        cases = self.cases(f, bank)
+        self.assertEqual(len(cases), 400)
+        arts_known = {
+            c["family"] for c in cases if (c["category"], c["block"]) == ("arts", "known")
+        }
+        self.assertTrue(arts_known)
+        self.assertFalse(arts_known & set(CELL_STREAMS))
+        self.assertTrue(record["merged_families"]["current-arts-known-noul-small"]["dropped"])
+        self.assertNotIn("arts/known", record["replaced_cells"])
+        self.assertEqual(len(record["replaced_cells"]), 9)
+        base_metrics.baselines(cases)
+
+    def blend_fixture(self, name):
+        rows = []
+        for stream in ("gh-close", "gh-merge", "gh-label"):
+            rows += stream_rows(stream, "reasoning", "new", "noul", 120)
+        rows += stream_rows("gh-type", "language", "new", "choice", 120)
+        rows += stream_rows("wiki-revert", "language", "new", "noul", 120)
+        return self.fixture(
+            name, rows, current_items=1000, current_share=0.25, min_family_items=100
+        )
+
+    def test_blend_keeps_every_bank_family_and_caps_the_current_share(self):
+        f = self.blend_fixture("blend")
+        bank, record = f.prepare(subset_size=800)
+        self.assertIsNone(record["fallback"])
+        cases = self.cases(f, bank)
+        self.assertEqual(len(cases), 800)
+        families = Counter(c["family"] for c in cases)
+        self.assertLessEqual(set(c["family"] for c in f.bank), set(families))  # every bank family
+        current = [c for c in cases if "-2026" in c["id"]]
+        self.assertEqual(len(current), 200)
+        self.assertEqual(record["current_items"], len(current))
+        self.assertEqual(record["bank_items"], 800 - len(current))
+        self.assertEqual(record["replaced_cells"], [])
+        self.assertEqual(record["added_cells"], ["reasoning/new"])
+        # Each stream can give at most 80 items (0.4 x the 200-item Current budget), below 100:
+        # the three reasoning yes/no streams merge (240 available, 200 drawn); the language
+        # streams, one choice and one yes/no, stay below 100 apiece and are left out.
+        self.assertEqual(families["current-reasoning-new-noul-small"], 200)
+        merged = record["merged_families"]["current-reasoning-new-noul-small"]
+        self.assertEqual(merged["available"], 240)
+        self.assertTrue(record["merged_families"]["current-language-new-choice-small"]["dropped"])
+        base_metrics.baselines(cases)
+
+    def test_blend_without_merging_adds_streams_next_to_the_bank(self):
+        f = Fixture(self.root / "blend-plain", current_share=0.15, min_family_items=1)
+        bank, record = f.prepare(subset_size=800)
+        cases = self.cases(f, bank)
+        families = Counter(c["family"] for c in cases)
+        self.assertEqual(sum(families[s] for s in STREAMS), 120)
+        self.assertEqual(record["added_cells"], ["language/new", "reasoning/new"])
+        reasoning_new = {
+            c["family"] for c in cases if (c["category"], c["block"]) == ("reasoning", "new")
+        }
+        self.assertTrue({"gh-close", "gh-merge", "reasoning-new-noul"} <= reasoning_new)
+
+    def test_the_record_counts_items_per_cell_and_flags_thin_cells(self):
+        f = self.blend_fixture("noise")
+        bank, record = f.prepare(subset_size=800)
+        cases = self.cases(f, bank)
+        per_cell = Counter(f"{c['category']}/{c['block']}" for c in cases)
+        self.assertEqual({k: v["items"] for k, v in record["cells"].items()}, dict(per_cell))
+        self.assertEqual(record["cells"]["reasoning/new"]["current_items"], 200)
+        thin = {k for k, n in per_cell.items() if n < 100}
+        self.assertEqual(set(record["thin_cells"]), thin)
+        self.assertNotIn("reasoning/new", record["thin_cells"])
+
+    def test_a_quality_round_that_cannot_fill_falls_back_and_says_why(self):
+        rows = stream_rows("a", "reasoning", "new", "noul", 30)
+        rows += stream_rows("b", "language", "new", "noul", 30)
+        rows += stream_rows("c", "tools", "new", "noul", 30)
+        f = self.fixture("thin", rows, current_items=90, min_items=40, min_family_items=100)
+        _, record = f.prepare()
+        self.assertIsNotNone(record["fallback"])
+        self.assertEqual(record["current_items"], 0)
+        self.assertEqual(len(f.subset()), 400)
+
+
+# A Current bank shaped like a real gated export: (stream, category, block, type, available).
+REAL_BANK = [
+    *(
+        (f"wiki-revert-{name}", "language", "known", "noul", n)
+        for name, n in zip(
+            "abcdefghi", (580, 640, 700, 760, 820, 880, 940, 1000, 1066), strict=True
+        )
+    ),
+    ("afd", "reasoning", "known", "noul", 511),
+    ("stackexchange-closed-tools", "tools", "known", "noul", 148),
+    ("stackexchange-closed-reasoning", "reasoning", "known", "noul", 146),
+    ("stackexchange-closed-language", "language", "new", "noul", 54),
+    ("stackexchange-closed-retrieval", "retrieval", "known", "noul", 30),
+    ("stackexchange-closed-arts", "arts", "known", "noul", 20),
+    ("stackexchange-accepted-reasoning", "reasoning", "known", "choice", 31),
+    ("stackexchange-accepted-tools", "tools", "known", "choice", 22),
+    ("stackexchange-accepted-language", "language", "known", "choice", 21),
+    ("stackexchange-accepted-retrieval", "retrieval", "known", "choice", 15),
+    ("stackexchange-accepted-arts", "arts", "known", "choice", 13),
+]
+
+
+def big_bank():
+    """A fixed round bank large enough for 3,000-item subsets (30 families of 120)."""
+    labels = {
+        "choice": ["a", "b"] * 60,
+        "noul": ["false", "true"] * 60,
+        "score": ["0", "1", "3", "4"] * 30,
+    }
+    from tests.test_base_metrics import exam
+
+    return [row for kind in labels for row in exam(kind, labels[kind], prefix="bank")]
+
+
+class FamilyFirstTest(unittest.TestCase):
+    """Families and their floors are chosen before the budget is spread, so a large stream in a
+    cell of its own is not cut below the minimum by many large streams elsewhere."""
+
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        rows = []
+        for stream, category, block, kind, n in REAL_BANK:
+            rows += stream_rows(stream, category, block, kind, n)
+        self.f = Fixture(
+            self.root / "real",
+            days=(),
+            current_items=1000,
+            min_items=300,
+            current_share=0.33,
+            min_family_items=100,
+        )
+        export(self.f.current, "2026-11-02", rows)
+        self.f.bank = big_bank()
+
+    def test_the_draw_covers_afd_and_the_closed_streams(self):
+        bank, record = self.f.prepare(subset_size=3000)
+        self.assertIsNone(record["fallback"])
+        by_id = {c["id"]: c for c in bank}
+        cases = [by_id[i] for i in self.f.subset()]
+        self.assertEqual(len(cases), 3000)
+        current = Counter(
+            c["family"] for c in cases if c["id"] in {r for r in by_id if "-2026" in r}
+        )
+        cell = {stream: (category, block) for stream, category, block, _, _ in REAL_BANK}
+        self.assertGreaterEqual(current["afd"], 100)
+        self.assertGreaterEqual(current["stackexchange-closed-tools"], 100)
+        self.assertGreaterEqual(current["stackexchange-closed-reasoning"], 100)
+        self.assertEqual(cell["afd"], ("reasoning", "known"))
+        self.assertTrue(all(n >= 100 for n in current.values()), current)
+        self.assertTrue(any(f.startswith("wiki-revert-") for f in current))
+        self.assertGreaterEqual(sum(current.values()), 980)
+        self.assertLessEqual(sum(current.values()), 990)
+        self.assertEqual(record["current_items"], sum(current.values()))
+        self.assertEqual(
+            record["added_cells"], ["language/known", "reasoning/known", "tools/known"]
+        )
+        families = record["current_families"]
+        self.assertTrue(families["afd"]["kept"])
+        self.assertFalse(families["current-language-new-noul-small"]["kept"])
+        self.assertEqual({f for f, v in families.items() if v["kept"]}, set(current))
+        base_metrics.baselines(cases)
+
+    def test_the_draw_is_deterministic(self):
+        self.f.prepare(subset_size=3000)
+        first = self.f.subset()
+        other = Fixture(
+            self.root / "again",
+            days=(),
+            **{k: v for k, v in self.f.exam.items() if k not in ("source", "current_bank")},
+        )
+        other.current = self.f.current
+        other.exam["current_bank"] = str(self.f.current)
+        other.bank = self.f.bank
+        other.prepare(subset_size=3000)
+        self.assertEqual(other.subset(), first)
+
+    def test_without_room_for_every_cell_the_largest_cells_come_first(self):
+        settings = {
+            "current_items": 250,
+            "min_items": 100,
+            "min_streams": 1,
+            "stream_max": 1.0,
+            "min_family_items": 100,
+        }
+        rows = []
+        for stream, category, block, kind, n in REAL_BANK:
+            rows += stream_rows(stream, category, block, kind, n)
+        chosen, _, merges, families = soup_current._family_draw(rows, b"k", settings)
+        kept = sorted(f for f, v in families.items() if v["kept"])
+        # Room for two families, one per cell. Every wiki stream is capped at the 250-item budget,
+        # so the tie between them goes to the secret, not to the name.
+        self.assertEqual(len(kept), 2)
+        self.assertIn("afd", kept)
+        self.assertTrue(kept[1].startswith("wiki-revert-"))
+        tied = set()
+        for secret in (b"one", b"two", b"three", b"four", b"five", b"six"):
+            _, _, _, families = soup_current._family_draw(rows, secret, settings)
+            tied |= {f for f, v in families.items() if v["kept"] and f != "afd"}
+        self.assertGreater(len(tied), 1)
+        self.assertEqual(len(chosen), 250)
+
+    def kept_wiki(self, round_id):
+        _, record = self.f.prepare(round_id, subset_size=3000)
+        self.assertIsNone(record["fallback"])
+        families = record["current_families"]
+        return {f for f, v in families.items() if v["kept"] and f.startswith("wiki-revert-")}
+
+    def test_rounds_rotate_which_tied_families_are_kept(self):
+        first = self.kept_wiki("d3-mini-2026-11-03")
+        other = self.kept_wiki("d3-mini-2026-11-04")
+        self.assertEqual(len(first), 6)
+        self.assertEqual(len(other), 6)
+        self.assertNotEqual(first, other)
+        self.assertNotEqual(first, {f"wiki-revert-{c}" for c in "abcdef"})
+
+    def test_the_same_round_draws_the_same_families(self):
+        first = self.kept_wiki("d3-mini-2026-11-03")
+        ids = self.f.subset("d3-mini-2026-11-03")
+        again = Fixture(
+            self.root / "again",
+            days=(),
+            **{k: v for k, v in self.f.exam.items() if k not in ("source", "current_bank")},
+        )
+        again.exam["current_bank"] = str(self.f.current)
+        again.bank = self.f.bank
+        _, record = again.prepare("d3-mini-2026-11-03", subset_size=3000)
+        kept = {f for f, v in record["current_families"].items() if v["kept"]}
+        self.assertLessEqual(first, kept)
+        self.assertEqual(again.subset("d3-mini-2026-11-03"), ids)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -549,6 +549,10 @@ after the check are missed, and so are removals that do not restore an earlier v
 - **Stack Exchange text** is the current text. Questions edited after the first hour are
   dropped, but answers are shown as they are now. Closed questions get no score item, because
   closing changes how people vote.
+- **Score streams.** Stack Exchange score items show close to zero skill for every body
+  measured. The exam quality defaults exclude `stackexchange-score-*`.
+- **Small streams.** Many streams resolve only tens of items in a freshness window. Graded as
+  their own families they make the base score noisy; `min_family_items` merges or drops them.
 - **Deletion discussions** are read as archived. Edits after the close are against convention
   but possible.
 
@@ -559,14 +563,32 @@ To grade a soup pool on Zils Current items:
 1. Run the nightly job on the validator host (or anywhere that writes to a directory the
    validator can read). Pass the validator's exam draws and round bank as references, so the
    overlap check runs against them.
-2. Set the pool's `exam` setting to `{"source": "current", "current_bank": "<the --bank
-   directory>"}`.
+2. Set the pool's `exam` setting. A blend keeps the fixed round bank in every cell of the base
+   score and adds Current families next to it:
+
+   ```json
+   {
+     "source": "current",
+     "current_bank": "<the --bank directory>",
+     "current_share": 0.33,
+     "min_family_items": 100,
+     "exclude_streams": ["stackexchange-score-*"]
+   }
+   ```
+
+   `{"source": "current", "current_bank": "<the --bank directory>"}` alone lets Current streams
+   replace the bank's families in the cells they cover, with no minimum family size.
 
 Each round then reads every dated folder whose manifest checks out, and draws its Current part
 under the freshness, reuse, breadth and token rules in
 [model pools](model-pools.md#round-items-from-zils-current). The round falls back to the fixed
 round bank when those rules cannot be met. The four streams cover two cells of the base score:
 `reasoning`/`new` and `language`/`new`. The fixed bank still fills the other cells.
+
+Each cell of the base score has a fixed weight, and the families in a cell count equally, so a
+stream with a few dozen items can decide a round. `min_family_items` merges small streams of a
+cell into one family and leaves out the rest, and `exclude_streams` drops streams with no
+signal. See [quality settings](model-pools.md#quality-settings).
 
 Every resolved item is public and can be rebuilt by anyone, labels included. A body committed
 after an item resolved could have been trained on it. A short `max_age_days` narrows that
