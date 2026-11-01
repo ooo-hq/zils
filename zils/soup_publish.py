@@ -50,6 +50,9 @@ def public_record(private_round):
         "subset_sha256": _sha256(sorted(r["subset_ids"])),
         "predictions_sha256": _sha256(r["predictions"]),
     }
+    if "temperature" in r:  # the released soup's fitted temperature, which serving applies
+        record["scoring"] = r["scoring"]
+        record["temperature"] = r["temperature"]
     if "decision" in r:  # the rounds whose items the seats and crown were scored on
         record["decision"] = {k: r["decision"][k] for k in ("rounds", "items")}
     return record

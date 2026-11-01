@@ -457,7 +457,12 @@ Validators run one soup round per day for each open soup pool:
    on (solo, greedy, contribution, crown) is on the items of this round and the
    validator's last two finished rounds pooled together (`decision_rounds`, default
    3), because one subset's noise is larger than the 0.3-point margin. A new body is
-   graded on the earlier rounds' items too.
+   graded on the earlier rounds' items too. Under the default `calibrated_brier`
+   scoring, each body and soup first gets one temperature fitted on a private 20%
+   of those items; the rest are scored on Brier skill (ranked probability score
+   for Score questions) at that temperature. Confidence counts, but sharpening or
+   softening a body's probabilities without changing its answers earns nothing
+   ([model pools: scoring](model-pools.md#soup-pools)).
 6. **Greedy soup:** starting from the best single body, add the next best only if
    the soup's score rises by at least **0.3** points; stop at **5** members.
 7. **Contribution:** each member's leave-one-out effect on the soup's score.
@@ -517,8 +522,9 @@ exact blocks are in each validator's configuration and its published report.
 ### What validators publish
 
 Each round's public record lists the soup members (hotkey, body hash, rate), their
-rounded contributions, per-category soup scores, the rounds whose items the
-decisions were scored on and their item count, and sha256 hashes of the item
+rounded contributions, per-category soup scores, the pool's scoring and the
+soup's fitted temperature, the rounds whose items the decisions were scored on
+and their item count, and sha256 hashes of the item
 subset, the per-item predictions and the soup weights, so a round can be audited
 against the validator's private record. Exam items, labels and per-family scores
 are never published. The round bank is private, so outside re-grading of a round

@@ -74,8 +74,42 @@ def grade(key, cases, cache, runner):
     return [have[i] for i in ids]
 
 
-def score(cases, rows):
-    return base_metrics.score(cases, rows)["score"]
+# How a soup pool scores bodies and soups (the pool's ``scoring`` setting):
+# - "argmax": the base exam as before (top answers; expected value for Score questions);
+# - "calibrated_argmax": one temperature per graded model fitted on a held-apart part of the
+#   round's items, then top answers on the rest (Score questions: RPS, a proper score);
+# - "calibrated_brier": the same fit, then Brier skill (RPS for Score questions) on the rest.
+SCORINGS = ("argmax", "calibrated_argmax", "calibrated_brier")
+DEFAULT_SCORING = "calibrated_brier"
+CALIBRATION_SHARE = 0.2  # of each family (and yes/no label), held apart to fit the temperature
+
+
+def evaluate(cases, rows, *, scoring=DEFAULT_SCORING, secret=None):
+    """{"score", "temperature", "metrics", "calibration_ids"} for one graded model.
+
+    Calibrated scorings split ``cases`` with ``base_metrics.calibration_split(cases, secret,
+    CALIBRATION_SHARE)``, fit the model's temperature on the held-apart cases and score the others
+    at that temperature against the whole exam's baselines. The rows are the model's raw
+    temperature-1 probabilities, as graded and cached."""
+    if scoring not in SCORINGS:
+        raise ValueError("soup scoring must be one of " + ", ".join(SCORINGS))
+    if scoring == "argmax":
+        metrics = base_metrics.score(cases, rows)
+        return {"score": metrics["score"], "temperature": 1.0, "metrics": metrics,
+                "calibration_ids": []}  # fmt: skip
+    if not isinstance(secret, bytes) or not secret:
+        raise ValueError("calibrated soup scoring needs the round's private split secret")
+    held, scored = base_metrics.calibration_split(cases, secret, CALIBRATION_SHARE)
+    temperature = base_metrics.fit_temperature([c for c in cases if c["id"] in held], rows)
+    tempered = base_metrics.temper(cases, rows, temperature)
+    metric = "brier" if scoring == "calibrated_brier" else "argmax_rps"
+    metrics = base_metrics.score(cases, tempered, metric=metric, only=scored)
+    return {"score": metrics["score"], "temperature": temperature, "metrics": metrics,
+            "calibration_ids": sorted(held)}  # fmt: skip
+
+
+def score(cases, rows, *, scoring="argmax", secret=None):
+    return evaluate(cases, rows, scoring=scoring, secret=secret)["score"]
 
 
 def screen_score(cases, rows):
