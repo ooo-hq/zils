@@ -67,3 +67,104 @@ def verify_public(public, private_round):
     )
     if bad:
         raise ValueError(f"public record mismatch: {', '.join(bad)}")
+
+
+FEED_ROUNDS = 60  # newest public round records served per pool by GET /soup
+
+
+def _read_object(path):
+    """The JSON object at `path`, or None when it is missing, unreadable or not an object."""
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _feed_rounds(state, limit):
+    """The newest `limit` readable public.json records under `state`/rounds, newest first, each with
+    the UTC time its public.json was written as ``finished_at``. Only public.json is read."""
+    from datetime import UTC, datetime
+
+    found = []
+    try:
+        folders = list((state / "rounds").iterdir())
+    except OSError:
+        return []
+    for folder in folders:
+        path = folder / "public.json"
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        found.append((mtime, folder.name, path))
+    rounds = []
+    for mtime, _, path in sorted(found, key=lambda f: (f[0], f[1]), reverse=True):
+        record = _read_object(path)
+        if record is None or not isinstance(record.get("round_id"), str):
+            continue
+        finished = datetime.fromtimestamp(mtime, UTC).isoformat()
+        rounds.append({**record, "finished_at": finished})
+        if len(rounds) == limit:
+            break
+    return rounds
+
+
+def _round_bodies(record):
+    out = []
+    for member in record.get("members") or []:
+        if isinstance(member, dict) and isinstance(member.get("body_sha256"), str):
+            out.append(member["body_sha256"])
+    crown = record.get("crown")
+    if isinstance(crown, dict) and isinstance(crown.get("body_sha256"), str):
+        out.append(crown["body_sha256"])
+    return out
+
+
+def feed(config, directory, *, limit=FEED_ROUNDS):
+    """The payload of the validator's ``GET /soup``: each enabled soup pool's newest public round
+    records and, for every body those rounds seat or crown, its house name and repo when known.
+
+    House names and repos come from the pool's house registry (by pinned hash, or by the hash this
+    validator resolved an unpinned entry to) and repos otherwise from the intake record in
+    ``pool.json``; anything else is null. A missing or malformed file is skipped, never raised.
+    """
+    from pathlib import Path
+
+    from . import model_pools, soup_pool
+
+    pools = {}
+    if "base_pools" not in config:
+        return {"kind": "soup", "pools": pools}
+    normalized = model_pools.validate(config["base_pools"])["pools"]
+    for pool, entry in normalized.items():
+        if not (entry["enabled"] and model_pools.is_soup(entry)):
+            continue
+        state = soup_pool.state_dir(Path(directory), pool)
+        rounds = _feed_rounds(state, limit)
+        pool_state = _read_object(state / "pool.json") or {}
+        known = pool_state.get("bodies") if isinstance(pool_state.get("bodies"), dict) else {}
+        resolved = pool_state.get("house") if isinstance(pool_state.get("house"), dict) else {}
+        try:
+            house = soup_pool.house(entry, directory)
+        except (OSError, ValueError):
+            house = []
+        by_sha = {}
+        for item in house:
+            sha = item["body_sha256"] or resolved.get(f"{item['repo']}@{item['revision']}")
+            if isinstance(sha, str):
+                by_sha.setdefault(sha, item)
+        bodies = {}
+        for record in rounds:
+            for sha in _round_bodies(record):
+                if sha in bodies:
+                    continue
+                item = by_sha.get(sha)
+                info = known.get(sha) if isinstance(known.get(sha), dict) else {}
+                name = item["name"] if item else None
+                if name is None and info.get("house") and isinstance(info.get("name"), str):
+                    name = info["name"]
+                repo = item["repo"] if item else info.get("repo")
+                bodies[sha] = {"house": name, "repo": repo if isinstance(repo, str) else None}
+        pools[pool] = {"bodies": bodies, "rounds": rounds}
+    return {"kind": "soup", "pools": pools}

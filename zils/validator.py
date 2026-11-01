@@ -917,6 +917,11 @@ def validator(config, directory, args):
             self.reply(code, signed(payload, key))
 
         def do_GET(self):
+            if self.path == "/soup":  # public soup round records; files only, so no lock
+                from . import soup_publish
+
+                self.send(200, soup_publish.feed(config, directory))
+                return
             with condition:
                 if self.path == "/round":
                     self.send(200, current or {"kind": "idle"})
