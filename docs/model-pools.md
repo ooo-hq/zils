@@ -121,7 +121,7 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
 `others_max` (0.3), `house_mix_max` (0.05), `max_decision_age_days` (3),
 `decision_rounds` (3, from 1 to 7), `known_public` (empty),
 `max_known_public_bytes_per_round` (16 GiB), `max_known_public_seconds_per_round`
-(7,200) and `sketch_seed`:
+(7,200), `scoring` (`calibrated_brier`) and `sketch_seed`:
 
 ```json
 "d3-mini": {
@@ -165,6 +165,27 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
   remade, so a round whose seed differs from the pool's recorded seed stops with
   an error until the original seed is restored.
 
+- `scoring` sets how every graded body and soup is scored. Under the default,
+  `calibrated_brier`, the validator holds apart 20% of each family's round items
+  (and of each yes/no label), chosen by a private secret that changes every
+  round. On those items it fits one temperature per body or soup: the value on a
+  grid from 0.1 to 10 that minimises the mean Brier loss. It then scores the
+  other 80% at that temperature: Brier skill for yes/no and Choice questions,
+  ranked probability score skill for Score questions, each against the best
+  constant answer for the family, in the same cells and weights as before.
+  Confidence therefore counts, while a pure change of confidence (sharper or
+  softer probabilities with the same answers) is undone by the fit and earns
+  nothing. `calibrated_argmax` uses the same fit but scores top answers (ranked
+  probability score for Score questions). `argmax` is the earlier exam: top
+  answers, and the distance of the expected value from the label for Score
+  questions, with no fit; that distance moves when probabilities are only
+  sharpened, so it rewards confidence changes that change no answer.
+  The released soup's `model.json` carries the temperature fitted for it on the
+  round's held-apart items, and the public round record publishes it. Bodies are
+  always graded as temperature-1 candidates built by the validator; a
+  temperature in a body's own files is never read. Greedy margins, the
+  contribution floor and the crown bar stay at 0.3 points on whichever scale the
+  pool uses.
 - `decision_rounds` sets how many rounds' items each seat and crown decision is
   scored on. A body's measured gain moves by about 0.4 to 0.6 points from one
   3,000-item subset to the next, more than the 0.3-point margin, so a single
@@ -373,7 +394,8 @@ unused for three rounds are deleted.
 When the round bank has too few unretired items, the round is skipped and logged.
 Only the public record (members, rates, rounded contributions, category scores and
 hashes of the subset, predictions and soup, all on the round's own subset, plus
-the pooled round ids and item count) enters the published report.
+the pooled round ids and item count, the pool's scoring and the soup's fitted
+temperature) enters the published report.
 
 ### Submitting a body
 
