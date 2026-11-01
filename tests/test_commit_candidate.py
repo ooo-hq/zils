@@ -277,11 +277,18 @@ class CommitCandidateTest(unittest.TestCase):
         code, out = self.run_miner("doctor", wallet=False)
         self.assertEqual(code, 1)
         self.assertIn("no wallet configured; run zils-miner setup", out)
+        wordmark = miner.LOGO.splitlines()[
+            1
+        ].strip()  # setup opens with the Zils wordmark; doctor doesn't
+        self.assertNotIn(wordmark, out)
 
         repo = "alice/d3"
         answers = iter([self.wallet["path"], "", "", str(self.candidate), "", repo])
         with patch("builtins.input", lambda prompt: next(answers)):
             code, out = self.run_miner("setup", wallet=False)
+        self.assertIn(wordmark, out)
+        self.assertLess(out.index(wordmark), out.index("Zils miner setup"))
+        self.assertNotIn("\033[", out)  # no colour when output is not a terminal
         self.assertIn("wallets there: fixture", out)
         self.assertIn("hotkeys: miner", out)
         self.assertIn("✗ hugging face\n  not uploaded yet", out)

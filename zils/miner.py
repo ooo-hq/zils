@@ -52,6 +52,37 @@ def paint(code, text):
     return f"\033[{code}m{text}\033[0m"
 
 
+# The Zils wordmark, as the customer CLI shows it (zils-sdk fit_guide.LOGO); kept in sync by hand.
+LOGO = """\
+                   ▄███  ▄▄▄▄▄
+  ████████████▀ ▄█ ▀██▀  ▀████
+  ███    ████▀ ██         ████
+  ▀▀    ████ ▄██  ▄███▄   ████   ▄▄██████▄
+  ▄▄▄▄▄███▀ ▄██▄▄  ████   ████  ███▀ ▀▀██
+  ███████▀ ██▀▀▀▀  ████   ████  ████▄▄
+    ████ ▄██       ████   ████   ▀██████▄
+   ████ ▄█▀    ██  ████   ████  ▄▄  ▀█████
+  ███▀ ███    ▄██  ████   ████  ██▄   ████
+  ██▀ ███████████  ▀████  █████ ████████▀"""
+SPECTRUM = (
+    "38;5;209",
+    "38;5;216",
+    "38;5;211",
+    "38;5;183",
+    "38;5;111",
+)  # orange to periwinkle, 256-colour
+
+
+def wordmark():
+    """The wordmark in brand purple over a spectrum rule, as `zils` and `zils fit` open."""
+    print()
+    for line in LOGO.splitlines():
+        print(paint("38;5;105", line))
+    rule = 42
+    print("  " + "".join(paint(SPECTRUM[i * len(SPECTRUM) // rule], "─") for i in range(rule)))
+    print(flush=True)
+
+
 def config_path():
     return Path(os.environ.get("ZILS_MINER_CONFIG", "~/.zils/miner.json")).expanduser()
 
@@ -732,6 +763,7 @@ def ask(question, default=None):
 def setup(args):
     """Ask for each saved value (Enter keeps the shown one), save them, then run doctor."""
     config = load_config()
+    wordmark()
     print(
         f"{paint('1;32', '◆ Zils miner setup')}  {paint('2', 'Enter keeps the value in brackets')}"
     )
