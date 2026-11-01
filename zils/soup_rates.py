@@ -71,15 +71,22 @@ def rate(
     skipped, so a trainer's own earlier upload never makes it a scout, whatever its repo.
 
     A house mix is paid as a scout: a body whose change from the base is almost entirely a
-    non-negative mix of the house bodies' changes (`house_sketches`), with a residual share of its
-    squared norm under `house_mix_max`. A light fine-tune leaves more than that and is a trainer's.
+    non-negative mix of the house bodies' changes (`house_sketches`) and the listed public models'
+    (the `known` entries with no hotkey), with a residual share of its squared norm under
+    `house_mix_max`. A light fine-tune leaves more than that and is a trainer's.
     So is a body whose `base_residual` (``soup_copies.base_residual`` against the house bodies, the
     soup and the release, measured when it was admitted) is under `house_mix_max`: a near-pure
     re-weighting of the soup or release. A real fine-tune of either keeps the trainer rate."""
     house_hashes = _house_hashes(house)
     if body_sha256 in house_hashes:
         return HOUSE_RATE
-    if house_sketches and 1 - explained_share(sketch, list(house_sketches)) < house_mix_max - 1e-9:
+    public = [
+        e["sketch"]
+        for e in known
+        if e.get("hotkey") is None and e.get("body_sha256") not in house_hashes
+    ]
+    mixable = [*house_sketches, *public]
+    if mixable and 1 - explained_share(sketch, mixable) < house_mix_max - 1e-9:
         return SCOUT_RATE
     if base_residual is not None and base_residual < house_mix_max - 1e-9:
         return SCOUT_RATE

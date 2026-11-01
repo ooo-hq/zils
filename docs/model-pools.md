@@ -429,13 +429,34 @@ scored at most 0.10 on this measure, and copies and re-weighted mixes scored
 0.36 or more. A behavioural twin of a pool body is also refused.
 
 A house mix is paid at the scout rate (0.25): a body whose change from the base,
-fitted on the house bodies' changes, leaves a residual share under
-`house_mix_max` (default 0.05, settable from 0 to 0.5). So is a body that, when
-admitted, was almost all allowed bases: fitted on the house bodies, the current
-soup and the release, it left a residual under the same bar (a near-pure
-re-weighting of the soup). The dry run's two real fine-tunes of a house body
+fitted on the house bodies' and listed public models' changes, leaves a residual
+share under `house_mix_max` (default 0.05, settable from 0 to 0.5). So is a body
+that, when admitted, was almost all allowed bases: fitted on the house bodies,
+the listed models, the current soup and the release, it left a residual under
+the same bar (a near-pure re-weighting of the soup, or a mix of the soup with a
+listed model). The dry run's two real fine-tunes of a house body
 left about 0.07 to 0.12, so a real fine-tune of the soup or release keeps the
 trainer rate.
+
+Fine-tunes at launch. A seat is credited by leave-one-out: the soup with the
+body minus the soup without it. A fine-tune that takes its base's place in the
+soup is therefore credited with the base's contribution as well as its own. Until
+seats are credited relative to a body's base, the validator applies a stopgap. It
+splits each body's change over the allowed bases (non-negative fit on the
+sketches). If at least half of it is allowed bases, the body is a fine-tune, and
+its bases are those explaining at least 10%:
+
+- If one of its bases is a listed public model, it is paid at the scout rate.
+  Listed models are not graded, so a fine-tune can't be compared with them.
+- Otherwise its seat is paid only if its solo score beats the best of its bases
+  by at least 0.3 points on the round's items. A house body's base score is its
+  solo score; the soup's is the score of the soup the body was admitted against
+  (never a soup built from the body itself); the release's is the chassis
+  score. A base that can't be scored this round leaves the seat unpaid.
+
+A gated body keeps its place in the soup; its seat share burns, like a house
+ingredient's. The round's private record lists gated bodies under `gated` with
+the reason.
 
 A known public model's re-upload is also paid at the scout rate: a body whose
 weight-change sketch has cosine at least 0.9 to the sketch of a model on the
@@ -449,9 +470,9 @@ model is allowed, since that is the scout's work. The first commitment that is a
 near re-upload (cosine at least 0.9) of a listed model wins: a later near
 re-upload of the same model by another hotkey is refused as explained by that
 earlier body while it stays in the pool, and a near-exact copy of any earlier
-body is refused as before. Listed models are not part of the house-mix residual
-(`base_residual`), so a mix of several listed models is paid by the cosine rule
-alone. House bodies stay at 0.
+body is refused as before. Listed models are part of the house-mix fit, so a mix of
+several listed models (whose cosine to each one is under 0.9) is still a scout's,
+not a trainer's. House bodies stay at 0.
 
 The validator resolves each list entry once: it downloads the pinned revision
 through the same fetch path as a body (within twice the pool's body size cap,

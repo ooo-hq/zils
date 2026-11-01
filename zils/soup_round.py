@@ -34,6 +34,13 @@ SCOUT_RATE = 0.25  # open models released after launch, submitted by a scout
 TRAINER_RATE = 1.0
 RATES = (HOUSE_RATE, SCOUT_RATE, TRAINER_RATE)
 _EPS = 1e-9  # score differences are floats; 3.3 - 3.0 must clear a 0.3 margin
+# Launch stopgap (ZIL-117) until seats are credited relative to a body's base: a fine-tune whose
+# change is mostly (EXPLAINED_MIN) allowed bases is seated only if its solo score beats its best
+# base (one explaining at least BASE_MIN) by BASE_MARGIN; if one of those bases is a listed public
+# model, which is not graded, it is paid as a scout instead.
+BASE_MARGIN = MARGIN
+EXPLAINED_MIN = 0.5
+BASE_MIN = 0.1
 
 
 def greedy(solo, evaluate, *, margin=MARGIN, max_members=MAX_MEMBERS, order_key):
@@ -79,6 +86,51 @@ def leave_one_out(members, evaluate, *, baseline=None):
             raise ValueError("a one-member soup needs the chassis baseline score")
         return {members[0]: full - baseline}
     return {m: full - evaluate(tuple(b for b in members if b != m)) for m in members}
+
+
+def fine_tune_gates(shares, solo, *, house, soup_scores, release_score, margin=None):
+    """The launch stopgap for fine-tunes (ZIL-117). Returns ({body: reason} for bodies that get no
+    paid seat, {bodies paid at most the scout rate}).
+
+    ``shares`` is {body: {base: share}} from ``soup_copies.base_shares`` with bases named
+    ``house:<sha256>``, ``public:<repo>``, ``soup`` (the soup the body was admitted against, whose
+    score on this round's items is ``soup_scores[body]``) and ``release``. Leave-one-out
+    credits a fine-tune that took its base's place with the base's whole contribution, so until the
+    credit is relative to the base, a body mostly made of allowed bases must beat the best of them:
+    a house body's solo score, its soup's score or ``release_score`` (a base that cannot be scored
+    gates the body). If a listed public model is one of its bases, the body is paid as a scout
+    instead, since listed models are not graded. House bodies and bodies mostly their own are not
+    affected.
+    """
+    margin = BASE_MARGIN if margin is None else margin
+    gated, scouts = {}, set()
+    for body, split in shares.items():
+        if body in house or sum(split.values()) < EXPLAINED_MIN - _EPS:
+            continue
+        split = {name: share for name, share in split.items() if share >= BASE_MIN - _EPS}
+        if any(name.startswith("public:") for name in split):
+            scouts.add(body)
+            continue
+        if body not in solo:
+            continue
+        bars = {}
+        for name in split:
+            if name == "soup":
+                bars[name] = soup_scores.get(body)
+            elif name == "release":
+                bars[name] = release_score
+            elif name.startswith("house:"):
+                bars[name] = solo.get(name.removeprefix("house:"))
+        if not bars:
+            continue
+        missing = sorted(name for name, bar in bars.items() if bar is None)
+        if missing:
+            gated[body] = f"its base {missing[0]} could not be scored this round"
+            continue
+        best = max(bars, key=bars.get)
+        if solo[body] - bars[best] < margin - _EPS:
+            gated[body] = f"does not beat its base {best} by {margin} points"
+    return gated, scouts
 
 
 def _check_rate(rate):
@@ -412,8 +464,8 @@ def _intake(
     round. Only a claim that downloaded weight bytes counts toward the claims cap, so dead repos
     cannot starve intake; a claim whose download fails in ``TRANSPORT_STRIKES`` separate rounds
     (``round_id``) is retired as failed (the claim, never the hash). ``residual(sha256, folder, *,
-    soup)``, when given, measures an admitted body's share beyond the house bodies, soup and
-    release (``soup_copies.base_residual``), kept as ``base_residual`` for its rate. ``progress`` holds the outcome of each claim so far and is passed to ``save`` after every
+    soup)``, when given, measures an admitted body's share beyond the house bodies, listed models,
+    soup and release (``soup_copies.base_residual``), kept as ``base_residual`` for its rate. ``progress`` holds the outcome of each claim so far and is passed to ``save`` after every
     claim, so a round cut off by its deadline resumes without downloading a claim twice.
     """
     from . import bodies
@@ -546,6 +598,8 @@ def _intake(
                 }  # fmt: skip
                 if measured is not None:
                     new[sha]["base_residual"] = measured
+                if soup:  # the soup a fine-tune of the soup started from (fine-tune stopgap)
+                    new[sha]["admitted_soup"] = list(soup)
         finally:
             shutil.rmtree(partial, ignore_errors=True)
         progress["done"].append(uid)
@@ -730,6 +784,7 @@ def run(
     copies=None,
     twins=None,
     rates=None,
+    bases=None,
     bank_source=None,
     deadline=None,
     clock=time.time,
@@ -750,6 +805,9 @@ def run(
     earlier body by another hotkey (``earlier`` = {sha256: folder}) or of the current soup (``soup`` =
     its member hashes) before screening; ``twins(rows, other_rows) -> bool`` rejects a behavioural
     twin of a pool body on the screen items (default ``soup_copies.is_twin``);
+    ``bases(sha256, *, soup) -> {base: share}`` splits a body's change over the allowed bases for
+    the fine-tune stopgap (``fine_tune_gates``; default ``soup_copies.base_shares``, none without
+    ``base``);
     ``rates(sha256, info, house) -> 0.0 | 0.25 | 1.0`` sets each pool body's pay rate (default
     ``soup_rates.rate`` against the house sketches, the body's ``base_residual`` and the sketches
     of the pool's ``known_public`` list (``_known_public``), whose re-uploads are scouts'; without
@@ -874,9 +932,10 @@ def run(
             return sum(members) / len(members) if members else None
 
         def residual(sha, body, *, soup):
+            # Listed public models count as bases, so a mix of the soup and one is not a trainer's.
             return soup_copies.base_residual(
                 sketches(sha, body),
-                house=[sketch(s) for s in sorted(house)],
+                house=[*(sketch(s) for s in sorted(house)), *(e["sketch"] for e in public)],
                 soup=soup_sketch(soup),
                 release=release(),
             )
@@ -922,6 +981,20 @@ def run(
                     house_mix_max=config.get("house_mix_max", soup_rates.HOUSE_MIX_MAX),
                     base_residual=info.get("base_residual"),
                 )
+
+        if bases is None:
+
+            def bases(sha, *, soup):
+                named = {f"house:{h}": sketch(h) for h in sorted(house)}
+                named.update(
+                    (f"public:{e['repo']}", e["sketch"])
+                    for e in public
+                    if e.get("body_sha256") not in house
+                )
+                if soup:
+                    named["soup"] = soup_sketch(soup)
+                named["release"] = release()
+                return soup_copies.base_shares(sketch(sha), named)
 
     else:
         residual = None
@@ -1154,14 +1227,55 @@ def run(
             )
             bar_missing = True
     members, trace = greedy(solo, evaluate, order_key=order)
-    baseline = None
-    if len(members) == 1:
+
+    def chassis_score():
         key = f"chassis-{soup.soup_hash(chassis)[:32]}-{scope}"
-        rows = graded(key, decision_cases, chassis_body)
-        baseline = exam_score(decision_cases, rows)
+        return exam_score(decision_cases, graded(key, decision_cases, chassis_body))
+
+    baseline = chassis_score() if len(members) == 1 else None
     contributions = leave_one_out(members, evaluate, baseline=baseline)
     rate_map = {sha: rates(sha, known[sha], house) for sha in pool}
-    seats = seat_weights(members, contributions, rate_map)
+    gated = {}
+    if bases is not None:
+        # A body's soup base is the soup it was admitted against, never one built from it.
+        started = {
+            sha: tuple(sorted(s for s in known[sha].get("admitted_soup", ()) if s in known))
+            for sha in pool
+            if sha not in house
+        }
+        shares = {sha: bases(sha, soup=started[sha]) for sha in started}
+
+        def based(name):
+            return {
+                sha
+                for sha, split in shares.items()
+                if sum(split.values()) >= EXPLAINED_MIN - _EPS
+                and split.get(name, 0.0) >= BASE_MIN - _EPS
+            }
+
+        def soup_score_of(members):
+            if members == current:
+                return soup_bar
+            if any(m not in solo for m in members):
+                return None  # a member not graded this round (pruned or failed): cannot compare
+            try:
+                return evaluate(members)
+            except Exception as error:
+                if _round_fault(error):
+                    raise
+                return None
+
+        gated, scouts = fine_tune_gates(
+            shares,
+            solo,
+            house=house,
+            soup_scores={sha: soup_score_of(started[sha]) for sha in based("soup")},
+            release_score=chassis_score() if based("release") else None,
+        )
+        for sha in scouts:
+            rate_map[sha] = min(rate_map[sha], SCOUT_RATE)
+    # A gated member keeps its place in the soup; its seat burns, like a house ingredient's.
+    seats = seat_weights(members, contributions, {**rate_map, **dict.fromkeys(gated, HOUSE_RATE)})
     crown = (
         {}
         if bar_missing
@@ -1226,6 +1340,7 @@ def run(
         "solo": solo,
         "screen": screen,
         "rates": rate_map,
+        "gated": gated,
         "trace": trace,
         "soup_bar": soup_bar,
         "rejected": rejected,
