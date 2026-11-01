@@ -269,8 +269,12 @@ class CommitCandidateTest(unittest.TestCase):
         self.assertEqual(out.count("✓ "), 1)
         self.assertIn("✗ d3 runtime\n  " + f"{self.d3}: OSError: d3 requires X", out)
         self.d3.unlink()
-        code, out = self.run_miner("doctor")
-        self.assertIn("✗ d3 runtime\n  no d3 training runtime", out)
+        with (
+            patch("zils.miner.platform.system", return_value="Linux"),
+            patch("zils.miner.platform.machine", return_value="x86_64"),
+        ):  # on a GPU host; tests/test_miner_setup_ui.py covers machines that can't mine
+            code, out = self.run_miner("doctor")
+        self.assertIn("✗ d3 runtime\n  no d3 training runtime yet", out)
         self.assertIn("install.sh | sh", out)
 
     def test_setup_saves_answers_that_later_commands_default_to(self):
