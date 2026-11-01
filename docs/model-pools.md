@@ -438,6 +438,26 @@ listed model). The dry run's two real fine-tunes of a house body
 left about 0.07 to 0.12, so a real fine-tune of the soup or release keeps the
 trainer rate.
 
+Fine-tunes at launch. A seat is credited by leave-one-out: the soup with the
+body minus the soup without it. A fine-tune that takes its base's place in the
+soup is therefore credited with the base's contribution as well as its own. Until
+seats are credited relative to a body's base, the validator applies a stopgap. It
+splits each body's change over the allowed bases (non-negative fit on the
+sketches). If at least half of it is allowed bases, the body is a fine-tune, and
+its bases are those explaining at least 10%:
+
+- If one of its bases is a listed public model, it is paid at the scout rate.
+  Listed models are not graded, so a fine-tune can't be compared with them.
+- Otherwise its seat is paid only if its solo score beats the best of its bases
+  by at least 0.3 points on the round's items. A house body's base score is its
+  solo score; the soup's is the score of the soup the body was admitted against
+  (never a soup built from the body itself); the release's is the chassis
+  score. A base that can't be scored this round leaves the seat unpaid.
+
+A gated body keeps its place in the soup; its seat share burns, like a house
+ingredient's. The round's private record lists gated bodies under `gated` with
+the reason.
+
 A known public model's re-upload is also paid at the scout rate: a body whose
 weight-change sketch has cosine at least 0.9 to the sketch of a model on the
 pool's `known_public` list. The check looks at the body as committed, so an

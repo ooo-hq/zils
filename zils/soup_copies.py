@@ -164,6 +164,12 @@ def _nnls_fallback(matrix, target):
     return x
 
 
+def _nnls(matrix, target):
+    if _scipy_nnls is not None:
+        return _scipy_nnls(matrix, target)[0]
+    return _nnls_fallback(matrix, target)
+
+
 def explained_share(target, others) -> float:
     """‖P t‖² / ‖t‖², where P t is the non-negative least-squares fit of `target` on the columns `others`."""
     target = np.asarray(target, dtype=np.float64)
@@ -171,12 +177,25 @@ def explained_share(target, others) -> float:
     if norm == 0 or len(others) == 0:
         return 0.0
     matrix = np.column_stack([np.asarray(o, dtype=np.float64) for o in others])
-    if _scipy_nnls is not None:
-        weights = _scipy_nnls(matrix, target)[0]
-    else:
-        weights = _nnls_fallback(matrix, target)
-    fit = matrix @ weights
+    fit = matrix @ _nnls(matrix, target)
     return min(1.0, max(0.0, float(fit @ fit) / norm))
+
+
+def base_shares(target, bases) -> dict:
+    """{name: share} of a body's change explained by each of `bases` ({name: sketch}): the
+    non-negative fit's weight times that base's overlap with the target, over ‖t‖². At the fit's
+    optimum the shares add up to ``explained_share``; what is left is the body's own change."""
+    target = np.asarray(target, dtype=np.float64)
+    names = list(bases)
+    norm = float(target @ target)
+    if not names or norm == 0:
+        return {name: 0.0 for name in names}
+    columns = [np.asarray(bases[name], dtype=np.float64) for name in names]
+    weights = _nnls(np.column_stack(columns), target)
+    return {
+        name: max(0.0, float(w * (column @ target)) / norm)
+        for name, w, column in zip(names, weights, columns)
+    }
 
 
 def _allowed(house, soup, release):

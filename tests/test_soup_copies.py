@@ -141,6 +141,39 @@ class GeometryTest(unittest.TestCase):
         self.assertAlmostEqual(share, soup_copies.explained_share(target, list(matrix.T)), places=6)
 
 
+class BaseSharesTest(unittest.TestCase):
+    """How much of a body's change each allowed base explains (the non-negative fit, split by base)."""
+
+    def setUp(self):
+        self.e = np.eye(6, 64)
+
+    def test_orthogonal_bases_split_by_squared_weight(self):
+        shares = soup_copies.base_shares(
+            2 * self.e[0] + self.e[1], {"a": self.e[0], "b": self.e[1]}
+        )
+        self.assertAlmostEqual(shares["a"], 0.8)
+        self.assertAlmostEqual(shares["b"], 0.2)
+
+    def test_shares_add_up_to_the_explained_share(self):
+        rng = np.random.default_rng(7)
+        bases = {name: rng.standard_normal(64) for name in "abc"}
+        target = 0.7 * bases["a"] + 0.2 * bases["c"] + 0.3 * rng.standard_normal(64)
+        shares = soup_copies.base_shares(target, bases)
+        self.assertTrue(all(value >= 0 for value in shares.values()))
+        self.assertAlmostEqual(
+            sum(shares.values()), soup_copies.explained_share(target, list(bases.values()))
+        )
+        self.assertEqual(max(shares, key=shares.get), "a")
+
+    def test_own_change_is_left_out(self):
+        shares = soup_copies.base_shares(3 * self.e[0] + self.e[5], {"a": self.e[0]})
+        self.assertAlmostEqual(shares["a"], 0.9)
+
+    def test_no_bases_or_no_change(self):
+        self.assertEqual(soup_copies.base_shares(self.e[0], {}), {})
+        self.assertEqual(soup_copies.base_shares(0 * self.e[0], {"a": self.e[0]}), {"a": 0.0})
+
+
 class IsCopyTest(unittest.TestCase):
     def setUp(self):
         rng = np.random.default_rng(2)
