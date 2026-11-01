@@ -476,6 +476,11 @@ earning at once.
 - **Seats:** members whose contribution is at least **0.3** points share the 80%
   equally, each share multiplied by its rate. If no member clears the floor, the
   seat share burns.
+- **Fine-tunes (launch rule):** if at least half of your body's change comes from
+  house ingredients, the soup or the release, your seat is paid only if your
+  body alone beats the best of those bases by at least **0.3** points. If part
+  of it (10% or more) comes from a listed public model, it is paid at the scout
+  rate. Train enough to beat what you started from.
 - **Crown:** the round's best single body that is not a house ingredient takes the
   20%, multiplied by its rate, only if it beats every house ingredient alone and
   the current soup by at least **0.3** points on the pooled items; otherwise the

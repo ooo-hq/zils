@@ -188,6 +188,58 @@ class CrownWeightTest(unittest.TestCase):
         self.assertEqual(soup_round.crown_weight({"h": 5.0}, {"h": 0.0}, {"h"}, order_key=str), {})
 
 
+class FineTuneGateTest(unittest.TestCase):
+    """Launch stopgap (ZIL-117): a fine-tune is seated only if it beats the base it came from, and a
+    fine-tune of a listed public model is paid as a scout until base-relative credit exists."""
+
+    def gate(self, shares, solo, **kwargs):
+        options = {"house": {"h"}, "soup_scores": {"b": 50.0}, "release_score": 40.0, **kwargs}
+        return soup_round.fine_tune_gates(shares, solo, **options)
+
+    def test_a_fine_tune_must_beat_its_house_base_by_the_margin(self):
+        shares = {"b": {"house:h": 0.9}}
+        gated, scouts = self.gate(shares, {"b": 60.2, "h": 60.0})
+        self.assertIn("house:h", gated["b"])
+        self.assertEqual(scouts, set())
+        gated, _ = self.gate(shares, {"b": 60.3, "h": 60.0})
+        self.assertEqual(gated, {})
+
+    def test_a_soup_retune_must_beat_the_current_soup(self):
+        shares = {"b": {"soup": 0.85, "house:h": 0.05}}
+        self.assertIn("soup", self.gate(shares, {"b": 50.1, "h": 10.0})[0]["b"])
+        self.assertEqual(self.gate(shares, {"b": 50.3, "h": 10.0})[0], {})
+
+    def test_the_bar_is_the_best_of_its_bases(self):
+        shares = {"b": {"soup": 0.4, "house:h": 0.4}}
+        self.assertIn("b", self.gate(shares, {"b": 60.1, "h": 60.0})[0])
+        self.assertEqual(self.gate(shares, {"b": 60.4, "h": 60.0})[0], {})
+
+    def test_a_release_tune_must_beat_the_release(self):
+        shares = {"b": {"release": 0.9}}
+        self.assertIn("release", self.gate(shares, {"b": 40.2})[0]["b"])
+        self.assertEqual(self.gate(shares, {"b": 40.3})[0], {})
+
+    def test_a_body_mostly_its_own_is_not_gated(self):
+        self.assertEqual(self.gate({"b": {"house:h": 0.45}}, {"b": 1.0, "h": 60.0}), ({}, set()))
+
+    def test_a_fine_tune_of_listed_models_is_a_scout(self):
+        gated, scouts = self.gate({"b": {"public:open/x": 0.6, "house:h": 0.3}}, {"b": 99.0})
+        self.assertEqual((gated, scouts), ({}, {"b"}))
+        # A listed model that is only part of the base still makes the body a scout's.
+        mixed = {"b": {"house:h": 0.56, "public:open/x": 0.32}}
+        self.assertEqual(self.gate(mixed, {"b": 99.0, "h": 10.0}), ({}, {"b"}))
+        # A listed model under BASE_MIN of a mostly-house body does not.
+        slight = {"b": {"house:h": 0.85, "public:open/x": 0.05}}
+        self.assertEqual(self.gate(slight, {"b": 99.0, "h": 10.0}), ({}, set()))
+
+    def test_a_base_that_cannot_be_scored_gates_the_body(self):
+        self.assertIn("b", self.gate({"b": {"soup": 0.9}}, {"b": 99.0}, soup_scores={})[0])
+        self.assertIn("b", self.gate({"b": {"house:h": 0.9}}, {"b": 99.0})[0])  # h not graded
+
+    def test_house_bodies_are_never_gated(self):
+        self.assertEqual(self.gate({"h": {"house:h": 1.0}}, {"h": 60.0}), ({}, set()))
+
+
 class SoupWeightsTest(unittest.TestCase):
     ROSTER = {"3": {"hotkey": "hk-a"}, "7": {"hotkey": "hk-b"}, "9": {"hotkey": "hk-c"}}
 
