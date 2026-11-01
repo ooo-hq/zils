@@ -225,6 +225,7 @@ class WiringTest(unittest.TestCase):
                 afd_first_days=0,
                 afc_first_days=0,
                 arxiv_first_days=0,
+                gerrit_first_days=0,
                 se_sites=["stackoverflow"],
             )
         self.assertEqual(result["collected"]["stackexchange"]["status"], "rate-limited")

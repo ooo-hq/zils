@@ -26,6 +26,7 @@ of it yet (see [Extension points](#extension-points)).
 | `wikipedia-revert` (English), `wikipedia-revert-<lang>` | Will this article edit be reverted? | yes/no | `mw-reverted` tag | MediaWiki change tags after a waiting period | language | known |
 | `wikidata-revert` | Will this Wikidata item edit be reverted? | yes/no | `mw-reverted` tag | as for Wikipedia | retrieval | known |
 | `wikipedia-afd` | How did this deletion discussion close? | choice | `keep` / `delete` / `merge-redirect` / `no-consensus` | the closing result of an English Wikipedia Articles for deletion discussion | reasoning | known |
+| `gerrit-merge` | Will this proposed code change be merged? | yes/no | merged or abandoned | the change's status on a public Gerrit server (OpenDev, Wikimedia, AOSP) | tools | new |
 | `wikipedia-afc` | Will the reviewer accept this Articles for Creation draft? | yes/no | accepted or declined/rejected | the AFCH review: a decline or rejection edit, or the move that publishes the draft | reasoning | new |
 | `arxiv-category-<group>` | Which category was this new paper announced under? | choice (4 categories) | `A`..`D` | the paper's primary category in the arXiv API | the group | known |
 | `stackexchange-closed-<group>` | Will this new question be closed? | yes/no | closed or still open | `closed_date` a week or more after asking | the group | known |
@@ -80,12 +81,12 @@ Coverage of the ten exam cells (category by block) and the three question types:
 | language | Wikipedia reverts (known), SE language closed (known) | SE language accepted (new) | SE language score (new) |
 | reasoning | SE reasoning closed (known), AfC review (new) | AfD result (known), arXiv math (known), SE reasoning accepted (new) | SE reasoning score (new) |
 | retrieval | Wikidata reverts (known), SE retrieval closed (known) | arXiv physics and other (known), SE retrieval accepted (new) | SE retrieval score (new) |
-| tools | SE tools closed (known) | arXiv cs (known), SE tools accepted (new) | SE tools score (new) |
+| tools | SE tools closed (known), Gerrit merge (new) | arXiv cs (known), SE tools accepted (new) | SE tools score (new) |
 | arts | SE arts closed (known) | SE arts accepted (new) | SE arts score (new) |
 
 With the default blocks, every category has both blocks. `known` has yes/no items plus the AfD
-and arXiv choices, and `new` has the AfC yes/no and the Stack Exchange choice and score items. GitHub streams are local-only
-and are not counted here.
+and arXiv choices, and `new` has the AfC and Gerrit yes/no and the Stack Exchange choice and
+score items. GitHub streams are local-only and have no cross-check, so they are not counted here.
 
 The state text holds only what was known when the event happened:
 
@@ -109,6 +110,10 @@ The state text holds only what was known when the event happened:
   (the submission box, earlier declines and reviewer comments, infoboxes), HTML comments, files
   and categories are removed; citations become `[ref: title, publication]`; links become their
   text; editor names are scrubbed.
+- **Gerrit changes:** the server, the project, the branch and the commit message of patch set 1
+  (the change as first proposed). Trailers (`Signed-off-by`, `Change-Id`, `Reviewed-by`, bug
+  links, ...), cherry-pick notes and the owner's and uploaders' names are removed. Later patch
+  sets, votes and review comments are never shown.
 - **arXiv papers:** the title and the abstract. Authors, comments, journal references, dates and
   the categories themselves are never shown.
 - **Stack Exchange questions:** the site, the title, the tags and the body. Accepted-answer items
@@ -124,6 +129,7 @@ python -m zils.current collect --source wikimedia --minutes 5 --since 2026-10-28
 python -m zils.current collect --source afd --day 2026-10-04 --day 2026-10-05
 python -m zils.current collect --source afc --day 2026-10-29
 python -m zils.current collect --source arxiv --day 2026-10-27
+python -m zils.current collect --source gerrit --day 2026-10-27
 python -m zils.current collect --source stackexchange [--site math] [--pages 2]
 python -m zils.current collect --source recentchanges [--samples 48] [--min-days 2] [--max-days 14]
 python -m zils.current resolve --negatives-per-positive 3
@@ -174,6 +180,14 @@ python -m zils.current grade --items BANK/2026-10-30/items.jsonl --model CHECKPO
   that are at least three days old, when their papers have been announced. The API sometimes
   answers with no entries; a page is retried, and a day with no papers at all is an error, so
   the nightly cursor stays on it. Withdrawn papers are dropped.
+- `--source gerrit` reads the changes merged or abandoned on the named UTC days on OpenDev
+  (OpenStack), Wikimedia and AOSP (Android), 200 a request, one second apart (about ten
+  requests a day in all). Read days that are at least three days old, so most abandoned changes
+  that will be restored have been. Dropped: changes owned by bots or service accounts; titles
+  that say not to merge (WIP, DNM, "do not merge", `[RFC]`, ...); abandons whose reason names a
+  replacement (superseded, duplicate, squashed, in favour of, ...); changes decided within an
+  hour of upload; and more than five changes per owner, outcome and day (bulk clean-ups). On
+  27 Oct 2026 that kept 458 of 1,319 changes (54 abandoned), 108 balanced items.
 - `--source stackexchange` reads questions asked at least 8 days ago, up to `--pages` pages of
   100 per site, from a per-site cursor in `DIR/stackexchange-cursor.json` (a first run starts 22
   days back). Without a key the API allows 300 requests a day per IP address. A run of every
@@ -263,6 +277,9 @@ the copy and the reports):
    - Articles for Creation: a decline or rejection needs the review edit's own text to hold a
      declined or rejected submission box (`{{AfC submission|d|...}}` or `|r|`); an acceptance
      needs the article to exist now, or a deletion log entry after the review;
+   - Gerrit: the change's detail read again; merged if it has a submit time, abandoned if its
+     history holds an "Abandoned" message and no submit. A change restored and merged after we
+     labelled it disagrees;
    - arXiv: the paper's OAI-PMH record (`oaipmh.arxiv.org`, `metadataPrefix=arXiv`), whose
      first category is the primary. One request per item, 3 seconds apart: a 20-item sample of
      the four arXiv streams takes about four minutes.
@@ -338,8 +355,9 @@ rebuild-only datasets, are compared on that hash alone, and the manifest counts 
 `--publishable` exports only streams whose licence allows republishing: the Wikipedia,
 Articles for deletion, Articles for Creation and Stack Exchange streams (CC BY-SA 4.0), and
 Wikidata and arXiv (CC0), and every
-case must carry its attribution link in `source.url`. The GitHub streams are local-only. Asking for one in a publishable export, or
-any GitHub case reaching one, is an error and writes nothing. The manifest records the mode.
+case must carry its attribution link in `source.url`. The GitHub and Gerrit streams are
+local-only (local exports, which soup exams read, include them). Asking for one in a publishable
+export, or any such case reaching one, is an error and writes nothing. The manifest records the mode.
 GitHub text needs legal review before any commercial use or release (see
 [Sources, licences and terms](#sources-licences-and-terms)).
 
@@ -366,12 +384,14 @@ GitHub text needs legal review before any commercial use or release (see
    `--afc-first-days`, default 28; `0` skips the step).
 5. **arXiv:** every submission day after the `arxiv` cursor that is at least three days old (a
    first run reads `--arxiv-first-days`, default 14; `0` skips the step).
-6. **Stack Exchange:** `--se-pages` pages per site (default 2; `0` skips the step) for
+6. **Gerrit:** every outcome day after the `gerrit` cursor that is at least three days old (a
+   first run reads `--gerrit-first-days`, default 14; `0` skips the step).
+7. **Stack Exchange:** `--se-pages` pages per site (default 2; `0` skips the step) for
    `--se-site` sites (default all), from the per-site cursors. A rate limit ends the step without
    an error.
-7. **Resolve:** one resolution pass over the waiting room, keeping `--negatives-per-positive`
+8. **Resolve:** one resolution pass over the waiting room, keeping `--negatives-per-positive`
    (default 3) not-reverted edits per reverted one.
-8. **Export and gates:** writes every finished UTC day after the `export` cursor, leaving out
+9. **Export and gates:** writes every finished UTC day after the `export` cursor, leaving out
    paused streams, then runs the proof and cross-check gates on it, oldest first. A first
    run writes yesterday. The overlap and leak options are the same as for `export`.
 
@@ -548,6 +568,12 @@ post's `content_license`). Attribution means linking the post, whose page names 
 `backoff`; the tool sends its User-Agent, waits 2 seconds between requests and stops at the
 quota floor. Stack Exchange has also published restrictions on using its content to train
 commercial AI models; read the current terms before any training use.
+
+**Gerrit** servers (OpenDev, Wikimedia, AOSP) publish their review data openly, and the
+projects' code is under open licences (Apache 2.0 for OpenStack and AOSP, GPL and others at
+Wikimedia). Whether those licences cover commit messages is not settled, so `gerrit-merge` is
+local-only, like the GitHub streams, until it is checked. The tool sends its User-Agent, makes
+one request at a time a second apart, and backs off on HTTP 429 and 503.
 
 **arXiv** metadata (titles, abstracts, categories) is CC0 1.0, by arXiv's
 [licence page](https://info.arxiv.org/help/license/index.html) and

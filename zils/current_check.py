@@ -22,7 +22,9 @@ Two gates run on a dated export, after it is written:
      review edit's own text to hold a declined or rejected submission box; an acceptance needs
      the article to exist now (or a deletion log entry after the review);
    - arXiv (API primary category): the paper's OAI-PMH record, whose first category is the
-     primary.
+     primary;
+   - Gerrit (the change's `status`): the change's detail read again, merged if it has a submit
+     time, abandoned if its history holds an "Abandoned" message and no submit.
 
    A stream whose agreement is under the threshold is removed from the export.
 
@@ -248,6 +250,20 @@ def check_afc(cases, http):
     return results
 
 
+def check_gerrit(cases, http):
+    """Read each change again: a submit time means merged, an Abandoned message abandoned."""
+    from .current_gerrit import Api, recheck
+
+    api, results = Api(http), []
+    for case in cases:
+        source = case["source"]
+        derived, evidence = recheck(api, source["host"], source["project"], source["number"])
+        results.append(
+            {"derived": derived, "agree": derived == case["label"], "evidence": evidence}
+        )
+    return results
+
+
 def check_arxiv(cases, http):
     """Compare each label's category with the first category of the paper's OAI-PMH record."""
     from .current_arxiv import Api, primary_from_oai
@@ -373,6 +389,9 @@ def crosscheck(cases, http, *, sample=SAMPLE, seed=0, threshold=THRESHOLD):
         elif stream == "wikipedia-afc":
             results = check_afc(chosen, http)
             method = "review edit text or article exists now"
+        elif stream == "gerrit-merge":
+            results = check_gerrit(chosen, http)
+            method = "change history (submitted, Abandoned)"
         elif stream.startswith("arxiv-"):
             results = check_arxiv(chosen, http)
             method = "OAI-PMH record categories"
@@ -463,6 +482,8 @@ def _label_source(stream):
         return "AFCH review edit summary or move log"
     if stream.startswith("arxiv-"):
         return "arXiv API primary category"
+    if stream == "gerrit-merge":
+        return "Gerrit change status"
     return "source API"
 
 
