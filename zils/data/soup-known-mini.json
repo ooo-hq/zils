@@ -1,0 +1,50 @@
+[
+  {
+    "name": "iota-decide-4b",
+    "repo": "macrocosm-os/iota-decide-4b",
+    "revision": "e4d7d7c438613d6e4e2647215a776a59628af486",
+    "body_sha256": null
+  },
+  {
+    "name": "iota-decide-4b-v0.3",
+    "repo": "macrocosm-os/iota-decide-4b-v0.3",
+    "revision": "1da87f01c949e2f8a65e5958ef7cc43ec18da999",
+    "body_sha256": null
+  },
+  {
+    "name": "iota-decide-4b-v0.4",
+    "repo": "macrocosm-os/iota-decide-4b-v0.4",
+    "revision": "7c82bc488b80d0ab45408c4c1a652483d485725c",
+    "body_sha256": null
+  },
+  {
+    "name": "Xevn-4B",
+    "repo": "quevirus/Xevn-4B",
+    "revision": "ba11f0c2d8100a1e8b7789a1174ddee7c24dcab0",
+    "body_sha256": null
+  },
+  {
+    "name": "h2o-lightning-4b",
+    "repo": "h2oai/h2o-lightning-4b",
+    "revision": "052bb7d48c71abcd769d91994792bbc664b7681e",
+    "body_sha256": null
+  },
+  {
+    "name": "philadelphia-decider-4b",
+    "repo": "PhillyLabs/philadelphia-decider-4b",
+    "revision": "538e70d4fb38a85cafd404ddf69f969e591036ee",
+    "body_sha256": null
+  },
+  {
+    "name": "philly-decider-v2",
+    "repo": "PhillyLabs/philly-decider-v2",
+    "revision": "36e5ddde2c59021d37ed5974aa7c9f16062050e0",
+    "body_sha256": null
+  },
+  {
+    "name": "torchcast-decision-4b-v1.2",
+    "repo": "torchcast-ai/torchcast-decision-4b",
+    "revision": "d54b248f2643df847979ca15638ee502ec79b788",
+    "body_sha256": null
+  }
+]

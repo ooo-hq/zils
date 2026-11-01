@@ -233,6 +233,45 @@ class LaunchDataTest(unittest.TestCase):
             chassis = next(h for h in house if h["repo"] == models.pins(model)["vendor"]["repo"])
             self.assertEqual(chassis["revision"], models.pins(model)["revision"])
 
+    def test_known_public_lists_per_pool(self):
+        """Public cousins re-uploaded unchanged earn the scout rate; house bodies stay unpaid."""
+        from zils import soup_rates
+
+        config = json.loads((DATA / "base-pools-launch.json").read_text())
+        checked = model_pools.validate(config)["pools"]
+        lite = {
+            "cribl-ai/cribl-decision-2-0.8B", "eljiwo/jiwo-0.8b",
+            "Maincode/Matilda-Decision-v1-Edge", "OmniJev/OneJev1.6-0.8B",
+            "OmniJev/OneJev1.5-0.8B", "OmniJev/OneJev-0.8B", "Mapika/decider-0.8b",
+            "ken-jo/QEV-0.8B", "run-saina/saina-helm-0.8b", "run-saina/saina-helm-2-0.8b",
+            "run-saina/saina-helm-3-0.8b", "jeff-legacy/Jeff-Qwen3.5-0.8B", "mstrasser/jeff-base",
+            "chaoliangUNSW/Jev-Style-0.8B-Decision-v3", "FluidInference/clef-vision-0.8b",
+        }  # fmt: skip
+        mini = {
+            "macrocosm-os/iota-decide-4b", "macrocosm-os/iota-decide-4b-v0.3",
+            "macrocosm-os/iota-decide-4b-v0.4", "quevirus/Xevn-4B", "h2oai/h2o-lightning-4b",
+            "PhillyLabs/philadelphia-decider-4b", "PhillyLabs/philly-decider-v2",
+            "torchcast-ai/torchcast-decision-4b",
+        }  # fmt: skip
+        expected = {
+            "d3-lite": ("soup-known-lite.json", lite),
+            "d3-mini": ("soup-known-mini.json", mini),
+        }
+        excluded = {"lambdasec/serin-0.8b", "startlux-models/StartLux-Decision-v1-0.8B"}
+        for pool, (name, repos) in expected.items():
+            with self.subTest(pool=pool):
+                self.assertEqual(checked[pool]["known_public"], f"zils/data/{name}")
+                listed = soup_rates.load_house(DATA / name)  # the house format and rules
+                self.assertEqual({e["repo"] for e in listed}, repos)
+                self.assertFalse(excluded & repos)
+                house = soup_rates.load_house(DATA / checked[pool]["house"].split("/")[-1])
+                pinned = {(h["repo"], h["revision"]) for h in house}
+                self.assertFalse(pinned & {(e["repo"], e["revision"]) for e in listed})
+                self.assertTrue(all(len(e["revision"]) == 40 for e in listed))
+        # Pools without a list resolve nothing.
+        self.assertNotIn("known_public", checked["d3-flash"])
+        self.assertNotIn("known_public", checked["d3"])
+
     def test_launch_template_follows_the_owner_split(self):
         config = json.loads((DATA / "base-pools-launch.json").read_text())
         checked = model_pools.validate(config)["pools"]
@@ -339,6 +378,11 @@ class FetchBodyTest(unittest.TestCase):
             soup_pool.fetch_body({"repo": "a/b", "revision": REV}, "/x", pool="d3")
             self.assertEqual(seen["budget"], bodies.max_bytes("d3"))
             self.assertEqual(seen["seconds"], bodies.download_seconds("d3"))
+            # A known-public resolution may name a larger cap (its repo may carry an untied
+            # lm_head); a miner's claim comes from the chain and never carries one.
+            known = {"repo": "a/b", "revision": REV, "max_bytes": 3 * bodies.max_bytes("d3-lite")}
+            soup_pool.fetch_body(known, "/x", pool="d3-lite")
+            self.assertEqual(seen["budget"], 3 * bodies.max_bytes("d3-lite"))
 
 
 class FitBankTest(unittest.TestCase):

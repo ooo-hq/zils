@@ -15,6 +15,8 @@ from . import base_round, core, models
 # Pool-entry keys that are not part of the base-tier payout track.
 NOT_TRACK = ("model", "enabled", "cooldown_seconds")
 SOUP_KEYS = {"type", "model", "enabled", "share", "house", "schedule"}
+SOUP_KNOWN = "known_public"  # optional: public models whose re-uploads earn the scout rate
+SOUP_KNOWN_BYTES = "max_known_public_bytes_per_round"  # optional; soup_round default otherwise
 SOUP_SECRET = "sketch_seed"  # optional, local to each validator, never echoed into a report
 SOUP_OPTIONAL = {
     "subset_size": 3000,
@@ -135,7 +137,10 @@ def validate_soup(entry):
     """A soup pool: daily soup rounds (``zils.soup_round.run``) pay seats and a crown, not kings.
 
     ``house`` is the house registry inline (a list, as ``soup_rates.load_house`` reads it) or a path
-    to it relative to the validator directory; ``schedule.deadline_utc`` is the daily commit deadline
+    to it relative to the validator directory; the optional ``known_public`` list (same format and
+    forms, empty by default) names public models that are not house ingredients, whose unchanged
+    or near re-uploads earn the scout rate (``soup_round._known_public``), resolved within
+    ``max_known_public_bytes_per_round``; ``schedule.deadline_utc`` is the daily commit deadline
     ("HH:MM", UTC). An optional ``sketch_seed`` (64 hex characters) fixes this validator's private
     copy-check sketch seed; it is checked here but left out of the result, which reports publish.
     Without it each validator generates and keeps its own (``soup_round.sketch_seed``).
@@ -144,9 +149,8 @@ def validate_soup(entry):
     """
     from . import soup_current, soup_rates
 
-    if set(entry) - SOUP_KEYS - set(SOUP_OPTIONAL) - {SOUP_SECRET, "exam"} or SOUP_KEYS - set(
-        entry
-    ):
+    allowed = SOUP_KEYS | set(SOUP_OPTIONAL) | {SOUP_KNOWN, SOUP_KNOWN_BYTES, SOUP_SECRET, "exam"}
+    if set(entry) - allowed or SOUP_KEYS - set(entry):
         raise ValueError("soup pool requires " + ", ".join(sorted(SOUP_KEYS)))
     share = entry["share"]
     if type(share) not in (int, float) or not math.isfinite(share) or not 0 <= share <= 1:
@@ -157,6 +161,12 @@ def validate_soup(entry):
             raise ValueError("soup house path must not be empty")
     else:
         soup_rates.validate_house(house)
+    known = entry.get(SOUP_KNOWN, [])
+    if isinstance(known, str):
+        if not known:
+            raise ValueError("soup known_public path must not be empty")
+    else:
+        soup_rates.validate_house(known)
     schedule = entry["schedule"]
     deadline = schedule.get("deadline_utc") if isinstance(schedule, dict) else None
     if (
@@ -191,6 +201,9 @@ def validate_soup(entry):
         raise ValueError("soup max_claims_per_round must be in [1, 100]")
     if sizes["max_download_bytes_per_round"] < 1:
         raise ValueError("soup max_download_bytes_per_round must be positive")
+    known_bytes = entry.get(SOUP_KNOWN_BYTES, 1)
+    if type(known_bytes) is not int or known_bytes < 1:
+        raise ValueError("soup max_known_public_bytes_per_round must be a positive integer")
     if not 0 <= sizes["failed_claim_backoff_rounds"] <= 30:
         raise ValueError("soup failed_claim_backoff_rounds must be in [0, 30]")
     if not 1 <= sizes["decision_rounds"] <= 7:
@@ -204,6 +217,9 @@ def validate_soup(entry):
         "enabled": entry["enabled"],
         "share": share,
         "house": house,
+        # Echoed only when set, so a pool without a list validates (and reports) as before.
+        **({SOUP_KNOWN: known} if SOUP_KNOWN in entry else {}),
+        **({SOUP_KNOWN_BYTES: known_bytes} if SOUP_KNOWN_BYTES in entry else {}),
         "schedule": {"deadline_utc": deadline},
         **sizes,
         "others_max": others,

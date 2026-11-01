@@ -62,6 +62,15 @@ def fraction(identity):
     return int.from_bytes(hashlib.sha256(identity.encode()).digest()[:8], "big") / 2**64
 
 
+def known(name, body_sha256=None):
+    """A known-public registry entry for the fixture repo open/<name>."""
+    return {"name": name, "repo": f"open/{name}", "revision": REVISION, "body_sha256": body_sha256}
+
+
+def r_public(r, round_id="d3-mini-2026-11-03"):
+    return json.loads((r.state / "rounds" / round_id / "public.json").read_text())
+
+
 class FakeRunner:
     """Answers a case correctly when its hash fraction is below min(1, 2 x the folder's strength for the
     case's category); otherwise answers confidently wrong. Soups average strengths, so they can win."""
@@ -113,7 +122,7 @@ class Round:
             self.repos[name] = repo
             self.sha[name] = bodies.body_hash(repo, list(bodies.load_index(self.chassis)))
         self.commits = {1: ("t1", 100), 2: ("t2", 101), 3: ("t1", 102), 4: ("weak", 103)}
-        self.fetched = []
+        self.fetched, self.caps = [], {}
         self.runner = FakeRunner()
         self.bank = exam_bank()
         self.state = self.root / "state"
@@ -133,6 +142,7 @@ class Round:
         }
 
     def fetch(self, claim, dest):
+        self.caps[claim["repo"]] = claim.get("max_bytes")
         name = claim["repo"].split("/")[1]
         self.fetched.append(self.sha[name])
         dest = Path(dest)
@@ -1256,6 +1266,167 @@ class SoupRunTest(unittest.TestCase):
         self.assertEqual({len(c["house_sketches"]) for c in calls}, {1})
         self.assertEqual(record["rates"][self.r.sha["t1"]], 1.0)
 
+    def known_round(self, name, **extra):
+        """A fresh round whose fixture also holds the `extra` bodies (public repos open/<key>)."""
+        for key, tensors in extra.items():
+            BODIES[key] = tensors
+            self.addCleanup(BODIES.pop, key, None)
+        return Round(self.tmp / name)
+
+    def test_a_re_upload_of_a_known_public_model_is_paid_at_the_scout_rate(self):
+        r = self.known_round("known", cousin=strengths(0.5, 0, 0.5, 0, 0))
+        r.commits[5] = ("cousin", 50)  # the public model, committed unchanged by a scout
+        config = r.config(known_public=[known("cousin")])
+        record = r.run(config=config)
+        sha = r.sha
+        self.assertIn(sha["cousin"], record["pool"])
+        self.assertEqual(record["rates"][sha["cousin"]], 0.25)
+        # Real work far from every known public model keeps the trainer rate; house stays unpaid.
+        self.assertEqual(record["rates"][sha["t1"]], 1.0)
+        self.assertEqual(record["rates"][sha["t2"]], 1.0)
+        self.assertEqual(record["rates"][sha["house"]], 0.0)
+        self.assertEqual(record["known_public_failures"], {})
+        # The public body is sketched, never kept, graded or listed as a pool body.
+        state = json.loads((r.state / "pool.json").read_text())
+        self.assertEqual(state["known_public"]["open/cousin@" + REVISION]["key"], sha["cousin"])
+        self.assertTrue((r.state / "sketches" / f"{sha['cousin']}.npz").exists())
+        self.assertNotIn("known_public_failures", json.dumps(r_public(r)))
+        # Fetched with twice the pool's body cap: public repos may carry an untied lm_head.
+        self.assertEqual(r.caps["open/cousin"], 2 * bodies.max_bytes("d3-mini"))
+        self.assertIsNone(r.caps["miner/cousin"])
+        # Resolved once: the next round neither downloads it again nor changes the rate.
+        fetched = r.fetched.count(sha["cousin"])
+        again = r.run(round_id="d3-mini-2026-11-04", config=config)
+        self.assertEqual(r.fetched.count(sha["cousin"]), fetched)
+        self.assertEqual(again["rates"][sha["cousin"]], 0.25)
+
+    def test_without_the_list_the_same_upload_is_a_trainer(self):
+        r = self.known_round("unlisted", cousin=strengths(0.5, 0, 0.5, 0, 0))
+        r.commits[5] = ("cousin", 50)
+        record = r.run()
+        self.assertEqual(record["rates"][r.sha["cousin"]], 1.0)
+        self.assertEqual(record["known_public_failures"], {})
+
+    def test_a_near_re_upload_is_a_scout_and_a_real_fine_tune_a_trainer(self):
+        bodies_ = {
+            "cousin": strengths(0.5, 0, 0.5, 0, 0),
+            "near": strengths(0.5, 0, 0.5, 0, 0.0625),  # cosine 0.99 to the public model
+            "far": strengths(0.5, -0.5, 0.5, -0.5, 0),  # cosine 0.71: a fine-tune that moved far
+        }
+        for name, rate in (("near", 0.25), ("far", 1.0)):
+            with self.subTest(body=name):
+                r = self.known_round(name, **bodies_)
+                r.commits[5] = (name, 50)
+                record = r.run(config=r.config(known_public=[known("cousin")]))
+                self.assertEqual(record["rates"][r.sha[name]], rate)
+                self.assertNotIn(r.sha["cousin"], record["pool"])
+
+    def test_a_text_only_public_checkpoint_is_sketched_on_its_language_layers(self):
+        r = self.known_round("text", cousin=strengths(0.5, 0, 0.5, 0, 0))
+        text = {
+            k.removeprefix("language_model."): v
+            for k, v in strengths(0.5, 0, 0.5, 0, 0).items()
+            if k.startswith("language_model.")
+        }
+        repo = test_bodies.checkpoint(r.root / "repos" / "textonly", text, owner=None)
+        fetch = r.fetch
+
+        def fetch_body(claim, dest):
+            if claim["repo"] == "open/textonly":
+                shutil.copytree(repo, dest)
+                return dest
+            return fetch(claim, dest)
+
+        r.commits[5] = ("cousin", 50)  # a miner grafts the chassis's other tensors around it
+        config = r.config(known_public=[known("textonly")])
+        record = r.run(config=config, fetch_body=fetch_body)
+        self.assertEqual(record["known_public_failures"], {})
+        self.assertEqual(record["rates"][r.sha["cousin"]], 0.25)
+        state = json.loads((r.state / "pool.json").read_text())
+        entry = state["known_public"]["open/textonly@" + REVISION]
+        self.assertIsNone(entry["body_sha256"])  # no full body hash for a text-only layout
+        # A pinned hash cannot be checked on such a layout, so a pinned text-only entry is skipped.
+        fresh = self.known_round("text-pinned")
+        pinned = fresh.config(known_public=[known("textonly", "1" * 64)])
+        record = fresh.run(config=pinned, fetch_body=fetch_body)
+        self.assertIn("textonly", record["known_public_failures"])
+
+    def test_a_bad_known_public_entry_is_skipped_and_never_fails_the_round(self):
+        r = self.known_round("bad", cousin=strengths(0.5, 0, 0.5, 0, 0))
+        fetch, calls = r.fetch, []
+
+        def fetch_body(claim, dest):
+            calls.append(claim["repo"])
+            if claim["repo"] == "open/broken":
+                raise ValueError("body tensor language_model.layers.0.mlp.weight is malformed")
+            if claim["repo"] == "open/flaky":
+                raise ConnectionResetError("reset by peer")
+            return fetch(claim, dest)
+
+        entries = [
+            known("broken"),
+            known("flaky"),
+            {**known("cousin"), "name": "wrong", "revision": "d" * 40, "body_sha256": "0" * 64},
+            known("cousin"),
+        ]
+        r.commits[5] = ("cousin", 50)
+        config = r.config(known_public=entries)
+        record = r.run(config=config, fetch_body=fetch_body)
+        self.assertEqual(set(record["known_public_failures"]), {"broken", "flaky", "wrong"})
+        self.assertIn("malformed", record["known_public_failures"]["broken"])
+        self.assertIn("pinned hash", record["known_public_failures"]["wrong"])
+        self.assertEqual(record["rates"][r.sha["cousin"]], 0.25)
+        self.assertTrue(record["members"])
+        self.assertNotIn("known_public_failures", json.dumps(r_public(r)))
+        # A broken or wrongly pinned entry is not fetched again; a transport error is retried.
+        calls.clear()
+        record = r.run(round_id="d3-mini-2026-11-04", config=config, fetch_body=fetch_body)
+        self.assertNotIn("open/broken", calls)
+        self.assertIn("open/flaky", calls)
+        self.assertEqual(calls.count("open/cousin"), 0)
+        self.assertEqual(set(record["known_public_failures"]), {"broken", "flaky", "wrong"})
+
+    def test_known_public_downloads_have_their_own_per_round_budget(self):
+        r = self.known_round(
+            "budget", cousin=strengths(0.5, 0, 0.5, 0, 0), other=strengths(0, 0.5, 0, 0.5, 0)
+        )
+        config = r.config(
+            known_public=[known("cousin"), known("other")], max_known_public_bytes_per_round=1
+        )
+        record = r.run(config=config)
+        self.assertEqual(set(record["known_public_failures"]), {"other"})
+        self.assertIn("budget", record["known_public_failures"]["other"])
+        self.assertNotIn(r.sha["other"], r.fetched)
+        # Miner intake is unaffected: its own download budget still admits the trainers.
+        self.assertIn(r.sha["t1"], record["pool"])
+        record = r.run(round_id="d3-mini-2026-11-04", config=config)
+        self.assertEqual(record["known_public_failures"], {})
+        self.assertIn(r.sha["other"], r.fetched)
+
+    def test_known_public_needs_the_default_rates_and_a_base(self):
+        r = self.known_round("hooks", cousin=strengths(0.5, 0, 0.5, 0, 0))
+        config = r.config(known_public=[known("cousin")])
+        r.run(config=config, rates=lambda sha, info, house: 1.0)
+        self.assertNotIn(r.sha["cousin"], r.fetched)
+
+    def test_rates_see_the_known_public_sketches(self):
+        from zils import soup_rates
+
+        r = self.known_round("spy", cousin=strengths(0.5, 0, 0.5, 0, 0))
+        calls, rate = [], soup_rates.rate
+
+        def spy(*args, **kwargs):
+            calls.append(kwargs)
+            return rate(*args, **kwargs)
+
+        with patch("zils.soup_rates.rate", side_effect=spy):
+            r.run(config=r.config(known_public=[known("cousin")]))
+        self.assertTrue(calls)
+        for call in calls:
+            (entry,) = call["known"]
+            self.assertEqual((entry["hotkey"], entry["repo"]), (None, "open/cousin"))
+            self.assertEqual(entry["body_sha256"], r.sha["cousin"])
+
     def test_rate_constants_match_soup_rates(self):
         from zils import soup_rates
 
@@ -1400,7 +1571,28 @@ class SoupPoolWeightsTest(unittest.TestCase):
             ],
             "soup-house.json",
         )
+        # Optional, and left out unless set, so a pool without a list validates as before.
+        self.assertNotIn("known_public", checked)
+        self.assertNotIn("max_known_public_bytes_per_round", checked)
+        listed = soup_entry(known_public=HOUSE, max_known_public_bytes_per_round=5)
+        listed = model_pools.validate(pools(listed))["pools"]["d3-mini"]
+        self.assertEqual(listed["known_public"], HOUSE)
+        self.assertEqual(listed["max_known_public_bytes_per_round"], 5)
+        self.assertEqual(
+            model_pools.validate(pools(soup_entry(known_public="known.json")))["pools"]["d3-mini"][
+                "known_public"
+            ],
+            "known.json",
+        )
         for bad in (
+            {"known_public": [{**HOUSE[0], "body_sha256": "x"}]},
+            {"known_public": [HOUSE[0], HOUSE[0]]},
+            {"known_public": [{**HOUSE[0], "license": "mit"}]},
+            {"known_public": ""},
+            {"known_public": 3},
+            {"known_public": None},
+            {"max_known_public_bytes_per_round": 0},
+            {"max_known_public_bytes_per_round": 1.5},
             {"type": "pot"},
             {"house": [{**HOUSE[0], "body_sha256": "x"}]},
             {"sketch_seed": "short"},
@@ -1735,6 +1927,25 @@ class SoupEpochTest(unittest.TestCase):
         self.config["base_pools"] = pools(soup_entry(house="house.json"))
         self.epoch()
         self.assertEqual(self.calls[0][1]["config"]["house"], HOUSE)
+
+    def test_known_public_file_is_read_relative_to_the_validator_directory(self):
+        (self.directory / "known.json").write_text(json.dumps(HOUSE))
+        self.config["base_pools"] = pools(soup_entry(known_public="known.json"))
+        self.epoch()
+        self.assertEqual(self.calls[0][1]["config"]["known_public"], HOUSE)
+
+    def test_known_public_defaults_to_an_empty_list(self):
+        self.epoch()
+        self.assertEqual(self.calls[0][1]["config"]["known_public"], [])
+
+    def test_a_bad_known_public_file_never_stops_the_round(self):
+        # The list only lowers pay for re-uploads; without it the round still runs, and says so.
+        (self.directory / "known.json").write_text(json.dumps([{"name": "x"}]))
+        self.config["base_pools"] = pools(soup_entry(known_public="known.json"))
+        summary = self.epoch()
+        self.assertEqual(self.calls[0][1]["config"]["known_public"], [])
+        self.assertIn("ValueError", summary["d3-mini"]["known_public_error"])
+        self.assertNotIn("error", summary["d3-mini"])
 
     def test_validator_skips_soup_pools_for_king_rounds_and_attaches_their_decision(self):
         from zils import validator
