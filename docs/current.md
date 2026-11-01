@@ -604,6 +604,10 @@ after the check are missed, and so are removals that do not restore an earlier v
   closing changes how people vote.
 - **Score streams.** Stack Exchange score items show close to zero skill for every body
   measured. The exam quality defaults exclude `stackexchange-score-*`.
+- **arXiv streams** are large (about 1,600 items a day) and their task, subject classification,
+  has millions of public labelled examples. Soup exams cap the four arXiv streams together at
+  15% of the Current part (`group_max` in [model pools](model-pools.md)), so a model cannot win
+  rounds by specialising in it.
 - **Small streams.** Many streams resolve only tens of items in a freshness window. Graded as
   their own families they make the base score noisy; `min_family_items` merges or drops them.
 - **Deletion discussions** are read as archived. Edits after the close are against convention
