@@ -382,12 +382,14 @@ part of a submission. A body is eligible when:
 
 A body must be the **full** Qwen3.5 model: the language weights under
 `language_model.` and the vision tower under `visual.` (an optional leading
-`model.` is fine). Text-only exports (`model.layers.*`, `model.embed_tokens.*`)
-can't be bodies, and neither can a merge of them. `zils merge` keeps the first
-model's layout, so start a merge from a full checkpoint such as the pool's
-release or its Qwen parent; a mix of listed public models pays the scout rate
-(see [Model pools](model-pools.md)). Check any folder first, with no wallet or
-repo needed:
+`model.` is fine). Many public fine-tunes, including most listed cousins, are
+text-only exports (`model.layers.*`, `model.embed_tokens.*`): to submit one,
+add the vision tower of the pool's Qwen parent, unchanged. Its language layers
+still match the listed model, so a re-upload pays the scout rate (see
+[Model pools](model-pools.md)). `zils merge` keeps the first model's layout, so a
+merge that starts from a full checkpoint (the pool's release or its Qwen parent)
+already has a vision tower; a mix of listed models also pays the scout rate.
+Check any folder first, with no wallet or repo needed:
 
 ```bash
 zils-miner commit-body --pool <pool> --path ./my-body --check

@@ -109,8 +109,10 @@ class MapNamesTest(unittest.TestCase):
                 bodies.map_names(keys, NAMES)
             message = str(caught.exception)
             self.assertIn("text-only checkpoint", message)
-            self.assertIn("vision tower", message)
             self.assertIn("language_model.", message)
+            # a listed cousin is re-uploaded with its Qwen parent's vision tower added (scout rate)
+            self.assertIn("add the vision tower of the pool's Qwen parent", message)
+            self.assertNotIn("can't be bodies", message)
 
     def test_a_missing_vision_tower_is_named(self):
         language = [n for n in NAMES if n.startswith("language_model.")]

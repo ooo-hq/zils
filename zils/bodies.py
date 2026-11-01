@@ -147,8 +147,9 @@ def map_names(keys, chassis_names):
             raise ValueError(
                 f"body is a text-only checkpoint ({key}): a soup body is the full Qwen3.5 model,"
                 " language weights under language_model. plus the vision tower under visual."
-                " Start from a full checkpoint such as the pool's release or its Qwen parent;"
-                " text-only exports, and merges of them, can't be bodies"
+                " To submit a text-only model (such as a listed cousin), add the vision tower of"
+                " the pool's Qwen parent, unchanged; a merge that starts from a full checkpoint"
+                " (the pool's release or its Qwen parent) already has one"
             )
         if not name.startswith(KEEP) or name not in chassis:
             raise ValueError(f"body has a tensor outside the chassis: {key}")
