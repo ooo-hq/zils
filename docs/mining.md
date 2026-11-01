@@ -347,9 +347,7 @@ longer than a pool's input cap are left out of that pool's rounds.
 
 Lite and mini run rounds from the start. Flash and z3 open later, each at a
 block fixed in the validator configuration. A pool pays nothing before it opens
-(its share burns), and it may pay a temporary **boosted share** for its first
-weeks that steps down to its long-run share; see
-[the emission schedule](model-pools.md#emission-schedule). Bodies committed to a
+(its share burns); see [the emission schedule](model-pools.md#emission-schedule). Bodies committed to a
 pool before it opens are admitted at its first round.
 
 ### What a body is
@@ -476,13 +474,14 @@ Validators run one soup round per day for each open soup pool:
 
 ### Pay
 
-The pool's emission share splits **80% to soup seats and 20% to the best single
-body** (the crown). Seats are re-earned every round; a displaced member stops
-earning at once.
+Each pool's emission share pays **five seats of 16% each** (80% in all) and
+**20% to the best single body** (the crown). A seat's value is fixed: it does not
+grow when fewer members are seated. Seats are re-earned every round; a displaced
+member stops earning at once.
 
-- **Seats:** members whose contribution is at least **0.3** points share the 80%
-  equally, each share multiplied by its rate. If no member clears the floor, the
-  seat share burns.
+- **Seats:** each member whose contribution is at least **0.3** points earns one
+  seat, 16% of the pool's share multiplied by its rate. Empty seats, house seats
+  and seats below the floor burn.
 - **Fine-tunes (launch rule):** if at least half of your body's change comes from
   house ingredients, the soup or the release, your seat is paid only if your
   body alone beats the best of those bases by at least **0.3** points. If part
@@ -524,12 +523,11 @@ Every unearned part burns to the subnet owner's uid, as in the base tier. Until
 miners submit new bodies, most of the pool's share burns.
 
 **Pool shares.** The launch configuration (`zils/data/base-pools-launch.json`)
-gives the base emission to lite 35%, mini 30%, flash 20% and z3 10%; the other 5%
-is unassigned and burns. Flash and z3 burn their shares until their opening
-blocks. The launch configuration boosts flash to 30% for its first two weeks and
-25% for the next two, and z3 to 15% for its first two weeks; a boost is paid out
-of budget that would otherwise burn and never reduces another pool's share. The
-exact blocks are in each validator's configuration and its published report.
+gives each of lite, mini, flash and z3 25% of the base emission. With the base
+tier at the whole budget, a trainer's seat is 4% of all emissions and a crown 5%;
+a pool has five seats and one crown, so the four pools have 24 paid spots.
+Flash and z3 burn their shares until their opening blocks, which are in each
+validator's configuration and its published report.
 
 ### What validators publish
 

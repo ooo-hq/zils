@@ -218,7 +218,7 @@ class SoupRunTest(unittest.TestCase):
         for member in members.values():
             self.assertEqual(member["rate"], 1.0)
             self.assertGreater(member["contribution"], 30)
-            self.assertAlmostEqual(member["seat_weight"], 0.4)
+            self.assertAlmostEqual(member["seat_weight"], 0.16)  # one fixed seat of five
         # Trainer 1's categories weigh 51.7% of the score, so it is the best solo body.
         self.assertGreater(record["solo"][sha["t1"]], record["solo"][sha["t2"]])
         self.assertEqual(record["crown"]["body_sha256"], sha["t1"])
@@ -233,8 +233,8 @@ class SoupRunTest(unittest.TestCase):
         self.assertEqual(len(record["subset_ids"]), 300)
         roster = {str(uid): {"hotkey": h} for uid, h in HOTKEYS.items()}
         weights = soup_round.soup_weights(record, roster)
-        self.assertAlmostEqual(weights[1], 0.6)
-        self.assertAlmostEqual(weights[2], 0.4)
+        self.assertAlmostEqual(weights[1], 0.36)  # a seat (0.16) and the crown (0.2)
+        self.assertAlmostEqual(weights[2], 0.16)
         # The final soup stays on disk; trial soups are deleted after grading.
         round_dir = self.r.state / "rounds" / "d3-mini-2026-11-03"
         self.assertTrue((round_dir / "soup" / "readout.safetensors").exists())
@@ -395,7 +395,7 @@ class SoupRunTest(unittest.TestCase):
         self.assertTrue(any(p.name.startswith("chassis-") for p in graded))
         roster = {str(uid): {"hotkey": h} for uid, h in HOTKEYS.items()}
         weights = soup_round.soup_weights(record, roster)
-        self.assertAlmostEqual(weights[1], 1.0)  # its seat (0.8) and the crown (0.2)
+        self.assertAlmostEqual(weights[1], 0.36)  # one fixed seat (0.16) and the crown (0.2)
         self.assertEqual(list((self.r.state / "tmp").iterdir()), [])
 
     def test_the_chassis_check_after_a_failed_body_grades_a_built_chassis(self):
@@ -608,8 +608,8 @@ class SoupRunTest(unittest.TestCase):
 
         record = self.r.run(rates=rates)
         members = self.by_body(record)
-        self.assertAlmostEqual(members[self.r.sha["t1"]]["seat_weight"], 0.1)
-        self.assertAlmostEqual(members[self.r.sha["t2"]]["seat_weight"], 0.4)
+        self.assertAlmostEqual(members[self.r.sha["t1"]]["seat_weight"], 0.04)
+        self.assertAlmostEqual(members[self.r.sha["t2"]]["seat_weight"], 0.16)
         self.assertAlmostEqual(record["crown"]["weight"], 0.05)
 
     def test_a_commitment_failing_validation_fails_and_leaves_no_files(self):
