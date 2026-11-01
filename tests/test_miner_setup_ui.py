@@ -24,6 +24,12 @@ class MenuKeyTests(unittest.TestCase):
         self.assertEqual(miner.menu_key(1, "enter", 3), (1, True))
         self.assertEqual(miner.menu_key(1, "x", 3), (1, False))
 
+    def test_arrows_and_numbers_skip_closed_options(self):
+        self.assertEqual(miner.menu_key(0, "down", 3, closed={1}), (2, False))
+        self.assertEqual(miner.menu_key(2, "down", 4, closed={3}), (0, False))
+        self.assertEqual(miner.menu_key(0, "up", 4, closed={2, 3}), (1, False))
+        self.assertEqual(miner.menu_key(0, "2", 3, closed={1}), (0, False))
+
     def test_ctrl_c_stops(self):
         with self.assertRaises(KeyboardInterrupt):
             miner.menu_key(0, "ctrl-c", 3)
@@ -48,6 +54,33 @@ class ChooseWithoutATerminalTests(unittest.TestCase):
         value, out = self.choose("nope", "4", "2")
         self.assertEqual(value, "b")
         self.assertEqual(out.count("pick 1 to 3"), 2)
+
+
+class ClosedOptionsWithoutATerminalTests(unittest.TestCase):
+    def test_a_closed_option_is_listed_but_not_chosen(self):
+        replies, out = iter(["3", "c", "1"]), io.StringIO()
+        with patch("builtins.input", lambda prompt: next(replies)), contextlib.redirect_stdout(out):
+            value = miner.choose("Base profile", OPTIONS, "c", closed={"c"})
+        self.assertEqual(value, "a")
+        self.assertIn("  3. third (opens later)", out.getvalue())
+        self.assertEqual(out.getvalue().count("c opens later"), 2)
+
+    def test_a_closed_default_falls_back_to_the_first_open_option(self):
+        replies, out = iter([""]), io.StringIO()
+        with patch("builtins.input", lambda prompt: next(replies)), contextlib.redirect_stdout(out):
+            value = miner.choose("Base profile", OPTIONS, "a", closed={"a"})
+        self.assertEqual(value, "b")
+
+
+class SetupProfilesTests(unittest.TestCase):
+    def test_the_menu_lists_the_launch_pools_with_unopened_ones_closed(self):
+        profiles, closed = miner.setup_profiles()
+        values = [value for value, _ in profiles]
+        self.assertEqual(
+            values, ["d3-lite-0.8b-v1", "d3-mini-4.5b-v1", "d3-flash-8.4b-v1", "d3-ultra-26b-v1"]
+        )
+        self.assertNotIn("d3-nano-2.2b-v1", values)
+        self.assertEqual(closed, {"d3-flash-8.4b-v1", "d3-ultra-26b-v1"})
 
 
 class MachineThatCannotMineTests(unittest.TestCase):
