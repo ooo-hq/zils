@@ -584,8 +584,9 @@ under the freshness, reuse, breadth and token rules in
 [model pools](model-pools.md#round-items-from-zils-current). The round falls back to the fixed
 round bank when those rules cannot be met. With the default blocks the streams reach every cell
 of the base score (see [Categories and blocks](#categories-and-blocks)). The fixed bank fills any
-cell the Current part does not cover; when Current streams cover every cell, the whole subset can
-come from Current.
+cell the Current part does not cover. Without a blend (`current_share` 1), when Current streams
+cover every cell the whole subset can come from Current; a blend always keeps the bank in every
+cell.
 
 Each cell of the base score has a fixed weight, and the families in a cell count equally, so a
 stream with a few dozen items can decide a round. `min_family_items` merges small streams of a
