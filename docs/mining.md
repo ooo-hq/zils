@@ -380,6 +380,19 @@ part of a submission. A body is eligible when:
 
 ### Commit a body
 
+A body must be the **full** Qwen3.5 model: the language weights under
+`language_model.` and the vision tower under `visual.` (an optional leading
+`model.` is fine). Text-only exports (`model.layers.*`, `model.embed_tokens.*`)
+can't be bodies, and neither can a merge of them. `zils merge` keeps the first
+model's layout, so start a merge from a full checkpoint such as the pool's
+release or its Qwen parent; a mix of listed public models pays the scout rate
+(see [Model pools](model-pools.md)). Check any folder first, with no wallet or
+repo needed:
+
+```bash
+zils-miner commit-body --pool <pool> --path ./my-body --check
+```
+
 Register a hotkey as in [the base tier](#compete-in-the-base-tier-from-outside) and
 install with `curl -fsSL https://zils.ai/install.sh | sh`. Then:
 
