@@ -86,16 +86,38 @@ class BrierMetricTest(unittest.TestCase):
         self.assertAlmostEqual(base_metrics.score(cases, rows, metric="brier")["score"], 0)
 
     def test_argmax_rps_keeps_top_answers_and_scores_score_questions_by_rps(self):
-        cases = exam("noul") + exam("score", prefix="s")
+        def rps(p, label):  # independent of base_metrics: cumulative squared error over K - 1
+            total, cumulative = 0.0, 0.0
+            for k in range(len(p) - 1):
+                cumulative += p[k]
+                total += (cumulative - (k >= label)) ** 2
+            return total / (len(p) - 1)
+
+        cases = exam("noul") + exam("score", prefix="s")  # score labels 0, 1, 3, 4 of 0..4
         rows = predictions(cases, confidence=0.6)
         result = base_metrics.score(cases, rows, metric="argmax_rps")
+        score_cases = [c for c in cases if c["question"]["type"] == "score"]
+        by_id = {r["id"]: r["probabilities"] for r in rows}
+        raw = sum(
+            rps([by_id[c["id"]][str(k)] for k in range(5)], int(c["label"])) for c in score_cases
+        ) / len(score_cases)
+        # Best constant: the empirical label distribution (a quarter each on 0, 1, 3, 4) or uniform.
+        constant = min(
+            sum(rps([0.25, 0.25, 0, 0.25, 0.25], y) for y in (0, 1, 3, 4)) / 4,
+            sum(rps([0.2] * 5, y) for y in (0, 1, 3, 4)) / 4,
+        )
         for family, values in result["families"].items():
             if family.endswith("noul"):
-                self.assertEqual(values["skill"], 1)
+                self.assertEqual(values["skill"], 1)  # top answers, as argmax
+                self.assertEqual(values["baseline"], 0.5)
             else:
-                self.assertLess(values["skill"], 1)
-        self.assertEqual(
-            base_metrics.baselines(cases, metric="argmax_rps")[cases[0]["family"]], 0.5
+                self.assertAlmostEqual(values["raw_metric"], raw)
+                self.assertAlmostEqual(values["baseline"], constant)
+                self.assertAlmostEqual(values["unclipped_skill"], 1 - raw / constant)
+                # not the argmax exam's expected-value distance against the median
+                self.assertNotAlmostEqual(values["baseline"], base_metrics.baselines(cases)[family])
+        self.assertAlmostEqual(
+            base_metrics.baselines(cases, metric="argmax_rps")[score_cases[0]["family"]], constant
         )
 
     def test_score_questions_use_ranked_probability_score(self):
