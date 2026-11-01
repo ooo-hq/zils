@@ -1321,6 +1321,54 @@ class SoupRunTest(unittest.TestCase):
                 self.assertEqual(record["rates"][r.sha[name]], rate)
                 self.assertNotIn(r.sha["cousin"], record["pool"])
 
+    def test_a_fine_tune_of_a_listed_model_is_not_a_copy_of_its_scouts_re_upload(self):
+        r = self.known_round(
+            "allowed",
+            cousin=strengths(0.5, 0, 0.5, 0, 0),
+            far=strengths(0.5, 0.375, 0.5, 0.375, 0),  # B's real fine-tune of it (cosine 0.80)
+            near=strengths(0.5, 0, 0.5, 0, 0.0625),  # C's near re-upload of it (cosine 0.99)
+        )
+        # A commits the listed model unchanged first, then B its fine-tune, then C a near copy.
+        r.commits = {4: ("cousin", 50), 5: ("far", 51), 6: ("near", 52)}
+        record = r.run(config=r.config(known_public=[known("cousin")]))
+        sha = r.sha
+        self.assertEqual(record["rates"][sha["cousin"]], 0.25)
+        self.assertEqual(record["rates"][sha["far"]], 1.0)
+        self.assertNotIn(sha["near"], record["pool"])
+        self.assertIn("explained by earlier", record["refused"]["6"])
+        self.assertNotIn(sha["near"], record["rejected"])  # never a hash ban
+        # Without the list, B's fine-tune is judged a copy of A's upload.
+        plain = self.known_round("allowed-unlisted")
+        plain.commits = {4: ("cousin", 50), 5: ("far", 51)}
+        record = plain.run()
+        self.assertNotIn(plain.sha["far"], record["pool"])
+        self.assertIn("explained by earlier", record["refused"]["5"])
+
+    def test_known_public_resolution_has_a_time_budget_and_degrades_to_what_it_resolved(self):
+        r = self.known_round(
+            "slow", cousin=strengths(0.5, 0, 0.5, 0, 0), other=strengths(0, 0.5, 0, 0.5, 0)
+        )
+        r.commits[5] = ("cousin", 50)
+        ticks = iter(range(0, 10**6, 10))
+        config = r.config(
+            known_public=[known("cousin"), known("other")], max_known_public_seconds_per_round=15
+        )
+        record = r.run(config=config, clock=lambda: next(ticks))
+        self.assertEqual(set(record["known_public_failures"]), {"other"})
+        self.assertIn("time", record["known_public_failures"]["other"])
+        self.assertNotIn(r.sha["other"], r.fetched)
+        self.assertEqual(record["rates"][r.sha["cousin"]], 0.25)  # what resolved still counts
+        self.assertTrue(record["members"])
+        # Close to the round deadline nothing new starts, whatever the time budget.
+        late = self.known_round("late", cousin=strengths(0.5, 0, 0.5, 0, 0))
+        record = late.run(
+            config=late.config(known_public=[known("cousin")]),
+            deadline=soup_round.KNOWN_PUBLIC_DEADLINE_RESERVE - 1,
+            clock=lambda: 0,
+        )
+        self.assertIn("time", record["known_public_failures"]["cousin"])
+        self.assertNotIn(late.sha["cousin"], late.fetched)
+
     def test_a_text_only_public_checkpoint_is_sketched_on_its_language_layers(self):
         r = self.known_round("text", cousin=strengths(0.5, 0, 0.5, 0, 0))
         text = {
@@ -1403,11 +1451,19 @@ class SoupRunTest(unittest.TestCase):
         self.assertEqual(record["known_public_failures"], {})
         self.assertIn(r.sha["other"], r.fetched)
 
-    def test_known_public_needs_the_default_rates_and_a_base(self):
+    def test_known_public_needs_a_default_hook_and_a_base(self):
         r = self.known_round("hooks", cousin=strengths(0.5, 0, 0.5, 0, 0))
         config = r.config(known_public=[known("cousin")])
-        r.run(config=config, rates=lambda sha, info, house: 1.0)
+        r.run(
+            config=config,
+            rates=lambda sha, info, house: 1.0,
+            copies=lambda sha, body, earlier, *, soup: None,
+        )
         self.assertNotIn(r.sha["cousin"], r.fetched)
+        # The default copy check alone needs the list too (listed models are allowed bases).
+        again = self.known_round("hooks-copies", cousin=strengths(0.5, 0, 0.5, 0, 0))
+        again.run(config=again.config(known_public=[known("cousin")]), rates=lambda *a: 1.0)
+        self.assertIn(again.sha["cousin"], again.fetched)
 
     def test_rates_see_the_known_public_sketches(self):
         from zils import soup_rates
@@ -1574,8 +1630,14 @@ class SoupPoolWeightsTest(unittest.TestCase):
         # Optional, and left out unless set, so a pool without a list validates as before.
         self.assertNotIn("known_public", checked)
         self.assertNotIn("max_known_public_bytes_per_round", checked)
-        listed = soup_entry(known_public=HOUSE, max_known_public_bytes_per_round=5)
+        self.assertNotIn("max_known_public_seconds_per_round", checked)
+        listed = soup_entry(
+            known_public=HOUSE,
+            max_known_public_bytes_per_round=5,
+            max_known_public_seconds_per_round=60,
+        )
         listed = model_pools.validate(pools(listed))["pools"]["d3-mini"]
+        self.assertEqual(listed["max_known_public_seconds_per_round"], 60)
         self.assertEqual(listed["known_public"], HOUSE)
         self.assertEqual(listed["max_known_public_bytes_per_round"], 5)
         self.assertEqual(
@@ -1592,6 +1654,9 @@ class SoupPoolWeightsTest(unittest.TestCase):
             {"known_public": 3},
             {"known_public": None},
             {"max_known_public_bytes_per_round": 0},
+            {"max_known_public_seconds_per_round": 0},
+            {"max_known_public_seconds_per_round": 6 * 3600 + 1},
+            {"max_known_public_seconds_per_round": "1"},
             {"max_known_public_bytes_per_round": 1.5},
             {"type": "pot"},
             {"house": [{**HOUSE[0], "body_sha256": "x"}]},

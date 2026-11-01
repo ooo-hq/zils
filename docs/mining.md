@@ -497,10 +497,11 @@ The known-public lists name other public decision models of a pool's size:
 pinned revision. Finding one of them and committing it, unchanged or lightly
 changed, is a scout's work and earns 0.25. Full pay is for real training: a
 fine-tune that moves well away from every listed model (sketch cosine under 0.9)
-earns the trainer rate, whichever model it started from. The first valid
-commitment of a body still wins, and a near-copy of another hotkey's earlier
-body is refused, so a later fine-tune of a listed model that someone has already
-committed must move away from that commitment too.
+earns the trainer rate, whichever model it started from. A listed model is an
+allowed base: your fine-tune of it is not a copy of someone else's re-upload of
+it. The first near re-upload of each listed model wins; another hotkey's later
+near re-upload of the same model is refused while the first stays in the pool,
+and a near-copy of any other hotkey's earlier body is refused as before.
 
 Every unearned part burns to the subnet owner's uid, as in the base tier. Until
 miners submit new bodies, most of the pool's share burns.

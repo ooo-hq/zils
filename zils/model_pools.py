@@ -17,6 +17,7 @@ NOT_TRACK = ("model", "enabled", "cooldown_seconds")
 SOUP_KEYS = {"type", "model", "enabled", "share", "house", "schedule"}
 SOUP_KNOWN = "known_public"  # optional: public models whose re-uploads earn the scout rate
 SOUP_KNOWN_BYTES = "max_known_public_bytes_per_round"  # optional; soup_round default otherwise
+SOUP_KNOWN_SECONDS = "max_known_public_seconds_per_round"  # optional, at most one 6 h round
 SOUP_SECRET = "sketch_seed"  # optional, local to each validator, never echoed into a report
 SOUP_OPTIONAL = {
     "subset_size": 3000,
@@ -149,7 +150,8 @@ def validate_soup(entry):
     """
     from . import soup_current, soup_rates
 
-    allowed = SOUP_KEYS | set(SOUP_OPTIONAL) | {SOUP_KNOWN, SOUP_KNOWN_BYTES, SOUP_SECRET, "exam"}
+    known_keys = {SOUP_KNOWN, SOUP_KNOWN_BYTES, SOUP_KNOWN_SECONDS}
+    allowed = SOUP_KEYS | set(SOUP_OPTIONAL) | known_keys | {SOUP_SECRET, "exam"}
     if set(entry) - allowed or SOUP_KEYS - set(entry):
         raise ValueError("soup pool requires " + ", ".join(sorted(SOUP_KEYS)))
     share = entry["share"]
@@ -204,6 +206,9 @@ def validate_soup(entry):
     known_bytes = entry.get(SOUP_KNOWN_BYTES, 1)
     if type(known_bytes) is not int or known_bytes < 1:
         raise ValueError("soup max_known_public_bytes_per_round must be a positive integer")
+    known_seconds = entry.get(SOUP_KNOWN_SECONDS, 1)
+    if type(known_seconds) is not int or not 1 <= known_seconds <= 6 * 3600:
+        raise ValueError("soup max_known_public_seconds_per_round must be an integer in [1, 21600]")
     if not 0 <= sizes["failed_claim_backoff_rounds"] <= 30:
         raise ValueError("soup failed_claim_backoff_rounds must be in [0, 30]")
     if not 1 <= sizes["decision_rounds"] <= 7:
@@ -220,6 +225,7 @@ def validate_soup(entry):
         # Echoed only when set, so a pool without a list validates (and reports) as before.
         **({SOUP_KNOWN: known} if SOUP_KNOWN in entry else {}),
         **({SOUP_KNOWN_BYTES: known_bytes} if SOUP_KNOWN_BYTES in entry else {}),
+        **({SOUP_KNOWN_SECONDS: known_seconds} if SOUP_KNOWN_SECONDS in entry else {}),
         "schedule": {"deadline_utc": deadline},
         **sizes,
         "others_max": others,

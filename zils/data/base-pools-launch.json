@@ -22,7 +22,7 @@
       "share": 0.3,
       "house": "zils/data/soup-house.json",
       "known_public": "zils/data/soup-known-mini.json",
-      "max_known_public_bytes_per_round": 42949672960,
+      "max_known_public_bytes_per_round": 85899345920,
       "schedule": {
         "deadline_utc": "00:00"
       }
