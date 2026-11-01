@@ -331,6 +331,8 @@ class NightlyGateTest(unittest.TestCase):
                     wiki_first_hours=2,
                     se_pages=0,
                     afd_first_days=0,
+                    afc_first_days=0,
+                    arxiv_first_days=0,
                     crosscheck_sample=20,
                 )
             finally:

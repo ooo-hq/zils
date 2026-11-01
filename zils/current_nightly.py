@@ -104,6 +104,30 @@ def _afd(store, http, cursor, now, first_days):
     return {"days": days, "added": added}
 
 
+def _days(store, http, cursor, now, first_days, module, key, days_of):
+    """Every day after the cursor that a module can read; the cursor moves after each day."""
+    days = days_of(now, cursor.get(key), first_days or module.FIRST_DAYS)
+    added = 0
+    for day in days:
+        added += module.collect(store, http, now, days=[day])["added"]
+        cursor.set(key, day)
+    return {"days": days, "added": added}
+
+
+def _afc(store, http, cursor, now, first_days):
+    """Every finished Articles for Creation review day after the cursor."""
+    from . import current_afc
+
+    return _days(store, http, cursor, now, first_days, current_afc, "afc", current_afc.review_days)
+
+
+def _arxiv(store, http, cursor, now, first_days):
+    """Every announced arXiv submission day after the cursor."""
+    from . import current_arxiv
+
+    return _days(store, http, cursor, now, first_days, current_arxiv, "arxiv", current_arxiv.days)
+
+
 def _exports(store, bank, cursor, now, options, check=None):
     """Every finished UTC day after the export cursor, oldest first (yesterday on a first run).
 
@@ -143,6 +167,8 @@ def run(
     wiki_samples=48,
     negatives_per_positive=None,
     afd_first_days=None,
+    afc_first_days=None,
+    arxiv_first_days=None,
     se_sites=None,
     se_pages=None,
     crosscheck_sample=0,
@@ -194,6 +220,14 @@ def run(
         if afd_first_days != 0:
             result["collected"]["afd"] = step(
                 "afd", lambda: _afd(store, http, cursor, now, afd_first_days)
+            )
+        if afc_first_days != 0:
+            result["collected"]["afc"] = step(
+                "afc", lambda: _afc(store, http, cursor, now, afc_first_days)
+            )
+        if arxiv_first_days != 0:
+            result["collected"]["arxiv"] = step(
+                "arxiv", lambda: _arxiv(store, http, cursor, now, arxiv_first_days)
             )
         if se_pages != 0:
             result["collected"]["stackexchange"] = step(
