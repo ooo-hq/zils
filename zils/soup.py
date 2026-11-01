@@ -32,8 +32,12 @@ def _sha256(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def build(out, chassis, bodies, *, model):
-    """Write the soup of `bodies` ([(folder, rename)]) on `chassis` as a `model` base candidate at `out`."""
+def build(out, chassis, bodies, *, model, temperature=1.0):
+    """Write the soup of `bodies` ([(folder, rename)]) on `chassis` as a `model` base candidate at `out`.
+
+    Only the bodies' tensors are read; every other file comes from the chassis and the metadata is
+    written here, so no body's own metadata (its temperature included) reaches the soup.
+    ``temperature`` is the validator's fitted temperature for a released soup (1.0 for grading)."""
     from safetensors import safe_open
     from safetensors.torch import save_file
 
@@ -76,7 +80,7 @@ def build(out, chassis, bodies, *, model):
     for name in files:
         if name != "model.json" and name not in layout.values():
             shutil.copyfile(chassis / name, out / name)
-    models.write_metadata(out, kind="candidate", model=model)
+    models.write_metadata(out, kind="candidate", model=model, temperature=temperature)
     if _sha256(out / READOUT) != _sha256(chassis / READOUT):
         raise ValueError("soup readout.safetensors differs from the chassis answer layer")
     if _sha256(out / READOUT) != d3.pins(model)["files"][READOUT]:

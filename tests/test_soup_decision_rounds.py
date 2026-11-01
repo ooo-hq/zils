@@ -43,6 +43,10 @@ class DecisionRoundsTest(unittest.TestCase):
         self.enterContext(patch.dict(d3.PINS["files"], {"readout.safetensors": pinned}))
         self.recording = Recording(self.r.runner)
         self.r.runner = self.recording
+        # These tests pin decision-round pooling against results recorded under the argmax exam;
+        # calibrated scoring of pooled items is tested in test_calibrated_decisions_score_pooled_items.
+        config = self.r.config
+        self.r.config = lambda **changes: config(**{"scoring": "argmax", **changes})
 
     def round(self, day, rounds=3, **kwargs):
         config = kwargs.pop("config", None) or self.r.config(decision_rounds=rounds)
@@ -64,17 +68,28 @@ class DecisionRoundsTest(unittest.TestCase):
         by_id = {c["id"]: c for c in self.r.bank}
         return [by_id[i] for i in ids]
 
-    def assert_decided_on(self, record, ids):
+    def assert_decided_on(self, record, ids, **scoring):
         """Every solo, greedy trial and the crown bar are scores on exactly `ids`."""
         self.assertEqual(record["decision_ids"], sorted(ids))
         self.assertEqual(record["decision"]["items"], len(set(ids)))
         cases = self.cases(sorted(ids))
         for sha, value in record["solo"].items():
-            self.assertAlmostEqual(value, soup_grade.score(cases, self.rows(sha, sorted(ids))))
+            rows = self.rows(sha, sorted(ids))
+            self.assertAlmostEqual(value, soup_grade.score(cases, rows, **scoring))
         for trial in record["trace"]:
             key = "soup-" + hashlib.sha256("+".join(trial["try"]).encode()).hexdigest()[:32]
             rows = self.rows(key, sorted(ids))
-            self.assertAlmostEqual(trial["score"], soup_grade.score(cases, rows))
+            self.assertAlmostEqual(trial["score"], soup_grade.score(cases, rows, **scoring))
+
+    def test_calibrated_decisions_score_pooled_items(self):
+        config = self.r.config(decision_rounds=3, scoring="calibrated_brier")
+        records = [self.round(day, config=config) for day in range(3)]
+        last = records[-1]
+        self.assertEqual(last["scoring"], "calibrated_brier")
+        secret = soup_round.split_secret(config, self.r.state, DAYS[2])
+        self.assert_decided_on(
+            last, last["decision_ids"], scoring="calibrated_brier", secret=secret
+        )
 
     def test_the_setting_defaults_to_three_and_is_validated(self):
         checked = model_pools.validate(pools())["pools"]["d3-mini"]

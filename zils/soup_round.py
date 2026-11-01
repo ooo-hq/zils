@@ -12,6 +12,7 @@ sorted tuple of bodies and returns its exam score in points.
 
 import gc
 import hashlib
+import hmac
 import http.client
 import json
 import math
@@ -660,6 +661,15 @@ def sketch_seed(config, state_dir):
     return bytes.fromhex(path.read_text().strip())
 
 
+def split_secret(config, state_dir, round_id):
+    """The round's private calibration-split secret: an HMAC of the round id under this validator's
+    sketch seed, so the cases that fit each model's temperature change every round and no miner can
+    know them in advance."""
+    return hmac.new(
+        sketch_seed(config, state_dir), b"calibration-split:" + round_id.encode(), hashlib.sha256
+    ).digest()
+
+
 SEED_CHANGED = (
     "the sketch_seed differs from the one this pool's sketches were made with; sketches of pruned "
     "bodies cannot be remade, so every copy check would be wrong. Restore the original sketch_seed "
@@ -761,7 +771,6 @@ def run(
     round reruns from its cached predictions and is recorded once.
     """
     from . import (
-        base_metrics,
         bodies,
         d3,
         models,
@@ -782,6 +791,19 @@ def run(
     model = config["model"]
     model = model if isinstance(model, str) else models.validate_spec(model)
     seed = round_seed(block_hash, pool_id)
+    scoring = config.get("scoring", soup_grade.DEFAULT_SCORING)
+    if scoring not in soup_grade.SCORINGS:
+        raise ValueError("soup scoring must be one of " + ", ".join(soup_grade.SCORINGS))
+    secret = None if scoring == "argmax" else split_secret(config, state_dir, round_id)
+    temperatures = {}  # (body or soup, case set) -> fitted temperature
+
+    def exam_score(cases, rows, key=None):
+        """The pool's scoring of one graded model's raw rows (see ``soup_grade.evaluate``)."""
+        result = soup_grade.evaluate(cases, rows, scoring=scoring, secret=secret)
+        if key is not None:
+            temperatures[key] = result["temperature"]
+        return result["score"]
+
     bank_key = bank_sha256(bank)
     # Cached rows are scoped to the bank and the chassis profile (model id and pinned answer layer),
     # so a profile change never reuses rows graded on another chassis.
@@ -1012,7 +1034,7 @@ def run(
     solo = {}
     for sha in incumbents[:max_pool]:  # graded first, so twin checks read their rows from the cache
         try:
-            solo[sha] = soup_grade.score(subset, grade(sha, subset))
+            solo[sha] = exam_score(subset, grade(sha, subset), sha)
         except Exception as error:
             strike(sha, "solo", error)
     # New bodies, and bodies admitted earlier that have not been graded yet (an earlier failure).
@@ -1045,7 +1067,7 @@ def run(
                 }
                 continue
             screen[sha] = soup_grade.screen_score(screen_cases, screen_rows)
-            score = soup_grade.score(subset, rows)
+            score = exam_score(subset, rows, sha)
         except Exception as error:
             strike(sha, "screen", error)
             continue
@@ -1068,7 +1090,7 @@ def run(
             solo[sha] = scored[sha]
             continue
         try:
-            solo[sha] = soup_grade.score(subset, grade(sha, subset))
+            solo[sha] = exam_score(subset, grade(sha, subset), sha)
         except Exception as error:
             strike(sha, "solo", error)
     plan = _read_json(round_dir / "decision-items.json", None)
@@ -1084,7 +1106,7 @@ def run(
         decision_cases = plan["cases"]
         for sha in list(solo):  # rescored on the pooled items; cached rows are never regraded
             try:
-                solo[sha] = soup_grade.score(decision_cases, grade(sha, decision_cases))
+                solo[sha] = exam_score(decision_cases, grade(sha, decision_cases), sha)
             except Exception as error:
                 del solo[sha]
                 strike(sha, "solo", error)
@@ -1113,7 +1135,7 @@ def run(
             return solo[members[0]]
         if members not in scores:
             rows = soup_rows(members, decision_cases)
-            scores[members] = soup_grade.score(decision_cases, rows)
+            scores[members] = exam_score(decision_cases, rows)
         return scores[members]
 
     # The crown bar: the current (previous round's) soup on the decision items, if one exists.
@@ -1136,7 +1158,7 @@ def run(
     if len(members) == 1:
         key = f"chassis-{soup.soup_hash(chassis)[:32]}-{scope}"
         rows = graded(key, decision_cases, chassis_body)
-        baseline = soup_grade.score(decision_cases, rows)
+        baseline = exam_score(decision_cases, rows)
     contributions = leave_one_out(members, evaluate, baseline=baseline)
     rate_map = {sha: rates(sha, known[sha], house) for sha in pool}
     seats = seat_weights(members, contributions, rate_map)
@@ -1146,16 +1168,25 @@ def run(
         else crown_weight(solo, rate_map, house, soup_score=soup_bar, order_key=order)
     )
 
+    rows = soup_rows(members, subset)  # published predictions and scores: this round's subset
+    scored = soup_grade.evaluate(subset, rows, scoring=scoring, secret=secret)
+    metrics, temperature = scored["metrics"], scored["temperature"]
+    # The released soup carries the temperature fitted on this round's held-apart cases, so d3
+    # serves calibrated probabilities. Grading builds stay at 1.0 (raw rows are what is cached).
     final = round_dir / "soup"
     if not final.exists():
         partial = scratch / f"final-{round_id}"
         shutil.rmtree(partial, ignore_errors=True)
         soup.build(
-            partial, chassis, [(folder(s), _rename(folder(s))) for s in members], model=model
+            partial,
+            chassis,
+            [(folder(s), _rename(folder(s))) for s in members],
+            model=model,
+            temperature=temperature,
         )
         os.replace(partial, final)
-    rows = soup_rows(members, subset)  # published predictions and scores: this round's subset
-    metrics = base_metrics.score(subset, rows)
+    elif models.temperature(final) != temperature:  # a round resumed after the build
+        models.set_temperature(final, temperature)
     crown_body = next(iter(crown), None)
     private = {
         "round_id": round_id,
@@ -1187,6 +1218,9 @@ def run(
         "category_scores": {c: 100 * v for c, v in metrics["categories"].items()},
         "family_scores": {f: 100 * v["skill"] for f, v in metrics["families"].items()},
         "predictions": rows,
+        "scoring": scoring,
+        "temperature": temperature,
+        "solo_temperatures": {sha: temperatures[sha] for sha in solo},
         "soup_sha256": soup.soup_hash(final),
         "pool": pool,
         "solo": solo,

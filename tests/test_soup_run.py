@@ -21,7 +21,17 @@ import zils
 from tests import test_bodies, test_soup
 from tests.test_base_metrics import CATEGORIES
 from tests.test_soup_exam import bank as exam_bank
-from zils import bodies, d3, model_pools, models, soup_exam, soup_grade, soup_pool, soup_round
+from zils import (
+    base_metrics,
+    bodies,
+    d3,
+    model_pools,
+    models,
+    soup_exam,
+    soup_grade,
+    soup_pool,
+    soup_round,
+)
 
 STRENGTH = "language_model.layers.0.mlp.weight"
 CHASSIS = {
@@ -229,6 +239,102 @@ class SoupRunTest(unittest.TestCase):
         round_dir = self.r.state / "rounds" / "d3-mini-2026-11-03"
         self.assertTrue((round_dir / "soup" / "readout.safetensors").exists())
         self.assertEqual(list((self.r.state / "tmp").iterdir()), [])
+
+    def soft_runner(self, confidence=0.97):
+        """runner_for whose answers are FakeRunner's, at `confidence` instead of 1.0. The final soup
+        is always right, so at 97% it is underconfident and its fitted temperature is below 1.
+        Records each graded folder's metadata temperature."""
+        fake, seen = self.r.runner, []
+
+        def runner_for(folder):
+            seen.append(models.metadata(folder)["temperature"])
+            run = fake(folder)
+
+            def soft(cases):
+                rows = run(cases)
+                for row in rows:
+                    p = row["probabilities"]
+                    rest = (1 - confidence) / (len(p) - 1)
+                    row["probabilities"] = {
+                        k: confidence if v == 1.0 else rest for k, v in p.items()
+                    }
+                return rows
+
+            return soft
+
+        self.r.runner = runner_for
+        return seen
+
+    def test_calibrated_round_fits_a_temperature_and_ships_it_with_the_soup(self):
+        seen = self.soft_runner()
+        record = self.r.run(config=self.r.config(scoring="calibrated_brier"))
+        self.assertEqual(record["scoring"], "calibrated_brier")
+        temperature = record["temperature"]
+        self.assertLess(temperature, 1.0)
+        round_dir = self.r.state / "rounds" / "d3-mini-2026-11-03"
+        self.assertEqual(models.metadata(round_dir / "soup")["temperature"], temperature)
+        self.assertEqual(self.public()["temperature"], temperature)
+        # Every graded build is a temperature-1 candidate: raw probabilities are cached and
+        # calibration happens in scoring.
+        self.assertTrue(seen)
+        self.assertEqual(set(seen), {1.0})
+        # The published score is the calibrated soup's score on the held-out part.
+        expected = soup_grade.evaluate(
+            [c for c in self.r.bank if c["id"] in set(record["subset_ids"])],
+            record["predictions"],
+            scoring="calibrated_brier",
+            secret=soup_round.split_secret(self.r.config(), self.r.state, record["round_id"]),
+        )
+        self.assertEqual(expected["temperature"], temperature)
+        self.assertEqual(
+            record["category_scores"],
+            {c: 100 * v for c, v in expected["metrics"]["categories"].items()},
+        )
+        self.assertEqual(set(record["solo_temperatures"]), set(record["solo"]))
+
+    def test_the_default_scoring_is_calibrated(self):
+        self.soft_runner()
+        config = self.r.config()
+        config.pop("scoring", None)
+        record = self.r.run(config=config)
+        self.assertEqual(record["scoring"], soup_grade.DEFAULT_SCORING)
+        self.assertLess(record["temperature"], 1.0)
+
+    def test_a_miners_own_temperature_is_ignored(self):
+        for name in ("t1", "t2"):
+            models.write_metadata(
+                self.r.repos[name], model=models.D3, kind="candidate", temperature=0.2
+            )
+        seen = self.soft_runner()
+        record = self.r.run(config=self.r.config(scoring="calibrated_brier"))
+        self.assertEqual(set(seen), {1.0})
+        round_dir = self.r.state / "rounds" / "d3-mini-2026-11-03"
+        self.assertEqual(models.metadata(round_dir / "soup")["temperature"], record["temperature"])
+        self.assertNotEqual(record["temperature"], 0.2)
+
+    def test_argmax_scoring_keeps_the_old_score_and_temperature_one(self):
+        self.soft_runner()
+        record = self.r.run(config=self.r.config(scoring="argmax"))
+        self.assertEqual(record["temperature"], 1.0)
+        subset = [c for c in self.r.bank if c["id"] in set(record["subset_ids"])]
+        metrics = base_metrics.score(subset, record["predictions"])
+        self.assertEqual(
+            record["category_scores"], {c: 100 * v for c, v in metrics["categories"].items()}
+        )
+        round_dir = self.r.state / "rounds" / "d3-mini-2026-11-03"
+        self.assertEqual(models.metadata(round_dir / "soup")["temperature"], 1.0)
+
+    def test_the_split_secret_is_private_and_changes_every_round(self):
+        config = self.r.config()
+        first = soup_round.split_secret(config, self.r.state, "d3-mini-2026-11-03")
+        self.assertEqual(first, soup_round.split_secret(config, self.r.state, "d3-mini-2026-11-03"))
+        self.assertNotEqual(
+            first, soup_round.split_secret(config, self.r.state, "d3-mini-2026-11-04")
+        )
+        other = self.r.config(sketch_seed="7f" * 32)
+        self.assertNotEqual(
+            first, soup_round.split_secret(other, self.r.state, "d3-mini-2026-11-03")
+        )
 
     def test_every_graded_body_and_soup_is_a_valid_d3_candidate(self):
         # Production grading loads d3.DecisionModel, which needs candidate metadata and the chassis files.
@@ -686,9 +792,9 @@ class SoupRunTest(unittest.TestCase):
         build, built, sizes = soup.build, [], []
         fake = self.r.runner
 
-        def counting(out, chassis, members, *, model):
+        def counting(out, chassis, members, *, model, temperature=1.0):
             built.append(Path(out).name)
-            return build(out, chassis, members, model=model)
+            return build(out, chassis, members, model=model, temperature=temperature)
 
         def runner_for(folder):
             run = fake(folder)

@@ -146,12 +146,14 @@ def validate_soup(entry):
     copy-check sketch seed; it is checked here but left out of the result, which reports publish.
     Without it each validator generates and keeps its own (``soup_round.sketch_seed``).
     An optional ``exam`` picks where round items come from (``soup_current.validate``): the fixed
-    round bank (the default) or Zils Current dated exports.
+    round bank (the default) or Zils Current dated exports. An optional ``scoring`` (one of
+    ``soup_grade.SCORINGS``, default ``soup_grade.DEFAULT_SCORING``) picks how graded models are
+    scored.
     """
-    from . import soup_current, soup_rates
+    from . import soup_current, soup_grade, soup_rates
 
     known_keys = {SOUP_KNOWN, SOUP_KNOWN_BYTES, SOUP_KNOWN_SECONDS}
-    allowed = SOUP_KEYS | set(SOUP_OPTIONAL) | known_keys | {SOUP_SECRET, "exam"}
+    allowed = SOUP_KEYS | set(SOUP_OPTIONAL) | known_keys | {SOUP_SECRET, "exam", "scoring"}
     if set(entry) - allowed or SOUP_KEYS - set(entry):
         raise ValueError("soup pool requires " + ", ".join(sorted(SOUP_KEYS)))
     share = entry["share"]
@@ -216,6 +218,9 @@ def validate_soup(entry):
     if not 1 <= sizes["max_decision_age_days"] <= 30:
         raise ValueError("soup max_decision_age_days must be in [1, 30]")
     exam = soup_current.validate(entry["exam"]) if "exam" in entry else None
+    scoring = entry.get("scoring", soup_grade.DEFAULT_SCORING)
+    if not isinstance(scoring, str) or scoring not in soup_grade.SCORINGS:
+        raise ValueError("soup scoring must be one of " + ", ".join(soup_grade.SCORINGS))
     return {
         **({"exam": exam} if exam and exam["source"] != "bank" else {}),
         "type": "soup",
@@ -230,6 +235,9 @@ def validate_soup(entry):
         **sizes,
         "others_max": others,
         "house_mix_max": house_mix,
+        # Echoed only when set, so a pool without it validates (and hashes) as before; rounds then
+        # use soup_grade.DEFAULT_SCORING.
+        **({"scoring": scoring} if "scoring" in entry else {}),
     }
 
 
