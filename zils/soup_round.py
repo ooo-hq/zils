@@ -173,6 +173,8 @@ MAX_KNOWN_PUBLIC_BYTES_PER_ROUND = 16 * 1024**3  # known-public bytes resolved p
 # A known public repo may carry tensors a body leaves out (an untied lm_head), so it is fetched
 # within this multiple of the pool's body cap; only its language layers are read.
 KNOWN_PUBLIC_CAP_FACTOR = 2
+KNOWN_PUBLIC_SECONDS = 7200  # no new known-public download starts after this much of a round
+KNOWN_PUBLIC_DEADLINE_RESERVE = 4 * 3600  # nor this close to the round deadline (intake, grading)
 OTHERS_MAX = 0.3  # share other hotkeys' bodies may add to a body's fit beyond the house bodies
 FAILED_CLAIM_BACKOFF_ROUNDS = (
     3  # rounds a hotkey sits out after a claim fails validation or download
@@ -291,7 +293,10 @@ def _house(config, state, *, names, download, folder, scratch):
     return house, failures
 
 
-def _known_public(config, state, *, names, download, scratch, sketches, save=lambda: None):
+def _known_public(
+    config, state, *, names, download, scratch, sketches, save=lambda: None, deadline=None,
+    clock=time.time,
+):  # fmt: skip
     """Resolve the pool's known-public list (public models that are not house ingredients) to
     ``soup_rates.rate`` ``known`` entries. Returns (entries, {name: reason} for entries skipped).
 
@@ -303,8 +308,11 @@ def _known_public(config, state, *, names, download, scratch, sketches, save=lam
     text-only checkpoint (no vision tower) has no body hash; it is keyed by its repo and revision
     and sketched on its language layers alone, so it cannot carry a pinned hash.
 
-    Downloads stop once ``max_known_public_bytes_per_round`` is spent (the next entry waits for a
-    later round), separate from the miners' intake budget. An entry that fails for its contents
+    Downloads stop once ``max_known_public_bytes_per_round`` is spent, separate from the miners'
+    intake budget, and no new one starts after ``max_known_public_seconds_per_round`` or within
+    ``KNOWN_PUBLIC_DEADLINE_RESERVE`` of the round ``deadline``, so intake and grading keep their
+    time. Entries left over wait for a later round; this round's copy and scout checks use the
+    entries resolved so far, and the skipped ones are logged and recorded. An entry that fails for its contents
     (a malformed file, a wrong pinned hash) is skipped until its pin changes; a transport error is
     retried next round. No entry ever fails the round.
     """
@@ -313,6 +321,9 @@ def _known_public(config, state, *, names, download, scratch, sketches, save=lam
     resolved = state.setdefault("known_public", {})
     dead = state.setdefault("known_public_failed", {})
     budget = config.get("max_known_public_bytes_per_round", MAX_KNOWN_PUBLIC_BYTES_PER_ROUND)
+    stop = clock() + config.get("max_known_public_seconds_per_round", KNOWN_PUBLIC_SECONDS)
+    if deadline is not None:
+        stop = min(stop, deadline - KNOWN_PUBLIC_DEADLINE_RESERVE)
     entries, failures, spent = [], {}, 0
     for item in config.get("known_public", []):
         name, pin = item["name"], item["body_sha256"]
@@ -329,6 +340,10 @@ def _known_public(config, state, *, names, download, scratch, sketches, save=lam
             continue
         if spent >= budget:
             failures[name] = "waiting: this round's known-public download budget is spent"
+            continue
+        if clock() >= stop:
+            print(f"soup known public: {name} waits for a later round (time)", flush=True)
+            failures[name] = "waiting: this round's known-public time budget is spent"
             continue
         claim = {
             "repo": item["repo"], "revision": item["revision"], "sha256": pin, "hotkey": None,
@@ -844,6 +859,19 @@ def run(
                 release=release(),
             )
 
+        public = []
+        if rates is None or copies is None:
+            # Public models other than the house ones, resolved before intake: a re-upload of one
+            # earns the scout rate and a fine-tune of one is a fine-tune of an allowed base.
+            def save_state():
+                _write_json(state_dir / "pool.json", state)
+
+            public, known_failures = _known_public(
+                config, state, names=names, download=download, scratch=scratch,
+                sketches=sketches, save=save_state, deadline=deadline, clock=clock,
+            )  # fmt: skip
+            save_state()
+
         if copies is None:
 
             def copies(sha, body, earlier, *, soup):
@@ -853,21 +881,13 @@ def run(
                     soup=soup_sketch(soup),
                     release=release(),
                     house=[sketch(s) for s in sorted(house)],
+                    public=[entry["sketch"] for entry in public],
                     # Explained shares count only earlier bodies still in the pool.
                     explained=[sketch(s) for s in earlier if not known.get(s, {}).get("pruned")],
                     others_max=config.get("others_max", OTHERS_MAX),
                 )
 
         if rates is None:
-            # Public models other than the house ones: a re-upload of one earns the scout rate.
-            def save_state():
-                _write_json(state_dir / "pool.json", state)
-
-            public, known_failures = _known_public(
-                config, state, names=names, download=download, scratch=scratch,
-                sketches=sketches, save=save_state,
-            )  # fmt: skip
-            save_state()
 
             def rates(sha, info, house):
                 return soup_rates.rate(

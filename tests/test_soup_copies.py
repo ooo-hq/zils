@@ -293,6 +293,40 @@ class IsCopyTest(unittest.TestCase):
         self.assertAlmostEqual(got, expected)
         self.assertAlmostEqual(soup_copies.base_residual(self.fresh, house=[]), 1.0)
 
+    def test_listed_public_models_are_allowed_bases_whose_re_upload_is_a_scouts(self):
+        rng = np.random.default_rng(11)
+        listed = 10 * rng.standard_normal(4096)
+        # Miner A commits the listed model unchanged: admitted (paid as a scout, not a copy).
+        scout = listed.copy()
+        self.assertIsNone(soup_copies.is_copy(scout, [], public=[listed]))
+        self.assertIsNone(soup_copies.is_copy(scout + self.noise, [], public=[listed]))
+        # Miner B's real fine-tune of the same listed model (cosine under 0.9) is not a copy of A,
+        # although A explains most of it; without the listed model as a base it would be.
+        tuned = listed + 6 * rng.standard_normal(4096)
+        self.assertLess(soup_copies.cosine(tuned, listed), 0.9)
+        self.assertEqual(soup_copies.is_copy(tuned, [scout]), "explained by earlier")
+        self.assertIsNone(soup_copies.is_copy(tuned, [scout], public=[listed]))
+        # A third hotkey's near-copy of A's body is refused: near-exact, or another near re-upload
+        # of the listed model A committed first (retried when A's body leaves the pool).
+        self.assertEqual(soup_copies.is_copy(scout * 1.001, [scout], public=[listed]), "cosine")
+        near = listed + 2 * rng.standard_normal(4096)
+        self.assertGreater(soup_copies.cosine(near, listed), 0.9)
+        self.assertLess(soup_copies.cosine(near, scout), 0.999)
+        got = soup_copies.is_copy(near, [scout], public=[listed])
+        self.assertEqual(got, "explained by earlier")
+        self.assertEqual(
+            soup_copies.is_copy(near, [scout], public=[listed], explained=[]), None
+        )  # once A's body has left the pool, the next scout may take its place
+        # A near copy of A's fine-tune is still a copy, and house, soup and release are unchanged.
+        self.assertEqual(
+            soup_copies.is_copy(tuned + self.noise, [tuned], public=[listed]), "cosine"
+        )
+        house = self.earlier[2]
+        self.assertEqual(
+            soup_copies.is_copy(house + self.noise, [], house=[house], public=[listed]),
+            "house re-upload",
+        )
+
     def test_zero_change_is_rejected(self):
         self.assertEqual(
             soup_copies.is_copy(np.zeros(4096), self.earlier), "no change from the base"
