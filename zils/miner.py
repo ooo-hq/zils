@@ -756,15 +756,18 @@ def doctor(args):
 KEYS = {"\x1b[A": "up", "\x1b[B": "down", "\r": "enter", "\n": "enter", "\x03": "ctrl-c"}
 
 
-def menu_key(index, key, count):
-    """(new index, chosen) after one key: arrows or j/k move and wrap, a number jumps, Enter chooses."""
+def menu_key(index, key, count, closed=()):
+    """(new index, chosen) after one key: arrows or j/k move and wrap, a number jumps, Enter chooses.
+    Indexes in `closed` are skipped."""
     if key == "ctrl-c":
         raise KeyboardInterrupt
-    if key in ("up", "k"):
-        return (index - 1) % count, False
-    if key in ("down", "j"):
-        return (index + 1) % count, False
-    if key.isdigit() and 1 <= int(key) <= count:
+    step = {"up": -1, "k": -1, "down": 1, "j": 1}.get(key)
+    if step:
+        moved = (index + step) % count
+        while moved in closed and moved != index:
+            moved = (moved + step) % count
+        return moved, False
+    if key.isdigit() and 1 <= int(key) <= count and int(key) - 1 not in closed:
         return int(key) - 1, False
     return index, key == "enter"
 
@@ -786,34 +789,60 @@ def read_key():
     return KEYS.get(key, key)
 
 
-def choose(question, options, default=None):
-    """Pick one of `options` ([(value, label)]): an arrow-key menu on a terminal, else a numbered prompt."""
+def choose(question, options, default=None, closed=()):
+    """Pick one of `options` ([(value, label)]): an arrow-key menu on a terminal, else a numbered prompt.
+    Values in `closed` are listed as opening later but can't be picked."""
     values = [value for value, _ in options]
+    shut = {i for i, value in enumerate(values) if value in closed}
+    labels = [
+        f"{label} (opens later)" if i in shut else label for i, (_, label) in enumerate(options)
+    ]
     index = values.index(default) if default in values else 0
+    if index in shut:
+        index = next(i for i in range(len(values)) if i not in shut)
     if not (sys.stdin.isatty() and os.isatty(1)) or os.name == "nt":
-        for n, (_, label) in enumerate(options, 1):
+        for n, label in enumerate(labels, 1):
             print(f"  {n}. {label}")
         while True:
             answer = ask(question, values[index])
-            if answer in values:
-                return answer
             if answer.isdigit() and 1 <= int(answer) <= len(options):
-                return values[int(answer) - 1]
-            print(f"  pick 1 to {len(options)}, or type a name from the list")
+                answer = values[int(answer) - 1]
+            if answer in closed:
+                print(f"  {answer} opens later; pick another")
+            elif answer in values:
+                return answer
+            else:
+                print(f"  pick 1 to {len(options)}, or type a name from the list")
     print(f"{paint('36', '?')} {question} {paint('2', '(↑/↓ and Enter)')}")
     chosen = False
     while True:
-        for i, (_, label) in enumerate(options):
-            line = f"{paint('36', '❯')} {paint('1', label)}" if i == index else f"  {label}"
+        for i, label in enumerate(labels):
+            if i == index:
+                line = f"{paint('36', '❯')} {paint('1', label)}"
+            else:
+                line = f"  {paint('2', label) if i in shut else label}"
             print(f"\x1b[2K  {line}")
         if chosen:
             break
-        index, chosen = menu_key(index, read_key(), len(options))
+        index, chosen = menu_key(index, read_key(), len(options), shut)
         print(f"\x1b[{len(options)}F", end="")
     print(
         f"\x1b[{len(options) + 1}F\x1b[J{paint('36', '?')} {question}: {paint('1', options[index][1])}"
     )
     return values[index]
+
+
+def setup_profiles():
+    """([(model, label)], closed models) for setup's menu: d3 profiles in the launch pools, in their
+    order; a pool with an opening block (set or not) is shown as opening later."""
+    data = Path(zils.__file__).with_name("data") / "base-pools-launch.json"
+    pools = json.loads(data.read_text())["pools"]
+    order = list(pools)
+    found = [(models.pool_id(m), m) for m in models.d3_family()]
+    found = sorted((order.index(pool), pool, m) for pool, m in found if pool in pools)
+    profiles = [(m, f"{pool:<9} {m}") for _, pool, m in found]
+    closed = {m for _, pool, m in found if "opens_block" in pools[pool]}
+    return profiles, closed
 
 
 def missing_runtime(python):
@@ -867,9 +896,8 @@ def setup(args):
         model = selected_model(args.model, candidate)
     else:
         found = models.checkpoint_model(Path(candidate).expanduser()) if candidate else None
-        profiles = [(p, f"{models.pool_id(p):<9} {p}") for p in models.d3_family()]
-        print("Validators decide which base profiles are open.")
-        choice = choose("Base profile", profiles, found or config.get("model"))
+        profiles, closed = setup_profiles()
+        choice = choose("Base profile", profiles, found or config.get("model"), closed)
         model = selected_model(choice, candidate)
     repo = ask("Public Hugging Face repo for it, owner/name", config.get("repo"))
     if not name:
