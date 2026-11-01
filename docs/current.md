@@ -160,9 +160,13 @@ python -m zils.current grade --items BANK/2026-10-30/items.jsonl --model CHECKPO
   (`list=logevents`, `AFCH` tag, into the article space), then the reviewed revisions, 50 per
   request. Recent changes keep 30 days. The ask time is the `ts` of the pending submission box
   in the reviewed text, or that revision's time. Drafts under 200 characters are dropped.
-  Declines for a copyright violation, a breach of the living-persons policy, vandalism or
-  an attack page (reason codes `cv`, `blp`, `van`, or those words in the summary) are
-  skipped before the draft is read, so their text is never stored or published.
+  Reviews whose draft text must not be kept are skipped before the draft is read, so it
+  never reaches `pending.jsonl` or `dropped.jsonl`: declines with AFCH reason code `cv`
+  (copyright violation), `blp` (unsourced BLP), `van` (vandalism or attack page), `ilc`
+  (BLP without inline citations), `ecr` (topic under an editing restriction) or `joke`, and
+  rejections with `blp` (attack page) or `j` (joke or hoax), plus any summary naming a
+  copyright violation, an attack page or a hoax. The collect result counts them as
+  `skipped_sensitive`.
   English Wikipedia sees roughly 150 to 200 reviews a day, about one in eight an acceptance;
   export balances the labels, so a day gives about 30 to 50 items.
 - `--source arxiv` reads every paper submitted on the named UTC days, one API request per 2,000

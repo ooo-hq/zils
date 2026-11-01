@@ -211,16 +211,21 @@ class CollectTest(unittest.TestCase):
         self.assertIsNone(current_check.proof_reason(case))
 
     def test_drafts_declined_as_unsafe_are_never_read(self):
-        # Copyright violations, unsourced claims about living people, vandalism and attack pages:
-        # their text is not ours to keep or publish, so the draft is not even fetched.
+        # Copyright violations, claims about living people, attack pages, contentious topics and
+        # hoaxes: their text is not ours to keep or publish, so the draft is not even fetched.
         unsafe = {
             "Draft:Copied": "Declining submission: cv - Submission is a copyright violation (AFCH)",
-            "Draft:Gossip": "Declining submission: blp - Submission is in violation of the "
+            "Draft:Gossip": "Declining submission: nn, blp - Submission is about a topic not yet "
+            "shown to meet general notability guidelines, Submission is in violation of the "
             "biographies of living persons policy (AFCH)",
-            "Draft:Junk": "Rejecting submission: van - Submission is vandalism (AFCH)",
-            "Draft:Mixed": "Declining submission: v, cv - Submission is improperly sourced, "
-            "Submission is a copyright violation (AFCH)",
-            "Draft:Mean": "Declining submission: reason - This draft is an attack page (AFCH)",
+            "Draft:Attack": "Rejecting submission: blp - Submission is an attack page (AFCH)",
+            "Draft:Junk": "Declining submission: van - Submission is vandalism (AFCH)",
+            "Draft:Uncited": "Declining submission: ilc - Submission is a BLP that does not meet "
+            "minimum inline citation requirements (AFCH)",
+            "Draft:Restricted": "Declining submission: ecr - Submission is on a topic under an "
+            "editing restriction (AFCH)",
+            "Draft:Hoax": "Declining submission: joke - Submission appears to be a joke (AFCH)",
+            "Draft:Prank": "Rejecting submission: j - Submission is a hoax (AFCH)",
         }
         edits = [
             {"title": title, "revid": 900 + 2 * i, "old_revid": 901 + 2 * i,
@@ -240,11 +245,28 @@ class CollectTest(unittest.TestCase):
                 if params.get("prop") == "revisions"
                 for revid in params["revids"].split("|")
             }
+            kept = (Path(tmp) / "pending.jsonl", Path(tmp) / "dropped.jsonl")
+            stored = "".join(path.read_text() for path in kept if path.exists())
         self.assertEqual(titles, {"Draft:Frog Pond", "Draft:Spam Co", "Draft:Lake Inn"})
         self.assertEqual(result["added"], 3)
+        self.assertEqual(result["skipped_sensitive"], len(unsafe))
         self.assertFalse(fetched & set(extra))
-        # An ordinary decline that merely mentions sources is kept.
-        self.assertFalse(current_afc.unsafe_decline(RC[0]["comment"]))
+        for title in unsafe:
+            self.assertNotIn(title, stored)
+
+    def test_ordinary_declines_are_not_sensitive(self):
+        for comment in (
+            RC[0]["comment"],
+            RC[1]["comment"],
+            "Declining submission: bio - Submission is about a person not yet shown to meet "
+            "notability guidelines (AFCH)",
+            "Declining submission: ai - Submission appears to be written by a large language "
+            "model (AFCH)",
+            "Declining submission: nn, v - Submission is about a topic not yet shown to meet "
+            "general notability guidelines, Submission is improperly sourced (AFCH)",
+        ):
+            with self.subTest(comment=comment):
+                self.assertFalse(current_afc.sensitive(comment))
 
     def test_recent_changes_are_paged(self):
         with tempfile.TemporaryDirectory() as tmp:
