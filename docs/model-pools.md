@@ -100,7 +100,8 @@ and must be set to the same values on every validator before they open.
 A pool entry with `"type": "soup"` pays from daily soup rounds instead of a king
 history (omit `type` for a king pool). Each round admits the pool's body
 commitments, grades the pool's bodies alone and as uniform averages ("soups") on
-a seeded subset of a private round bank, and pays the soup's seats and the best
+a seeded subset of a private round bank (a soup averages the language weights and
+keeps the release's vision tower, since no exam grades images yet), and pays the soup's seats and the best
 solo body (the crown). The mechanism and its constants live in
 `zils/soup_round.py`; copy and twin checks in `zils/soup_copies.py`; pay rates and
 the house registry in `zils/soup_rates.py`.
