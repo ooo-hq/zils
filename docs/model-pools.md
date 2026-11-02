@@ -261,7 +261,15 @@ Each round's subset (`subset_size` items, 3,000 by default) has two parts:
     run, and the mode must be `local` or `publishable`. Any other folder is
     skipped and logged, and the round goes on.
   - An item is eligible when all of these hold:
-    - it resolved in the `max_age_days` before the round's commit deadline;
+    - it resolved in the `max_age_days` before the round's commit deadline. An
+      optional `wait_days` (1 to 14) changes this: the round runs that many days
+      after its deadline, bodies still freeze at the deadline's seed block, and
+      an item is eligible when it was **asked after the deadline**, so no graded
+      body could have seen its question or answer. A stream supplies such items
+      once its settle time plus the nightly export's lag (about two days) fits
+      in `wait_days`: with 5, about a day of Wikipedia reverts (48 h); arXiv
+      and GitHub (72 h) need 6. The pool's last decision stays paid `wait_days`
+      longer than `max_decision_age_days`;
     - earlier rounds drew it fewer than `max_uses` times (the use ledger);
     - with the question, it fits the pool model's input cap (8,192 tokens for
       d3-mini). The estimate is the same one Zils Current uses.

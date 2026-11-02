@@ -688,7 +688,9 @@ signal. See [quality settings](model-pools.md#quality-settings).
 
 Every resolved item is public and can be rebuilt by anyone, labels included. A body committed
 after an item resolved could have been trained on it. A short `max_age_days` narrows that
-window but does not close it.
+window but does not close it. `wait_days` closes it: the round runs that many days after
+its commit deadline and takes only items asked after the deadline, so every graded body was
+frozen before the question existed.
 
 ## Extension points
 

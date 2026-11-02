@@ -14,7 +14,9 @@ The rules for the Current part:
   logged. A bad folder never stops the round.
 * An item is eligible when it resolved within ``max_age_days`` before the round's commit deadline,
   has been drawn in fewer than ``max_uses`` earlier rounds (the use ledger), and fits the pool
-  model's input cap.
+  model's input cap. With ``wait_days`` the round runs that many days after its deadline (bodies
+  still freeze at the deadline) and takes items asked after the deadline instead, which no graded
+  body could have seen.
 * The draw takes ``current_items`` items. No stream may hold more than ``stream_max`` of them, and at
   least ``min_streams`` streams must contribute. Streams in one ``group_max`` group (by default
   every ``arxiv-category-*`` stream, 15% together) share one cap, spent on as few of them as
@@ -68,7 +70,17 @@ GROUP_MAX = {"arxiv-category-*": 0.15}
 KEEP_ROUNDS = 8  # earlier rounds whose drawn Current items stay in the bank (pooled decisions)
 MODES = ("local", "publishable")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
-_ITEM_KEYS = ("id", "family", "category", "block", "state", "question", "label", "resolved_at")
+_ITEM_KEYS = (
+    "id",
+    "family",
+    "category",
+    "block",
+    "state",
+    "question",
+    "label",
+    "asked_at",
+    "resolved_at",
+)
 
 
 def validate(exam):
@@ -82,7 +94,10 @@ def validate(exam):
             raise ValueError("soup exam settings apply only to the current source")
         return {"source": "bank"}
     unknown = (
-        set(exam) - {"source", "current_bank", "group_max"} - set(DEFAULTS) - set(QUALITY_DEFAULTS)
+        set(exam)
+        - {"source", "current_bank", "group_max", "wait_days"}
+        - set(DEFAULTS)
+        - set(QUALITY_DEFAULTS)
     )
     if unknown:
         raise ValueError("unknown soup exam settings: " + ", ".join(sorted(unknown)))
@@ -98,6 +113,10 @@ def validate(exam):
         raise ValueError("soup exam max_age_days must be in [1, 90]")
     if not 1 <= result["max_uses"] <= 24:
         raise ValueError("soup exam max_uses must be in [1, 24]")
+    if "wait_days" in exam:  # echoed only when set, so a pool without it records as before
+        if type(exam["wait_days"]) is not int or not 0 <= exam["wait_days"] <= 14:
+            raise ValueError("soup exam wait_days must be an integer in [0, 14]")
+        result["wait_days"] = exam["wait_days"]
     if not 1 <= result["min_streams"] <= 20:
         raise ValueError("soup exam min_streams must be in [1, 20]")
     if not 1 <= result["min_items"] <= result["current_items"]:
@@ -361,6 +380,7 @@ def _valid_item(item):
         return False
     try:
         core.validate_cases([item])
+        _parse_time(item["asked_at"])
         _parse_time(item["resolved_at"])
     except (TypeError, ValueError):
         return False
@@ -373,10 +393,17 @@ def _tokens(item):
     return current_items.estimated_tokens(item["state"]["text"]) + current_items.QUESTION_TOKENS
 
 
-def load(bank_dir, *, deadline, max_age_days, max_tokens, uses, max_uses, log=print):
-    """Eligible items from the dated folders under ``bank_dir`` and what was read and excluded."""
+def load(bank_dir, *, deadline, max_age_days, max_tokens, uses, max_uses, wait_days=0, log=print):
+    """Eligible items from the dated folders under ``bank_dir`` and what was read and excluded.
+
+    An item is in the window when it resolved within ``max_age_days`` before the ``deadline``, or,
+    with ``wait_days`` (the round runs that long after the deadline), when it was asked after the
+    deadline: no graded body could have seen it."""
     root = Path(bank_dir)
-    start = deadline - timedelta(days=max_age_days)
+    if wait_days:
+        key, start, end = "asked_at", deadline, None
+    else:
+        key, start, end = "resolved_at", deadline - timedelta(days=max_age_days), deadline
     folders, skipped, excluded = [], {}, Counter()
     eligible, seen = {}, set()
     names = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
@@ -389,8 +416,8 @@ def load(bank_dir, *, deadline, max_age_days, max_tokens, uses, max_uses, log=pr
             day = datetime.strptime(name, "%Y-%m-%d").replace(tzinfo=UTC)
         except ValueError:
             continue
-        if day + timedelta(days=1) <= start or day > deadline:
-            continue  # the folder's items all resolved outside the window
+        if day + timedelta(days=1) <= start or (end is not None and day > end):
+            continue  # the folder's items all resolved (so were asked) outside the window
         try:
             manifest_sha, manifest, items = verify(root / name)
         except ValueError as error:
@@ -402,11 +429,11 @@ def load(bank_dir, *, deadline, max_age_days, max_tokens, uses, max_uses, log=pr
             if not _valid_item(item):
                 excluded["invalid"] += 1
                 continue
-            resolved = _parse_time(item["resolved_at"])
-            key = item.get("content_sha256") or item["id"]
-            if item["id"] in eligible or item["id"] in seen or key in seen:
+            moment = _parse_time(item[key])
+            identity = item.get("content_sha256") or item["id"]
+            if item["id"] in eligible or item["id"] in seen or identity in seen:
                 excluded["duplicate"] += 1
-            elif not start <= resolved <= deadline:
+            elif moment < start or (end is not None and moment > end):
                 excluded["outside_window"] += 1
             elif uses.get(item["id"], 0) >= max_uses:
                 excluded["used_up"] += 1
@@ -415,7 +442,7 @@ def load(bank_dir, *, deadline, max_age_days, max_tokens, uses, max_uses, log=pr
             else:
                 eligible[item["id"]] = item
                 used += 1
-            seen.update((item["id"], key))
+            seen.update((item["id"], identity))
         folders.append(
             {
                 "date": name,
@@ -647,6 +674,7 @@ def prepare(config, state_dir, *, round_id, block_hash, bank, ledger, log=print)
             max_tokens=_max_tokens(config),
             uses=uses,
             max_uses=settings["max_uses"],
+            wait_days=settings.get("wait_days", 0),
             log=log,
         )
         record.update(

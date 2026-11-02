@@ -1869,6 +1869,13 @@ class ScheduleTest(unittest.TestCase):
             ("2026-11-02", at("2026-11-02T06:30:00")),
         )
 
+    def test_a_waiting_pool_is_due_wait_days_after_its_deadline(self):
+        schedule = {"deadline_utc": "00:00"}
+        self.assertEqual(
+            soup_pool.due(schedule, at("2026-11-07T05:00:00"), wait_days=4),
+            ("2026-11-03", at("2026-11-03T00:00:00")),
+        )
+
     def test_seed_block_is_the_first_block_after_the_deadline(self):
         start = at("2026-11-02T23:00:00")
         chain = FakeChain(start)
@@ -1991,6 +1998,34 @@ class SoupEpochTest(unittest.TestCase):
         self.epoch()
         self.assertEqual([r["round_id"] for _, r in self.calls][-1], "d3-mini-2026-11-04")
         self.assertEqual(soup_pool.decision(self.directory, "d3-mini")["pool_id"], "d3-mini")
+
+    def test_a_waiting_pool_runs_its_round_wait_days_after_the_deadline(self):
+        exam = {"source": "current", "current_bank": "current", "wait_days": 1}
+        self.config["base_pools"] = pools(soup_entry(exam=exam))
+        self.snapshot["block"] = 1000 + 7200  # 2026-11-04 02:20
+        summary = self.epoch()
+        [(_, request)] = self.calls
+        self.assertEqual(request["round_id"], "d3-mini-2026-11-03")
+        self.assertEqual(summary["d3-mini"]["round_id"], "d3-mini-2026-11-03")
+        # Bodies still freeze at the deadline: uid 2 committed after it, a day before grading.
+        self.assertEqual(request["seed_block"], 301)
+        self.assertEqual(set(request["snapshot"]["commitments"]), {"1"})
+        self.assertEqual(request["config"]["exam"]["wait_days"], 1)
+
+    def test_a_waiting_pool_keeps_its_decision_wait_days_longer(self):
+        exam = {"source": "current", "current_bank": "current", "wait_days": 2}
+        self.config["base_pools"] = pools(soup_entry(exam=exam))
+        self.snapshot["block"] = 1000 + 2 * 7200
+        self.epoch()  # the round for 2026-11-03, graded on 2026-11-05
+        entry = soup_pool.soup_pools(self.config)["d3-mini"]
+        fresh = soup_pool.fresh_decision(
+            self.directory, "d3-mini", entry, now=at("2026-11-07T23:00:00")
+        )
+        self.assertEqual(fresh["round_id"], "d3-mini-2026-11-03")
+        stale = soup_pool.fresh_decision(
+            self.directory, "d3-mini", entry, now=at("2026-11-08T00:00:01")
+        )
+        self.assertIsNone(stale)
 
     def test_a_failed_round_keeps_the_last_decision_and_reports_the_error(self):
         self.epoch()
