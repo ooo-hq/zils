@@ -24,21 +24,26 @@ import time
 import traceback
 from pathlib import Path
 
-MARGIN = 0.3  # minimum soup score gain (points) for greedy to add a body; above GPU-to-GPU drift
+# The three bars are about 2.5 standard errors of the score differences they test, measured on
+# the 31 Oct 2026 dry run by resampling items (ZIL-131) and scaled to the ~7,500 pooled decision
+# items of a three-round window: a greedy step ~0.23, a leave-one-out contribution ~0.34, a solo
+# score against another solo score ~0.5.
+MARGIN = 0.5  # minimum soup score gain (points) for greedy to add a body
 MAX_MEMBERS = 5
 SEAT_SHARE = 0.8
 CROWN_SHARE = 0.2
-FLOOR = 0.3  # minimum leave-one-out contribution (points) for a paid seat
+FLOOR = 0.8  # minimum leave-one-out contribution (points) for a paid seat
+CROWN_MARGIN = 1.2  # the crown's solo score over every house body's and the current soup's
 HOUSE_RATE = 0.0  # open models known at launch: seated but unpaid
 SCOUT_RATE = 0.25  # open models released after launch, submitted by a scout
 TRAINER_RATE = 1.0
 RATES = (HOUSE_RATE, SCOUT_RATE, TRAINER_RATE)
-_EPS = 1e-9  # score differences are floats; 3.3 - 3.0 must clear a 0.3 margin
+_EPS = 1e-9  # score differences are floats; 3.5 - 3.0 must clear a 0.5 margin
 # Launch stopgap (ZIL-117) until seats are credited relative to a body's base: a fine-tune whose
 # change is mostly (EXPLAINED_MIN) allowed bases is seated only if its solo score beats its best
 # base (one explaining at least BASE_MIN) by BASE_MARGIN; if one of those bases is a listed public
 # model, which is not graded, it is paid as a scout instead.
-BASE_MARGIN = MARGIN
+BASE_MARGIN = CROWN_MARGIN  # a solo score against a solo score, like the crown
 EXPLAINED_MIN = 0.5
 BASE_MIN = 0.1
 
@@ -152,7 +157,7 @@ def seat_weights(members, contributions, rates, *, share=SEAT_SHARE, floor=FLOOR
 
 
 def crown_weight(
-    solo, rates, house, *, share=CROWN_SHARE, margin=MARGIN, soup_score=None, order_key
+    solo, rates, house, *, share=CROWN_SHARE, margin=CROWN_MARGIN, soup_score=None, order_key
 ):
     """The crown: the best solo body that is not a house ingredient gets ``share`` times its rate,
     provided its solo score beats every house body's, and ``soup_score`` (the current soup on the

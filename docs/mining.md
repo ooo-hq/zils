@@ -478,7 +478,7 @@ Validators run one soup round per day for each open soup pool:
 5. **Solo:** each pool body is graded alone on the chassis. Every score from here
    on (solo, greedy, contribution, crown) is on the items of this round and the
    validator's last two finished rounds pooled together (`decision_rounds`, default
-   3), because one subset's noise is larger than the 0.3-point margin. A new body is
+   3), because one subset's noise is larger than the greedy margin. A new body is
    graded on the earlier rounds' items too. Under the default `calibrated_brier`
    scoring, each body and soup first gets one temperature fitted on a private 20%
    of those items; the rest are scored on Brier skill (ranked probability score
@@ -486,7 +486,7 @@ Validators run one soup round per day for each open soup pool:
    softening a body's probabilities without changing its answers earns nothing
    ([model pools: scoring](model-pools.md#soup-pools)).
 6. **Greedy soup:** starting from the best single body, add the next best only if
-   the soup's score rises by at least **0.3** points; stop at **5** members.
+   the soup's score rises by at least **0.5** points; stop at **5** members.
 7. **Contribution:** each member's leave-one-out effect on the soup's score.
 
 ### Pay
@@ -496,17 +496,17 @@ Each pool's emission share pays **five seats of 16% each** (80% in all) and
 grow when fewer members are seated. Seats are re-earned every round; a displaced
 member stops earning at once.
 
-- **Seats:** each member whose contribution is at least **0.3** points earns one
+- **Seats:** each member whose contribution is at least **0.8** points earns one
   seat, 16% of the pool's share multiplied by its rate. Empty seats, house seats
   and seats below the floor burn.
 - **Fine-tunes (launch rule):** if at least half of your body's change comes from
   house ingredients, the soup or the release, your seat is paid only if your
-  body alone beats the best of those bases by at least **0.3** points. If part
+  body alone beats the best of those bases by at least **1.2** points. If part
   of it (10% or more) comes from a listed public model, it is paid at the scout
   rate. Train enough to beat what you started from.
 - **Crown:** the round's best single body that is not a house ingredient takes the
   20%, multiplied by its rate, only if it beats every house ingredient alone and
-  the current soup by at least **0.3** points on the pooled items; otherwise the
+  the current soup by at least **1.2** points on the pooled items; otherwise the
   crown burns. Since a soup usually beats its members, expect the crown to burn in
   most rounds; it pays for a body that is better than the soup by itself.
 - **Rates:** **1.0** for a trainer's body; **0.25** for a scout's body, an
@@ -567,9 +567,12 @@ pass the 12-hour confirmation draw and the pinned three-seed adapter suite (the
 [release gate](base-election.md)); the owner's promotion PR then makes it the next
 z3 version. Members are paid through seats, not as kings.
 
-The margin (0.3), floor (0.3), member cap (5), pool size (20), change bound (0.15),
-80/20 split, rates (1.0 / 0.25 / 0) and release cadence are policy choices made
-for the launch, not tuned results.
+The member cap (5), pool size (20), change bound (0.15), 80/20 split, rates
+(1.0 / 0.25 / 0) and release cadence are policy choices made for the launch, not
+tuned results. The greedy margin (0.5), seat floor (0.8) and the crown and
+fine-tune bars (1.2) are about 2.5 standard errors of the differences they test,
+measured by resampling the items of a 3,000-item dry run and scaled to the pooled
+three-round window; a smaller real gain is not paid until the pool has more items.
 
 ## Results and restarts
 
