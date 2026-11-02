@@ -33,11 +33,12 @@ class GreedyTest(unittest.TestCase):
         self.assertEqual(trace[0]["score"], 3.5)
 
     def test_owner_constants(self):
-        self.assertEqual(soup_round.MARGIN, 0.3)
+        self.assertEqual(soup_round.MARGIN, 0.5)
         self.assertEqual(soup_round.MAX_MEMBERS, 5)
         self.assertEqual(soup_round.SEAT_SHARE, 0.8)
         self.assertEqual(soup_round.CROWN_SHARE, 0.2)
-        self.assertEqual(soup_round.FLOOR, 0.3)
+        self.assertEqual(soup_round.FLOOR, 0.8)
+        self.assertEqual(soup_round.CROWN_MARGIN, 1.2)
         self.assertEqual(
             (soup_round.HOUSE_RATE, soup_round.SCOUT_RATE, soup_round.TRAINER_RATE),
             (0.0, 0.25, 1.0),
@@ -45,7 +46,7 @@ class GreedyTest(unittest.TestCase):
 
     def test_margin_blocks_a_small_gain_and_accepts_a_full_one(self):
         solo = {"a": 3.0, "b": 2.0, "c": 1.0}
-        scores = {("a", "b"): 3.2, ("a", "c"): 3.3}
+        scores = {("a", "b"): 3.4, ("a", "c"): 3.5}
         soup, trace = soup_round.greedy(
             solo, scripted(scores), order_key=commit_order("a", "b", "c")
         )
@@ -54,7 +55,7 @@ class GreedyTest(unittest.TestCase):
 
     def test_margin_is_measured_from_the_current_soup(self):
         solo = {"a": 3.0, "b": 2.0, "c": 1.0}
-        scores = {("a", "b"): 3.4, ("a", "b", "c"): 3.6}
+        scores = {("a", "b"): 3.6, ("a", "b", "c"): 4.0}
         soup, _ = soup_round.greedy(solo, scripted(scores), order_key=commit_order("a", "b", "c"))
         self.assertEqual(soup, ("a", "b"))
 
@@ -116,7 +117,7 @@ class SeatWeightsTest(unittest.TestCase):
         # A seat pays SEAT_SHARE / MAX_MEMBERS whoever else is seated; unfilled seats burn.
         got = soup_round.seat_weights(
             ("a", "b", "c"),
-            {"a": 1.0, "b": 0.3, "c": 0.29},
+            {"a": 1.0, "b": 0.8, "c": 0.79},
             {"a": self.T, "b": self.T, "c": self.T},
         )
         self.assertEqual(set(got), {"a", "b"})
@@ -145,7 +146,7 @@ class SeatWeightsTest(unittest.TestCase):
         self.assertAlmostEqual(got["a"], 0.16)
 
     def test_nobody_above_the_floor_pays_nothing(self):
-        got = soup_round.seat_weights(("a", "b"), {"a": 0.2, "b": -1.0}, {"a": self.T, "b": self.T})
+        got = soup_round.seat_weights(("a", "b"), {"a": 0.7, "b": -1.0}, {"a": self.T, "b": self.T})
         self.assertEqual(got, {})
 
     def test_rejects_an_unknown_rate(self):
@@ -155,7 +156,7 @@ class SeatWeightsTest(unittest.TestCase):
 
 class CrownWeightTest(unittest.TestCase):
     def test_best_non_house_solo_body_wins_at_its_rate(self):
-        solo = {"house": 3.0, "scout": 4.0, "trainer": 3.5}
+        solo = {"house": 3.0, "scout": 4.5, "trainer": 3.5}
         rates = {"house": 0.0, "scout": 0.25, "trainer": 1.0}
         got = soup_round.crown_weight(
             solo, rates, {"house"}, order_key=commit_order("house", "scout", "trainer")
@@ -173,7 +174,7 @@ class CrownWeightTest(unittest.TestCase):
     def test_the_crown_must_beat_every_house_body_by_the_margin(self):
         rates = {"h1": 0.0, "h2": 0.0, "t": 1.0}
         order = commit_order("h1", "h2", "t")
-        for best, paid in ((5.29, False), (5.3, True), (6.0, True), (4.0, False)):
+        for best, paid in ((6.19, False), (6.2, True), (7.0, True), (4.0, False)):
             with self.subTest(best=best):
                 solo = {"h1": 4.5, "h2": 5.0, "t": best}
                 got = soup_round.crown_weight(solo, rates, {"h1", "h2"}, order_key=order)
@@ -181,7 +182,7 @@ class CrownWeightTest(unittest.TestCase):
 
     def test_a_soup_fine_tune_needs_the_margin_over_the_current_soup(self):
         rates, order = {"h": 0.0, "t": 1.0}, commit_order("h", "t")
-        for best, paid in ((5.2, False), (5.3, True)):
+        for best, paid in ((6.1, False), (6.2, True)):
             with self.subTest(best=best):
                 got = soup_round.crown_weight(
                     {"h": 4.0, "t": best}, rates, {"h"}, soup_score=5.0, order_key=order
@@ -190,7 +191,7 @@ class CrownWeightTest(unittest.TestCase):
 
     def test_first_round_without_a_soup_uses_the_house_bodies_only(self):
         got = soup_round.crown_weight(
-            {"h": 4.0, "t": 4.3}, {"h": 0.0, "t": 1.0}, {"h"}, soup_score=None,
+            {"h": 4.0, "t": 5.2}, {"h": 0.0, "t": 1.0}, {"h"}, soup_score=None,
             order_key=commit_order("h", "t"),
         )  # fmt: skip
         self.assertEqual(got, {"t": 0.2})
@@ -209,26 +210,26 @@ class FineTuneGateTest(unittest.TestCase):
 
     def test_a_fine_tune_must_beat_its_house_base_by_the_margin(self):
         shares = {"b": {"house:h": 0.9}}
-        gated, scouts = self.gate(shares, {"b": 60.2, "h": 60.0})
+        gated, scouts = self.gate(shares, {"b": 61.1, "h": 60.0})
         self.assertIn("house:h", gated["b"])
         self.assertEqual(scouts, set())
-        gated, _ = self.gate(shares, {"b": 60.3, "h": 60.0})
+        gated, _ = self.gate(shares, {"b": 61.2, "h": 60.0})
         self.assertEqual(gated, {})
 
     def test_a_soup_retune_must_beat_the_current_soup(self):
         shares = {"b": {"soup": 0.85, "house:h": 0.05}}
-        self.assertIn("soup", self.gate(shares, {"b": 50.1, "h": 10.0})[0]["b"])
-        self.assertEqual(self.gate(shares, {"b": 50.3, "h": 10.0})[0], {})
+        self.assertIn("soup", self.gate(shares, {"b": 51.1, "h": 10.0})[0]["b"])
+        self.assertEqual(self.gate(shares, {"b": 51.2, "h": 10.0})[0], {})
 
     def test_the_bar_is_the_best_of_its_bases(self):
         shares = {"b": {"soup": 0.4, "house:h": 0.4}}
-        self.assertIn("b", self.gate(shares, {"b": 60.1, "h": 60.0})[0])
-        self.assertEqual(self.gate(shares, {"b": 60.4, "h": 60.0})[0], {})
+        self.assertIn("b", self.gate(shares, {"b": 61.1, "h": 60.0})[0])
+        self.assertEqual(self.gate(shares, {"b": 61.3, "h": 60.0})[0], {})
 
     def test_a_release_tune_must_beat_the_release(self):
         shares = {"b": {"release": 0.9}}
-        self.assertIn("release", self.gate(shares, {"b": 40.2})[0]["b"])
-        self.assertEqual(self.gate(shares, {"b": 40.3})[0], {})
+        self.assertIn("release", self.gate(shares, {"b": 41.1})[0]["b"])
+        self.assertEqual(self.gate(shares, {"b": 41.2})[0], {})
 
     def test_a_body_mostly_its_own_is_not_gated(self):
         self.assertEqual(self.gate({"b": {"house:h": 0.45}}, {"b": 1.0, "h": 60.0}), ({}, set()))

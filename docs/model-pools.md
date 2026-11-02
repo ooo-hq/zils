@@ -189,12 +189,12 @@ optionally `subset_size` (default 3,000), `screen_size` (300),
   The released soup's `model.json` carries the temperature fitted for it on the
   round's held-apart items, and the public round record publishes it. Bodies are
   always graded as temperature-1 candidates built by the validator; a
-  temperature in a body's own files is never read. Greedy margins, the
-  contribution floor and the crown bar stay at 0.3 points on whichever scale the
+  temperature in a body's own files is never read. The greedy margin,
+  the contribution floor and the crown bar are points on whichever scale the
   pool uses.
 - `decision_rounds` sets how many rounds' items each seat and crown decision is
   scored on. A body's measured gain moves by about 0.4 to 0.6 points from one
-  3,000-item subset to the next, more than the 0.3-point margin, so a single
+  3,000-item subset to the next, about the greedy margin, so a single
   subset seats a body with no real gain on a large share of nights. With the
   default of 3, the round scores every pool body, every soup it tries, each
   leave-one-out soup, the current soup (the crown bar) and the chassis baseline
@@ -261,7 +261,15 @@ Each round's subset (`subset_size` items, 3,000 by default) has two parts:
     run, and the mode must be `local` or `publishable`. Any other folder is
     skipped and logged, and the round goes on.
   - An item is eligible when all of these hold:
-    - it resolved in the `max_age_days` before the round's commit deadline;
+    - it resolved in the `max_age_days` before the round's commit deadline. An
+      optional `wait_days` (1 to 14) changes this: the round runs that many days
+      after its deadline, bodies still freeze at the deadline's seed block, and
+      an item is eligible when it was **asked after the deadline**, so no graded
+      body could have seen its question or answer. A stream supplies such items
+      once its settle time plus the nightly export's lag (about two days) fits
+      in `wait_days`: with 5, about a day of Wikipedia reverts (48 h); arXiv
+      and GitHub (72 h) need 6. The pool's last decision stays paid `wait_days`
+      longer than `max_decision_age_days`;
     - earlier rounds drew it fewer than `max_uses` times (the use ledger);
     - with the question, it fits the pool model's input cap (8,192 tokens for
       d3-mini). The estimate is the same one Zils Current uses.
@@ -378,7 +386,7 @@ weight and the crown its crown weight, as fractions of the pool's share. A seat
 is a fixed fifth of 80% (16%) times its rate, however many members are seated;
 empty and unpaid seats burn. The crown (20%) goes to the best non-house solo body only if its solo score beats
 every house body's solo score and the current soup's score on the same pooled
-items by at least the greedy margin (0.3 points); otherwise it burns. If the current
+items by at least the crown bar (1.2 points); otherwise it burns. If the current
 soup cannot be graded that round, the crown burns too. Before the first
 soup only the house bodies set the bar. Whatever a round does not pay goes to
 `burn_uid`; before the first round the whole share burns. A failed round keeps
@@ -470,7 +478,7 @@ its bases are those explaining at least 10%:
 - If one of its bases is a listed public model, it is paid at the scout rate.
   Listed models are not graded, so a fine-tune can't be compared with them.
 - Otherwise its seat is paid only if its solo score beats the best of its bases
-  by at least 0.3 points on the round's items. A house body's base score is its
+  by at least 1.2 points on the round's items. A house body's base score is its
   solo score; the soup's is the score of the soup the body was admitted against
   (never a soup built from the body itself); the release's is the chassis
   score. A base that can't be scored this round leaves the seat unpaid.

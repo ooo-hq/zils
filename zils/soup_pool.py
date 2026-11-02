@@ -65,7 +65,13 @@ def fresh_decision(directory, pool, entry, *, now):
     hours, minutes = map(int, entry["schedule"]["deadline_utc"].split(":"))
     deadline = day + timedelta(hours=hours, minutes=minutes)
     age = now - deadline.timestamp()
-    return record if age <= entry["max_decision_age_days"] * 86400 else None
+    allowed = entry["max_decision_age_days"] + _wait(entry)
+    return record if age <= allowed * 86400 else None
+
+
+def _wait(entry):
+    """Days a pool's round waits after its commit deadline (``exam.wait_days``; 0 without one)."""
+    return entry.get("exam", {}).get("wait_days", 0)
 
 
 def recorded(directory, pool, round_id):
@@ -78,10 +84,11 @@ def recorded(directory, pool, round_id):
     )
 
 
-def due(schedule, head_time):
-    """(day, deadline timestamp) of the latest daily commit deadline at or before `head_time`."""
+def due(schedule, head_time, wait_days=0):
+    """(day, deadline timestamp) of the latest daily commit deadline at or before `head_time`,
+    less `wait_days` for a pool whose rounds wait that long after their deadline."""
     hours, minutes = map(int, schedule["deadline_utc"].split(":"))
-    now = datetime.fromtimestamp(head_time, UTC)
+    now = datetime.fromtimestamp(head_time, UTC) - timedelta(days=wait_days)
     deadline = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
     if deadline > now:
         deadline -= timedelta(days=1)
@@ -256,7 +263,7 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
     for pool, entry in soup_pools(config, int(snapshot["block"])).items():
         try:
             head = int(snapshot["block"])
-            day, deadline = due(entry["schedule"], _time(block_info(head)))
+            day, deadline = due(entry["schedule"], _time(block_info(head)), _wait(entry))
             round_id = f"{pool}-{day}"
             summary[pool] = {"round_id": round_id}
             summary[pool]["decision"] = decision(directory, pool) is not None
