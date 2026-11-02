@@ -521,7 +521,8 @@ member stops earning at once.
 
 Each pool has its own house ingredients, the open decision models of its size
 already public at launch, listed in `zils/data/`: `soup-house.json` (mini),
-`soup-house-lite.json` (`vllm-sr/d3-lite` and `internlm/Intern-Decision-0.8B`),
+`soup-house-lite.json` (`vllm-sr/d3-lite`, `internlm/Intern-Decision-0.8B`,
+`Maincode/Matilda-Decision-v1-Edge` and `zils-ai/jiwo-0.8b-full`),
 `soup-house-flash.json` (`vllm-sr/d3-flash`) and `soup-house-z3.json`
 (`vllm-sr/d3-ultra`).
 

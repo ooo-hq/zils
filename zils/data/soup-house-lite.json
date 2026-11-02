@@ -10,5 +10,17 @@
     "repo": "internlm/Intern-Decision-0.8B",
     "revision": "42457fafd13d10d0b0d9be46cb30a23caa409994",
     "body_sha256": "5413b49ba0f480d57db4c773e79e45ce38b02306d5309c99cdcf615f2329bea9"
+  },
+  {
+    "name": "Matilda-Decision-v1-Edge",
+    "repo": "Maincode/Matilda-Decision-v1-Edge",
+    "revision": "90c2cee9c6f607f40a4802a95939857d7eb6dfeb",
+    "body_sha256": "c877f501acc787d9ee8b5b7eba3b42318b63d364e32081fd73ca02368753a362"
+  },
+  {
+    "name": "jiwo-0.8b-full",
+    "repo": "zils-ai/jiwo-0.8b-full",
+    "revision": "adce2ce92cd2130fd3ed451cf5f9642e3dfe4a57",
+    "body_sha256": "d2b726da239f0d9d6d6f4557bd96d5d4e920358fa36e3b5fa97242e5534292b4"
   }
 ]

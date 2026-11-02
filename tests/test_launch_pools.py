@@ -216,7 +216,12 @@ class LaunchDataTest(unittest.TestCase):
 
         expected = {
             "soup-house.json": {"vllm-sr/d3-mini"},
-            "soup-house-lite.json": {"vllm-sr/d3-lite", "internlm/Intern-Decision-0.8B"},
+            "soup-house-lite.json": {
+                "vllm-sr/d3-lite",
+                "internlm/Intern-Decision-0.8B",
+                "Maincode/Matilda-Decision-v1-Edge",
+                "zils-ai/jiwo-0.8b-full",
+            },
             "soup-house-flash.json": {"vllm-sr/d3-flash"},
             "soup-house-z3.json": {"vllm-sr/d3-ultra"},
         }
@@ -240,8 +245,7 @@ class LaunchDataTest(unittest.TestCase):
         config = json.loads((DATA / "base-pools-launch.json").read_text())
         checked = model_pools.validate(config)["pools"]
         lite = {
-            "cribl-ai/cribl-decision-2-0.8B", "eljiwo/jiwo-0.8b",
-            "Maincode/Matilda-Decision-v1-Edge", "OmniJev/OneJev1.6-0.8B",
+            "cribl-ai/cribl-decision-2-0.8B", "eljiwo/jiwo-0.8b", "OmniJev/OneJev1.6-0.8B",
             "OmniJev/OneJev1.5-0.8B", "OmniJev/OneJev-0.8B", "Mapika/decider-0.8b",
             "ken-jo/QEV-0.8B", "run-saina/saina-helm-0.8b", "run-saina/saina-helm-2-0.8b",
             "run-saina/saina-helm-3-0.8b", "jeff-legacy/Jeff-Qwen3.5-0.8B", "mstrasser/jeff-base",
@@ -271,8 +275,8 @@ class LaunchDataTest(unittest.TestCase):
         # Each packaged list resolves in the first round: every download starts within the byte
         # budget (safetensors sizes at the pinned revisions, read from the Hub on 31 Oct 2026).
         gb = {
-            "d3-lite": [1.51, 1.51, 1.71, 1.71, 2.21, 2.21, 1.5, 1.71, 1.71, 1.72, 1.72, 1.71,
-                        1.71, 1.5, 1.84],
+            "d3-lite": [1.51, 1.51, 1.71, 2.21, 2.21, 1.5, 1.71, 1.71, 1.72, 1.72, 1.71, 1.71,
+                        1.5, 1.84],
             "d3-mini": [9.21, 9.08, 9.08, 9.32, 9.32, 8.41, 8.41, 10.35],
         }  # fmt: skip
         for pool, sizes in gb.items():
