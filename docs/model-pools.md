@@ -312,7 +312,7 @@ predict adds only noise. Three optional settings guard against both:
   "current_bank": "/var/lib/zils-current/bank",
   "current_share": 0.33,
   "min_family_items": 100,
-  "exclude_streams": ["stackexchange-score-*"]
+  "exclude_streams": ["stackexchange-score-*", "wikipedia-afd"]
 }
 ```
 
@@ -336,10 +336,11 @@ predict adds only noise. Three optional settings guard against both:
   - A cell with no kept Current family is filled from `round_bank`. If fewer
     than `min_items` items or `min_streams` streams remain, the round falls
     back to `round_bank`.
-- **`exclude_streams`** (default `["stackexchange-score-*"]`): glob patterns of
-  stream names that are never drawn. Stack Exchange score streams show close to
-  zero skill for every body measured, so they are excluded by default. `[]`
-  draws every stream.
+- **`exclude_streams`** (default `["stackexchange-score-*", "wikipedia-afd"]`):
+  glob patterns of stream names that are never drawn. Stack Exchange score
+  streams show close to zero skill for every body measured, and an AfD item's
+  state holds the discussion's votes, so its label is mostly a vote count. Both
+  are excluded by default. `[]` draws every stream.
 - **`current_share`** (default 1, in (0, 1]): below 1 the round **blends**.
   `round_bank` keeps its families in every cell, and Current families are added
   next to them, up to `current_share` of the subset (and at most

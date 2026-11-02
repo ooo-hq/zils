@@ -654,6 +654,9 @@ after the check are missed, and so are removals that do not restore an earlier v
   closing changes how people vote.
 - **Score streams.** Stack Exchange score items show close to zero skill for every body
   measured. The exam quality defaults exclude `stackexchange-score-*`.
+- **AfD state holds the votes.** A `wikipedia-afd` item's state is the discussion up to the
+  close, so the label is mostly a tally of the votes shown. The exam quality defaults exclude
+  it; the stream is still collected.
 - **arXiv streams** are large (about 1,600 items a day) and their task, subject classification,
   has millions of public labelled examples. Soup exams cap the four arXiv streams together at
   15% of the Current part (`group_max` in [model pools](model-pools.md)), so a model cannot win
@@ -679,7 +682,7 @@ To grade a soup pool on Zils Current items:
      "current_bank": "<the --bank directory>",
      "current_share": 0.33,
      "min_family_items": 100,
-     "exclude_streams": ["stackexchange-score-*"]
+     "exclude_streams": ["stackexchange-score-*", "wikipedia-afd"]
    }
    ```
 
