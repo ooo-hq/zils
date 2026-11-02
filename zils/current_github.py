@@ -24,10 +24,17 @@ ISSUE_STREAMS = ("github-issue-type", "github-issue-close")
 BUG = re.compile(r"\bbugs?\b")
 FEATURE = re.compile(r"\b(?:enhancements?|features?|feature requests?)\b")
 # GitHub's guidance against secondary rate limits: serial requests with a gap between them, and
-# after a limit, wait Retry-After (or a minute, doubling) before retrying.
+# after a limit, wait Retry-After (or a minute, doubling) before retrying. The secondary limit
+# counts server time, not requests: on 1 Nov 3.3 s GraphQL queries one second apart still hit it
+# within a minute. So the gap is GAP_PER_REQUEST_SECOND times the last request's duration (about
+# a quarter of the time spent waiting on GitHub), at least GAP_SECONDS, and doubles for the rest of
+# the pass after each limit, up to MAX_SLOWDOWN times.
 GAP_SECONDS = 1.0
+GAP_PER_REQUEST_SECOND = 3.0
+MAX_SLOWDOWN = 16
 LIMIT_RETRIES, LIMIT_WAIT, MAX_LIMIT_WAIT = 4, 60.0, 900.0
 sleep = time.sleep
+clock = time.monotonic
 
 
 def hour_url(hour):
@@ -156,21 +163,26 @@ def _exhausted(headers):
 
 
 class _Paced:
-    """Serial GitHub requests GAP_SECONDS apart; secondary rate limits are waited out and retried."""
+    """Serial GitHub requests, spaced by how long the last one took; secondary rate limits are
+    waited out and retried, and slow the rest of the pass."""
 
     def __init__(self):
-        self.last = None
+        self.last, self.took, self.slowdown = None, 0.0, 1
 
     def __call__(self, send, label):
         for attempt in range(LIMIT_RETRIES + 1):
             if self.last is not None:
-                gap = GAP_SECONDS - (time.monotonic() - self.last)
+                gap = max(GAP_SECONDS, GAP_PER_REQUEST_SECOND * self.took) * self.slowdown
+                gap -= clock() - self.last
                 if gap > 0:
                     sleep(gap)
+            start = clock()
             status, body, headers = send()
-            self.last = time.monotonic()
+            self.last = clock()
+            self.took = self.last - start
             if not _limited(status, body, headers):
                 return status, body, headers
+            self.slowdown = min(2 * self.slowdown, MAX_SLOWDOWN)
             if _exhausted(headers) or attempt == LIMIT_RETRIES:
                 break
             wait = float(headers.get("retry-after") or LIMIT_WAIT * 2**attempt)
