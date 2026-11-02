@@ -1166,6 +1166,58 @@ def rows_of(streams):
     return rows
 
 
+REVERTS = [  # the 1 Nov 2026 export: nine Wikipedia revert streams, 89% of the items, one cell
+    (f"wikipedia-revert{suffix}", "language", "known", "noul", n)
+    for suffix, n in zip(
+        ("", "-es", "-de", "-fr", "-it", "-ja", "-ru", "-zh", "-pt"),
+        (2668, 1792, 840, 584, 566, 452, 388, 248, 134),
+        strict=True,
+    )
+]
+
+
+class RevertCapTest(unittest.TestCase):
+    """The Wikipedia revert streams share one cap, so one task cannot be most of the exam."""
+
+    family = {  # the live pools, as in GroupCapTest
+        "current_items": 990,
+        "min_items": 300,
+        "min_streams": 3,
+        "stream_max": 0.4,
+        "min_family_items": 100,
+    }
+    budget = int(0.2 * 990)
+
+    def reverts(self, chosen):
+        return Counter(c["family"] for c in chosen if c["family"].startswith("wikipedia-revert"))
+
+    def test_the_family_draw_caps_reverts_combined_and_keeps_one_family(self):
+        rows = rows_of(REVERTS + REAL_BANK[9:])
+        chosen, _, _, families = soup_current._family_draw(rows, b"k", self.family)
+        drawn = self.reverts(chosen)
+        self.assertLessEqual(sum(drawn.values()), self.budget)
+        self.assertGreaterEqual(sum(drawn.values()), 100)
+        self.assertEqual(len(drawn), 1, drawn)
+        others = {f for f, v in families.items() if v["kept"]} - set(drawn)
+        self.assertGreaterEqual(len(others), 3, others)  # the budget left goes to other tasks
+
+    def test_the_kept_wiki_rotates_with_the_round_secret(self):
+        kept = set()
+        for secret in (b"a", b"b", b"c", b"d", b"e", b"f", b"g", b"h"):
+            chosen, _, _, _ = soup_current._family_draw(
+                rows_of(REVERTS + REAL_BANK[9:]), secret, self.family
+            )
+            kept |= set(self.reverts(chosen))
+        self.assertGreaterEqual(len(kept), 2)
+
+    def test_an_empty_group_max_lifts_the_cap(self):
+        settings = {**self.family, "group_max": {}}
+        chosen, _, _, _ = soup_current._family_draw(
+            rows_of(REVERTS + REAL_BANK[9:]), b"k", settings
+        )
+        self.assertGreater(sum(self.reverts(chosen).values()), self.budget)
+
+
 class GroupCapTest(unittest.TestCase):
     """The arXiv streams share one cap, so a large, easily specialised source cannot fill the exam."""
 
