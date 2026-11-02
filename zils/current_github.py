@@ -4,6 +4,9 @@ GH Archive (https://www.gharchive.org) publishes every public GitHub event in ho
 GitHub trimmed Events API payloads in 2025, pull request events carry ids and branch names but no
 title or body, so pull request text is read from the REST API at the first resolution pass.
 Resolution reads the issue or pull request's current state: maintainer labels, close reason, merge.
+Merges and completed closes count only within WAIT_HOURS of opening; an item still open after that
+is a "no", like a Wikipedia edit not reverted after its waiting period. Without that rule only closed
+items would ever get a "no", and the quick outcomes that resolve first are nearly all "yes".
 """
 
 import gzip
@@ -15,12 +18,15 @@ import time
 from datetime import datetime, timedelta
 
 from . import settings
-from .current_items import RateLimited, iso, scrub
+from .current_items import RateLimited, iso, parse_time, scrub
 
 ARCHIVE = "https://data.gharchive.org/{}.json.gz"
 API = "https://api.github.com/repos/{}/{}/{}"
 HOUR = re.compile(r"\d{4}-\d{2}-\d{2}-(?:[1-9]|1\d|2[0-3]|0)")
 ISSUE_STREAMS = ("github-issue-type", "github-issue-close")
+WAIT_HOURS = (
+    72  # merged or completed within this long after opening is "yes"; still open after it, "no"
+)
 BUG = re.compile(r"\bbugs?\b")
 FEATURE = re.compile(r"\b(?:enhancements?|features?|feature requests?)\b")
 # GitHub's guidance against secondary rate limits: serial requests with a gap between them, and
@@ -202,6 +208,17 @@ def issue_kind(labels):
     return ("ambiguous" if len(kinds) > 1 else kinds.pop()) if kinds else None
 
 
+def _within_wait(record, at):
+    return at - parse_time(record["asked_at"]) <= timedelta(hours=WAIT_HOURS)
+
+
+def _open(record, now):
+    """Still open: pending within the waiting period, afterwards the outcome is "no"."""
+    if _within_wait(record, now):
+        return "pending", record
+    return "resolved", {**record, "resolved_at": iso(now), "label": "false"}
+
+
 def _outcome(record, body, now):
     stream = record["stream"]
     if stream == "github-issue-type":
@@ -215,13 +232,14 @@ def _outcome(record, body, now):
         )
     if stream == "github-issue-close":
         if body.get("state") != "closed":
-            return "pending", record
+            return _open(record, now)
         if _bot(body.get("closed_by")):
             return "dropped", {**record, "reason": "closed-by-bot"}
         reason = body.get("state_reason")
         if reason not in ("completed", "not_planned", "duplicate"):
             return "dropped", {**record, "reason": "no-close-reason"}
-        label = "true" if reason == "completed" else "false"
+        completed = reason == "completed" and _within_wait(record, parse_time(body["closed_at"]))
+        label = "true" if completed else "false"
         return "resolved", {
             **record,
             "resolved_at": iso(now),
@@ -242,10 +260,11 @@ def _outcome(record, body, now):
         }
         record = {**record, "data": data}
     if body.get("merged"):
+        merged = _within_wait(record, parse_time(body["merged_at"]))
         return "resolved", {
             **record,
             "resolved_at": iso(now),
-            "label": "true",
+            "label": "true" if merged else "false",
             "outcome_at": body["merged_at"],
         }
     if body.get("state") == "closed":
@@ -255,7 +274,7 @@ def _outcome(record, body, now):
             "label": "false",
             "outcome_at": body["closed_at"],
         }
-    return "pending", record
+    return _open(record, now)
 
 
 GRAPHQL = "https://api.github.com/graphql"
