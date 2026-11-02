@@ -66,7 +66,6 @@ A soup pool entry may add an opening block and a boost:
   "share": 0.20,
   "opens_block": 7300000,
   "boost": [{"share": 0.30, "blocks": 100800}, {"share": 0.25, "blocks": 100800}],
-  "house": "zils/data/soup-house-flash.json",
   "schedule": {"deadline_utc": "12:00"}
 }
 ```
@@ -113,13 +112,12 @@ the house registry in `zils/soup_rates.py`.
 > later than that fails to read its commitments; it is retried, and until it
 > succeeds the previous decision keeps paying.
 
-A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
-`schedule`, and optionally `subset_size` (default 3,000), `screen_size` (300),
+A soup entry contains `type`, `model`, `enabled`, `share` and `schedule`, and
+optionally `subset_size` (default 3,000), `screen_size` (300),
 `max_pool` (20, at least 5), `max_new_per_round` (6), `max_claims_per_round`
 (12), `max_download_bytes_per_round` (60 GiB), `failed_claim_backoff_rounds` (3),
 `others_max` (0.3), `house_mix_max` (0.05), `max_decision_age_days` (3),
-`decision_rounds` (3, from 1 to 7), `known_public` (empty),
-`max_known_public_bytes_per_round` (16 GiB), `max_known_public_seconds_per_round`
+`decision_rounds` (3, from 1 to 7), `max_known_public_bytes_per_round` (16 GiB), `max_known_public_seconds_per_round`
 (7,200), `scoring` (`calibrated_brier`) and `sketch_seed`:
 
 ```json
@@ -128,19 +126,28 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
   "model": "d3-mini-4.5b-v1",
   "enabled": true,
   "share": 0.4,
-  "house": "zils/data/soup-house.json",
   "schedule": {"deadline_utc": "00:00"}
 }
 ```
 
-- `house` is the house registry inline (a list of `name`, `repo`, `revision`,
-  `body_sha256`) or a path to it relative to the validator directory. A
-  `body_sha256` of `null` is identified by the hash of the body at its revision.
-- `known_public` lists public models of the pool's size that are not house
-  ingredients, in the same format and forms as `house` (inline or a path). An
-  unchanged or near re-upload of one is paid at the scout rate (see below).
-  `zils/data/soup-known-lite.json` (lite) and `zils/data/soup-known-mini.json`
-  (mini) are the launch lists; flash and z3 have none.
+- The pool's **house list** (its unpaid ingredients) and **known-public list**
+  (public models of its size that are not house ingredients, whose unchanged or
+  near re-uploads are paid at the scout rate, see below) are not settings. They
+  ship with the code in `zils/data/` and change only through a release, so
+  every validator on a release uses the same lists:
+
+  | Pool | House | Known public |
+  |---|---|---|
+  | `d3-lite` | `soup-house-lite.json` | `soup-known-lite.json` |
+  | `d3-mini` | `soup-house.json` | `soup-known-mini.json` |
+  | `d3-flash` | `soup-house-flash.json` | none |
+  | `d3` | `soup-house-z3.json` | none |
+
+  Each entry is `name`, `repo`, `revision` and `body_sha256`; a `body_sha256`
+  of `null` is identified by the hash of the body at its revision. A soup entry
+  that still names `house` or `known_public` is refused: remove the keys. If a
+  list cannot be read, the pool runs no round and its last decision keeps
+  paying.
 - `schedule.deadline_utc` is the daily commit deadline. The round for a day uses
   the first block after that deadline as its seed and admits only commitments
   made before that block.
@@ -474,7 +481,7 @@ the reason.
 
 A known public model's re-upload is also paid at the scout rate: a body whose
 weight-change sketch has cosine at least 0.9 to the sketch of a model on the
-pool's `known_public` list. The check looks at the body as committed, so an
+pool's known-public list. The check looks at the body as committed, so an
 unchanged or lightly changed re-upload is a scout's, while a fine-tune that
 moves well away from the public model (cosine under 0.9) keeps the trainer rate.
 Listed models are also allowed bases in the copy check, like the house bodies,

@@ -131,7 +131,7 @@ def feed(config, directory, *, limit=FEED_ROUNDS):
     """
     from pathlib import Path
 
-    from . import model_pools, soup_pool
+    from . import model_pools, soup_pool, soup_rates
 
     pools = {}
     if "base_pools" not in config:
@@ -146,7 +146,7 @@ def feed(config, directory, *, limit=FEED_ROUNDS):
         known = pool_state.get("bodies") if isinstance(pool_state.get("bodies"), dict) else {}
         resolved = pool_state.get("house") if isinstance(pool_state.get("house"), dict) else {}
         try:
-            house = soup_pool.house(entry, directory)
+            house = soup_rates.house(pool)
         except (OSError, ValueError):
             house = []
         by_sha = {}

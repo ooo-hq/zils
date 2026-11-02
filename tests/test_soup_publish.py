@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from zils import models, soup_publish
 
@@ -214,7 +215,6 @@ def soup_entry(**changes):
         "model": models.D3,
         "enabled": True,
         "share": 0.25,
-        "house": FEED_HOUSE,
         "schedule": {"deadline_utc": "00:00"},
         "sketch_seed": "5e" * 32,
         **changes,
@@ -249,6 +249,7 @@ class SoupFeedTest(unittest.TestCase):
     def setUp(self):
         self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.state = self.directory / "base-pools" / "d3-mini" / "soup"
+        self.house = self.enterContext(patch("zils.soup_rates.house", return_value=FEED_HOUSE))
 
     def write_round(self, round_id, record, mtime, private=None):
         folder = self.state / "rounds" / round_id
@@ -362,11 +363,11 @@ class SoupFeedTest(unittest.TestCase):
         for value in [*SECRET_IDS, *SECRET_LABELS, *SECRET_FAMILIES, *SECRET_TEXT]:
             self.assertNotIn(value, text)
 
-    def test_an_unreadable_house_path_leaves_house_names_null(self):
+    def test_an_unreadable_house_list_falls_back_to_the_pool_state_names(self):
         self.write_pool({HOUSE_SHA: {"repo": "open/pinned", "house": True, "name": "house-pinned"}})
         self.write_round("r1", public_round("r1", [HOUSE_SHA]), 1_800_000_000)
-        config = feed_config({"d3-mini": soup_entry(house="missing-house.json")})
-        feed = soup_publish.feed(config, self.directory)
+        self.house.side_effect = ValueError("unreadable")
+        feed = soup_publish.feed(feed_config({"d3-mini": soup_entry()}), self.directory)
         self.assertEqual(
             feed["pools"]["d3-mini"]["bodies"],
             {HOUSE_SHA: {"house": "house-pinned", "repo": "open/pinned"}},

@@ -154,7 +154,6 @@ class ValidateTest(unittest.TestCase):
             "model": models.D3,
             "enabled": True,
             "share": 1.0,
-            "house": "house.json",
             "schedule": {"deadline_utc": "03:00"},
             **changes,
         }
