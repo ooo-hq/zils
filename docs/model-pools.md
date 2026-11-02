@@ -502,7 +502,7 @@ miners' `max_download_bytes_per_round`), after `max_known_public_seconds_per_rou
 the remaining entries wait for a later round, and that round's copy and scout
 checks use the entries resolved so far (each skipped entry is logged). The launch
 byte budgets (32 GiB for lite, 80 GiB for mini) cover each packaged list: about
-26 GB for lite and 73 GB for mini, which takes about 1.6 hours at 100 Mbit/s, so
+24 GB for lite and 73 GB for mini, which takes about 1.6 hours at 100 Mbit/s, so
 the mini list resolves in the first round on a link of roughly that speed or
 faster. A pool's first round also downloads its house bodies before the list, and
 on a slower link the rest of the list resolves in later rounds.
