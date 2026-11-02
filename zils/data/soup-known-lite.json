@@ -12,12 +12,6 @@
     "body_sha256": null
   },
   {
-    "name": "Matilda-Decision-v1-Edge",
-    "repo": "Maincode/Matilda-Decision-v1-Edge",
-    "revision": "90c2cee9c6f607f40a4802a95939857d7eb6dfeb",
-    "body_sha256": null
-  },
-  {
     "name": "OneJev1.6-0.8B",
     "repo": "OmniJev/OneJev1.6-0.8B",
     "revision": "c89933c277629b707895bff752c61d2b0664c85e",
