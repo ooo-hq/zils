@@ -203,10 +203,13 @@ python -m zils.current grade --items BANK/2026-10-30/items.jsonl --model CHECKPO
   per-edit diff requests. A pass saves its progress every 2,000 outcomes. With `GITHUB_TOKEN` (or `ZILS_GITHUB_TOKEN`), lookups go through GitHub's GraphQL API
   50 at a time, so one request replaces fifty. Without a token, they use the REST API, which
   allows 60 unauthenticated requests an hour. Each lookup resolves every stream built from the
-  same issue. Requests are sent one at a time, at least a second apart. When GitHub signals a
-  secondary rate limit, the pass waits `Retry-After` (or a minute, doubling) and retries, up to
-  four times. When the hourly quota is spent, or the retries run out, the pass stops and the
-  remaining items stay pending.
+  same issue. Requests are sent one at a time. After each one the pass waits three times as long
+  as it took, and at least a second: GitHub's secondary limit counts server time, and 50-item
+  GraphQL queries take about 3 seconds each, so a second apart was not enough. A full pass
+  therefore takes about an hour. When GitHub signals a secondary rate limit, the pass waits
+  `Retry-After` (or a minute, doubling) and retries, up to four times, and the gap doubles for
+  the rest of the pass (up to 16 times). When the hourly quota is spent, or the retries run out,
+  the pass stops and the remaining items stay pending.
 - `export --out FILE` writes every resolved item to one file. `export --bank DIR` writes one
   dated folder (see [Dated exports](#dated-exports)). Both apply the
   [leak filters](#leak-filters). `--max-tokens 8192` allows longer states for 8,192-token models

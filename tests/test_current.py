@@ -457,6 +457,45 @@ class GraphQLResolveTest(unittest.TestCase):
         self.assertEqual(len(waits), 2)
         self.assertTrue(all(0 < w <= current_github.GAP_SECONDS for w in waits))
 
+    def timed(self, handler, took, batch=1):
+        """Resolve with a fake clock: each request takes `took` seconds and each sleep passes."""
+        now, waits = [0.0], []
+
+        def slept(seconds):
+            waits.append(seconds)
+            now[0] += seconds
+
+        def slow(url, payload):
+            now[0] += took
+            return handler(url, payload)
+
+        with (
+            patch.object(current_github, "sleep", slept),
+            patch.object(current_github, "clock", lambda: now[0]),
+        ):
+            store, http, counts = self.resolve(slow, batch=batch)
+        return store, http, counts, waits
+
+    def test_gap_scales_with_how_long_the_request_took(self):
+        # 1 Nov: 3.3 s GraphQL queries one second apart still hit GitHub's secondary limit.
+        _, http, _, waits = self.timed(graphql_handler(self.nodes()), took=3.0)
+        self.assertEqual(len(http.calls), 3)
+        self.assertEqual(waits, [3.0 * current_github.GAP_PER_REQUEST_SECOND] * 2)
+
+    def test_gap_doubles_for_the_rest_of_the_pass_after_a_secondary_limit(self):
+        secondary = (
+            403,
+            {"message": "You have exceeded a secondary rate limit."},
+            {"retry-after": "30"},
+        )
+        _, http, counts, waits = self.timed(self.limited_then([secondary]), took=2.0)
+        gap = 2.0 * current_github.GAP_PER_REQUEST_SECOND
+        # Retry-After, then the retry goes at once (30 s already exceeds the doubled gap), then
+        # the two remaining requests each wait the doubled gap.
+        self.assertEqual(len(http.calls), 4)
+        self.assertEqual(waits, [30.0, 2 * gap, 2 * gap])
+        self.assertNotIn("rate_limited", counts)
+
     def limited_then(self, responses):
         """A handler that answers with each limited response once, then normally."""
         answer = graphql_handler(self.nodes())
@@ -482,7 +521,7 @@ class GraphQLResolveTest(unittest.TestCase):
     def test_secondary_limit_without_retry_after_backs_off(self):
         secondary = (403, {"message": "You have exceeded a secondary rate limit."}, {})
         _, _, counts, waits = self.paced(self.limited_then([secondary, secondary]))
-        long_waits = [w for w in waits if w > current_github.GAP_SECONDS]
+        long_waits = [w for w in waits if w >= current_github.LIMIT_WAIT]
         self.assertEqual(long_waits, [current_github.LIMIT_WAIT, 2 * current_github.LIMIT_WAIT])
         self.assertNotIn("rate_limited", counts)
 
