@@ -456,6 +456,9 @@ WantedBy=timers.target
 ZILS_CURRENT_CONTACT=you@example.org
 GITHUB_TOKEN=github_pat_...
 ZILS_CURRENT_REFERENCES=/path/to/exam-draws:/path/to/round-bank.jsonl:/path/to/benchmark
+# Grading only: the cache that holds the pinned base weights (see Grading)
+HF_HOME=/path/to/huggingface
+HF_HUB_OFFLINE=1
 ```
 
 The job has its own unit name, user and directory, and it neither starts, stops nor depends on
@@ -478,11 +481,18 @@ per stream and overall, plus the SHA-256 of the items file.
 GPU work holds the shared lock that training and validation use (`--lock`, `ZILS_COMPUTE_LOCK`,
 default `/var/lock/zils-training/cuda.lock`). If the lock stays busy for `--lock-wait` seconds
 (default 600), nothing runs and the command exits 75, so a timer can try again later. Run it on
-the GPU host after the nightly export, for example:
+the GPU host after the nightly export.
+
+`--model` takes a Zils checkpoint folder, one with a `model.json`. A downloaded model folder
+fails with `d3 requires a d3 checkpoint`. To grade a stock base, make its reference checkpoint
+once; it holds only `model.json` and loads the pinned weights from the Hugging Face cache, so
+the job needs the same `HF_HOME` as the host's validator (with `HF_HUB_OFFLINE=1` it never
+downloads):
 
 ```bash
+python -m zils.d3 reference --model d3-lite-0.8b-v1 --out /var/lib/zils-current/stock/d3-lite
 python -m zils.current grade --items /var/lib/zils-current/bank/$(date -u -d yesterday +%F)/items.jsonl \
-    --model /path/to/stock-lite --key stock-lite
+    --model /var/lib/zils-current/stock/d3-lite --key stock-lite
 ```
 
 ## Item format
