@@ -25,7 +25,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import model_pools
+from . import model_pools, soup_rates
 
 SOUP_PATHS = {
     "round_bank",
@@ -203,26 +203,6 @@ def paths(config, directory, pool):
     return {k: str((Path(directory) / v).resolve()) for k, v in value.items()}
 
 
-def house(entry, directory, key="house"):
-    """The pool's house registry (or, with ``key="known_public"``, its known-public list, empty when
-    absent): inline, or read from a path relative to the validator directory."""
-    from . import soup_rates
-
-    value = entry.get(key, []) if key == model_pools.SOUP_KNOWN else entry[key]
-    if isinstance(value, str):
-        return soup_rates.load_house(Path(directory) / value)
-    return soup_rates.validate_house(value)
-
-
-def known_public(entry, directory):
-    """The pool's known-public list, or ([], the reason) when it cannot be read: the list only lowers
-    the pay of re-uploads, so a bad file never stops the round."""
-    try:
-        return house(entry, directory, model_pools.SOUP_KNOWN), None
-    except (OSError, ValueError) as error:
-        return [], f"{type(error).__name__}: {error}"[:400]
-
-
 def _started(pid):
     """Process `pid`'s start time as `ps` reports it (Linux and macOS), or None."""
     try:
@@ -304,20 +284,19 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
             exam = entry.get("exam")
             if exam:  # a relative Zils Current bank is read from under the validator directory
                 exam = {**exam, "current_bank": str((Path(directory) / exam["current_bank"]))}
-            known, known_error = known_public(entry, directory)
-            if known_error:
-                summary[pool]["known_public_error"] = known_error
             request = {
                 "round_id": round_id,
                 "seed_block": block,
                 "block_hash": block_hash,
                 "snapshot": {"members": snapshot["members"], "commitments": commitments},
                 "config": {
-                    **{k: v for k, v in entry.items() if k != "house"},
+                    **entry,
                     **({"exam": exam} if exam else {}),
                     "pool_id": pool,
-                    "house": house(entry, directory),
-                    model_pools.SOUP_KNOWN: known,
+                    # Unreadable lists stop the round: without the known list a public
+                    # re-upload would earn the trainer rate.
+                    "house": soup_rates.house(pool),
+                    "known_public": soup_rates.known_public(pool),
                     **({model_pools.SOUP_SECRET: secret} if secret else {}),
                 },
                 "state_dir": str(state_dir(directory, pool)),

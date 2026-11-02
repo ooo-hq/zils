@@ -58,7 +58,9 @@ Z3 = {"opens_block": 1000 + 2 * TWO_WEEKS, "boost": [{"share": 0.15, "blocks": T
 
 
 class NoScheduleIsUnchangedTest(unittest.TestCase):
-    """Digests recorded on a clean checkout of origin/main (10553a6), without the schedule code."""
+    """Digests recorded on a clean checkout of origin/main (10553a6), without the schedule code, then
+    re-recorded when soup entries stopped echoing ``house`` (the lists ship with the code): putting
+    ``house`` back reproduces the 10553a6 digests, so nothing else changed."""
 
     def test_weights_records_and_validated_configs_are_byte_identical(self):
         from tests.promoted_profile import promoted_profile
@@ -66,13 +68,13 @@ class NoScheduleIsUnchangedTest(unittest.TestCase):
 
         crown = {"hotkey": "b", "body_sha256": "f" * 64, "rate": 1.0, "weight": 0.2}
         cases = {
-            "a819ba1fccca53c7768ce9d1917d68ea9b3b00286184af82f096d8686b04eb8b": (
+            "66a111ae340044b4505b51f3041882189551ea87c45447f98909f37f6878fd18": (
                 {"d3-mini": decision([("c", 0.4)])}
             ),
-            "77f98886dc48d86308c43c0e90ffbe762616a12bfc4735b4ebd5e6991ef36d20": (
+            "bef0da43b51aa1fd0879239d7b7ffa8c600c72c0c8c5eda10b7e2cf3df2d0283": (
                 {"d3-mini": decision([("b", 0.4), ("gone", 0.4)], crown)}
             ),
-            "2fe46e5037216850b83cccdf4337977c2a0b002d1c8667ffb26cf0159b91ff07": {},
+            "1ecce1a69b8ea4587e8338a30db371f29a04d2f27348ad8d18feaf41c3e9787c": {},
         }
         for expected, decisions in cases.items():
             for block in (None, 10**9):
@@ -81,7 +83,7 @@ class NoScheduleIsUnchangedTest(unittest.TestCase):
                     self.assertEqual(digest([sorted(weights.items()), record]), expected)
         self.assertEqual(
             digest(model_pools.validate(pools())),
-            "8893c1a648bee6ed1ace029b28ed85a5cc360b56eda3dda41e0bdd5c606102db",
+            "530bc19fc16da8be759ca0c85f086e3c80665dc9be6cb5a3536b4707cf2496d3",
         )
         with promoted_profile():
             weights, record = model_pools.weights(king_pools(), {}, KING_MEMBERS)
@@ -225,9 +227,15 @@ class LaunchDataTest(unittest.TestCase):
             "soup-house-flash.json": {"vllm-sr/d3-flash"},
             "soup-house-z3.json": {"vllm-sr/d3-ultra"},
         }
-        for name, repos in expected.items():
-            house = soup_rates.load_house(DATA / name)
-            self.assertLessEqual(repos, {h["repo"] for h in house}, name)
+        pools = {"d3-mini": "soup-house.json", "d3-lite": "soup-house-lite.json",
+                 "d3-flash": "soup-house-flash.json", "d3": "soup-house-z3.json"}  # fmt: skip
+        for pool, name in pools.items():
+            house = soup_rates.house(pool)
+            self.assertEqual(house, soup_rates.load_house(DATA / name), pool)
+            self.assertLessEqual(expected[name], {h["repo"] for h in house}, pool)
+        launch = json.loads((DATA / "base-pools-launch.json").read_text())["pools"]
+        for pool, entry in launch.items():  # the lists ship with the code, never in the config
+            self.assertFalse({"house", "known_public"} & set(entry), pool)
         # The house chassis entries are the pinned chassis revisions.
         for name, model in (
             ("soup-house-lite.json", "d3-lite-0.8b-v1"),
@@ -264,11 +272,11 @@ class LaunchDataTest(unittest.TestCase):
         excluded = {"lambdasec/serin-0.8b", "startlux-models/StartLux-Decision-v1-0.8B"}
         for pool, (name, repos) in expected.items():
             with self.subTest(pool=pool):
-                self.assertEqual(checked[pool]["known_public"], f"zils/data/{name}")
-                listed = soup_rates.load_house(DATA / name)  # the house format and rules
+                listed = soup_rates.known_public(pool)
+                self.assertEqual(listed, soup_rates.load_house(DATA / name))  # the house format
                 self.assertEqual({e["repo"] for e in listed}, repos)
                 self.assertFalse(excluded & repos)
-                house = soup_rates.load_house(DATA / checked[pool]["house"].split("/")[-1])
+                house = soup_rates.house(pool)
                 pinned = {(h["repo"], h["revision"]) for h in house}
                 self.assertFalse(pinned & {(e["repo"], e["revision"]) for e in listed})
                 self.assertTrue(all(len(e["revision"]) == 40 for e in listed))
@@ -288,8 +296,8 @@ class LaunchDataTest(unittest.TestCase):
                 cap = soup_round.KNOWN_PUBLIC_CAP_FACTOR * bodies.max_bytes(pool)
                 self.assertTrue(all(size * 1e9 <= cap for size in sizes))
         # Pools without a list resolve nothing.
-        self.assertNotIn("known_public", checked["d3-flash"])
-        self.assertNotIn("known_public", checked["d3"])
+        self.assertEqual(soup_rates.known_public("d3-flash"), [])
+        self.assertEqual(soup_rates.known_public("d3"), [])
 
     def test_launch_template_follows_the_owner_split(self):
         config = json.loads((DATA / "base-pools-launch.json").read_text())

@@ -225,10 +225,12 @@ operator actions. Stable migration cannot be inferred from an election result.
 
 Every base pool at launch is a [soup pool](model-pools.md#soup-pools): `d3-lite`,
 `d3-mini`, `d3-flash` and `d3` (z3). `zils/data/base-pools-launch.json` is the
-launch `base_pools` block: shares, house lists, daily commit deadlines, intake
+launch `base_pools` block: shares, daily commit deadlines, intake
 caps and the [emission schedule](model-pools.md#emission-schedule). Every
 validator must run the same `base_pools` block, including the same opening
-blocks, or its weights disagree with the others'.
+blocks, or its weights disagree with the others'. The pools' house and known-public lists are not
+part of the block: they ship with the code, so updating to a release updates
+them ([model pools](model-pools.md#soup-pools)).
 
 A soup round loads one model at a time on the GPU. Approximate memory for one
 grading in bf16, and disk for the pool's state at its launch caps:

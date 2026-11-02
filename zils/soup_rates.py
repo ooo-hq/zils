@@ -23,6 +23,22 @@ def load_house(path=None):
     return validate_house(json.loads(Path(path or HOUSE_PATH).read_text()))
 
 
+def house(pool):
+    """The pool's house ingredients, from the list shipped with this code (``bodies.BODY_POOLS``).
+    The lists are part of the protocol: every validator on a release reads the same ones."""
+    from . import bodies
+
+    return load_house(HOUSE_PATH.with_name(bodies._pool(pool)["house"]))
+
+
+def known_public(pool):
+    """The pool's known public models (same format as the house list), empty for a pool without one."""
+    from . import bodies
+
+    name = bodies._pool(pool)["known_public"]
+    return load_house(HOUSE_PATH.with_name(name)) if name else []
+
+
 def validate_house(value):
     """Check a house registry list (as `load_house` reads it) and return it."""
     if not isinstance(value, list):
