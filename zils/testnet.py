@@ -34,7 +34,7 @@ def check_config(config):
     chain = config.get("chain")
     if (
         not isinstance(chain, dict)
-        or set(chain) != {"network", "netuid"}
+        or set(chain) - {"archive_endpoints"} != {"network", "netuid"}
         or chain["network"] not in ENDPOINTS
         or type(chain["netuid"]) is not int
         or not 1 <= chain["netuid"] < 4096
@@ -42,6 +42,13 @@ def check_config(config):
         raise ValueError(
             "chain mode requires network test or finney and an explicit subnet ID in 1..4095"
         )
+    archive = chain.get("archive_endpoints", [])
+    # A waiting soup round reads state at a seed block days old, which the default mainnet
+    # endpoint has discarded; queries for old blocks fall through to these.
+    if not isinstance(archive, list) or not archive and "archive_endpoints" in chain:
+        raise ValueError("chain archive_endpoints must be a non-empty list of wss:// URLs")
+    if any(not isinstance(url, str) or not url.startswith("wss://") for url in archive):
+        raise ValueError("chain archive_endpoints must be a non-empty list of wss:// URLs")
     return chain["netuid"]
 
 
@@ -57,7 +64,7 @@ def connect(config, *, raw_calls=False):
     with bt.Subtensor(
         network=network,
         fallback_endpoints=[],
-        archive_endpoints=[],
+        archive_endpoints=list(config["chain"].get("archive_endpoints", [])),
         policy=bt.Policy(allowed_netuids=[netuid], allow_raw_calls=raw_calls),
     ) as sub:
         yield sub

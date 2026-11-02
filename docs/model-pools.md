@@ -269,7 +269,11 @@ Each round's subset (`subset_size` items, 3,000 by default) has two parts:
       once its settle time plus the nightly export's lag (about two days) fits
       in `wait_days`: with 5, about a day of Wikipedia reverts (48 h); arXiv
       and GitHub (72 h) need 6. The pool's last decision stays paid `wait_days`
-      longer than `max_decision_age_days`;
+      longer than `max_decision_age_days`. The round reads the chain at a seed
+      block days old; the default mainnet endpoint discards that state, so a
+      mainnet validator with a waiting pool sets `chain.archive_endpoints`
+      (for example `["wss://archive.chain.opentensor.ai:443"]`), which queries
+      for old blocks fall through to;
     - earlier rounds drew it fewer than `max_uses` times (the use ledger);
     - with the question, it fits the pool model's input cap (8,192 tokens for
       d3-mini). The estimate is the same one Zils Current uses.
