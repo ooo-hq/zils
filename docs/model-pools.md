@@ -276,14 +276,17 @@ Each round's subset (`subset_size` items, 3,000 by default) has two parts:
   - Yes/no streams keep their labels balanced. No stream may hold more than `stream_max`
     of the part, and at least `min_streams` streams must contribute.
   - Streams in one `group_max` group share one cap. The default,
-    `{"arxiv-category-*": 0.15}`, holds the four arXiv streams together to 15% of the
-    Current part: they give about 1,600 items a day, and arXiv classification has
-    millions of public labelled examples, so uncapped they took 44% of a 990-item part
-    and would reward a specialised classifier. The budget goes to as few streams as
-    possible, in an order the round's secret sets, so one arXiv family can reach
-    `min_family_items` and rounds rotate the subject. A budget below `min_family_items`
-    leaves the group out. Set `group_max` in `exam` to replace the default (`{}` turns
-    it off).
+    `{"arxiv-category-*": 0.15, "wikipedia-revert*": 0.2}`, holds the four arXiv
+    streams together to 15% of the Current part and the Wikipedia revert streams
+    (one per language, all in the language/known cell) together to 20%. arXiv gives
+    about 1,600 items a day and its task, subject classification, has millions of
+    public labelled examples, so uncapped it took 44% of a 990-item part and would
+    reward a specialised classifier. Reverts were 89% of the 1 Nov 2026 export and
+    uncapped took 660 of a 990-item part, so the exam was mostly one task. A group's
+    budget goes to as few streams as possible, in an order the round's secret sets,
+    so one arXiv family or one wiki can reach `min_family_items` and rounds rotate
+    which. A budget below `min_family_items` leaves the group out. Set `group_max`
+    in `exam` to replace the default (`{}` turns it off).
   - Newer resolution days are drawn first. Within a day, items are ranked under
     the validator's private `sketch_seed`, because anyone can rebuild Current
     items from the public sources.

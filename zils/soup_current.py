@@ -66,7 +66,7 @@ QUALITY_DEFAULTS = {
 # Streams that share one cap, as a share of the Current part: arXiv's four subject streams give
 # about 1,600 items a day and the task has millions of public labelled examples, so together they
 # could fill the exam and reward a specialised classifier. A pool's ``group_max`` replaces this.
-GROUP_MAX = {"arxiv-category-*": 0.15}
+GROUP_MAX = {"arxiv-category-*": 0.15, "wikipedia-revert*": 0.2}
 KEEP_ROUNDS = 8  # earlier rounds whose drawn Current items stay in the bank (pooled decisions)
 MODES = ("local", "publishable")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
