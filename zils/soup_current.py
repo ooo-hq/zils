@@ -10,8 +10,8 @@ cells, so the base score keeps all its cells.
 The rules for the Current part:
 
 * A folder is used only when its manifest checks out: the ``items.jsonl`` hash and row count match,
-  the overlap check ran, and the mode is ``local`` or ``publishable``. Any other folder is skipped and
-  logged. A bad folder never stops the round.
+  the overlap check and the cross-check ran, and the mode is ``local`` or ``publishable``. Any other
+  folder is skipped and logged. A bad folder never stops the round.
 * An item is eligible when it resolved within ``max_age_days`` before the round's commit deadline,
   has been drawn in fewer than ``max_uses`` earlier rounds (the use ledger), and fits the pool
   model's input cap. With ``wait_days`` the round runs that many days after its deadline (bodies
@@ -361,6 +361,9 @@ def verify(folder):
     overlap = manifest.get("overlap")
     if not isinstance(overlap, dict) or overlap.get("checked") is not True:
         raise ValueError("the overlap check did not run")
+    crosscheck = manifest.get("crosscheck")
+    if not isinstance(crosscheck, dict) or not isinstance(crosscheck.get("agreement"), dict):
+        raise ValueError("the cross-check did not run")
     entry = (manifest.get("files") or {}).get("items.jsonl")
     if not isinstance(entry, dict) or entry.get("sha256") != hashlib.sha256(data).hexdigest():
         raise ValueError("items.jsonl does not match the manifest hash")

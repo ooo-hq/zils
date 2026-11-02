@@ -295,7 +295,8 @@ the copy and the reports):
 The folder gets `crosscheck.json` (per stream: items, sample size, method, agreement, pass or
 fail, and up to 25 disagreements with links and evidence) and `spotcheck.md`, a sheet of 20
 random items per stream with the link, the start of the input, the label and its evidence, for
-a person to check by hand. The manifest records the gate's result.
+a person to check by hand. The manifest records the gate's result, and a validator's soup
+round uses only folders whose manifest carries it.
 
 The nightly job runs the same gates on every day it exports, with a smaller sample
 (`--crosscheck-sample`, default 20; `0` skips it). A stream that fails is added to
