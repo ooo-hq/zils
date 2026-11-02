@@ -335,12 +335,69 @@ class GitHubResolveTest(unittest.TestCase):
                 },
             }
         )
+        # Five days after opening: an open issue is "not closed as completed within three days";
+        # its type question has no time limit and keeps waiting.
+        self.assertEqual(
+            [(r["stream"], r["source"]["number"]) for r in store.pending()],
+            [("github-issue-type", 7)],
+        )
+        resolved = {(r["stream"], r["source"]["number"]): r for r in store.resolved()}
+        self.assertEqual(resolved[("github-issue-close", 7)]["label"], "false")
+        self.assertNotIn("outcome_at", resolved[("github-issue-close", 7)])
+        self.assertEqual(resolved[("github-pr-merge", 8)]["label"], "false")
+        self.assertEqual({r["reason"] for r in store.dropped()}, {"deleted"})
+
+    def test_open_items_within_the_waiting_period_stay_pending(self):
+        issues = "https://api.github.com/repos/acme/widgets/issues/"
+        store, _, _ = self.resolve(
+            {
+                issues + "7": {
+                    "state": "open",
+                    "labels": [],
+                    "user": {"login": "alice-dev", "type": "User"},
+                },
+                "https://api.github.com/repos/acme/widgets/pulls/8": {
+                    "state": "open",
+                    "merged": False,
+                    "title": "t",
+                    "body": "b",
+                    "user": {"login": "dave-k", "type": "User"},
+                },
+            },
+            now="2026-10-27T12:00:00Z",
+        )
         self.assertEqual(
             sorted((r["stream"], r["source"]["number"]) for r in store.pending()),
-            [("github-issue-close", 7), ("github-issue-type", 7)],
+            [("github-issue-close", 7), ("github-issue-type", 7), ("github-pr-merge", 8)],
         )
-        self.assertEqual(store.resolved()[0]["label"], "false")
-        self.assertEqual({r["reason"] for r in store.dropped()}, {"deleted"})
+
+    def test_outcomes_after_the_waiting_period_count_as_no(self):
+        issues = "https://api.github.com/repos/acme/widgets/issues/"
+        store, _, _ = self.resolve(
+            {
+                issues + "7": {
+                    "state": "closed",
+                    "state_reason": "completed",
+                    "closed_at": "2026-10-30T10:00:00Z",
+                    "closed_by": {"login": "alice-dev", "type": "User"},
+                    "labels": [],
+                    "user": {"login": "alice-dev", "type": "User"},
+                },
+                "https://api.github.com/repos/acme/widgets/pulls/8": {
+                    "state": "closed",
+                    "merged": True,
+                    "merged_at": "2026-10-30T18:00:00Z",
+                    "closed_at": "2026-10-30T18:00:00Z",
+                    "title": "t",
+                    "body": "b",
+                    "user": {"login": "dave-k", "type": "User"},
+                },
+            }
+        )
+        resolved = {(r["stream"], r["source"]["number"]): r for r in store.resolved()}
+        self.assertEqual(resolved[("github-issue-close", 7)]["label"], "false")
+        self.assertEqual(resolved[("github-pr-merge", 8)]["label"], "false")
+        self.assertEqual(resolved[("github-pr-merge", 8)]["outcome_at"], "2026-10-30T18:00:00Z")
 
     def test_ambiguous_labels_bots_and_old_items_are_dropped(self):
         issues = "https://api.github.com/repos/acme/widgets/issues/"
@@ -371,11 +428,14 @@ class GitHubResolveTest(unittest.TestCase):
             reasons,
             {
                 ("github-issue-type", 7): "ambiguous-label",
-                ("github-issue-close", 7): "expired",
                 ("github-issue-type", 9): "expired",
-                ("github-issue-close", 9): "expired",
                 ("github-pr-merge", 8): "bot",
             },
+        )
+        # Open past the waiting period is an outcome, so these never expire.
+        self.assertEqual(
+            {(r["stream"], r["source"]["number"]): r["label"] for r in store.resolved()},
+            {("github-issue-close", 7): "false", ("github-issue-close", 9): "false"},
         )
 
     def test_rate_limit_keeps_the_rest_pending(self):

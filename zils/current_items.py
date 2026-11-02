@@ -55,11 +55,11 @@ STREAMS = {
         "publishable": False,
         "question": {
             "type": "noul",
-            "instructions": "Will the maintainers close this newly opened GitHub issue as completed, "
-            "rather than as not planned or a duplicate?",
+            "instructions": "Will the maintainers close this newly opened GitHub issue as completed "
+            "within three days?",
             "criteria": {
-                "true": "Closed as completed",
-                "false": "Closed as not planned or as a duplicate",
+                "true": "Closed as completed within three days",
+                "false": "Still open after three days, or closed as not planned or as a duplicate",
             },
         },
     },
@@ -69,8 +69,11 @@ STREAMS = {
         "publishable": False,
         "question": {
             "type": "noul",
-            "instructions": "Will this newly opened GitHub pull request be merged?",
-            "criteria": {"true": "Merged", "false": "Closed without merging"},
+            "instructions": "Will this newly opened GitHub pull request be merged within three days?",
+            "criteria": {
+                "true": "Merged within three days",
+                "false": "Still open after three days, or closed without merging",
+            },
         },
     },
     "wikipedia-revert": {

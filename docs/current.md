@@ -21,8 +21,8 @@ of it yet (see [Extension points](#extension-points)).
 | Stream | Question | Type | Label | Source of the label | Category | Block |
 | --- | --- | --- | --- | --- | --- | --- |
 | `github-issue-type` | Is this new issue a bug report or a feature request? | choice | `bug` / `feature` | the issue's labels (`bug`, `type: bug`, `enhancement`, `feature request`, ...) | language | new |
-| `github-issue-close` | Will maintainers close it as completed rather than not planned or duplicate? | yes/no | close reason | `state_reason` of the closed issue | reasoning | new |
-| `github-pr-merge` | Will this new pull request be merged? | yes/no | merged or closed unmerged | the pull request's `merged` flag | reasoning | new |
+| `github-issue-close` | Will maintainers close it as completed within three days? | yes/no | close reason | `state_reason` and `closed_at`; still open after three days is no | reasoning | new |
+| `github-pr-merge` | Will this new pull request be merged within three days? | yes/no | merged in time, or not | the pull request's `merged` flag and `merged_at`; still open after three days is no | reasoning | new |
 | `wikipedia-revert` (English), `wikipedia-revert-<lang>` | Will this article edit be reverted? | yes/no | `mw-reverted` tag | MediaWiki change tags after a waiting period | language | known |
 | `wikidata-revert` | Will this Wikidata item edit be reverted? | yes/no | `mw-reverted` tag | as for Wikipedia | retrieval | known |
 | `wikipedia-afd` | How did this deletion discussion close? | choice | `keep` / `delete` / `merge-redirect` / `no-consensus` | the closing result of an English Wikipedia Articles for deletion discussion | reasoning | known |
@@ -196,7 +196,10 @@ python -m zils.current grade --items BANK/2026-10-30/items.jsonl --model CHECKPO
   fewer than 20 requests remain or the API throttles; the cursor keeps what was read.
 - `resolve` labels items whose outcome is known and drops items still waiting after
   `--max-age-days` (default 14, or `ZILS_CURRENT_MAX_AGE_DAYS`). Wikipedia edits are checked once
-  they are `--wiki-wait-hours` old (default 48). Run it again later and it continues where it
+  they are `--wiki-wait-hours` old (default 48). A GitHub pull request or issue still open 72 hours
+  after it was opened resolves as no (merged or completed later also counts as no), so the
+  stream is not limited to items that happened to close; only the type question keeps waiting
+  for a label. Run it again later and it continues where it
   stopped. `--negatives-per-positive N` keeps, in each batch of 50 edits, N not-reverted edits
   per reverted one and drops the rest as `sampled-out` before their diffs are fetched. Reverts
   are a few percent of edits and export balances labels anyway, so this saves most of the
