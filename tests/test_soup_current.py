@@ -130,6 +130,13 @@ class ValidateTest(unittest.TestCase):
         self.assertEqual(exam["current_items"], 1000)
         self.assertEqual(exam["min_streams"], 3)
         self.assertEqual(exam["stream_max"], 0.4)
+        self.assertNotIn("wait_days", exam)  # echoed only when set
+        self.assertEqual(
+            soup_current.validate({"source": "current", "current_bank": "/b", "wait_days": 4})[
+                "wait_days"
+            ],
+            4,
+        )
 
     def test_bad_settings_are_refused(self):
         bad = [
@@ -142,6 +149,9 @@ class ValidateTest(unittest.TestCase):
             {"source": "current", "current_bank": "/b", "stream_max": 0.2, "min_streams": 3},
             {"source": "current", "current_bank": "/b", "min_items": 2000},
             {"source": "current", "current_bank": "/b", "surprise": 1},
+            {"source": "current", "current_bank": "/b", "wait_days": -1},
+            {"source": "current", "current_bank": "/b", "wait_days": 15},
+            {"source": "current", "current_bank": "/b", "wait_days": 1.5},
             {"source": "bank", "max_uses": 3},
         ]
         for exam in bad:
@@ -247,6 +257,18 @@ class LoadTest(unittest.TestCase):
         result = self.load()
         self.assertEqual([c["id"] for c in result["items"]], [item("gh-merge", 1, inside)["id"]])
         self.assertEqual(result["excluded"].get("outside_window"), 1)
+
+    def test_a_waiting_round_takes_items_asked_after_the_deadline(self):
+        # item() asks a day before it resolves: the first was asked 12 h before the deadline.
+        before = item("gh-merge", 0, DEADLINE + timedelta(hours=12))
+        after = item("gh-merge", 1, DEADLINE + timedelta(days=2))
+        export(self.root, "2026-11-01", [item("gh-merge", 2, DEADLINE - timedelta(days=2))])
+        export(self.root, f"{DEADLINE + timedelta(hours=12):%F}", [before])
+        export(self.root, f"{DEADLINE + timedelta(days=2):%F}", [after])
+        result = self.load(wait_days=3)
+        self.assertEqual([c["id"] for c in result["items"]], [after["id"]])
+        self.assertEqual(result["excluded"]["outside_window"], 1)
+        self.assertEqual([f["date"] for f in result["folders"]], ["2026-11-03", "2026-11-05"])
 
     def test_items_used_max_uses_times_are_excluded(self):
         rows = day_items("2026-11-01", 2)
@@ -369,6 +391,21 @@ class PrepareTest(unittest.TestCase):
         self.assertEqual(f.subset(), [c["id"] for c in expected])
         self.assertEqual(record["current_items"], 0)
         self.assertEqual(record["bank_items"], 400)
+
+    def test_a_waiting_round_draws_only_items_asked_after_the_deadline(self):
+        # Fixture days resolve at noon and were asked a day earlier: 2026-11-05 is the only day
+        # asked after the 2026-11-03 03:00 deadline.
+        f = Fixture(Path(self.f.root) / "wait", days=("2026-11-01", "2026-11-05"), wait_days=2)
+        _, record = f.prepare()
+        self.assertIsNone(record["fallback"])
+        self.assertEqual(record["settings"]["wait_days"], 2)
+        self.assertEqual([x["date"] for x in record["folders"]], ["2026-11-05"])
+        drawn = soup_current._read_jsonl(f.state / "rounds" / ROUND / "current-items.jsonl")
+        self.assertEqual(len(drawn), record["current_items"])
+        self.assertTrue(all(c["asked_at"] > "2026-11-03T03:00:00Z" for c in drawn))
+        stale = Fixture(Path(self.f.root) / "stale", days=("2026-11-01",), wait_days=2)
+        _, record = stale.prepare()
+        self.assertIn("streams", record["fallback"])
 
     def test_an_unreadable_bank_falls_back_instead_of_crashing(self):
         f = Fixture(Path(self.f.root) / "gone", current_bank=str(Path(self.f.root) / "nowhere"))
