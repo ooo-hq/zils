@@ -257,8 +257,8 @@ Each round's subset (`subset_size` items, 3,000 by default) has two parts:
 
 - **The Current part:** `current_items` items from the dated folders.
   - A folder is used only if its `manifest.json` checks out. The SHA-256 and row
-    count of `items.jsonl` must match the manifest, the overlap check must have
-    run, and the mode must be `local` or `publishable`. Any other folder is
+    count of `items.jsonl` must match the manifest, the overlap check and the
+    cross-check must have run, and the mode must be `local` or `publishable`. Any other folder is
     skipped and logged, and the round goes on.
   - An item is eligible when all of these hold:
     - it resolved in the `max_age_days` before the round's commit deadline. An

@@ -55,6 +55,7 @@ def export(root, day, items, **manifest_changes):
         "date": day,
         "mode": "local",
         "overlap": {"checked": True, "references": [], "hits": []},
+        "crosscheck": {"threshold": 0.97, "excluded": [], "proof_rejected": {}, "agreement": {}},
         "files": {
             "items.jsonl": {
                 "sha256": hashlib.sha256(text.encode()).hexdigest(),
@@ -213,6 +214,7 @@ class LoadTest(unittest.TestCase):
         self.assertEqual(entry["rows"], 20)
 
     def test_failing_manifests_are_skipped_and_logged(self):
+        export(self.root, "2026-10-27", day_items("2026-10-27", 5), crosscheck=None)
         export(self.root, "2026-10-28", day_items("2026-10-28", 5))
         export(self.root, "2026-10-29", day_items("2026-10-29", 5), mode="draft")
         export(self.root, "2026-10-30", day_items("2026-10-30", 5), overlap={"checked": False})
@@ -229,11 +231,12 @@ class LoadTest(unittest.TestCase):
         self.assertEqual([f["date"] for f in result["folders"]], ["2026-10-28"])
         self.assertEqual(
             set(result["skipped"]),
-            {"2026-10-29", "2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02"},
+            {"2026-10-27", "2026-10-29", "2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02"},
         )
         self.assertIn("hash", result["skipped"]["2026-10-31"])
         self.assertIn("overlap", result["skipped"]["2026-10-30"])
-        self.assertEqual(len(logged), 5)
+        self.assertIn("cross-check", result["skipped"]["2026-10-27"])
+        self.assertEqual(len(logged), 6)
 
     def test_a_missing_bank_directory_loads_nothing(self):
         result = soup_current.load(
@@ -790,7 +793,12 @@ class QualityValidateTest(unittest.TestCase):
 
 
 class UnchangedTest(unittest.TestCase):
-    """Without the quality settings a round is byte for byte what main drew before them."""
+    """Without the quality settings a round is byte for byte what main drew before them.
+
+    The middle hash is ``bank-source.json``, which records each folder's manifest hash; it moved
+    once, when the fixture manifests gained the cross-check block the validator now requires. The
+    subset and the drawn items are unchanged.
+    """
 
     def setUp(self):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -799,7 +807,7 @@ class UnchangedTest(unittest.TestCase):
         f = Fixture(self.root / "mixed")
         f.prepare()
         self.assertEqual(
-            round_files(f), ["72a793626319d706", "65e2307383c4d37d", "e9b7e4fa1efdd25e"]
+            round_files(f), ["72a793626319d706", "74588d5b3193c8c1", "e9b7e4fa1efdd25e"]
         )
 
     def test_all_current_round_matches_main(self):
@@ -807,7 +815,7 @@ class UnchangedTest(unittest.TestCase):
         export(f.current, "2026-11-02", cell_items("2026-11-02", 60))
         f.prepare()
         self.assertEqual(
-            round_files(f), ["f5b58e7b41a1b909", "3da24036004288d0", "3adf5643c5ab1e0b"]
+            round_files(f), ["f5b58e7b41a1b909", "0e9ba104424ce3a3", "3adf5643c5ab1e0b"]
         )
 
     def test_neutral_quality_settings_draw_the_same_round(self):
