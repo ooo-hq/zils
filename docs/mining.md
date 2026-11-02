@@ -323,7 +323,9 @@ fifth model lowered the score. Treat the numbers in this section as launch polic
 that may change, not as measured results.
 
 Instead of one winner, each round builds the best **soup**: a uniform average of
-up to five bodies submitted by different miners. You earn by holding a seat in
+up to five bodies submitted by different miners. The average covers the language
+weights; the soup keeps the release's vision tower unchanged, since no exam grades
+images yet. A body still includes a vision tower (any one; usually its parent's). You earn by holding a seat in
 the round's soup, or by submitting the round's best single body.
 
 ### Four pools

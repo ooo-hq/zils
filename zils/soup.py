@@ -1,7 +1,8 @@
 """Soup builder: the uniform average of bodies written on a pinned d3 chassis.
 
 The chassis is the pinned parent folder. The soup takes the parent's shard layout and tensor names, an
-FP32 average of each tensor over the bodies cast to the parent's dtype, and every other candidate file
+FP32 average of each language tensor over the bodies cast to the parent's dtype, the parent's vision
+tower (``visual.*``) byte for byte, and every other candidate file
 from the parent byte for byte, so it runs in the parent's runtime with the parent's answer layer.
 A body named with ``strip-model`` drops a leading ``model.`` (Hugging Face names); tensors the chassis
 lacks (``lm_head*``, ``mtp.*``) are ignored.
@@ -68,6 +69,10 @@ def build(out, chassis, bodies, *, model, temperature=1.0):
         for shard in sorted(set(layout.values())):
             tensors = {}
             for name in stream(chassis / shard).keys():
+                if name.startswith("visual."):
+                    # No exam grades images yet, so bodies' towers would change vision unjudged.
+                    tensors[name] = stream(chassis / shard).get_tensor(name)
+                    continue
                 dtype = stream(chassis / shard).get_tensor(name).dtype
                 # Each body tensor is canonicalised to bf16 first (a body may store some as f32).
                 total = sum(
