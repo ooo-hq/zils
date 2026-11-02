@@ -757,7 +757,7 @@ class QualityValidateTest(unittest.TestCase):
         )
         self.assertEqual(exam["current_share"], 0.33)
         self.assertEqual(exam["min_family_items"], 100)
-        self.assertEqual(exam["exclude_streams"], ["stackexchange-score-*"])
+        self.assertEqual(exam["exclude_streams"], ["stackexchange-score-*", "wikipedia-afd"])
         again = soup_current.validate(
             {"source": "current", "current_bank": "/b", "exclude_streams": []}
         )
@@ -844,17 +844,21 @@ class QualityTest(unittest.TestCase):
         by_id = {c["id"]: c for c in bank}
         return [by_id[i] for i in f.subset()]
 
-    def test_score_streams_are_excluded_by_default(self):
+    def test_score_and_afd_streams_are_excluded_by_default(self):
         rows = stream_rows("gh-close", "reasoning", "new", "noul", 120)
         rows += stream_rows("wiki-revert", "language", "new", "noul", 120)
         rows += stream_rows("gh-merge", "tools", "new", "noul", 120)
         rows += stream_rows("stackexchange-score-math", "reasoning", "known", "score", 120)
+        rows += stream_rows("wikipedia-afd", "reasoning", "known", "choice", 120)
         f = self.fixture("exclude", rows, current_items=400, min_family_items=10)
         bank, record = f.prepare(subset_size=800)
         self.assertIsNone(record["fallback"])
         families = {c["family"] for c in self.cases(f, bank)}
         self.assertNotIn("stackexchange-score-math", families)
-        self.assertEqual(record["excluded_streams"], {"stackexchange-score-math": 120})
+        self.assertNotIn("wikipedia-afd", families)  # its state holds the votes (ZIL-131)
+        self.assertEqual(
+            record["excluded_streams"], {"stackexchange-score-math": 120, "wikipedia-afd": 120}
+        )
         self.assertNotIn("stackexchange-score-math", record["streams"])
 
     def test_exclude_streams_takes_glob_patterns(self):

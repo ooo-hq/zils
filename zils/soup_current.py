@@ -60,7 +60,7 @@ DEFAULTS = {
 # sets any of them gets these defaults for the others.
 QUALITY_DEFAULTS = {
     "min_family_items": 100,
-    "exclude_streams": ["stackexchange-score-*"],
+    "exclude_streams": ["stackexchange-score-*", "wikipedia-afd"],
     "current_share": 1.0,
 }
 # Streams that share one cap, as a share of the Current part: arXiv's four subject streams give
