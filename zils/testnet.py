@@ -572,11 +572,14 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
 def verify_receipt(config, record, sub):
     """Read current weights; a successful timelock commit alone is not a revealed weight vector."""
     state = preflight(config, sub)
-    if {k: record[k] for k in ("network", "netuid")} != config["chain"]:
+    chain = config["chain"]
+    if (record["network"], record["netuid"]) != (chain["network"], chain["netuid"]):
         raise ValueError("receipt is not for the configured chain subnet")
-    if (
-        record["validator_hotkey"] != state["validator_hotkey"]
-        or record["members"] != state["members"]
+    # A full subnet replaces unpaid UIDs between publication and verification; only the
+    # paid identities must still be the ones that were evaluated.
+    paid = set(record["requested_weights"]) - {str(state["validator_uid"])}
+    if record["validator_hotkey"] != state["validator_hotkey"] or any(
+        record["members"].get(uid) != state["members"].get(uid) for uid in paid
     ):
         raise ValueError("receipt identities do not match the current registered fleet")
     pairs = sub.query(
