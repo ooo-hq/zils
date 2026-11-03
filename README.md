@@ -42,7 +42,8 @@ burned ([base candidates](docs/base-candidates.md),
 **Adapter rounds** pay the rest. The hosted customer queue still requires operator
 admission and does not publish chain weights; its chain-derived admission is
 built but off. Mainnet subnet 127 has been live since 3 November 2026. `zils-miner`
-defaults to testnet, so add `--network finney --netuid 127` to every chain command.
+never assumes mainnet: run `zils-miner setup --network finney --netuid 127` once and
+later chain commands use what it saved.
 
 ## Repository scope
 

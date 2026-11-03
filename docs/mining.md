@@ -257,10 +257,10 @@ metadata. Existing candidates supply their profile when no selection is saved;
 without a candidate or selection, the CLI asks you to choose instead of assuming
 mini. A candidate for a different tier or parent profile is rejected before upload.
 
-From then on `zils-miner doctor` names the next step and prints its command. The CLI
-defaults to testnet and never assumes mainnet: add `--network finney --netuid 127` to
-every `zils-miner` chain command (`doctor`, `check`, `commit-candidate`, `commit-body`).
-The steps are:
+From then on `zils-miner doctor` names the next step and prints its command. Run
+`zils-miner setup --network finney --netuid 127` once: the CLI never assumes mainnet, but
+it saves the chain you named and every later chain command (`doctor`, `check`,
+`commit-candidate`, `commit-body`) uses it unless you pass `--network` again. The steps are:
 
 1. **Register a hotkey on mainnet subnet 127** following the
    [registration guide](bittensor-registration.md); keep the hotkey file on the
