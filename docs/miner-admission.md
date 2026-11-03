@@ -4,14 +4,14 @@
 `202610180001_chain_admission.sql`) and on the miner side (this repository); off in
 production until the owner sets `ZILS_CHAIN_ADMISSION=on` on the coordinator.**
 
-Registration on Bittensor subnet 579 is the admission. There is no application,
+Registration on Bittensor mainnet subnet 127 is the admission. There is no application,
 no form and no operator approval. This matches the fleet validator's
 `admission: chain` mode (built, off) and extends it to the hosted customer-job
 queue, which today only talks to hotkeys an operator inserted by hand.
 
 ## 1. What a miner does
 
-1. Register a hotkey on subnet 579 ([registration](bittensor-registration.md)).
+1. Register a hotkey on subnet 127 ([registration](bittensor-registration.md)).
 2. Read the [miner terms](mining-terms.md). Mining under a registered hotkey is
    acceptance; the first signed claim records it.
 3. Install the runtime and the d3 reference ([queue miners](queue-miners.md)),
@@ -24,7 +24,7 @@ queue, which today only talks to hotkeys an operator inserted by hand.
 
 ## 2. What the coordinator does (built, off by default)
 
-- Admit any hotkey registered on 579 at the current chain snapshot: create the
+- Admit any hotkey registered on 127 at the current chain snapshot: create the
   `fez_training_workers` row on first contact with the next free queue UID,
   `terms_sha256` from the claim, `terms_accepted_at` now. Deregistered hotkeys
   are disabled at the next snapshot.
@@ -60,9 +60,9 @@ name. Cap it: one qualification run per hotkey per 30 days.
 Replace "All miners are currently run by Zils; outside miners can join once
 the subnet moves to mainnet" with:
 
-> Subnet 579 on the Bittensor testnet. Register a hotkey on 579, run the miner,
-> and you are in under the [miner terms](mining-terms.md). Testnet rewards have
-> no value and no earnings are promised.
+> Subnet 127 on Bittensor mainnet. Register a hotkey on 127, run the miner,
+> and you are in under the [miner terms](mining-terms.md). No earnings are
+> promised.
 
 zils-web change, out of scope here.
 
@@ -82,7 +82,7 @@ continues (operator-registered nodes need neither key).
 **Coordinator side (zils-platform).**
 
 - `POST /v1/workers/admit`: signature checked, hotkey looked up in the subnet's
-  registration set (read from the testnet chain, cached five minutes; a hotkey
+  registration set (read from the chain, cached five minutes; a hotkey
   that drops off the chain is refused at the next refresh), terms hash compared
   with the current one, report checked against the pinned profile. Then
   `zils_admit_worker` writes the `fez_training_workers` row (next free queue UID,
