@@ -537,6 +537,25 @@ it. The first near re-upload of each listed model wins; another hotkey's later
 near re-upload of the same model is refused while the first stays in the pool,
 and a near-copy of any other hotkey's earlier body is refused as before.
 
+**Scouting.** The known-public list is not the limit of what a scout can
+commit. Any open fine-tune of the pool's Qwen parent that passes the eligibility
+checks above can be committed by the first hotkey to find it, listed or not. The
+list only names the public models validators already know about, and those pay
+0.25. A find that is not on the list, and whose weight change is far from every
+listed model (sketch cosine under 0.9), pays the trainer rate even though you did
+not train it: the pool cannot tell a find from a fine-tune and does not need to,
+because every body earns its seat the same way, by making the soup better on the
+round's items. If the find is itself a fine-tune of a house ingredient, the soup
+or the release, its seat pays only if it beats that base by 1.2 points, like any
+other fine-tune. Hunting Hugging Face for strong open decision models of the
+pool's size, adding the Qwen vision tower when the export is text-only, and
+committing them first is real work the pool pays for. Check a candidate before
+you upload it:
+
+```bash
+zils-miner commit-body --pool <pool> --path ./found-body --check
+```
+
 Every unearned part burns to the subnet owner's uid, as in the base tier. Until
 miners submit new bodies, most of the pool's share burns.
 
