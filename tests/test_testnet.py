@@ -102,6 +102,60 @@ class TestnetTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             t.drop_replaced({1: 1.0}, {"0": "validator"}, 0)  # the burn uid itself changed
 
+    def test_verify_receipt_tolerates_archive_endpoints_and_unpaid_churn(self):
+        from zils import testnet as t
+
+        # A mainnet config names archive endpoints, and a full subnet replaces unpaid UIDs
+        # between publication and verification; the paid UIDs and the vector still verify.
+        config = {
+            "chain": {"network": "finney", "netuid": 127, "archive_endpoints": ["wss://a:443"]},
+            "admission": "chain",
+            "validator_hotkey": "validator",
+            "members": {},
+            "base_pools": {"share": 1.0, "burn_uid": 0, "pools": {}},
+        }
+        keys = {0: "validator", 1: "miner-a", 2: "replacement"}
+        state = {
+            "NetworksAdded": True,
+            "SubnetworkN": 3,
+            "Uids": {hotkey: uid for uid, hotkey in keys.items()},
+            "Keys": keys,
+            "ValidatorPermit": [True, False, False],
+            "SubnetOwnerHotkey": "validator",
+            "CommitRevealWeightsEnabled": False,
+            "MinAllowedWeights": 1,
+            "MaxWeightsLimit": 65535,
+            "WeightsSetRateLimit": 100,
+            "WeightsVersionKey": 0,
+            "LastUpdate": [600, 0, 0],
+            "Weights": {0: [(0, 65535)]},
+        }
+
+        def query(item, params, *, block):
+            value = state.get(item[1])  # no commitments on this subnet
+            return value.get(params[1]) if isinstance(value, dict) else value
+
+        sub = SimpleNamespace(
+            network="finney", endpoint=t.ENDPOINTS["finney"], block=700, query=query
+        )
+        record = {
+            "network": "finney",
+            "netuid": 127,
+            "block": 500,
+            "validator_hotkey": "validator",
+            "members": {"1": "miner-a", "2": "miner-b"},  # uid 2 was replaced, unpaid
+            "requested_weights": {"0": 1.0},
+            "max_weight_limit": 65535,
+            "chain_write": True,
+        }
+        result = t.verify_receipt(config, record, sub)
+        self.assertTrue(result["weights_verified"])
+        self.assertEqual(result["on_chain_weights"], {"0": 65535})
+        # A paid UID that changed hands is a different fleet: refuse.
+        paid = {**record, "requested_weights": {"0": 0.5, "2": 0.5}}
+        with self.assertRaises(ValueError):
+            t.verify_receipt(config, paid, sub)
+
     def test_registration_and_publication_fail_closed(self):
         from bittensor.result import ChainError, ErrorCode, ExtrinsicResult
 
