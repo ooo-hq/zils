@@ -368,7 +368,7 @@ def verify(folder):
     if not isinstance(entry, dict) or entry.get("sha256") != hashlib.sha256(data).hexdigest():
         raise ValueError("items.jsonl does not match the manifest hash")
     try:
-        items = [json.loads(line) for line in data.decode().splitlines() if line.strip()]
+        items = [json.loads(line) for line in data.decode().split("\n") if line.strip()]
     except ValueError:
         raise ValueError("items.jsonl is not JSON lines") from None
     if entry.get("rows") != len(items):
@@ -537,7 +537,7 @@ def draw(items, secret, settings):
 
 
 def _read_jsonl(path):
-    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+    return [json.loads(line) for line in Path(path).read_text().split("\n") if line.strip()]
 
 
 def _write(path, text):
