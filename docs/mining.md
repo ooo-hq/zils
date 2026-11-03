@@ -1,6 +1,6 @@
 # Run a fleet miner
 
-Local and Bittensor testnet fleets support **d3-mini 4.5B** text jobs
+Local and Bittensor fleets support **d3-mini 4.5B** text jobs
 (`d3-mini-4.5b-v1`, the base since 17 October 2026). Existing Kev 0.8B bundles
 remain supported; H2O Lightning 4B, ImaJev and JevK5 4B bundles are retired and no
 longer run. d3 image jobs run in the [hosted queue](queue-miners.md), where a d3
@@ -128,12 +128,12 @@ From the repository root:
 Remove `--rounds 1` for continuous rounds. The validator evaluates after every
 miner submits or the collection deadline expires. It verifies signatures and
 hashes, calibrates each candidate, and scores the separate evaluation cases.
-Local mode never writes weights to Bittensor. Testnet mode needs registered
-wallets and explicit publication; follow the [testnet guide](testnet.md).
+Local mode never writes weights to Bittensor. Chain mode needs registered
+wallets and explicit publication; follow the [chain fleet guide](testnet.md).
 
-## Two tracks on the testnet: the base tier pays first
+## Two tracks on the subnet: the base tier pays first
 
-On a testnet fleet whose validator config carries `base_pools`, miners
+On a chain fleet whose validator config carries `base_pools`, miners
 earn on two tracks, paid from one weight vector on the configured subnet:
 
 - **Base tier (primary, continuous).** Beat the pinned incumbent in your
@@ -211,13 +211,13 @@ on the sealed exam.
 ## Compete in the base tier from outside
 
 You do not need a bundle, an operator or an invitation to enter the base tier:
-registration on subnet 579 is the admission. About an afternoon end to end, most
+registration on mainnet subnet 127 is the admission. About an afternoon end to end, most
 of it the training run.
 
 You do not need any validator's address or hotkey to compete: candidates are
 chain commitments that every validator reads itself. Validators are run by
 whoever operates them; find them on the metagraph
-(`btcli subnets metagraph --netuid 579 --network test`).
+(`btcli subnets metagraph 127 --network finney`).
 
 Start with the installer on the mining host. It clones Zils into `~/.zils/zils`,
 builds the miner runtime and, on Linux x86_64 with an NVIDIA GPU, the d3 training
@@ -257,9 +257,12 @@ metadata. Existing candidates supply their profile when no selection is saved;
 without a candidate or selection, the CLI asks you to choose instead of assuming
 mini. A candidate for a different tier or parent profile is rejected before upload.
 
-From then on `zils-miner doctor` names the next step and prints its command; the steps are:
+From then on `zils-miner doctor` names the next step and prints its command. The CLI
+defaults to testnet and never assumes mainnet: add `--network finney --netuid 127` to
+every `zils-miner` chain command (`doctor`, `check`, `commit-candidate`, `commit-body`).
+The steps are:
 
-1. **Register a hotkey on testnet subnet 579** following the
+1. **Register a hotkey on mainnet subnet 127** following the
    [registration guide](bittensor-registration.md); keep the hotkey file on the
    mining host and the coldkey elsewhere.
 2. **Read the [miner terms](mining-terms.md).** Running a miner against a Zils
@@ -302,7 +305,7 @@ From then on `zils-miner doctor` names the next step and prints its command; the
    step 3 (it prints the merge recipe), before step 4 (it prints the commit
    command) and again after each fix.
 6. **Read the result.** Your payout is on chain: the validators' weights and your
-   incentive (`btcli subnets metagraph --netuid 579 --network test`). The
+   incentive (`btcli subnets metagraph 127 --network finney`). The
    aggregate row per round (Brier and accuracy against the incumbent, eligibility,
    the pending and confirmed winner) is in each validator's signed round result on
    its own API (`GET /results/<round>`), not on chain. Per-case results are never returned. An ineligible or

@@ -14,9 +14,9 @@ every hotkey registered on the subnet ([open admission](validators.md#open-admis
 miners commit candidates on chain and the validator scores them in its sandboxed
 runner. Base and adapter tracks pay from one weight vector; an unearned share is
 burned at `base_tier.burn_uid`
-([two-track payment](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)).
-Which validators are running is on the metagraph, not in these docs. Mainnet is
-not implemented.
+([two-track payment](mining.md#two-tracks-on-the-subnet-the-base-tier-pays-first)).
+Which validators are running is on the metagraph, not in these docs. The public
+subnet is mainnet 127; this page covers the closed rehearsal fleet on testnet 579.
 
 Local fleets remain offline from Bittensor. Testnet fleets also require the
 validator's explicit `--publish-weights` flag before their loop sends weights.
@@ -29,7 +29,7 @@ Obtain the current testnet subnet ID from the operator, then register each
 validator/miner hotkey on that existing subnet using the
 [registration guide](https://docs.zils.ai/operations/bittensor-registration).
 Miners do not need to create a subnet. The
-[validator guide](https://docs.zils.ai/operations/validators#bittensor-testnet-validator)
+[validator guide](https://docs.zils.ai/operations/validators#bittensor-fleet-validator)
 covers eligibility, evaluation, publication, and verification.
 
 Install the additional SDK on each participant, using the existing environment:
