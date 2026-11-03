@@ -64,6 +64,10 @@ entry for each machine:
 }
 ```
 
+`chain` takes an optional `archive_endpoints` list (`wss://` URLs) for queries at blocks the
+network's default endpoint has discarded; a soup pool that waits after its deadline needs it on
+mainnet ([model pools](model-pools.md#round-items-from-zils-current)).
+
 `777` is an example only; use the operator-confirmed subnet ID. Each miner UID
 must be the value returned by the chain for that hotkey, not a local queue ID.
 

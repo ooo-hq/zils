@@ -166,6 +166,15 @@ class TestnetTest(unittest.TestCase):
         mainnet = copy.deepcopy(config)
         mainnet["chain"]["network"] = "finney"
         self.assertEqual(t.check_config(mainnet), 553)
+        # A waiting soup round reads state at a seed block days old; mainnet's default endpoint
+        # discards it, so a validator may name archive endpoints.
+        archived = copy.deepcopy(mainnet)
+        archived["chain"]["archive_endpoints"] = ["wss://archive.chain.opentensor.ai:443"]
+        self.assertEqual(t.check_config(archived), 553)
+        for bad_archive in ("wss://a", ["http://a"], [1], [], {"wss://a": 1}):
+            archived["chain"]["archive_endpoints"] = bad_archive
+            with self.assertRaises(ValueError):
+                t.check_config(archived)
         with self.assertRaisesRegex(ValueError, "pinned mainnet endpoint"):
             t.preflight(mainnet, sub)
         sub.network, sub.endpoint = "finney", t.ENDPOINTS["finney"]
