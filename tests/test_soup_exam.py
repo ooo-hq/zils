@@ -95,10 +95,14 @@ class UseLedgerTest(unittest.TestCase):
             self.assertEqual(soup_exam.UseLedger(path).exposure("x"), 2)
 
     def test_retirement_at_cap_feeds_subset(self):
+        # Items never leave the validator and cached rows make a reuse free, so the cap only
+        # keeps a deadline on the bank refill: 100 uses is about 290 nights (owner, 2 Nov 2026).
+        self.assertEqual(soup_exam.RETIRE_AFTER, 100)
+        cap = soup_exam.RETIRE_AFTER
         with tempfile.TemporaryDirectory() as tmp:
             ledger = soup_exam.UseLedger(Path(tmp) / "uses.jsonl")
-            for i in range(24):
-                ledger.record(f"r{i}", ["old"] if i < 23 else ["old", "worn"])
+            for i in range(cap):
+                ledger.record(f"r{i}", ["old"] if i < cap - 1 else ["old", "worn"])
             self.assertEqual(ledger.retired(), {"old"})
             self.assertEqual(ledger.retired(cap=1), {"old", "worn"})
             cases = bank()

@@ -423,7 +423,9 @@ other grading failure makes the body sit the round out, and a body that fails
 grading in three separate rounds is banned. A body out of the pool for three
 rounds loses its folder (its hash and sketch stay); cached soup predictions
 unused for three rounds are deleted.
-When the round bank has too few unretired items, the round is skipped and logged.
+A bank item retires once 100 rounds have drawn it (`RETIRE_AFTER`); items never leave the
+validator, so the cap only bounds how long a bank serves before it is refilled. When the round
+bank has too few unretired items, the round is skipped and logged.
 Only the public record (members, rates, rounded contributions, category scores and
 hashes of the subset, predictions and soup, all on the round's own subset, plus
 the pooled round ids and item count, the pool's scoring and the soup's fitted
