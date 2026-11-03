@@ -166,7 +166,10 @@ Replace `ROUND` below with the completed round directory's name. This command
 Only one process should publish for this hotkey and subnet. For subsequent
 continuous rounds, run `zils.fleet validator` with `--publish-weights` and omit
 `--rounds 1`. Zils uses mechanism 0 and weight version 1. It stops if the chain
-requires a newer version. `no_weights` and `rate_limited` submit nothing.
+requires a newer version. `no_weights` and `rate_limited` submit nothing. A
+frozen member whose UID holds another hotkey (or none) by publication time is
+dropped from the vector and listed under `replaced`; its share burns at the
+fleet's burn uid, so a replacement never inherits the evaluated score.
 
 ### 5. Verify the revealed weights
 

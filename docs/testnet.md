@@ -158,7 +158,9 @@ Verification checks the current registered identities, a later `LastUpdate`,
 and the expected proportions after SDK clipping/quantization. It reports the
 current weight state; it cannot uniquely attribute identical weights to one
 commit if another process writes for the same hotkey. `rate_limited` and
-`no_weights` send nothing; previous on-chain weights remain. Zils never invents
+`no_weights` send nothing; previous on-chain weights remain. A frozen member
+whose UID was re-registered during the round is dropped (`replaced`), its share
+burning at the fleet's burn uid. Zils never invents
 uniform rewards when every candidate fails: with a `base_tier` track, a share
 nobody earned goes to `base_tier.burn_uid` instead.
 
