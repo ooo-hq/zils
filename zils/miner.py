@@ -941,6 +941,7 @@ def setup(args):
         config.pop("revision", None)  # a changed target must not reuse the uploaded revision
     config |= {"wallet_path": path, "wallet_name": name, "wallet_hotkey": hotkey}
     config |= {"model": model, "candidate": candidate, "repo": repo}
+    config |= {"network": args.network, "netuid": args.netuid}  # later commands default to these
     write_config(config)
     print(f"{paint('32', '✓')} saved to {config_path()}\n", flush=True)
     for key in SAVED:
@@ -1023,8 +1024,7 @@ def main(argv=None):
         command.add_argument(
             "--network",
             choices=tuple(testnet.ENDPOINTS),
-            default="test",
-            help="finney is mainnet and needs an explicit --netuid",
+            help="finney is mainnet and needs an explicit --netuid; default: what setup saved, else test",
         )
         command.add_argument("--netuid", type=int)
         if command in (start, check, commit):
@@ -1047,6 +1047,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if hasattr(args, "netuid"):
+            # The chain setup saved is the default; an explicit --network brings its own netuid.
+            saved = load_config()
+            if args.network is None:
+                args.network = saved.get("network") or "test"
+                if args.netuid is None:
+                    args.netuid = saved.get("netuid")
             args.netuid = resolve_netuid(args.network, args.netuid)
         if args.command == "setup":
             if not setup(args):

@@ -27,7 +27,7 @@ class Chain:
         self.block, self.uids, self.records, self.calls = 300, uids, {}, []
 
     def query(self, item, params, *, block=None):
-        assert params[0] == 579 and block == self.block
+        assert params[0] == getattr(self, "netuid", 579) and block == self.block
         if item[1] == "Uids":
             return self.uids.get(params[1])
         if item[1] == "Keys":
@@ -93,6 +93,7 @@ class CommitCandidateTest(unittest.TestCase):
             testnet.check_config(config)
             self.connects.append(raw_calls)
             self.chains.append(config["chain"])
+            self.chain.netuid = config["chain"]["netuid"]
             yield self.chain
 
         self.enterContext(patch("zils.testnet.connect", connect))
@@ -317,6 +318,32 @@ class CommitCandidateTest(unittest.TestCase):
             code, out = self.run_miner("setup", wallet=False)
         self.assertNotIn("revision", json.loads(self.config.read_text()))
         self.assertIn("✗ hugging face\n  not uploaded yet", out)
+
+    def test_setup_saves_the_network_that_later_commands_default_to(self):
+        # Mainnet is never a default, but once setup was told finney/127 every later chain
+        # command uses it; a forgotten flag must not write a commitment on testnet instead.
+        answers = iter([self.wallet["path"], "", "", str(self.candidate), "", "alice/d3"])
+        with patch("builtins.input", lambda prompt: next(answers)):
+            code, out = self.run_miner(
+                "setup", "--network", "finney", "--netuid", "127", wallet=False
+            )
+        saved = json.loads(self.config.read_text())
+        self.assertEqual((saved["network"], saved["netuid"]), ("finney", 127))
+        self.assertEqual(self.chains[-1], {"network": "finney", "netuid": 127})
+
+        self.chains.clear()
+        self.run_miner("doctor", wallet=False)
+        self.assertEqual(self.chains[-1], {"network": "finney", "netuid": 127})
+        # An explicit flag still wins, and testnet keeps its own default netuid.
+        self.chains.clear()
+        self.run_miner("doctor", "--network", "test", wallet=False)
+        self.assertEqual(self.chains[-1], {"network": "test", "netuid": miner.NETUID})
+        # Setup without the flags keeps what was saved.
+        answers = iter(["", "", "", "", "", ""])
+        with patch("builtins.input", lambda prompt: next(answers)):
+            self.run_miner("setup", wallet=False)
+        saved = json.loads(self.config.read_text())
+        self.assertEqual((saved["network"], saved["netuid"]), ("finney", 127))
 
     def test_doctor_checks_a_serving_runtime_only_when_asked(self):
         from tests.test_serving_runtime import TOKEN, FakeRuntime, health
