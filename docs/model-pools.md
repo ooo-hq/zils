@@ -535,6 +535,18 @@ stops the round; both are recorded in the private round record. A list file that
 cannot be read runs the round with no list and is reported in the epoch summary.
 Public models are never graded, seated or paid themselves.
 
+The list is not an allowlist. Any body that passes the eligibility checks is
+admitted whether or not it matches a listed model; the list only decides the
+rate. A re-upload of an open model that is on no list and far from every listed
+model (cosine under 0.9) is indistinguishable from a trainer's body and is paid
+as one, subject to the same base rule above when it is a fine-tune of a house
+body, the soup or the release. This is deliberate: scouts who find strong open
+models of the pool's size and commit them first make the soup better, and the
+pool pays for the result, not for how the weights were made. Adding a model to a
+known-public list converts that find from the trainer rate to the scout rate, so
+the lists should name models that were public before the pool opened, not grow
+with every model miners discover.
+
 Only a near-exact re-upload (or a body with no change from the base) bans the
 body hash. "Explained by earlier" and behavioural twins judge the current pool:
 they refuse only that commitment (explained shares count only earlier bodies
