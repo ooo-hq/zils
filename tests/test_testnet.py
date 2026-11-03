@@ -32,13 +32,13 @@ class TestnetTest(unittest.TestCase):
             ],
         }
         wallet = SimpleNamespace(hotkey=SimpleNamespace(ss58_address="validator"))
-        # Even an unpaid frozen member must retain its identity. New registrations
-        # are safe when every frozen UID still belongs to the evaluated hotkey.
-        for keys, allowed in (
-            ({0: "validator", 1: "replacement", 2: "miner-b"}, False),
-            ({0: "validator", 2: "miner-b"}, False),
-            ({0: "validator", 1: "miner-a"}, False),
-            ({0: "validator", 1: "miner-a", 2: "miner-b", 3: "new-miner"}, True),
+        # A replaced or deregistered UID never inherits the evaluated hotkey's score: its
+        # weight is dropped and the rest publishes. New registrations are always safe.
+        for keys, expected, replaced in (
+            ({0: "validator", 1: "replacement", 2: "miner-b"}, None, {"1": "miner-a"}),
+            ({0: "validator", 2: "miner-b"}, None, {"1": "miner-a"}),
+            ({0: "validator", 1: "miner-a"}, {"1": 1.0}, {"2": "miner-b"}),
+            ({0: "validator", 1: "miner-a", 2: "miner-b", 3: "new-miner"}, {"1": 1.0}, {}),
         ):
             state = {
                 "NetworksAdded": True,
@@ -72,20 +72,35 @@ class TestnetTest(unittest.TestCase):
                 work = Path(tmp)
                 receipt = t.publish_round(config, work, report, sub, wallet, publish=True)
                 sub.plan.assert_not_called()
-                if allowed:
+                self.assertEqual(receipt["replaced"], replaced)
+                if expected:
                     self.assertEqual(receipt["status"], "included")
                     self.assertTrue(receipt["chain_write"])
-                    self.assertEqual(receipt["requested_weights"], {"1": 1.0})
+                    self.assertEqual(receipt["requested_weights"], expected)
                     sub.execute.assert_called_once()
                     self.assertEqual(sub.execute.call_args.args[0].uids, [1])
                 else:
-                    self.assertEqual(receipt["status"], "registration_changed")
+                    # The only earner was replaced and nothing burns: previous weights remain.
+                    self.assertEqual(receipt["status"], "no_weights")
                     self.assertIs(receipt["chain_write"], False)
                     self.assertIs(receipt["weights_verified"], False)
                     self.assertEqual(receipt["requested_weights"], {})
                     sub.execute.assert_not_called()
                     self.assertFalse((work / "chain-attempt.json").exists())
                     self.assertFalse((work / "chain-receipt.json").exists())
+
+    def test_replaced_uids_burn_or_renormalize(self):
+        from zils import testnet as t
+
+        # With a burn uid the dropped share burns there; without one the rest renormalizes.
+        self.assertEqual(
+            t.drop_replaced({1: 0.5, 2: 0.3, 0: 0.2}, {"2": "miner-b"}, 0), {1: 0.5, 0: 0.5}
+        )
+        self.assertEqual(t.drop_replaced({1: 0.5, 2: 0.5}, {"2": "miner-b"}, None), {1: 1.0})
+        self.assertEqual(t.drop_replaced({2: 1.0}, {"2": "miner-b"}, None), {})
+        self.assertEqual(t.drop_replaced({1: 1.0}, {}, 0), {1: 1.0})
+        with self.assertRaises(ValueError):
+            t.drop_replaced({1: 1.0}, {"0": "validator"}, 0)  # the burn uid itself changed
 
     def test_registration_and_publication_fail_closed(self):
         from bittensor.result import ChainError, ErrorCode, ExtrinsicResult

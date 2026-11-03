@@ -259,6 +259,22 @@ def preflight(config, sub):
     }
 
 
+def drop_replaced(weights, replaced, burn_uid):
+    """Weights without the frozen UIDs whose registration changed since the round snapshot. A
+    replaced UID never inherits the evaluated hotkey's score: its share burns at `burn_uid` when
+    the fleet has one, otherwise the remaining weights renormalize (empty when nothing is left)."""
+    if burn_uid is not None and str(burn_uid) in replaced:
+        raise ValueError("the burn uid's registration changed; start a fresh round")
+    kept = {uid: w for uid, w in weights.items() if str(uid) not in replaced}
+    dropped = sum(w for uid, w in weights.items() if str(uid) in replaced)
+    if not dropped:
+        return kept
+    if burn_uid is not None:
+        return {**kept, burn_uid: kept.get(burn_uid, 0.0) + dropped}
+    total = sum(kept.values())
+    return {uid: w / total for uid, w in kept.items()} if total else {}
+
+
 def publish_round(config, work, report, sub, wallet, *, publish=False):
     """Persist intent before signing. An interrupted submission is never retried automatically."""
     import bittensor as bt
@@ -345,18 +361,12 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
                 }
             )
     state = preflight(config, sub)
-    # Open admission discovers current registrations; scores belong to the frozen
-    # round identities. Additional members are safe only while all frozen ones match.
-    if any(state["members"].get(uid) != hotkey for uid, hotkey in identities.items()):
-        return {
-            **state,
-            "report_sha256": report_hash,
-            "requested_weights": {},
-            "chain_write": False,
-            "weights_verified": False,
-            "status": "registration_changed",
-            "detail": "nothing sent; evaluated registrations changed; start a fresh round",
-        }
+    # Open admission discovers current registrations; scores belong to the frozen round
+    # identities. A full subnet replaces UIDs every few blocks, so a frozen member whose UID
+    # now holds another hotkey (or none) is dropped from the vector below, never paid.
+    replaced = {
+        uid: hotkey for uid, hotkey in identities.items() if state["members"].get(uid) != hotkey
+    }
     if wallet.hotkey.ss58_address != config["validator_hotkey"]:
         raise ValueError("wallet does not match the configured validator")
     rows = report["miners"]
@@ -387,11 +397,13 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
         raise ValueError("report carries a base-tier decision but the fleet has no base-tier track")
     tracks = None
     weights = adapter
+    burn_target = None
     if pools is not None:
         base, pool_record = model_pools.weights(
             pools, pool_report["decisions"], config["members"], block=pool_report.get("block")
         )
         share, burn = pools["share"], pools["burn_uid"]
+        burn_target = burn
         feature_share, feature_vector, feature_record = 0.0, {}, None
         if features is not None:
             feature_share = features["share"]
@@ -466,6 +478,7 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
 
         track = base_round.validate_track(track)
         share, burn = track["share"], track["burn_uid"]
+        burn_target = burn
         # Only kings earn the base share, with or without a decision this epoch; exam winners earn
         # nothing. An empty track (no registered king, e.g. the unowned vendor base; no adapter
         # earner) burns its share at burn_uid, as Teutonic does, instead of enlarging the other.
@@ -490,10 +503,12 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
             "base": {str(k): v for k, v in base.items()},
             "adapter": {str(k): v for k, v in adapter.items()},
         }
+    weights = drop_replaced(weights, replaced, burn_target)
     record = {
         **state,
         "report_sha256": report_hash,
         "requested_weights": {str(k): v for k, v in weights.items()},
+        "replaced": replaced,
         **({"tracks": tracks} if tracks else {}),
         **({"adapter_source": "queue"} if "adapter_evidence" in config else {}),
         "chain_write": False,
