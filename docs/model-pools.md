@@ -130,6 +130,9 @@ optionally `subset_size` (default 3,000), `screen_size` (300),
 }
 ```
 
+- The operator's own miner hotkeys (`zils/data/soup-house-hotkeys.json`, shipped with
+  the code) are **house hotkeys**: their bodies compete like any other and take seats when
+  they lift the soup, but earn nothing, so the operator never pays itself from its own exam.
 - The pool's **house list** (its unpaid ingredients) and **known-public list**
   (public models of its size that are not house ingredients, whose unchanged or
   near re-uploads are paid at the scout rate, see below) are not settings. They
