@@ -1281,3 +1281,15 @@ class GroupCapTest(unittest.TestCase):
         for bad in ({"arxiv-*": 0}, {"arxiv-*": 1.5}, {"": 0.1}, ["arxiv-*"], {"arxiv-*": "x"}):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 soup_current.validate({**base, "group_max": bad})
+
+
+class LineSeparatorTest(unittest.TestCase):
+    setUp, load = LoadTest.setUp, LoadTest.load
+
+    def test_a_unicode_line_separator_inside_an_item_is_read(self):
+        items = day_items("2026-11-01", 5)
+        items[0]["state"]["text"] += "one line still the same line"
+        export(self.root, "2026-11-01", items)
+        result = self.load()
+        self.assertEqual(len(result["items"]), 20)
+        self.assertEqual(result["skipped"], {})

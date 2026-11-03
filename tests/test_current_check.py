@@ -382,3 +382,19 @@ class ReexportTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LineSeparatorTest(unittest.TestCase):
+    def test_a_unicode_line_separator_inside_an_item_is_not_a_row_break(self):
+        rows = [wiki_case(100, "true"), wiki_case(300, "false")]
+        rows[0]["state"]["text"] += "one line still the same line\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "2026-11-02"
+            folder.mkdir()
+            (folder / "items.jsonl").write_text(
+                "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+            )
+            report = current_check.run(folder, FakeHttp(history_handler), sample=100, seed=1)
+            kept = [json.loads(x) for x in (folder / "items.jsonl").read_text().split("\n") if x]
+        self.assertEqual(report["proof_rejected"], {})
+        self.assertEqual([c["id"] for c in kept], [r["id"] for r in rows])

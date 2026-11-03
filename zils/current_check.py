@@ -498,7 +498,7 @@ def run(folder, http, *, sample=SAMPLE, seed=0, threshold=THRESHOLD, now=None):
     original = folder / "items.unchecked.jsonl"
     if not original.exists():
         original.write_text(items.read_text())
-    cases = [json.loads(line) for line in original.read_text().splitlines() if line.strip()]
+    cases = [json.loads(line) for line in original.read_text().split("\n") if line.strip()]
     rejected, proven = Counter(), []
     for case in cases:
         reason = proof_reason(case)
