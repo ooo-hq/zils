@@ -145,7 +145,7 @@ def validate_soup(entry):
     copy-check sketch seed; it is checked here but left out of the result, which reports publish.
     Without it each validator generates and keeps its own (``soup_round.sketch_seed``).
     An optional ``exam`` picks where round items come from (``soup_current.validate``): the fixed
-    round bank (the default) or Zils Current dated exports. An optional ``scoring`` (one of
+    round bank (the default) or Zils Outcomes dated exports. An optional ``scoring`` (one of
     ``soup_grade.SCORINGS``, default ``soup_grade.DEFAULT_SCORING``) picks how graded models are
     scored.
     """

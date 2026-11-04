@@ -1,4 +1,4 @@
-"""Zils Current Wikipedia stream: article edits from Wikimedia EventStreams, resolved by the revert tag.
+"""Zils Outcomes Wikipedia stream: article edits from Wikimedia EventStreams, resolved by the revert tag.
 
 Edits come from the public `recentchange` server-sent event stream (live, or replayed with
 `since` within the stream's retention of several days). After a waiting period the MediaWiki

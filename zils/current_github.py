@@ -1,4 +1,4 @@
-"""Zils Current GitHub streams: issues and pull requests opened in GH Archive hours, resolved from the REST API.
+"""Zils Outcomes GitHub streams: issues and pull requests opened in GH Archive hours, resolved from the REST API.
 
 GH Archive (https://www.gharchive.org) publishes every public GitHub event in hourly files. Since
 GitHub trimmed Events API payloads in 2025, pull request events carry ids and branch names but no

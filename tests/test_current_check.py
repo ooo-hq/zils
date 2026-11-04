@@ -1,4 +1,4 @@
-"""Zils Current proof and cross-checks: every item's outcome re-derived by a second method."""
+"""Zils Outcomes proof and cross-checks: every item's outcome re-derived by a second method."""
 
 import json
 import tempfile

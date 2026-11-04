@@ -1,4 +1,4 @@
-"""Zils Current arXiv streams: which category was a new paper filed under?"""
+"""Zils Outcomes arXiv streams: which category was a new paper filed under?"""
 
 import tempfile
 import unittest

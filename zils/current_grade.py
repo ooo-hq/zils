@@ -1,4 +1,4 @@
-"""Zils Current grading: score a dated export with a checkpoint under the shared GPU lock.
+"""Zils Outcomes grading: score a dated export with a checkpoint under the shared GPU lock.
 
     python -m zils.current grade --items BANK/2026-10-30/items.jsonl --model CHECKPOINT
 

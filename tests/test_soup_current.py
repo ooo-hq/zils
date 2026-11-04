@@ -1,4 +1,4 @@
-"""Soup round exams drawn from Zils Current dated exports, with the fixed bank as fallback."""
+"""Soup round exams drawn from Zils Outcomes dated exports, with the fixed bank as fallback."""
 
 import hashlib
 import json
@@ -357,7 +357,7 @@ class PrepareTest(unittest.TestCase):
         cases = [by_id[i] for i in ids]
         families = Counter(c["family"] for c in cases)
         self.assertEqual(sum(families[s] for s in STREAMS), 120)
-        # Current streams replace the fixed bank's families in the cells they cover.
+        # Outcomes streams replace the fixed bank's families in the cells they cover.
         covered = {("reasoning", "new"), ("language", "new")}
         fixed = {c["family"] for c in cases if c["family"] not in STREAMS}
         self.assertFalse(
@@ -473,7 +473,7 @@ class PrepareTest(unittest.TestCase):
 
 
 class RoundTest(unittest.TestCase):
-    """A whole soup round (``tests.test_soup_run``'s synthetic bodies) on a Zils Current exam."""
+    """A whole soup round (``tests.test_soup_run``'s synthetic bodies) on a Zils Outcomes exam."""
 
     def setUp(self):
         from unittest.mock import patch
@@ -660,7 +660,7 @@ def cell_items(day, per_stream):
 
 
 class AllCellsTest(unittest.TestCase):
-    """Current streams in every category/block cell leave the fixed bank nothing to fill."""
+    """Outcomes streams in every category/block cell leave the fixed bank nothing to fill."""
 
     def setUp(self):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -710,7 +710,7 @@ class ChoiceBalanceTest(unittest.TestCase):
 
 
 def stream_rows(stream, category, block, kind, n, day="2026-11-02"):
-    """``n`` items of one Current stream in one cell; labels alternate so yes/no stays balanced."""
+    """``n`` items of one Outcomes stream in one cell; labels alternate so yes/no stays balanced."""
     resolved = datetime.fromisoformat(day).replace(hour=12, tzinfo=UTC)
     labels = {"noul": ["false", "true"], "choice": ["A", "B"], "score": ["0", "1", "3", "4"]}[kind]
     criteria = {"noul": None, "choice": {"A": "Bug", "B": "Feature"}, "score": list("01234")}[kind]
@@ -899,7 +899,7 @@ class QualityTest(unittest.TestCase):
         for name in ("current-language-new-choice-small", "current-language-new-noul-small"):
             self.assertTrue(record["merged_families"][name]["dropped"])
         self.assertEqual(record["current_items"], 260)
-        # The cell whose streams stayed too small is not taken from Current: the bank fills it.
+        # The cell whose streams stayed too small is not taken from Outcomes: the bank fills it.
         self.assertEqual(record["replaced_cells"], ["reasoning/new"])
         language_new = {
             c["family"] for c in cases if (c["category"], c["block"]) == ("language", "new")
@@ -953,7 +953,7 @@ class QualityTest(unittest.TestCase):
         self.assertEqual(record["bank_items"], 800 - len(current))
         self.assertEqual(record["replaced_cells"], [])
         self.assertEqual(record["added_cells"], ["reasoning/new"])
-        # Each stream can give at most 80 items (0.4 x the 200-item Current budget), below 100:
+        # Each stream can give at most 80 items (0.4 x the 200-item Outcomes budget), below 100:
         # the three reasoning yes/no streams merge (240 available, 200 drawn); the language
         # streams, one choice and one yes/no, stay below 100 apiece and are left out.
         self.assertEqual(families["current-reasoning-new-noul-small"], 200)
@@ -996,7 +996,7 @@ class QualityTest(unittest.TestCase):
         self.assertEqual(len(f.subset()), 400)
 
 
-# A Current bank shaped like a real gated export: (stream, category, block, type, available).
+# A Outcomes bank shaped like a real gated export: (stream, category, block, type, available).
 REAL_BANK = [
     *(
         (f"wiki-revert-{name}", "language", "known", "noul", n)

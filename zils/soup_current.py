@@ -1,13 +1,13 @@
-"""Soup round exams drawn from Zils Current dated exports (``zils.current`` ``export --bank``).
+"""Soup round exams drawn from Zils Outcomes dated exports (``zils.current`` ``export --bank``).
 
 A soup pool with ``exam: {"source": "current", "current_bank": DIR}`` builds each round's subset from
-two parts. The **Current part** holds recent real-world items from the dated folders under ``DIR``
+two parts. The **Outcomes part** holds recent real-world items from the dated folders under ``DIR``
 (``<YYYY-MM-DD>/items.jsonl`` and ``manifest.json``). The **bank part** comes from the fixed round
-bank. Current streams are families in the base score's category and block cells. In every cell the
-Current part covers, its streams replace the fixed bank's families, and the fixed bank fills the other
+bank. Outcomes streams are families in the base score's category and block cells. In every cell the
+Outcomes part covers, its streams replace the fixed bank's families, and the fixed bank fills the other
 cells, so the base score keeps all its cells.
 
-The rules for the Current part:
+The rules for the Outcomes part:
 
 * A folder is used only when its manifest checks out: the ``items.jsonl`` hash and row count match,
   the overlap check and the cross-check ran, and the mode is ``local`` or ``publishable``. Any other
@@ -22,19 +22,19 @@ The rules for the Current part:
   every ``arxiv-category-*`` stream, 15% together) share one cap, spent on as few of them as
   possible, in an order the round's secret sets. Yes/no streams keep balanced labels. Newer
   resolution days come first. Within a day, items are ranked by an HMAC of the item id under this
-  validator's local secret (``soup_round.sketch_seed``), because anyone can rebuild Current items.
-* If the Current part cannot meet these rules, the whole round falls back to the fixed bank. The
+  validator's local secret (``soup_round.sketch_seed``), because anyone can rebuild Outcomes items.
+* If the Outcomes part cannot meet these rules, the whole round falls back to the fixed bank. The
   draw is then exactly the one the fixed bank alone would give, and the fallback is recorded.
 
 Optional quality settings (``QUALITY_DEFAULTS``; a pool that sets none of them draws as above):
 ``exclude_streams`` drops streams by name pattern, ``min_family_items`` merges streams that drew
 fewer items into one family per cell and question type (and leaves out a merged family still
 below it), and ``current_share`` below 1 blends: the fixed bank keeps its families in every cell
-and Current families join them, up to that share of the subset.
+and Outcomes families join them, up to that share of the subset.
 
-``prepare`` writes the round's ``subset.json`` (which ``soup_round.run`` then reads), the Current
+``prepare`` writes the round's ``subset.json`` (which ``soup_round.run`` then reads), the Outcomes
 items it drew (``current-items.jsonl``) and the record (``bank-source.json``) into the round
-folder. A resumed round reuses them. The bank it returns also holds the Current items that earlier
+folder. A resumed round reuses them. The bank it returns also holds the Outcomes items that earlier
 rounds drew, so a later round can still score those items after they age out.
 """
 
@@ -63,11 +63,11 @@ QUALITY_DEFAULTS = {
     "exclude_streams": ["stackexchange-score-*", "wikipedia-afd"],
     "current_share": 1.0,
 }
-# Streams that share one cap, as a share of the Current part: arXiv's four subject streams give
+# Streams that share one cap, as a share of the Outcomes part: arXiv's four subject streams give
 # about 1,600 items a day and the task has millions of public labelled examples, so together they
 # could fill the exam and reward a specialised classifier. A pool's ``group_max`` replaces this.
 GROUP_MAX = {"arxiv-category-*": 0.15, "wikipedia-revert*": 0.2}
-KEEP_ROUNDS = 8  # earlier rounds whose drawn Current items stay in the bank (pooled decisions)
+KEEP_ROUNDS = 8  # earlier rounds whose drawn Outcomes items stay in the bank (pooled decisions)
 MODES = ("local", "publishable")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _ITEM_KEYS = (
@@ -154,7 +154,7 @@ def _quality(exam):
 
 
 def _group_capped(supply, ties, settings):
-    """Supply per stream once each ``group_max`` group shares one budget of the Current part.
+    """Supply per stream once each ``group_max`` group shares one budget of the Outcomes part.
 
     A group's budget goes to its streams one at a time, in an order set by an HMAC of the stream
     name under ``ties``, so it lands on as few streams as possible (one family can reach
@@ -267,7 +267,7 @@ def _family_draw(items, secret, settings):
         kept.append(family)
         budget -= minimum
     if not kept:
-        raise ValueError(f"no Current family reaches min_family_items {minimum}")
+        raise ValueError(f"no Outcomes family reaches min_family_items {minimum}")
     extra = _fill({f: available[f] - minimum for f in sorted(kept)}, budget)
     chosen, counts, families, merges = [], {}, {}, {}
     for family in sorted(members):
@@ -316,7 +316,7 @@ def _family_draw(items, secret, settings):
 
 
 def _drawn(items, secret, settings, size):
-    """(Current part, stream counts, merges, families) of ``size`` items."""
+    """(Outcomes part, stream counts, merges, families) of ``size`` items."""
     settings = {**settings, "current_items": size}
     if "min_family_items" not in settings:
         return (*draw(items, secret, settings), {}, {})
@@ -324,7 +324,7 @@ def _drawn(items, secret, settings, size):
 
 
 def _cells(chosen, current_ids, minimum):
-    """Items, families and Current items per category/block cell, and the cells below ``minimum``."""
+    """Items, families and Outcomes items per category/block cell, and the cells below ``minimum``."""
     cells = defaultdict(lambda: {"items": 0, "families": set(), "current_items": 0})
     for case in chosen:
         cell = cells[f"{case['category']}/{case['block']}"]
@@ -411,7 +411,7 @@ def load(bank_dir, *, deadline, max_age_days, max_tokens, uses, max_uses, wait_d
     eligible, seen = {}, set()
     names = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
     if not root.is_dir():
-        log(f"soup exam: Zils Current bank {root} is not a directory")
+        log(f"soup exam: Zils Outcomes bank {root} is not a directory")
     for name in names:
         if not _DATE.fullmatch(name):
             continue
@@ -425,7 +425,7 @@ def load(bank_dir, *, deadline, max_age_days, max_tokens, uses, max_uses, wait_d
             manifest_sha, manifest, items = verify(root / name)
         except ValueError as error:
             skipped[name] = str(error)
-            log(f"soup exam: skipped Zils Current folder {name}: {error}")
+            log(f"soup exam: skipped Zils Outcomes folder {name}: {error}")
             continue
         used = 0
         for item in items:
@@ -483,7 +483,7 @@ def _fill(capacity, size):
 
 
 def draw(items, secret, settings):
-    """(chosen items, per-stream counts) for the Current part; ValueError when it cannot fill."""
+    """(chosen items, per-stream counts) for the Outcomes part; ValueError when it cannot fill."""
     size = settings["current_items"]
     cap = int(settings["stream_max"] * size)
     streams = defaultdict(lambda: defaultdict(list))
@@ -549,7 +549,7 @@ def _write(path, text):
 
 
 def _earlier_items(state_dir, round_id):
-    """Current items drawn by the latest ``KEEP_ROUNDS`` earlier rounds, from their round folders."""
+    """Outcomes items drawn by the latest ``KEEP_ROUNDS`` earlier rounds, from their round folders."""
     rounds = Path(state_dir) / "rounds"
     paths = sorted(
         (p for p in rounds.glob("*/current-items.jsonl") if p.parent.name != round_id),
@@ -585,9 +585,9 @@ def _merge(bank, extra):
 
 
 def _blend(items, bank, secret, settings, *, size, seed, retired):
-    """(Current part, stream counts, merges, cells it adds to, bank part) for ``current_share`` < 1.
+    """(Outcomes part, stream counts, merges, cells it adds to, bank part) for ``current_share`` < 1.
 
-    The fixed bank keeps its families in every cell; Current families join them, up to
+    The fixed bank keeps its families in every cell; Outcomes families join them, up to
     ``current_share`` of the subset."""
     from . import soup_exam
 
@@ -595,17 +595,19 @@ def _blend(items, bank, secret, settings, *, size, seed, retired):
     current, streams, merges, families = _drawn(items, secret, settings, target)
     clash = {c["family"] for c in current} & {c["family"] for c in bank}
     if clash:
-        raise ValueError("Current families share a name with the bank: " + ", ".join(sorted(clash)))
+        raise ValueError(
+            "Outcomes families share a name with the bank: " + ", ".join(sorted(clash))
+        )
     part = soup_exam.subset(bank, seed, size - len(current), exclude=retired)
     cells = sorted({(c["category"], c["block"]) for c in current})
     return current, streams, merges, families, cells, part
 
 
 def _parts(items, bank, secret, settings, *, size, seed, retired):
-    """(Current part, stream counts, merges, the cells it covers, bank part) filling ``size`` items.
+    """(Outcomes part, stream counts, merges, the cells it covers, bank part) filling ``size`` items.
 
-    In the cells the Current part covers, its streams replace the fixed bank's families. When the
-    rest of the bank cannot fill the remainder (Current covers most or all cells), the Current
+    In the cells the Outcomes part covers, its streams replace the fixed bank's families. When the
+    rest of the bank cannot fill the remainder (Outcomes covers most or all cells), the Outcomes
     part grows to take the remainder, up to the whole subset."""
     from . import soup_exam
 
@@ -624,7 +626,7 @@ def _parts(items, bank, secret, settings, *, size, seed, retired):
     elif need == 0:
         part = []
     else:
-        raise ValueError("internal: the Current part is larger than the subset")
+        raise ValueError("internal: the Outcomes part is larger than the subset")
     return current, streams, merges, families, cells, part
 
 

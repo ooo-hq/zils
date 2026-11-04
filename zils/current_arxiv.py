@@ -1,4 +1,4 @@
-"""Zils Current arXiv streams: which category was a new paper filed under?
+"""Zils Outcomes arXiv streams: which category was a new paper filed under?
 
 One request to the arXiv API (`search_query=submittedDate:[day]`) returns up to 2,000 papers
 submitted on one UTC day, with their title, abstract, primary category and cross-lists. Each paper

@@ -1,4 +1,4 @@
-"""Zils Current Gerrit stream: will this proposed code change be merged?"""
+"""Zils Outcomes Gerrit stream: will this proposed code change be merged?"""
 
 import json
 import tempfile

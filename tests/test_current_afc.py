@@ -1,4 +1,4 @@
-"""Zils Current Articles for Creation stream: will a reviewer accept this draft?"""
+"""Zils Outcomes Articles for Creation stream: will a reviewer accept this draft?"""
 
 import tempfile
 import unittest
