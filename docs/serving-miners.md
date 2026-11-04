@@ -10,7 +10,7 @@ no adapters. It is separate from training and the base tier ([mining](mining.md)
   each checkpoint you serve.
 - The pinned d3 runtime: `.venv-d3` (Python 3.12, CUDA 13.0), which the
   [installer](https://zils.ai/install.sh) builds on Linux x86_64 with an NVIDIA GPU.
-  `zils serve` runs inference in a child process under that interpreter, or under
+  `zils-miner serve` runs inference in a child process under that interpreter, or under
   `ZILS_D3_RUNTIME_PYTHON` when it is set.
 - A public IPv4 address and an open TCP port. Private, loopback and reserved
   addresses are refused.
@@ -40,13 +40,13 @@ it is set, because the weights would no longer match the advertised hash.
 Write your endpoint on chain once. Without `--yes` this is a dry run.
 
 ```bash
-zils announce-serving --public-ip 203.0.113.10 --port 8091 --yes
+zils-miner announce-serving --public-ip 203.0.113.10 --port 8091 --yes
 ```
 
 Then start the server with one or more checkpoint directories, one per model:
 
 ```bash
-zils serve --public-ip 203.0.113.10 --port 8091 \
+zils-miner serve --public-ip 203.0.113.10 --port 8091 \
   --checkpoint models/d3-reference [--checkpoint DIR] [--slots 8]
 ```
 
@@ -59,12 +59,12 @@ systemd with `Restart=always`.
 
 A box that already runs the Zils adapter runtime with `--serve-base` holds the
 pinned base in GPU memory and answers it as `<profile>-base`. On that box,
-`zils serve` can send its requests to the runtime instead of starting its own
+`zils-miner serve` can send its requests to the runtime instead of starting its own
 worker, so the model is loaded once:
 
 ```bash
 export ZILS_RUNTIME_TOKEN=...   # the token the runtime was started with
-zils serve --public-ip 203.0.113.10 --port 8091 \
+zils-miner serve --public-ip 203.0.113.10 --port 8091 \
   --checkpoint models/d3-reference \
   --runtime http://127.0.0.1:8935 [--runtime-token-env ZILS_RUNTIME_TOKEN]
 ```
@@ -101,7 +101,7 @@ zils serve --public-ip 203.0.113.10 --port 8091 \
   `--runtime-token-env` (default `ZILS_RUNTIME_TOKEN`). It is never logged or
   printed.
 
-`zils doctor --model <profile> --runtime http://127.0.0.1:<port>` adds the same
+`zils-miner doctor --model <profile> --runtime http://127.0.0.1:<port>` adds the same
 identity check to its checklist.
 
 ## How callers find you

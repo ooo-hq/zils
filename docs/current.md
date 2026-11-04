@@ -1,8 +1,12 @@
-# Zils Current
+# Zils Outcomes
 
 Real-world decisions, labelled by what actually happened.
 
-Zils Current (`python -m zils.current`) turns public events into decision questions and
+Zils Outcomes is the product name (formerly Zils Current). The tool and its settings keep the
+name `current` in the module, the command, the config keys (`exam.source`, `current_bank`) and
+the paths.
+
+Zils Outcomes (`python -m zils.current`) turns public events into decision questions and
 labels each one with what really happened later. A GitHub issue is opened; days later a
 maintainer labels it a bug or a feature request. A Wikipedia edit is saved; within days it is
 reverted or it stays. The text available when the event happened is the question, and the
@@ -21,11 +25,14 @@ of it yet (see [Extension points](#extension-points)).
 | Stream | Question | Type | Label | Source of the label | Category | Block |
 | --- | --- | --- | --- | --- | --- | --- |
 | `github-issue-type` | Is this new issue a bug report or a feature request? | choice | `bug` / `feature` | the issue's labels (`bug`, `type: bug`, `enhancement`, `feature request`, ...) | language | new |
-| `github-issue-close` | Will maintainers close it as completed rather than not planned or duplicate? | yes/no | close reason | `state_reason` of the closed issue | reasoning | new |
-| `github-pr-merge` | Will this new pull request be merged? | yes/no | merged or closed unmerged | the pull request's `merged` flag | reasoning | new |
+| `github-issue-close` | Will maintainers close it as completed within three days? | yes/no | close reason | `state_reason` and `closed_at`; still open after three days is no | reasoning | new |
+| `github-pr-merge` | Will this new pull request be merged within three days? | yes/no | merged in time, or not | the pull request's `merged` flag and `merged_at`; still open after three days is no | reasoning | new |
 | `wikipedia-revert` (English), `wikipedia-revert-<lang>` | Will this article edit be reverted? | yes/no | `mw-reverted` tag | MediaWiki change tags after a waiting period | language | known |
 | `wikidata-revert` | Will this Wikidata item edit be reverted? | yes/no | `mw-reverted` tag | as for Wikipedia | retrieval | known |
 | `wikipedia-afd` | How did this deletion discussion close? | choice | `keep` / `delete` / `merge-redirect` / `no-consensus` | the closing result of an English Wikipedia Articles for deletion discussion | reasoning | known |
+| `gerrit-merge` | Will this proposed code change be merged? | yes/no | merged or abandoned | the change's status on a public Gerrit server (OpenDev, Wikimedia, AOSP) | tools | new |
+| `wikipedia-afc` | Will the reviewer accept this Articles for Creation draft? | yes/no | accepted or declined/rejected | the AFCH review: a decline or rejection edit, or the move that publishes the draft | reasoning | new |
+| `arxiv-category-<group>` | Which category was this new paper announced under? | choice (4 categories) | `A`..`D` | the paper's primary category in the arXiv API | the group | known |
 | `stackexchange-closed-<group>` | Will this new question be closed? | yes/no | closed or still open | `closed_date` a week or more after asking | the group | known |
 | `stackexchange-score-<group>` | What score will this new question have? | score (4 ordered levels) | `0`..`3` | the question's score a week or more after asking | the group | new |
 | `stackexchange-accepted-<group>` | Which of these answers did the asker accept? | choice (2 to 4 answers) | `A`..`D` | `accepted_answer_id` | the group | new |
@@ -46,17 +53,27 @@ category gets all three question types:
 | `retrieval` | history, travel, law, biology, money, academia, skeptics |
 | `arts` | movies, scifi, music, literature, photo, graphicdesign, writing |
 
+arXiv papers are grouped by their primary category: `cs` (computer science, `tools`), `math`
+(mathematics, `reasoning`), `physics` (every physics archive, `retrieval`) and `other`
+(statistics, electrical engineering, economics, quantitative biology and finance, `retrieval`).
+The four options are the primary category and three distractors: categories other papers of the
+same day were filed under, in the same group, picked in proportion to how often they occur (so
+the common neighbours of a paper are the likely distractors). A paper's own cross-lists, and
+their aliases (`math.IT` = `cs.IT`, ...), are never distractors, so exactly one option is a
+category the paper is listed in.
+
 ### Categories and blocks
 
 Each stream has one exam category from `base_metrics.CATEGORY_WEIGHTS` and one block:
 
 - **Categories.** Reverts test how well a model reads edits in a language, so they are
   `language`. Wikidata edits are claims about facts, so they are `retrieval`. Deletion
-  discussions are judgements of arguments against policy, so they are `reasoning`. Stack
-  Exchange streams take their site group's category.
+  discussions and Articles for Creation reviews are judgements against policy, so they are
+  `reasoning`. Stack Exchange and arXiv streams take their group's category.
 - **Blocks.** `known` marks a task type with an established public benchmark: Wikipedia
   vandalism (PAN-WVC), Wikidata vandalism (WSDM Cup 2017), closed Stack Overflow questions
-  (Kaggle, 2012) and Articles for deletion outcomes. `new` marks the rest. The items themselves
+  (Kaggle, 2012), Articles for deletion outcomes and arXiv subject classification. `new` marks
+  the rest. The items themselves
   are always new events. The blocks are a proposal. `ZILS_CURRENT_BLOCKS` overrides them with
   comma-separated `stream-prefix=block` pairs, for example
   `ZILS_CURRENT_BLOCKS=stackexchange-=new,wikipedia-afd=new`. The longest matching prefix wins.
@@ -66,14 +83,14 @@ Coverage of the ten exam cells (category by block) and the three question types:
 | Category | yes/no | choice | score |
 | --- | --- | --- | --- |
 | language | Wikipedia reverts (known), SE language closed (known) | SE language accepted (new) | SE language score (new) |
-| reasoning | SE reasoning closed (known) | AfD result (known), SE reasoning accepted (new) | SE reasoning score (new) |
-| retrieval | Wikidata reverts (known), SE retrieval closed (known) | SE retrieval accepted (new) | SE retrieval score (new) |
-| tools | SE tools closed (known) | SE tools accepted (new) | SE tools score (new) |
+| reasoning | SE reasoning closed (known), AfC review (new) | AfD result (known), arXiv math (known), SE reasoning accepted (new) | SE reasoning score (new) |
+| retrieval | Wikidata reverts (known), SE retrieval closed (known) | arXiv physics and other (known), SE retrieval accepted (new) | SE retrieval score (new) |
+| tools | SE tools closed (known), Gerrit merge (new) | arXiv cs (known), SE tools accepted (new) | SE tools score (new) |
 | arts | SE arts closed (known) | SE arts accepted (new) | SE arts score (new) |
 
-With the default blocks, every category has both blocks. `known` has only yes/no items (plus the
-AfD choice in reasoning), and `new` has only choice and score items. GitHub streams are local-only
-and are not counted here.
+With the default blocks, every category has both blocks. `known` has yes/no items plus the AfD
+and arXiv choices, and `new` has the AfC and Gerrit yes/no and the Stack Exchange choice and
+score items. GitHub streams are local-only and have no cross-check, so they are not counted here.
 
 The state text holds only what was known when the event happened:
 
@@ -92,6 +109,17 @@ The state text holds only what was known when the event happened:
 - **Deletion discussions:** the article title, the nomination and the discussion up to the
   close, with signatures, templates and markup removed. The closing statement is above the
   discussion heading and is never included.
+- **Articles for Creation drafts:** the draft title and the draft as the reviewer saw it (the
+  revision before the decline edit, or the last one before the publishing move). Templates
+  (the submission box, earlier declines and reviewer comments, infoboxes), HTML comments, files
+  and categories are removed; citations become `[ref: title, publication]`; links become their
+  text; editor names are scrubbed.
+- **Gerrit changes:** the server, the project, the branch and the commit message of patch set 1
+  (the change as first proposed). Trailers (`Signed-off-by`, `Change-Id`, `Reviewed-by`, bug
+  links, ...), cherry-pick notes and the owner's and uploaders' names are removed. Later patch
+  sets, votes and review comments are never shown.
+- **arXiv papers:** the title and the abstract. Authors, comments, journal references, dates and
+  the categories themselves are never shown.
 - **Stack Exchange questions:** the site, the title, the tags and the body. Accepted-answer items
   add the answers, shuffled once per question and named `Answer A`, `Answer B`, ... Scores,
   votes, view counts, dates and user names are never shown.
@@ -103,6 +131,9 @@ python -m zils.current collect --source gharchive --start 2026-10-26-15 --hours 
 python -m zils.current collect --source wikimedia --minutes 5
 python -m zils.current collect --source wikimedia --minutes 5 --since 2026-10-28T12:00:00Z
 python -m zils.current collect --source afd --day 2026-10-04 --day 2026-10-05
+python -m zils.current collect --source afc --day 2026-10-29
+python -m zils.current collect --source arxiv --day 2026-10-27
+python -m zils.current collect --source gerrit --day 2026-10-27
 python -m zils.current collect --source stackexchange [--site math] [--pages 2]
 python -m zils.current collect --source recentchanges [--samples 48] [--min-days 2] [--max-days 14]
 python -m zils.current resolve --negatives-per-positive 3
@@ -134,6 +165,33 @@ python -m zils.current grade --items BANK/2026-10-30/items.jsonl --model CHECKPO
 - `--source afd` reads the named Articles for deletion log days. Read days that are at least ten
   days old, when nearly all of their discussions are closed. Open ones are skipped; relisted
   discussions also appear on a later day's log.
+- `--source afc` reads the Articles for Creation reviews of the named UTC days: decline and
+  rejection edits (`list=recentchanges`, Draft namespace, `AFCH` tag) and publishing moves
+  (`list=logevents`, `AFCH` tag, into the article space), then the reviewed revisions, 50 per
+  request. Recent changes keep 30 days. The ask time is the `ts` of the pending submission box
+  in the reviewed text, or that revision's time. Drafts under 200 characters are dropped.
+  Reviews whose draft text must not be kept are skipped before the draft is read, so it
+  never reaches `pending.jsonl` or `dropped.jsonl`: declines with AFCH reason code `cv`
+  (copyright violation), `blp` (unsourced BLP), `van` (vandalism or attack page), `ilc`
+  (BLP without inline citations), `ecr` (topic under an editing restriction) or `joke`, and
+  rejections with `blp` (attack page) or `j` (joke or hoax), plus any summary naming a
+  copyright violation, an attack page or a hoax. The collect result counts them as
+  `skipped_sensitive`.
+  English Wikipedia sees roughly 150 to 200 reviews a day, about one in eight an acceptance;
+  export balances the labels, so a day gives about 30 to 50 items.
+- `--source arxiv` reads every paper submitted on the named UTC days, one API request per 2,000
+  papers (about 1,600 a weekday), at least 3 seconds apart as arXiv's API terms ask. Read days
+  that are at least three days old, when their papers have been announced. The API sometimes
+  answers with no entries; a page is retried, and a day with no papers at all is an error, so
+  the nightly cursor stays on it. Withdrawn papers are dropped.
+- `--source gerrit` reads the changes merged or abandoned on the named UTC days on OpenDev
+  (OpenStack), Wikimedia and AOSP (Android), 200 a request, one second apart (about ten
+  requests a day in all). Read days that are at least three days old, so most abandoned changes
+  that will be restored have been. Dropped: changes owned by bots or service accounts; titles
+  that say not to merge (WIP, DNM, "do not merge", `[RFC]`, ...); abandons whose reason names a
+  replacement (superseded, duplicate, squashed, in favour of, ...); changes decided within an
+  hour of upload; and more than five changes per owner, outcome and day (bulk clean-ups). On
+  27 Oct 2026 that kept 458 of 1,319 changes (54 abandoned), 108 balanced items.
 - `--source stackexchange` reads questions asked at least 8 days ago, up to `--pages` pages of
   100 per site, from a per-site cursor in `DIR/stackexchange-cursor.json` (a first run starts 22
   days back). Without a key the API allows 300 requests a day per IP address. A run of every
@@ -142,15 +200,23 @@ python -m zils.current grade --items BANK/2026-10-30/items.jsonl --model CHECKPO
   fewer than 20 requests remain or the API throttles; the cursor keeps what was read.
 - `resolve` labels items whose outcome is known and drops items still waiting after
   `--max-age-days` (default 14, or `ZILS_CURRENT_MAX_AGE_DAYS`). Wikipedia edits are checked once
-  they are `--wiki-wait-hours` old (default 48). Run it again later and it continues where it
+  they are `--wiki-wait-hours` old (default 48). A GitHub pull request or issue still open 72 hours
+  after it was opened resolves as no (merged or completed later also counts as no), so the
+  stream is not limited to items that happened to close; only the type question keeps waiting
+  for a label. Run it again later and it continues where it
   stopped. `--negatives-per-positive N` keeps, in each batch of 50 edits, N not-reverted edits
   per reverted one and drops the rest as `sampled-out` before their diffs are fetched. Reverts
   are a few percent of edits and export balances labels anyway, so this saves most of the
   per-edit diff requests. A pass saves its progress every 2,000 outcomes. With `GITHUB_TOKEN` (or `ZILS_GITHUB_TOKEN`), lookups go through GitHub's GraphQL API
   50 at a time, so one request replaces fifty. Without a token, they use the REST API, which
   allows 60 unauthenticated requests an hour. Each lookup resolves every stream built from the
-  same issue. When GitHub signals a rate limit, the pass stops and the remaining items stay
-  pending.
+  same issue. Requests are sent one at a time. After each one the pass waits three times as long
+  as it took, and at least a second: GitHub's secondary limit counts server time, and 50-item
+  GraphQL queries take about 3 seconds each, so a second apart was not enough. A full pass
+  therefore takes about an hour. When GitHub signals a secondary rate limit, the pass waits
+  `Retry-After` (or a minute, doubling) and retries, up to four times, and the gap doubles for
+  the rest of the pass (up to 16 times). When the hourly quota is spent, or the retries run out,
+  the pass stops and the remaining items stay pending.
 - `export --out FILE` writes every resolved item to one file. `export --bank DIR` writes one
   dated folder (see [Dated exports](#dated-exports)). Both apply the
   [leak filters](#leak-filters). `--max-tokens 8192` allows longer states for 8,192-token models
@@ -217,14 +283,24 @@ the copy and the reports):
      keep or no consensus: an article; merge or redirect: a redirect or an article). Merges are
      often carried out late, so this check is weak for them;
    - Stack Exchange: a second fetch of the questions (`closed_date`, the score level) and of
-     accepted items' answers (`is_accepted`, matched to our options by their text).
+     accepted items' answers (`is_accepted`, matched to our options by their text);
+   - Articles for Creation: a decline or rejection needs the review edit's own text to hold a
+     declined or rejected submission box (`{{AfC submission|d|...}}` or `|r|`); an acceptance
+     needs the article to exist now, or a deletion log entry after the review;
+   - Gerrit: the change's detail read again; merged if it has a submit time, abandoned if its
+     history holds an "Abandoned" message and no submit. A change restored and merged after we
+     labelled it disagrees;
+   - arXiv: the paper's OAI-PMH record (`oaipmh.arxiv.org`, `metadataPrefix=arXiv`), whose
+     first category is the primary. One request per item, 3 seconds apart: a 20-item sample of
+     the four arXiv streams takes about four minutes.
 
    A stream under `--threshold` agreement (default 0.97) is removed from the export.
 
 The folder gets `crosscheck.json` (per stream: items, sample size, method, agreement, pass or
 fail, and up to 25 disagreements with links and evidence) and `spotcheck.md`, a sheet of 20
 random items per stream with the link, the start of the input, the label and its evidence, for
-a person to check by hand. The manifest records the gate's result.
+a person to check by hand. The manifest records the gate's result, and a validator's soup
+round uses only folders whose manifest carries it.
 
 The nightly job runs the same gates on every day it exports, with a smaller sample
 (`--crosscheck-sample`, default 20; `0` skips it). A stream that fails is added to
@@ -282,15 +358,17 @@ rebuild-only datasets, are compared on that hash alone, and the manifest counts 
 - **`state`:** its normalized state text equals a reference row's;
 - **`passage`:** it shares a passage with a reference row. Passages are compared as 16-word
   windows, one window in four chosen by hash on both sides. Shared passages of about 50 words or
-  more are found almost surely. Zils Current's own template lines (field labels, size changes,
+  more are found almost surely. Zils Outcomes's own template lines (field labels, size changes,
   flags) are left out, so items never match each other on template wording alone.
 
 ## Licence gate
 
 `--publishable` exports only streams whose licence allows republishing: the Wikipedia,
-Articles for deletion and Stack Exchange streams (CC BY-SA 4.0) and Wikidata (CC0), and every
-case must carry its attribution link in `source.url`. The GitHub streams are local-only. Asking for one in a publishable export, or
-any GitHub case reaching one, is an error and writes nothing. The manifest records the mode.
+Articles for deletion, Articles for Creation and Stack Exchange streams (CC BY-SA 4.0), and
+Wikidata and arXiv (CC0), and every
+case must carry its attribution link in `source.url`. The GitHub and Gerrit streams are
+local-only (local exports, which soup exams read, include them). Asking for one in a publishable
+export, or any such case reaching one, is an error and writes nothing. The manifest records the mode.
 GitHub text needs legal review before any commercial use or release (see
 [Sources, licences and terms](#sources-licences-and-terms)).
 
@@ -313,12 +391,18 @@ GitHub text needs legal review before any commercial use or release (see
    GH Archive.
 3. **Articles for deletion:** every log day after the `afd` cursor that is at least ten days
    old (a first run reads `--afd-first-days`, default 45; `0` skips the step).
-4. **Stack Exchange:** `--se-pages` pages per site (default 2; `0` skips the step) for
+4. **Articles for Creation:** every finished UTC day after the `afc` cursor (a first run reads
+   `--afc-first-days`, default 28; `0` skips the step).
+5. **arXiv:** every submission day after the `arxiv` cursor that is at least three days old (a
+   first run reads `--arxiv-first-days`, default 14; `0` skips the step).
+6. **Gerrit:** every outcome day after the `gerrit` cursor that is at least three days old (a
+   first run reads `--gerrit-first-days`, default 14; `0` skips the step).
+7. **Stack Exchange:** `--se-pages` pages per site (default 2; `0` skips the step) for
    `--se-site` sites (default all), from the per-site cursors. A rate limit ends the step without
    an error.
-5. **Resolve:** one resolution pass over the waiting room, keeping `--negatives-per-positive`
+8. **Resolve:** one resolution pass over the waiting room, keeping `--negatives-per-positive`
    (default 3) not-reverted edits per reverted one.
-6. **Export and gates:** writes every finished UTC day after the `export` cursor, leaving out
+9. **Export and gates:** writes every finished UTC day after the `export` cursor, leaving out
    paused streams, then runs the proof and cross-check gates on it, oldest first. A first
    run writes yesterday. The overlap and leak options are the same as for `export`.
 
@@ -335,7 +419,7 @@ that owns only that directory:
 ```ini
 # /etc/systemd/system/zils-current.service
 [Unit]
-Description=Zils Current: collect, resolve and export
+Description=Zils Outcomes: collect, resolve and export
 Wants=network-online.target
 After=network-online.target
 
@@ -361,7 +445,7 @@ TimeoutStartSec=4h
 ```ini
 # /etc/systemd/system/zils-current.timer
 [Unit]
-Description=Run Zils Current daily
+Description=Run Zils Outcomes daily
 
 [Timer]
 OnCalendar=*-*-* 12:30:00 UTC
@@ -377,6 +461,9 @@ WantedBy=timers.target
 ZILS_CURRENT_CONTACT=you@example.org
 GITHUB_TOKEN=github_pat_...
 ZILS_CURRENT_REFERENCES=/path/to/exam-draws:/path/to/round-bank.jsonl:/path/to/benchmark
+# Grading only: the cache that holds the pinned base weights (see Grading)
+HF_HOME=/path/to/huggingface
+HF_HUB_OFFLINE=1
 ```
 
 The job has its own unit name, user and directory, and it neither starts, stops nor depends on
@@ -399,11 +486,18 @@ per stream and overall, plus the SHA-256 of the items file.
 GPU work holds the shared lock that training and validation use (`--lock`, `ZILS_COMPUTE_LOCK`,
 default `/var/lock/zils-training/cuda.lock`). If the lock stays busy for `--lock-wait` seconds
 (default 600), nothing runs and the command exits 75, so a timer can try again later. Run it on
-the GPU host after the nightly export, for example:
+the GPU host after the nightly export.
+
+`--model` takes a Zils checkpoint folder, one with a `model.json`. A downloaded model folder
+fails with `d3 requires a d3 checkpoint`. To grade a stock base, make its reference checkpoint
+once; it holds only `model.json` and loads the pinned weights from the Hugging Face cache, so
+the job needs the same `HF_HOME` as the host's validator (with `HF_HUB_OFFLINE=1` it never
+downloads):
 
 ```bash
+python -m zils.d3 reference --model d3-lite-0.8b-v1 --out /var/lib/zils-current/stock/d3-lite
 python -m zils.current grade --items /var/lib/zils-current/bank/$(date -u -d yesterday +%F)/items.jsonl \
-    --model /path/to/stock-lite --key stock-lite
+    --model /var/lib/zils-current/stock/d3-lite --key stock-lite
 ```
 
 ## Item format
@@ -496,6 +590,19 @@ post's `content_license`). Attribution means linking the post, whose page names 
 quota floor. Stack Exchange has also published restrictions on using its content to train
 commercial AI models; read the current terms before any training use.
 
+**Gerrit** servers (OpenDev, Wikimedia, AOSP) publish their review data openly, and the
+projects' code is under open licences (Apache 2.0 for OpenStack and AOSP, GPL and others at
+Wikimedia). Whether those licences cover commit messages is not settled, so `gerrit-merge` is
+local-only, like the GitHub streams, until it is checked. The tool sends its User-Agent, makes
+one request at a time a second apart, and backs off on HTTP 429 and 503.
+
+**arXiv** metadata (titles, abstracts, categories) is CC0 1.0, by arXiv's
+[licence page](https://info.arxiv.org/help/license/index.html) and
+[API terms](https://info.arxiv.org/help/api/tou.html). The terms ask for no more than one
+request every three seconds on a single connection, and an acknowledgement ("Thank you to arXiv
+for use of its open access interoperability"), which each case carries in its `licence` field.
+Paper full texts carry their own licences and are never read.
+
 **Wikimedia etiquette** is built in: an identifying User-Agent with a contact
 (`ZILS_CURRENT_CONTACT`), one stream connection, a resume from `Last-Event-ID` after the server's
 15-minute disconnect, replay of only the window asked for, serial Action API requests at least
@@ -551,6 +658,17 @@ after the check are missed, and so are removals that do not restore an earlier v
   closing changes how people vote.
 - **Score streams.** Stack Exchange score items show close to zero skill for every body
   measured. The exam quality defaults exclude `stackexchange-score-*`.
+- **AfD state holds the votes.** A `wikipedia-afd` item's state is the discussion up to the
+  close, so the label is mostly a tally of the votes shown. The exam quality defaults exclude
+  it; the stream is still collected.
+- **arXiv streams** are large (about 1,600 items a day) and their task, subject classification,
+  has millions of public labelled examples. Soup exams cap the four arXiv streams together at
+  15% of the Outcomes part (`group_max` in [model pools](model-pools.md)), so a model cannot win
+  rounds by specialising in it.
+- **Revert streams** are most of every export (89% on 1 Nov 2026) and all one task in one
+  exam cell. Soup exams cap the Wikipedia revert streams together at 20% of the Outcomes part,
+  the same way; the GitHub, Gerrit and AfC streams fill the rest once a window holds
+  `min_family_items` of them.
 - **Small streams.** Many streams resolve only tens of items in a freshness window. Graded as
   their own families they make the base score noisy; `min_family_items` merges or drops them.
 - **Deletion discussions** are read as archived. Edits after the close are against convention
@@ -558,13 +676,13 @@ after the check are missed, and so are removals that do not restore an earlier v
 
 ## Validators
 
-To grade a soup pool on Zils Current items:
+To grade a soup pool on Zils Outcomes items:
 
 1. Run the nightly job on the validator host (or anywhere that writes to a directory the
    validator can read). Pass the validator's exam draws and round bank as references, so the
    overlap check runs against them.
 2. Set the pool's `exam` setting. A blend keeps the fixed round bank in every cell of the base
-   score and adds Current families next to it:
+   score and adds Outcomes families next to it:
 
    ```json
    {
@@ -572,14 +690,14 @@ To grade a soup pool on Zils Current items:
      "current_bank": "<the --bank directory>",
      "current_share": 0.33,
      "min_family_items": 100,
-     "exclude_streams": ["stackexchange-score-*"]
+     "exclude_streams": ["stackexchange-score-*", "wikipedia-afd"]
    }
    ```
 
-   `{"source": "current", "current_bank": "<the --bank directory>"}` alone lets Current streams
+   `{"source": "current", "current_bank": "<the --bank directory>"}` alone lets Outcomes streams
    replace the bank's families in the cells they cover, with no minimum family size.
 
-Each round then reads every dated folder whose manifest checks out, and draws its Current part
+Each round then reads every dated folder whose manifest checks out, and draws its Outcomes part
 under the freshness, reuse, breadth and token rules in
 [model pools](model-pools.md#round-items-from-zils-current). The round falls back to the fixed
 round bank when those rules cannot be met. With the default blocks the streams reach every cell
@@ -595,7 +713,9 @@ signal. See [quality settings](model-pools.md#quality-settings).
 
 Every resolved item is public and can be rebuilt by anyone, labels included. A body committed
 after an item resolved could have been trained on it. A short `max_age_days` narrows that
-window but does not close it.
+window but does not close it. `wait_days` closes it: the round runs that many days after
+its commit deadline and takes only items asked after the deadline, so every graded body was
+frozen before the question existed.
 
 ## Extension points
 
@@ -603,8 +723,8 @@ window but does not close it.
   `resolve(records, http, now)` generator that yields `("pending" | "resolved" | "dropped", record)`,
   plus an entry in `current.RESOLVERS` and `current_items.STREAMS` (with `licence`,
   `publishable`, `category` and `block`). Sources whose outcome is known at collection
-  (Stack Exchange, Articles for deletion) store it in `outcome`, and their resolver labels them
-  straight away.
+  (Stack Exchange, Articles for deletion and for Creation, arXiv) store it in `outcome`, and
+  their resolver labels them straight away.
 - **Token-free GitHub resolution.** Merge and close events also appear in later GH Archive hours,
   so a resolver could replay those hours instead of calling the API. Pull request text would
   still need the API.

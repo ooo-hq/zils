@@ -14,9 +14,9 @@ every hotkey registered on the subnet ([open admission](validators.md#open-admis
 miners commit candidates on chain and the validator scores them in its sandboxed
 runner. Base and adapter tracks pay from one weight vector; an unearned share is
 burned at `base_tier.burn_uid`
-([two-track payment](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)).
-Which validators are running is on the metagraph, not in these docs. Mainnet is
-not implemented.
+([two-track payment](mining.md#two-tracks-on-the-subnet-the-base-tier-pays-first)).
+Which validators are running is on the metagraph, not in these docs. The public
+subnet is mainnet 127; this page covers the closed rehearsal fleet on testnet 579.
 
 Local fleets remain offline from Bittensor. Testnet fleets also require the
 validator's explicit `--publish-weights` flag before their loop sends weights.
@@ -29,7 +29,7 @@ Obtain the current testnet subnet ID from the operator, then register each
 validator/miner hotkey on that existing subnet using the
 [registration guide](https://docs.zils.ai/operations/bittensor-registration).
 Miners do not need to create a subnet. The
-[validator guide](https://docs.zils.ai/operations/validators#bittensor-testnet-validator)
+[validator guide](https://docs.zils.ai/operations/validators#bittensor-fleet-validator)
 covers eligibility, evaluation, publication, and verification.
 
 Install the additional SDK on each participant, using the existing environment:
@@ -63,6 +63,10 @@ entry for each machine:
   ]
 }
 ```
+
+`chain` takes an optional `archive_endpoints` list (`wss://` URLs) for queries at blocks the
+network's default endpoint has discarded; a soup pool that waits after its deadline needs it on
+mainnet ([model pools](model-pools.md#round-items-from-zils-current)).
 
 `777` is an example only; use the operator-confirmed subnet ID. Each miner UID
 must be the value returned by the chain for that hotkey, not a local queue ID.
@@ -129,8 +133,8 @@ commit-reveal. Zils uses mechanism 0 and sends `WEIGHTS_VERSION` from
 `zils/testnet.py` (currently 1) as the version key. A release that changes scoring
 bumps it. The chain keeps accepting the older version until the subnet's
 `weights_version` hyperparameter is raised to match, which is the grace period for
-validators to run `zils update`. After that the chain rejects weights from older
-releases, and this client refuses to submit with "run zils update" rather than
+validators to run `zils-miner update`. After that the chain rejects weights from older
+releases, and this client refuses to submit with "run zils-miner update" rather than
 pretending to implement a newer rubric.
 
 ## Read the outcome
@@ -154,7 +158,9 @@ Verification checks the current registered identities, a later `LastUpdate`,
 and the expected proportions after SDK clipping/quantization. It reports the
 current weight state; it cannot uniquely attribute identical weights to one
 commit if another process writes for the same hotkey. `rate_limited` and
-`no_weights` send nothing; previous on-chain weights remain. Zils never invents
+`no_weights` send nothing; previous on-chain weights remain. A frozen member
+whose UID was re-registered during the round is dropped (`replaced`), its share
+burning at the fleet's burn uid. Zils never invents
 uniform rewards when every candidate fails: with a `base_tier` track, a share
 nobody earned goes to `base_tier.burn_uid` instead.
 

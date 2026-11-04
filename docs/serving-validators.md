@@ -33,7 +33,7 @@ round. The order is shuffled each round. The grader then waits about `round_seco
 python -m zils.serving_grader --config serving-grader.json
 ```
 
-Run it with the same Python that runs `zils serve`. Like `zils serve`, it computes
+Run it with the same Python that runs `zils-miner serve`. Like `zils-miner serve`, it computes
 reference answers in a child process under the pinned d3 runtime (`.venv-d3`, or
 `ZILS_D3_RUNTIME_PYTHON` when it is set). The grader needs that runtime, a state directory that already exists, the request
 key file, and each reference checkpoint directory (see
@@ -85,7 +85,7 @@ Each request has a 30 second timeout.
 Requests are signed with a separate Bittensor-format hotkey that is not registered
 on the subnet. Never use the validator's reward hotkey for this. It is the same
 key a gateway uses to call miners. A miner admits it with `--gateway-hotkey` (its
-SS58 address) when running `zils serve`; without that, the miner refuses it.
+SS58 address) when running `zils-miner serve`; without that, the miner refuses it.
 
 ## GPU lock
 

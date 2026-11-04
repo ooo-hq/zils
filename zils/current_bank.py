@@ -1,4 +1,4 @@
-"""Zils Current exports: leak filters, overlap checks, the licence gate and dated bank folders.
+"""Zils Outcomes exports: leak filters, overlap checks, the licence gate and dated bank folders.
 
     python -m zils.current export --bank DIR [--date 2026-10-30] --reference EXAM.jsonl ...
 
@@ -82,6 +82,12 @@ OUTCOME_PHRASES["wikipedia-afd"] = (
     r"\bnon-admin closure\b",
     r"\bclos(?:ed|ing) (?:this )?as\b",
 )
+OUTCOME_PHRASES["wikipedia-afc"] = (
+    r"\b(?:submission|draft) (?:was |has been |is )?(?:declined|rejected|accepted)\b",
+    r"\b(?:declin|reject)(?:ed|ing) (?:this |the )?(?:submission|draft)\b",
+    r"\bwas declined\b",
+)
+OUTCOME_PHRASES["gerrit-merge"] = OUTCOME_PHRASES["github-pr-merge"] + (r"\babandon",)
 for _stream in current_items.STREAMS:
     if _stream.startswith(("wikipedia-revert", "wikidata-revert")):
         OUTCOME_PHRASES[_stream] = REVERT_PHRASES
@@ -106,10 +112,13 @@ TEMPLATE_LABELS = {
     "Title",
     "Tags",
     "Deletion discussion",
+    "Draft",
+    "Code review",
+    "Project",
 }
 TEMPLATE_FIELDS = {"Size change", "Minor edit", "Editor"}
 TEMPLATE_LINES = {"Removed:", "Added:", "(nothing)", "[truncated]", "Question:", "(empty)"}
-TEMPLATE_LINES |= {"Deletion discussion:"}
+TEMPLATE_LINES |= {"Deletion discussion:", "Draft text:", "Abstract:", "Commit message:"}
 TEMPLATE_LINES |= {f"Answer {chr(65 + i)}:" for i in range(26)}
 
 
@@ -149,7 +158,7 @@ def shingles(text):
 
 
 def passage_text(text):
-    """State text without the fixed lines of Zils Current's own templates (labels, sizes, flags),
+    """State text without the fixed lines of Zils Outcomes's own templates (labels, sizes, flags),
     so items never match each other, or an earlier export, on template wording alone."""
     kept = []
     for line in text.split("\n"):

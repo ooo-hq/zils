@@ -2,8 +2,8 @@
 
 Each round, validators build a fresh uniform-weight average ("soup") of up to five model bodies from the
 round's pool, chosen greedily (Wortsman et al. 2022, with a minimum gain per added member). The pool's
-emission share splits 80% among soup seats and 20% to the round's best single body (the crown); any share
-nobody earns burns. The selection and pay functions are pure: grading is passed in as ``evaluate``.
+emission share pays five fixed seats of 16% each (80% in all) and 20% to the round's best single body (the
+crown); any seat or crown nobody earns burns. The selection and pay functions are pure: grading is passed in as ``evaluate``.
 ``run`` orchestrates one round on a validator; its model, download and chain dependencies are injected.
 
 A body is any hashable id (a body sha256 in production). ``evaluate(members)`` grades the uniform soup of a
@@ -24,21 +24,26 @@ import time
 import traceback
 from pathlib import Path
 
-MARGIN = 0.3  # minimum soup score gain (points) for greedy to add a body; above GPU-to-GPU drift
+# The three bars are about 2.5 standard errors of the score differences they test, measured on
+# the 31 Oct 2026 dry run by resampling items (ZIL-131) and scaled to the ~7,500 pooled decision
+# items of a three-round window: a greedy step ~0.23, a leave-one-out contribution ~0.34, a solo
+# score against another solo score ~0.5.
+MARGIN = 0.5  # minimum soup score gain (points) for greedy to add a body
 MAX_MEMBERS = 5
 SEAT_SHARE = 0.8
 CROWN_SHARE = 0.2
-FLOOR = 0.3  # minimum leave-one-out contribution (points) for a paid seat
+FLOOR = 0.8  # minimum leave-one-out contribution (points) for a paid seat
+CROWN_MARGIN = 1.2  # the crown's solo score over every house body's and the current soup's
 HOUSE_RATE = 0.0  # open models known at launch: seated but unpaid
 SCOUT_RATE = 0.25  # open models released after launch, submitted by a scout
 TRAINER_RATE = 1.0
 RATES = (HOUSE_RATE, SCOUT_RATE, TRAINER_RATE)
-_EPS = 1e-9  # score differences are floats; 3.3 - 3.0 must clear a 0.3 margin
+_EPS = 1e-9  # score differences are floats; 3.5 - 3.0 must clear a 0.5 margin
 # Launch stopgap (ZIL-117) until seats are credited relative to a body's base: a fine-tune whose
 # change is mostly (EXPLAINED_MIN) allowed bases is seated only if its solo score beats its best
 # base (one explaining at least BASE_MIN) by BASE_MARGIN; if one of those bases is a listed public
 # model, which is not graded, it is paid as a scout instead.
-BASE_MARGIN = MARGIN
+BASE_MARGIN = CROWN_MARGIN  # a solo score against a solo score, like the crown
 EXPLAINED_MIN = 0.5
 BASE_MIN = 0.1
 
@@ -142,16 +147,17 @@ def _check_rate(rate):
 def seat_weights(members, contributions, rates, *, share=SEAT_SHARE, floor=FLOOR):
     """Seat pay as fractions of the pool's share.
 
-    Members whose contribution is at least ``floor`` split ``share`` equally; each slice is multiplied by
-    the member's rate, so a house ingredient keeps its seat at 0.0 and a scout gets a quarter. Members
-    below the floor are omitted. Whatever is not paid burns; if nobody clears the floor the result is {}.
+    Each member whose contribution is at least ``floor`` holds one fixed seat worth ``share`` /
+    MAX_MEMBERS, however many others are seated, multiplied by the member's rate: a house ingredient
+    keeps its seat at 0.0 and a scout gets a quarter. Members below the floor are omitted. Unfilled and
+    unpaid seats burn; if nobody clears the floor the result is {}.
     """
     paid = [m for m in members if contributions[m] >= floor - _EPS]
-    return {m: share / len(paid) * _check_rate(rates[m]) for m in paid}
+    return {m: share / MAX_MEMBERS * _check_rate(rates[m]) for m in paid}
 
 
 def crown_weight(
-    solo, rates, house, *, share=CROWN_SHARE, margin=MARGIN, soup_score=None, order_key
+    solo, rates, house, *, share=CROWN_SHARE, margin=CROWN_MARGIN, soup_score=None, order_key
 ):
     """The crown: the best solo body that is not a house ingredient gets ``share`` times its rate,
     provided its solo score beats every house body's, and ``soup_score`` (the current soup on the

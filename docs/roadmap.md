@@ -1,14 +1,15 @@
 # Subnet milestones
 
-The local training loop and guarded Bittensor testnet integration are implemented.
+The local training loop and Bittensor subnet integration are implemented;
+mainnet subnet 127 went live on 3 November 2026.
 The [first registered training-to-chain round](testnet-round-001.md) recorded a
 completed commit–reveal cycle. That evidence does not establish current uptime,
-open participation, mainnet support, or production model quality.
+open participation or production model quality.
 
 Status of the work for an open competition, as of 19 October 2026 (merged on
 `main`; this page does not record what a given host runs):
 
-1. Admission rules: base-tier entry is registration on testnet subnet 579. Miners
+1. Admission rules: base-tier entry is registration on mainnet subnet 127. Miners
    upload a candidate to Hugging Face and commit it on chain with
    `zils.miner commit-candidate` (ooo-hq/zils#59); `zils.miner doctor` checks
    each setup step (#57). A validator reads the commitments itself
@@ -32,8 +33,7 @@ Status of the work for an open competition, as of 19 October 2026 (merged on
    and an empty track burns at `base_tier.burn_uid`. The adapter track can pay
    from delivered hosted-queue customer jobs (`adapter_evidence`, #61, off by
    default).
-6. Public health, chain reporting and a public leaderboard: remaining. Mainnet
-   is not implemented.
+6. Public health, chain reporting and a public leaderboard: remaining.
 
 ## Base tier
 
@@ -42,10 +42,10 @@ profile. [Base candidates](base-candidates.md) describes the submission
 contract, scoring, the confirmation draw, the regression suite and the `latest`
 and `stable` channels. Candidate loading, round decisions, sandboxed evaluation,
 the regression suite, chain-derived admission and the dry-run promotion script
-are merged. A testnet fleet pays the last five kings, the promoted bases'
+are merged. A chain fleet pays the last five kings, the promoted bases'
 miners, from the base tier's share of the one weight vector (challengers earn
 nothing until promoted; an unpaid share is burned), blended with adapter rounds
-([two-track payment](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)).
+([two-track payment](mining.md#two-tracks-on-the-subnet-the-base-tier-pays-first)).
 No outside miner has been crowned king yet.
 
 ## d3-mini

@@ -4,8 +4,9 @@
 public-data training attempt, merges it into a full checkpoint, publishes an
 immutable Hugging Face revision and commits it with the miner's own registered
 hotkey. It uses the same training and candidate validation as `zils.d3` and
-`zils commit-candidate`. It does not elect winners, move channels or migrate
-customer adapters. Currently restricted to testnet 579.
+`zils-miner commit-candidate`. It does not elect winners, move channels or migrate
+customer adapters. The example below targets mainnet subnet 127; mainnet is never a
+default, so the configuration names both `network` and `netuid`.
 
 This is a bootstrap recipe: one epoch of the existing LoRA trainer, with a new
 seed for each attempt. Repeating seeds/data variants is not evidence of model
@@ -26,7 +27,8 @@ Compute the export's SHA-256, then save a JSON configuration:
 
 ```json
 {
-  "netuid": 579,
+  "network": "finney",
+  "netuid": 127,
   "model": "d3-mini-4.5b-v1",
   "wallet_name": "YOUR_WALLET",
   "wallet_hotkey": "YOUR_HOTKEY",
@@ -122,7 +124,7 @@ or failed attempt blocks new training until an operator reconciles its artifacts
 and publication; a service restart alone cannot discard the uncertainty.
 
 Retain the original receipt when repairing an attempt. For a saved uploaded
-revision, use `zils commit-candidate --revision <exact-sha>` with the same
+revision, use `zils-miner commit-candidate --revision <exact-sha>` with the same
 candidate and wallet; it reads the chain first and leaves an existing matching
 commitment alone. Only mark the receipt committed after verified readback.
 Training failures require an explicit operator decision before archiving the

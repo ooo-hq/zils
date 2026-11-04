@@ -1,4 +1,4 @@
-"""Soup round exams drawn from Zils Current dated exports, with the fixed bank as fallback."""
+"""Soup round exams drawn from Zils Outcomes dated exports, with the fixed bank as fallback."""
 
 import hashlib
 import json
@@ -55,6 +55,7 @@ def export(root, day, items, **manifest_changes):
         "date": day,
         "mode": "local",
         "overlap": {"checked": True, "references": [], "hits": []},
+        "crosscheck": {"threshold": 0.97, "excluded": [], "proof_rejected": {}, "agreement": {}},
         "files": {
             "items.jsonl": {
                 "sha256": hashlib.sha256(text.encode()).hexdigest(),
@@ -130,6 +131,13 @@ class ValidateTest(unittest.TestCase):
         self.assertEqual(exam["current_items"], 1000)
         self.assertEqual(exam["min_streams"], 3)
         self.assertEqual(exam["stream_max"], 0.4)
+        self.assertNotIn("wait_days", exam)  # echoed only when set
+        self.assertEqual(
+            soup_current.validate({"source": "current", "current_bank": "/b", "wait_days": 4})[
+                "wait_days"
+            ],
+            4,
+        )
 
     def test_bad_settings_are_refused(self):
         bad = [
@@ -142,6 +150,9 @@ class ValidateTest(unittest.TestCase):
             {"source": "current", "current_bank": "/b", "stream_max": 0.2, "min_streams": 3},
             {"source": "current", "current_bank": "/b", "min_items": 2000},
             {"source": "current", "current_bank": "/b", "surprise": 1},
+            {"source": "current", "current_bank": "/b", "wait_days": -1},
+            {"source": "current", "current_bank": "/b", "wait_days": 15},
+            {"source": "current", "current_bank": "/b", "wait_days": 1.5},
             {"source": "bank", "max_uses": 3},
         ]
         for exam in bad:
@@ -154,7 +165,6 @@ class ValidateTest(unittest.TestCase):
             "model": models.D3,
             "enabled": True,
             "share": 1.0,
-            "house": "house.json",
             "schedule": {"deadline_utc": "03:00"},
             **changes,
         }
@@ -204,6 +214,7 @@ class LoadTest(unittest.TestCase):
         self.assertEqual(entry["rows"], 20)
 
     def test_failing_manifests_are_skipped_and_logged(self):
+        export(self.root, "2026-10-27", day_items("2026-10-27", 5), crosscheck=None)
         export(self.root, "2026-10-28", day_items("2026-10-28", 5))
         export(self.root, "2026-10-29", day_items("2026-10-29", 5), mode="draft")
         export(self.root, "2026-10-30", day_items("2026-10-30", 5), overlap={"checked": False})
@@ -220,11 +231,12 @@ class LoadTest(unittest.TestCase):
         self.assertEqual([f["date"] for f in result["folders"]], ["2026-10-28"])
         self.assertEqual(
             set(result["skipped"]),
-            {"2026-10-29", "2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02"},
+            {"2026-10-27", "2026-10-29", "2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02"},
         )
         self.assertIn("hash", result["skipped"]["2026-10-31"])
         self.assertIn("overlap", result["skipped"]["2026-10-30"])
-        self.assertEqual(len(logged), 5)
+        self.assertIn("cross-check", result["skipped"]["2026-10-27"])
+        self.assertEqual(len(logged), 6)
 
     def test_a_missing_bank_directory_loads_nothing(self):
         result = soup_current.load(
@@ -248,6 +260,18 @@ class LoadTest(unittest.TestCase):
         result = self.load()
         self.assertEqual([c["id"] for c in result["items"]], [item("gh-merge", 1, inside)["id"]])
         self.assertEqual(result["excluded"].get("outside_window"), 1)
+
+    def test_a_waiting_round_takes_items_asked_after_the_deadline(self):
+        # item() asks a day before it resolves: the first was asked 12 h before the deadline.
+        before = item("gh-merge", 0, DEADLINE + timedelta(hours=12))
+        after = item("gh-merge", 1, DEADLINE + timedelta(days=2))
+        export(self.root, "2026-11-01", [item("gh-merge", 2, DEADLINE - timedelta(days=2))])
+        export(self.root, f"{DEADLINE + timedelta(hours=12):%F}", [before])
+        export(self.root, f"{DEADLINE + timedelta(days=2):%F}", [after])
+        result = self.load(wait_days=3)
+        self.assertEqual([c["id"] for c in result["items"]], [after["id"]])
+        self.assertEqual(result["excluded"]["outside_window"], 1)
+        self.assertEqual([f["date"] for f in result["folders"]], ["2026-11-03", "2026-11-05"])
 
     def test_items_used_max_uses_times_are_excluded(self):
         rows = day_items("2026-11-01", 2)
@@ -333,7 +357,7 @@ class PrepareTest(unittest.TestCase):
         cases = [by_id[i] for i in ids]
         families = Counter(c["family"] for c in cases)
         self.assertEqual(sum(families[s] for s in STREAMS), 120)
-        # Current streams replace the fixed bank's families in the cells they cover.
+        # Outcomes streams replace the fixed bank's families in the cells they cover.
         covered = {("reasoning", "new"), ("language", "new")}
         fixed = {c["family"] for c in cases if c["family"] not in STREAMS}
         self.assertFalse(
@@ -370,6 +394,21 @@ class PrepareTest(unittest.TestCase):
         self.assertEqual(f.subset(), [c["id"] for c in expected])
         self.assertEqual(record["current_items"], 0)
         self.assertEqual(record["bank_items"], 400)
+
+    def test_a_waiting_round_draws_only_items_asked_after_the_deadline(self):
+        # Fixture days resolve at noon and were asked a day earlier: 2026-11-05 is the only day
+        # asked after the 2026-11-03 03:00 deadline.
+        f = Fixture(Path(self.f.root) / "wait", days=("2026-11-01", "2026-11-05"), wait_days=2)
+        _, record = f.prepare()
+        self.assertIsNone(record["fallback"])
+        self.assertEqual(record["settings"]["wait_days"], 2)
+        self.assertEqual([x["date"] for x in record["folders"]], ["2026-11-05"])
+        drawn = soup_current._read_jsonl(f.state / "rounds" / ROUND / "current-items.jsonl")
+        self.assertEqual(len(drawn), record["current_items"])
+        self.assertTrue(all(c["asked_at"] > "2026-11-03T03:00:00Z" for c in drawn))
+        stale = Fixture(Path(self.f.root) / "stale", days=("2026-11-01",), wait_days=2)
+        _, record = stale.prepare()
+        self.assertIn("streams", record["fallback"])
 
     def test_an_unreadable_bank_falls_back_instead_of_crashing(self):
         f = Fixture(Path(self.f.root) / "gone", current_bank=str(Path(self.f.root) / "nowhere"))
@@ -434,7 +473,7 @@ class PrepareTest(unittest.TestCase):
 
 
 class RoundTest(unittest.TestCase):
-    """A whole soup round (``tests.test_soup_run``'s synthetic bodies) on a Zils Current exam."""
+    """A whole soup round (``tests.test_soup_run``'s synthetic bodies) on a Zils Outcomes exam."""
 
     def setUp(self):
         from unittest.mock import patch
@@ -621,7 +660,7 @@ def cell_items(day, per_stream):
 
 
 class AllCellsTest(unittest.TestCase):
-    """Current streams in every category/block cell leave the fixed bank nothing to fill."""
+    """Outcomes streams in every category/block cell leave the fixed bank nothing to fill."""
 
     def setUp(self):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -671,7 +710,7 @@ class ChoiceBalanceTest(unittest.TestCase):
 
 
 def stream_rows(stream, category, block, kind, n, day="2026-11-02"):
-    """``n`` items of one Current stream in one cell; labels alternate so yes/no stays balanced."""
+    """``n`` items of one Outcomes stream in one cell; labels alternate so yes/no stays balanced."""
     resolved = datetime.fromisoformat(day).replace(hour=12, tzinfo=UTC)
     labels = {"noul": ["false", "true"], "choice": ["A", "B"], "score": ["0", "1", "3", "4"]}[kind]
     criteria = {"noul": None, "choice": {"A": "Bug", "B": "Feature"}, "score": list("01234")}[kind]
@@ -718,7 +757,7 @@ class QualityValidateTest(unittest.TestCase):
         )
         self.assertEqual(exam["current_share"], 0.33)
         self.assertEqual(exam["min_family_items"], 100)
-        self.assertEqual(exam["exclude_streams"], ["stackexchange-score-*"])
+        self.assertEqual(exam["exclude_streams"], ["stackexchange-score-*", "wikipedia-afd"])
         again = soup_current.validate(
             {"source": "current", "current_bank": "/b", "exclude_streams": []}
         )
@@ -754,7 +793,12 @@ class QualityValidateTest(unittest.TestCase):
 
 
 class UnchangedTest(unittest.TestCase):
-    """Without the quality settings a round is byte for byte what main drew before them."""
+    """Without the quality settings a round is byte for byte what main drew before them.
+
+    The middle hash is ``bank-source.json``, which records each folder's manifest hash; it moved
+    once, when the fixture manifests gained the cross-check block the validator now requires. The
+    subset and the drawn items are unchanged.
+    """
 
     def setUp(self):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
@@ -763,7 +807,7 @@ class UnchangedTest(unittest.TestCase):
         f = Fixture(self.root / "mixed")
         f.prepare()
         self.assertEqual(
-            round_files(f), ["72a793626319d706", "65e2307383c4d37d", "e9b7e4fa1efdd25e"]
+            round_files(f), ["72a793626319d706", "74588d5b3193c8c1", "e9b7e4fa1efdd25e"]
         )
 
     def test_all_current_round_matches_main(self):
@@ -771,7 +815,7 @@ class UnchangedTest(unittest.TestCase):
         export(f.current, "2026-11-02", cell_items("2026-11-02", 60))
         f.prepare()
         self.assertEqual(
-            round_files(f), ["f5b58e7b41a1b909", "3da24036004288d0", "3adf5643c5ab1e0b"]
+            round_files(f), ["f5b58e7b41a1b909", "0e9ba104424ce3a3", "3adf5643c5ab1e0b"]
         )
 
     def test_neutral_quality_settings_draw_the_same_round(self):
@@ -800,17 +844,21 @@ class QualityTest(unittest.TestCase):
         by_id = {c["id"]: c for c in bank}
         return [by_id[i] for i in f.subset()]
 
-    def test_score_streams_are_excluded_by_default(self):
+    def test_score_and_afd_streams_are_excluded_by_default(self):
         rows = stream_rows("gh-close", "reasoning", "new", "noul", 120)
         rows += stream_rows("wiki-revert", "language", "new", "noul", 120)
         rows += stream_rows("gh-merge", "tools", "new", "noul", 120)
         rows += stream_rows("stackexchange-score-math", "reasoning", "known", "score", 120)
+        rows += stream_rows("wikipedia-afd", "reasoning", "known", "choice", 120)
         f = self.fixture("exclude", rows, current_items=400, min_family_items=10)
         bank, record = f.prepare(subset_size=800)
         self.assertIsNone(record["fallback"])
         families = {c["family"] for c in self.cases(f, bank)}
         self.assertNotIn("stackexchange-score-math", families)
-        self.assertEqual(record["excluded_streams"], {"stackexchange-score-math": 120})
+        self.assertNotIn("wikipedia-afd", families)  # its state holds the votes (ZIL-131)
+        self.assertEqual(
+            record["excluded_streams"], {"stackexchange-score-math": 120, "wikipedia-afd": 120}
+        )
         self.assertNotIn("stackexchange-score-math", record["streams"])
 
     def test_exclude_streams_takes_glob_patterns(self):
@@ -851,7 +899,7 @@ class QualityTest(unittest.TestCase):
         for name in ("current-language-new-choice-small", "current-language-new-noul-small"):
             self.assertTrue(record["merged_families"][name]["dropped"])
         self.assertEqual(record["current_items"], 260)
-        # The cell whose streams stayed too small is not taken from Current: the bank fills it.
+        # The cell whose streams stayed too small is not taken from Outcomes: the bank fills it.
         self.assertEqual(record["replaced_cells"], ["reasoning/new"])
         language_new = {
             c["family"] for c in cases if (c["category"], c["block"]) == ("language", "new")
@@ -905,7 +953,7 @@ class QualityTest(unittest.TestCase):
         self.assertEqual(record["bank_items"], 800 - len(current))
         self.assertEqual(record["replaced_cells"], [])
         self.assertEqual(record["added_cells"], ["reasoning/new"])
-        # Each stream can give at most 80 items (0.4 x the 200-item Current budget), below 100:
+        # Each stream can give at most 80 items (0.4 x the 200-item Outcomes budget), below 100:
         # the three reasoning yes/no streams merge (240 available, 200 drawn); the language
         # streams, one choice and one yes/no, stay below 100 apiece and are left out.
         self.assertEqual(families["current-reasoning-new-noul-small"], 200)
@@ -948,7 +996,7 @@ class QualityTest(unittest.TestCase):
         self.assertEqual(len(f.subset()), 400)
 
 
-# A Current bank shaped like a real gated export: (stream, category, block, type, available).
+# A Outcomes bank shaped like a real gated export: (stream, category, block, type, available).
 REAL_BANK = [
     *(
         (f"wiki-revert-{name}", "language", "known", "noul", n)
@@ -1101,3 +1149,147 @@ class FamilyFirstTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+ARXIV = [
+    ("arxiv-category-cs", "tools", "known", "choice", 1600),
+    ("arxiv-category-math", "reasoning", "known", "choice", 700),
+    ("arxiv-category-physics", "retrieval", "known", "choice", 900),
+    ("arxiv-category-other", "retrieval", "known", "choice", 300),
+]
+
+
+def rows_of(streams):
+    rows = []
+    for stream, category, block, kind, n in streams:
+        rows += stream_rows(stream, category, block, kind, n)
+    return rows
+
+
+REVERTS = [  # the 1 Nov 2026 export: nine Wikipedia revert streams, 89% of the items, one cell
+    (f"wikipedia-revert{suffix}", "language", "known", "noul", n)
+    for suffix, n in zip(
+        ("", "-es", "-de", "-fr", "-it", "-ja", "-ru", "-zh", "-pt"),
+        (2668, 1792, 840, 584, 566, 452, 388, 248, 134),
+        strict=True,
+    )
+]
+
+
+class RevertCapTest(unittest.TestCase):
+    """The Wikipedia revert streams share one cap, so one task cannot be most of the exam."""
+
+    family = {  # the live pools, as in GroupCapTest
+        "current_items": 990,
+        "min_items": 300,
+        "min_streams": 3,
+        "stream_max": 0.4,
+        "min_family_items": 100,
+    }
+    budget = int(0.2 * 990)
+
+    def reverts(self, chosen):
+        return Counter(c["family"] for c in chosen if c["family"].startswith("wikipedia-revert"))
+
+    def test_the_family_draw_caps_reverts_combined_and_keeps_one_family(self):
+        rows = rows_of(REVERTS + REAL_BANK[9:])
+        chosen, _, _, families = soup_current._family_draw(rows, b"k", self.family)
+        drawn = self.reverts(chosen)
+        self.assertLessEqual(sum(drawn.values()), self.budget)
+        self.assertGreaterEqual(sum(drawn.values()), 100)
+        self.assertEqual(len(drawn), 1, drawn)
+        others = {f for f, v in families.items() if v["kept"]} - set(drawn)
+        self.assertGreaterEqual(len(others), 3, others)  # the budget left goes to other tasks
+
+    def test_the_kept_wiki_rotates_with_the_round_secret(self):
+        kept = set()
+        for secret in (b"a", b"b", b"c", b"d", b"e", b"f", b"g", b"h"):
+            chosen, _, _, _ = soup_current._family_draw(
+                rows_of(REVERTS + REAL_BANK[9:]), secret, self.family
+            )
+            kept |= set(self.reverts(chosen))
+        self.assertGreaterEqual(len(kept), 2)
+
+    def test_an_empty_group_max_lifts_the_cap(self):
+        settings = {**self.family, "group_max": {}}
+        chosen, _, _, _ = soup_current._family_draw(
+            rows_of(REVERTS + REAL_BANK[9:]), b"k", settings
+        )
+        self.assertGreater(sum(self.reverts(chosen).values()), self.budget)
+
+
+class GroupCapTest(unittest.TestCase):
+    """The arXiv streams share one cap, so a large, easily specialised source cannot fill the exam."""
+
+    # The live pools: 3,000-item subsets, current_share 0.33, families of 100 or more.
+    family = {
+        "current_items": 990,
+        "min_items": 300,
+        "min_streams": 3,
+        "stream_max": 0.4,
+        "min_family_items": 100,
+    }
+    budget = int(0.15 * 990)
+
+    def arxiv(self, chosen):
+        return Counter(c["family"] for c in chosen if c["id"].startswith("arxiv-"))
+
+    def test_the_family_draw_caps_arxiv_combined_and_keeps_one_family(self):
+        chosen, _, _, families = soup_current._family_draw(
+            rows_of(REAL_BANK + ARXIV), b"k", self.family
+        )
+        drawn = self.arxiv(chosen)
+        self.assertLessEqual(sum(drawn.values()), self.budget)
+        self.assertGreaterEqual(sum(drawn.values()), 100)
+        self.assertEqual(len(drawn), 1, drawn)
+        self.assertGreaterEqual(len(chosen), 980)  # the rest of the budget goes to other streams
+
+    def test_the_kept_arxiv_subject_rotates_with_the_round_secret(self):
+        kept = set()
+        for secret in (b"a", b"b", b"c", b"d", b"e", b"f", b"g", b"h"):
+            chosen, _, _, _ = soup_current._family_draw(
+                rows_of(REAL_BANK + ARXIV), secret, self.family
+            )
+            kept |= set(self.arxiv(chosen))
+        self.assertGreaterEqual(len(kept), 2)
+
+    def test_the_plain_draw_caps_arxiv_combined(self):
+        settings = {"current_items": 1000, "min_items": 300, "min_streams": 3, "stream_max": 0.4}
+        items = day_items("2026-11-02", 300, streams=["gh-close", "gh-merge", "gh-type"])
+        chosen, counts = soup_current.draw(items + rows_of(ARXIV), b"k", settings)
+        self.assertLessEqual(sum(self.arxiv(chosen).values()), 150)
+        self.assertEqual(len(chosen), 1000)
+
+    def test_a_budget_under_the_family_minimum_leaves_arxiv_out(self):
+        settings = {**self.family, "group_max": {"arxiv-category-*": 0.05}}
+        chosen, _, _, _ = soup_current._family_draw(rows_of(REAL_BANK + ARXIV), b"k", settings)
+        self.assertEqual(self.arxiv(chosen), Counter())
+        self.assertGreaterEqual(len(chosen), 980)
+
+    def test_draws_without_arxiv_are_unchanged(self):
+        rows = rows_of(REAL_BANK)
+        capped = soup_current._family_draw(rows, b"k", self.family)
+        uncapped = soup_current._family_draw(rows, b"k", {**self.family, "group_max": {}})
+        self.assertEqual([c["id"] for c in capped[0]], [c["id"] for c in uncapped[0]])
+        self.assertEqual(capped[3], uncapped[3])
+
+    def test_validate_takes_a_group_cap_and_refuses_bad_ones(self):
+        base = {"source": "current", "current_bank": "/b"}
+        self.assertNotIn("group_max", soup_current.validate(base))
+        exam = soup_current.validate({**base, "group_max": {"arxiv-*": 0.1}})
+        self.assertEqual(exam["group_max"], {"arxiv-*": 0.1})
+        for bad in ({"arxiv-*": 0}, {"arxiv-*": 1.5}, {"": 0.1}, ["arxiv-*"], {"arxiv-*": "x"}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                soup_current.validate({**base, "group_max": bad})
+
+
+class LineSeparatorTest(unittest.TestCase):
+    setUp, load = LoadTest.setUp, LoadTest.load
+
+    def test_a_unicode_line_separator_inside_an_item_is_read(self):
+        items = day_items("2026-11-01", 5)
+        items[0]["state"]["text"] += "one line still the same line"
+        export(self.root, "2026-11-01", items)
+        result = self.load()
+        self.assertEqual(len(result["items"]), 20)
+        self.assertEqual(result["skipped"], {})

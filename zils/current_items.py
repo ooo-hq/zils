@@ -1,4 +1,4 @@
-"""Zils Current cases from resolved events: scrubbed state text, bank-format questions."""
+"""Zils Outcomes cases from resolved events: scrubbed state text, bank-format questions."""
 
 import hashlib
 import json
@@ -55,11 +55,11 @@ STREAMS = {
         "publishable": False,
         "question": {
             "type": "noul",
-            "instructions": "Will the maintainers close this newly opened GitHub issue as completed, "
-            "rather than as not planned or a duplicate?",
+            "instructions": "Will the maintainers close this newly opened GitHub issue as completed "
+            "within three days?",
             "criteria": {
-                "true": "Closed as completed",
-                "false": "Closed as not planned or as a duplicate",
+                "true": "Closed as completed within three days",
+                "false": "Still open after three days, or closed as not planned or as a duplicate",
             },
         },
     },
@@ -69,8 +69,11 @@ STREAMS = {
         "publishable": False,
         "question": {
             "type": "noul",
-            "instructions": "Will this newly opened GitHub pull request be merged?",
-            "criteria": {"true": "Merged", "false": "Closed without merging"},
+            "instructions": "Will this newly opened GitHub pull request be merged within three days?",
+            "criteria": {
+                "true": "Merged within three days",
+                "false": "Still open after three days, or closed without merging",
+            },
         },
     },
     "wikipedia-revert": {
@@ -206,9 +209,56 @@ STREAMS["wikipedia-afd"] = {
         },
     },
 }
+STREAMS["wikipedia-afc"] = {
+    "category": "reasoning",
+    "licence": WIKIMEDIA_TERMS,
+    "publishable": True,
+    "question": {
+        "type": "noul",
+        "instructions": "This draft was submitted for review at English Wikipedia's Articles for "
+        "Creation. Will the reviewer accept it as a new article?",
+        "criteria": {"true": "Accepted as an article", "false": "Declined or rejected"},
+    },
+}
+STREAMS["gerrit-merge"] = {
+    "category": "tools",
+    "licence": "unreviewed: commit messages from public Gerrit servers (OpenDev, Wikimedia, AOSP); "
+    "local only until their licence is checked; link source.url",
+    "publishable": False,
+    "question": {
+        "type": "noul",
+        "instructions": "This code change was just proposed for review. Will it be merged?",
+        "criteria": {"true": "Merged", "false": "Abandoned without merging"},
+    },
+}
+# arXiv: one stream per subject group, each an exam category. Options are four categories named
+# per paper (the primary and three distractors), so they are listed per record.
+ARXIV_TERMS = (
+    "CC0-1.0: arXiv metadata (title, abstract, categories); link source.url. "
+    "Thank you to arXiv for use of its open access interoperability."
+)
+for _group, _category in (
+    ("cs", "tools"),
+    ("math", "reasoning"),
+    ("physics", "retrieval"),
+    ("other", "retrieval"),
+):
+    STREAMS[f"arxiv-category-{_group}"] = {
+        "category": _category,
+        "licence": ARXIV_TERMS,
+        "publishable": True,
+        "block": "known",
+        "per_record_options": True,
+        "question": {
+            "type": "choice",
+            "instructions": "This paper was just submitted to arXiv. Which category was it "
+            "announced under as its primary subject?",
+            "criteria": {},
+        },
+    }
 # Blocks: `known` for task types with an established public benchmark (Wikipedia vandalism,
 # PAN-WVC; Wikidata vandalism, WSDM Cup 2017; Stack Overflow closed questions, Kaggle 2012;
-# Articles for deletion outcomes), `new` for the rest. ZILS_CURRENT_BLOCKS overrides them:
+# Articles for deletion outcomes; arXiv subject classification), `new` for the rest. ZILS_CURRENT_BLOCKS overrides them:
 # comma-separated `stream-prefix=block` pairs, longest prefix first.
 for _stream, _spec in STREAMS.items():
     if _stream.startswith(("wikipedia-revert", "wikidata-revert")):
@@ -391,6 +441,22 @@ def state_text(record, max_tokens=4096):
         data = record["data"]
         head = f"Wiki: English Wikipedia\nArticle: {data['article']}\n\nDeletion discussion:\n"
         return fit(truncate(head + (data["text"] or "(empty)"), limit), max_tokens)
+    if record["stream"] == "wikipedia-afc":
+        data = record["data"]
+        head = f"Wiki: English Wikipedia\nDraft: {data['title']}\n\nDraft text:\n"
+        return fit(truncate(head + data["text"], limit), max_tokens)
+    if record["stream"] == "gerrit-merge":
+        data = record["data"]
+        head = (
+            f"Code review: {data['host']}\nProject: {data['project']}\nBranch: {data['branch']}\n"
+            "\nCommit message:\n"
+        )
+        return fit(truncate(head + data["message"], limit), max_tokens)
+    if record["stream"].startswith("arxiv-"):
+        data = record["data"]
+        return fit(
+            truncate(f"Title: {data['title']}\n\nAbstract:\n{data['abstract']}", limit), max_tokens
+        )
     if record["stream"].startswith("stackexchange-"):
         return fit(_se_state(record, limit), max_tokens)
     if record["stream"].startswith(("wikipedia-revert", "wikidata-revert")):
@@ -408,6 +474,11 @@ def _question(record):
     spec = STREAMS[record["stream"]]
     question = json.loads(json.dumps(spec["question"]))
     label = record["label"]
+    if spec.get("per_record_options") and "options" in record["data"]:
+        # Options were chosen and shuffled at collection (arXiv categories).
+        options = record["data"]["options"]
+        question["criteria"] = {chr(65 + i): text for i, text in enumerate(options)}
+        return question, label
     if spec.get("per_record_options"):
         # Options were shuffled at collection and are named in the state text (Answer A, ...).
         count = len(record["data"]["answers"])

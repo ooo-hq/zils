@@ -1,4 +1,4 @@
-"""Zils Current sources beyond the pilot: more Wikipedias, Wikidata, sampled resolution."""
+"""Zils Outcomes sources beyond the pilot: more Wikipedias, Wikidata, sampled resolution."""
 
 import json
 import tempfile

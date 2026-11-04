@@ -218,7 +218,7 @@ class SoupRunTest(unittest.TestCase):
         for member in members.values():
             self.assertEqual(member["rate"], 1.0)
             self.assertGreater(member["contribution"], 30)
-            self.assertAlmostEqual(member["seat_weight"], 0.4)
+            self.assertAlmostEqual(member["seat_weight"], 0.16)  # one fixed seat of five
         # Trainer 1's categories weigh 51.7% of the score, so it is the best solo body.
         self.assertGreater(record["solo"][sha["t1"]], record["solo"][sha["t2"]])
         self.assertEqual(record["crown"]["body_sha256"], sha["t1"])
@@ -233,8 +233,8 @@ class SoupRunTest(unittest.TestCase):
         self.assertEqual(len(record["subset_ids"]), 300)
         roster = {str(uid): {"hotkey": h} for uid, h in HOTKEYS.items()}
         weights = soup_round.soup_weights(record, roster)
-        self.assertAlmostEqual(weights[1], 0.6)
-        self.assertAlmostEqual(weights[2], 0.4)
+        self.assertAlmostEqual(weights[1], 0.36)  # a seat (0.16) and the crown (0.2)
+        self.assertAlmostEqual(weights[2], 0.16)
         # The final soup stays on disk; trial soups are deleted after grading.
         round_dir = self.r.state / "rounds" / "d3-mini-2026-11-03"
         self.assertTrue((round_dir / "soup" / "readout.safetensors").exists())
@@ -395,7 +395,7 @@ class SoupRunTest(unittest.TestCase):
         self.assertTrue(any(p.name.startswith("chassis-") for p in graded))
         roster = {str(uid): {"hotkey": h} for uid, h in HOTKEYS.items()}
         weights = soup_round.soup_weights(record, roster)
-        self.assertAlmostEqual(weights[1], 1.0)  # its seat (0.8) and the crown (0.2)
+        self.assertAlmostEqual(weights[1], 0.36)  # one fixed seat (0.16) and the crown (0.2)
         self.assertEqual(list((self.r.state / "tmp").iterdir()), [])
 
     def test_the_chassis_check_after_a_failed_body_grades_a_built_chassis(self):
@@ -608,8 +608,8 @@ class SoupRunTest(unittest.TestCase):
 
         record = self.r.run(rates=rates)
         members = self.by_body(record)
-        self.assertAlmostEqual(members[self.r.sha["t1"]]["seat_weight"], 0.1)
-        self.assertAlmostEqual(members[self.r.sha["t2"]]["seat_weight"], 0.4)
+        self.assertAlmostEqual(members[self.r.sha["t1"]]["seat_weight"], 0.04)
+        self.assertAlmostEqual(members[self.r.sha["t2"]]["seat_weight"], 0.16)
         self.assertAlmostEqual(record["crown"]["weight"], 0.05)
 
     def test_a_commitment_failing_validation_fails_and_leaves_no_files(self):
@@ -1702,6 +1702,7 @@ class SoupRunTest(unittest.TestCase):
 MEMBERS = {"1": {"hotkey": "a"}, "2": {"hotkey": "b"}, "3": {"hotkey": "c"}}
 DRAW = {"manifest_sha256": "a" * 64, "dataset_sha256": "b" * 64}
 HOUSE = [{"name": "house", "repo": "open/house", "revision": "e" * 40, "body_sha256": None}]
+KNOWN = [{"name": "known", "repo": "open/known", "revision": "d" * 40, "body_sha256": None}]
 
 
 def soup_entry(**changes):
@@ -1710,7 +1711,6 @@ def soup_entry(**changes):
         "model": models.D3,
         "enabled": True,
         "share": 0.4,
-        "house": HOUSE,
         "schedule": {"deadline_utc": "00:00"},
         "sketch_seed": "5e" * 32,
         **changes,
@@ -1791,7 +1791,7 @@ class SoupPoolWeightsTest(unittest.TestCase):
         checked = model_pools.validate(pools())["pools"]["d3-mini"]
         self.assertEqual(checked["type"], "soup")
         self.assertEqual(checked["model"], models.spec(models.D3))
-        self.assertEqual(checked["house"], HOUSE)
+        self.assertNotIn("house", checked)  # house and known lists ship with the code
         self.assertEqual(
             (checked["subset_size"], checked["screen_size"], checked["max_pool"]), (3000, 300, 20)
         )
@@ -1802,49 +1802,27 @@ class SoupPoolWeightsTest(unittest.TestCase):
         self.assertNotIn("sketch_seed", model_pools.validate(pools(unseeded))["pools"]["d3-mini"])
         _, record = model_pools.weights(pools(), {}, MEMBERS)
         self.assertNotIn("5e" * 32, json.dumps(record))
-        self.assertEqual(
-            model_pools.validate(pools(soup_entry(house="soup-house.json")))["pools"]["d3-mini"][
-                "house"
-            ],
-            "soup-house.json",
-        )
-        # Optional, and left out unless set, so a pool without a list validates as before.
-        self.assertNotIn("known_public", checked)
         self.assertNotIn("max_known_public_bytes_per_round", checked)
         self.assertNotIn("max_known_public_seconds_per_round", checked)
-        listed = soup_entry(
-            known_public=HOUSE,
-            max_known_public_bytes_per_round=5,
-            max_known_public_seconds_per_round=60,
+        budgets = soup_entry(
+            max_known_public_bytes_per_round=5, max_known_public_seconds_per_round=60
         )
-        listed = model_pools.validate(pools(listed))["pools"]["d3-mini"]
-        self.assertEqual(listed["max_known_public_seconds_per_round"], 60)
-        self.assertEqual(listed["known_public"], HOUSE)
-        self.assertEqual(listed["max_known_public_bytes_per_round"], 5)
-        self.assertEqual(
-            model_pools.validate(pools(soup_entry(known_public="known.json")))["pools"]["d3-mini"][
-                "known_public"
-            ],
-            "known.json",
-        )
+        budgets = model_pools.validate(pools(budgets))["pools"]["d3-mini"]
+        self.assertEqual(budgets["max_known_public_seconds_per_round"], 60)
+        self.assertEqual(budgets["max_known_public_bytes_per_round"], 5)
+        # Every validator must use the same lists, so a config cannot set them.
+        for key, value in (("house", HOUSE), ("house", "soup-house.json"), ("known_public", HOUSE)):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "ship with the code"):
+                model_pools.validate(pools(soup_entry(**{key: value})))
         for bad in (
-            {"known_public": [{**HOUSE[0], "body_sha256": "x"}]},
-            {"known_public": [HOUSE[0], HOUSE[0]]},
-            {"known_public": [{**HOUSE[0], "license": "mit"}]},
-            {"known_public": ""},
-            {"known_public": 3},
-            {"known_public": None},
             {"max_known_public_bytes_per_round": 0},
             {"max_known_public_seconds_per_round": 0},
             {"max_known_public_seconds_per_round": 6 * 3600 + 1},
             {"max_known_public_seconds_per_round": "1"},
             {"max_known_public_bytes_per_round": 1.5},
             {"type": "pot"},
-            {"house": [{**HOUSE[0], "body_sha256": "x"}]},
             {"sketch_seed": "short"},
             {"sketch_seed": None},
-            {"house": ""},
-            {"house": 3},
             {"schedule": {"deadline_utc": "25:00"}},
             {"schedule": {}},
             {"incumbent_sha256": "c" * 64},
@@ -1891,6 +1869,13 @@ class ScheduleTest(unittest.TestCase):
             ("2026-11-02", at("2026-11-02T06:30:00")),
         )
 
+    def test_a_waiting_pool_is_due_wait_days_after_its_deadline(self):
+        schedule = {"deadline_utc": "00:00"}
+        self.assertEqual(
+            soup_pool.due(schedule, at("2026-11-07T05:00:00"), wait_days=4),
+            ("2026-11-03", at("2026-11-03T00:00:00")),
+        )
+
     def test_seed_block_is_the_first_block_after_the_deadline(self):
         start = at("2026-11-02T23:00:00")
         chain = FakeChain(start)
@@ -1906,6 +1891,12 @@ class ScheduleTest(unittest.TestCase):
 class SoupEpochTest(unittest.TestCase):
     def setUp(self):
         self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.lists = SimpleNamespace(
+            house=self.enterContext(patch("zils.soup_rates.house", return_value=HOUSE)),
+            known_public=self.enterContext(
+                patch("zils.soup_rates.known_public", return_value=KNOWN)
+            ),
+        )
         self.config = {
             "base_pools": pools(),
             "base_pool_rounds": {
@@ -2007,6 +1998,34 @@ class SoupEpochTest(unittest.TestCase):
         self.epoch()
         self.assertEqual([r["round_id"] for _, r in self.calls][-1], "d3-mini-2026-11-04")
         self.assertEqual(soup_pool.decision(self.directory, "d3-mini")["pool_id"], "d3-mini")
+
+    def test_a_waiting_pool_runs_its_round_wait_days_after_the_deadline(self):
+        exam = {"source": "current", "current_bank": "current", "wait_days": 1}
+        self.config["base_pools"] = pools(soup_entry(exam=exam))
+        self.snapshot["block"] = 1000 + 7200  # 2026-11-04 02:20
+        summary = self.epoch()
+        [(_, request)] = self.calls
+        self.assertEqual(request["round_id"], "d3-mini-2026-11-03")
+        self.assertEqual(summary["d3-mini"]["round_id"], "d3-mini-2026-11-03")
+        # Bodies still freeze at the deadline: uid 2 committed after it, a day before grading.
+        self.assertEqual(request["seed_block"], 301)
+        self.assertEqual(set(request["snapshot"]["commitments"]), {"1"})
+        self.assertEqual(request["config"]["exam"]["wait_days"], 1)
+
+    def test_a_waiting_pool_keeps_its_decision_wait_days_longer(self):
+        exam = {"source": "current", "current_bank": "current", "wait_days": 2}
+        self.config["base_pools"] = pools(soup_entry(exam=exam))
+        self.snapshot["block"] = 1000 + 2 * 7200
+        self.epoch()  # the round for 2026-11-03, graded on 2026-11-05
+        entry = soup_pool.soup_pools(self.config)["d3-mini"]
+        fresh = soup_pool.fresh_decision(
+            self.directory, "d3-mini", entry, now=at("2026-11-07T23:00:00")
+        )
+        self.assertEqual(fresh["round_id"], "d3-mini-2026-11-03")
+        stale = soup_pool.fresh_decision(
+            self.directory, "d3-mini", entry, now=at("2026-11-08T00:00:01")
+        )
+        self.assertIsNone(stale)
 
     def test_a_failed_round_keeps_the_last_decision_and_reports_the_error(self):
         self.epoch()
@@ -2168,30 +2187,19 @@ class SoupEpochTest(unittest.TestCase):
             written["runner"], {"runtime_python": "python3", "device": "cuda", "poll": 5}
         )
 
-    def test_house_file_is_read_relative_to_the_validator_directory(self):
-        (self.directory / "house.json").write_text(json.dumps(HOUSE))
-        self.config["base_pools"] = pools(soup_entry(house="house.json"))
+    def test_house_and_known_lists_come_from_the_code(self):
         self.epoch()
-        self.assertEqual(self.calls[0][1]["config"]["house"], HOUSE)
+        config = self.calls[0][1]["config"]
+        self.assertEqual((config["house"], config["known_public"]), (HOUSE, KNOWN))
+        self.assertEqual(self.lists.house.call_args.args, ("d3-mini",))
+        self.assertEqual(self.lists.known_public.call_args.args, ("d3-mini",))
 
-    def test_known_public_file_is_read_relative_to_the_validator_directory(self):
-        (self.directory / "known.json").write_text(json.dumps(HOUSE))
-        self.config["base_pools"] = pools(soup_entry(known_public="known.json"))
-        self.epoch()
-        self.assertEqual(self.calls[0][1]["config"]["known_public"], HOUSE)
-
-    def test_known_public_defaults_to_an_empty_list(self):
-        self.epoch()
-        self.assertEqual(self.calls[0][1]["config"]["known_public"], [])
-
-    def test_a_bad_known_public_file_never_stops_the_round(self):
-        # The list only lowers pay for re-uploads; without it the round still runs, and says so.
-        (self.directory / "known.json").write_text(json.dumps([{"name": "x"}]))
-        self.config["base_pools"] = pools(soup_entry(known_public="known.json"))
+    def test_an_unreadable_known_list_stops_the_round(self):
+        # Without it a public re-upload would earn the trainer rate; yesterday's soup stays paid.
+        self.lists.known_public.side_effect = ValueError("bad list")
         summary = self.epoch()
-        self.assertEqual(self.calls[0][1]["config"]["known_public"], [])
-        self.assertIn("ValueError", summary["d3-mini"]["known_public_error"])
-        self.assertNotIn("error", summary["d3-mini"])
+        self.assertEqual(self.calls, [])
+        self.assertIn("bad list", summary["d3-mini"]["error"])
 
     def test_validator_skips_soup_pools_for_king_rounds_and_attaches_their_decision(self):
         from zils import validator

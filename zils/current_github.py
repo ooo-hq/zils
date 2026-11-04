@@ -1,9 +1,12 @@
-"""Zils Current GitHub streams: issues and pull requests opened in GH Archive hours, resolved from the REST API.
+"""Zils Outcomes GitHub streams: issues and pull requests opened in GH Archive hours, resolved from the REST API.
 
 GH Archive (https://www.gharchive.org) publishes every public GitHub event in hourly files. Since
 GitHub trimmed Events API payloads in 2025, pull request events carry ids and branch names but no
 title or body, so pull request text is read from the REST API at the first resolution pass.
 Resolution reads the issue or pull request's current state: maintainer labels, close reason, merge.
+Merges and completed closes count only within WAIT_HOURS of opening; an item still open after that
+is a "no", like a Wikipedia edit not reverted after its waiting period. Without that rule only closed
+items would ever get a "no", and the quick outcomes that resolve first are nearly all "yes".
 """
 
 import gzip
@@ -11,17 +14,33 @@ import hashlib
 import itertools
 import json
 import re
+import time
 from datetime import datetime, timedelta
 
 from . import settings
-from .current_items import RateLimited, iso, scrub
+from .current_items import RateLimited, iso, parse_time, scrub
 
 ARCHIVE = "https://data.gharchive.org/{}.json.gz"
 API = "https://api.github.com/repos/{}/{}/{}"
 HOUR = re.compile(r"\d{4}-\d{2}-\d{2}-(?:[1-9]|1\d|2[0-3]|0)")
 ISSUE_STREAMS = ("github-issue-type", "github-issue-close")
+WAIT_HOURS = (
+    72  # merged or completed within this long after opening is "yes"; still open after it, "no"
+)
 BUG = re.compile(r"\bbugs?\b")
 FEATURE = re.compile(r"\b(?:enhancements?|features?|feature requests?)\b")
+# GitHub's guidance against secondary rate limits: serial requests with a gap between them, and
+# after a limit, wait Retry-After (or a minute, doubling) before retrying. The secondary limit
+# counts server time, not requests: on 1 Nov 3.3 s GraphQL queries one second apart still hit it
+# within a minute. So the gap is GAP_PER_REQUEST_SECOND times the last request's duration (about
+# a quarter of the time spent waiting on GitHub), at least GAP_SECONDS, and doubles for the rest of
+# the pass after each limit, up to MAX_SLOWDOWN times.
+GAP_SECONDS = 1.0
+GAP_PER_REQUEST_SECOND = 3.0
+MAX_SLOWDOWN = 16
+LIMIT_RETRIES, LIMIT_WAIT, MAX_LIMIT_WAIT = 4, 60.0, 900.0
+sleep = time.sleep
+clock = time.monotonic
 
 
 def hour_url(hour):
@@ -144,6 +163,39 @@ def _limited(status, body, headers):
     )
 
 
+def _exhausted(headers):
+    """The hourly quota is spent: waiting could take up to an hour, so the pass stops instead."""
+    return headers.get("x-ratelimit-remaining") == "0" and "retry-after" not in headers
+
+
+class _Paced:
+    """Serial GitHub requests, spaced by how long the last one took; secondary rate limits are
+    waited out and retried, and slow the rest of the pass."""
+
+    def __init__(self):
+        self.last, self.took, self.slowdown = None, 0.0, 1
+
+    def __call__(self, send, label):
+        for attempt in range(LIMIT_RETRIES + 1):
+            if self.last is not None:
+                gap = max(GAP_SECONDS, GAP_PER_REQUEST_SECOND * self.took) * self.slowdown
+                gap -= clock() - self.last
+                if gap > 0:
+                    sleep(gap)
+            start = clock()
+            status, body, headers = send()
+            self.last = clock()
+            self.took = self.last - start
+            if not _limited(status, body, headers):
+                return status, body, headers
+            self.slowdown = min(2 * self.slowdown, MAX_SLOWDOWN)
+            if _exhausted(headers) or attempt == LIMIT_RETRIES:
+                break
+            wait = float(headers.get("retry-after") or LIMIT_WAIT * 2**attempt)
+            sleep(min(wait, MAX_LIMIT_WAIT))
+        raise RateLimited(f"{label} HTTP {status}")
+
+
 def issue_kind(labels):
     """'bug', 'feature', 'ambiguous' or None from label names such as 'type: bug' or 'enhancement'."""
     kinds = set()
@@ -154,6 +206,17 @@ def issue_kind(labels):
         kinds |= {"bug"} if BUG.search(name) else set()
         kinds |= {"feature"} if FEATURE.search(name) else set()
     return ("ambiguous" if len(kinds) > 1 else kinds.pop()) if kinds else None
+
+
+def _within_wait(record, at):
+    return at - parse_time(record["asked_at"]) <= timedelta(hours=WAIT_HOURS)
+
+
+def _open(record, now):
+    """Still open: pending within the waiting period, afterwards the outcome is "no"."""
+    if _within_wait(record, now):
+        return "pending", record
+    return "resolved", {**record, "resolved_at": iso(now), "label": "false"}
 
 
 def _outcome(record, body, now):
@@ -169,13 +232,14 @@ def _outcome(record, body, now):
         )
     if stream == "github-issue-close":
         if body.get("state") != "closed":
-            return "pending", record
+            return _open(record, now)
         if _bot(body.get("closed_by")):
             return "dropped", {**record, "reason": "closed-by-bot"}
         reason = body.get("state_reason")
         if reason not in ("completed", "not_planned", "duplicate"):
             return "dropped", {**record, "reason": "no-close-reason"}
-        label = "true" if reason == "completed" else "false"
+        completed = reason == "completed" and _within_wait(record, parse_time(body["closed_at"]))
+        label = "true" if completed else "false"
         return "resolved", {
             **record,
             "resolved_at": iso(now),
@@ -196,10 +260,11 @@ def _outcome(record, body, now):
         }
         record = {**record, "data": data}
     if body.get("merged"):
+        merged = _within_wait(record, parse_time(body["merged_at"]))
         return "resolved", {
             **record,
             "resolved_at": iso(now),
-            "label": "true",
+            "label": "true" if merged else "false",
             "outcome_at": body["merged_at"],
         }
     if body.get("state") == "closed":
@@ -209,7 +274,7 @@ def _outcome(record, body, now):
             "label": "false",
             "outcome_at": body["closed_at"],
         }
-    return "pending", record
+    return _open(record, now)
 
 
 GRAPHQL = "https://api.github.com/graphql"
@@ -277,15 +342,15 @@ def _query(keys):
 def _graphql(groups, http, token):
     """Yield (key, status, body) per issue or pull request, GRAPHQL_BATCH keys per request."""
     keys = list(groups)
-    headers = {"Authorization": f"Bearer {token}"}
+    headers, paced = {"Authorization": f"Bearer {token}"}, _Paced()
     for start in range(0, len(keys), GRAPHQL_BATCH):
         chunk = keys[start : start + GRAPHQL_BATCH]
         query, aliases = _query(chunk)
-        status, body, response_headers = http.post_json(GRAPHQL, {"query": query}, headers=headers)
+        status, body, _ = paced(
+            lambda: http.post_json(GRAPHQL, {"query": query}, headers=headers), "GraphQL"
+        )
         errors = (body or {}).get("errors") or []
-        if _limited(status, body, response_headers) or any(
-            e.get("type") == "RATE_LIMITED" for e in errors
-        ):
+        if any(e.get("type") == "RATE_LIMITED" for e in errors):  # the hourly GraphQL quota
             raise RateLimited(f"GraphQL HTTP {status}")
         if status != 200 or not isinstance((body or {}).get("data"), dict):
             continue  # a timeout or server error: these stay pending
@@ -301,11 +366,13 @@ def _graphql(groups, http, token):
 
 
 def _rest(groups, http):
-    headers = _headers()
+    headers, paced = _headers(), _Paced()
     for key, group in groups.items():
-        status, body, response_headers = http.get_json(group[0]["source"]["api"], headers=headers)
-        if _limited(status, body, response_headers):
-            raise RateLimited(f"HTTP {status}; set GITHUB_TOKEN for 5,000 requests an hour")
+        url = group[0]["source"]["api"]
+        try:
+            status, body, _ = paced(lambda: http.get_json(url, headers=headers), "REST")
+        except RateLimited as error:
+            raise RateLimited(f"{error}; set GITHUB_TOKEN for 5,000 requests an hour") from None
         yield key, status, body
 
 

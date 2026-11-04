@@ -58,7 +58,9 @@ Z3 = {"opens_block": 1000 + 2 * TWO_WEEKS, "boost": [{"share": 0.15, "blocks": T
 
 
 class NoScheduleIsUnchangedTest(unittest.TestCase):
-    """Digests recorded on a clean checkout of origin/main (10553a6), without the schedule code."""
+    """Digests recorded on a clean checkout of origin/main (10553a6), without the schedule code, then
+    re-recorded when soup entries stopped echoing ``house`` (the lists ship with the code): putting
+    ``house`` back reproduces the 10553a6 digests, so nothing else changed."""
 
     def test_weights_records_and_validated_configs_are_byte_identical(self):
         from tests.promoted_profile import promoted_profile
@@ -66,13 +68,13 @@ class NoScheduleIsUnchangedTest(unittest.TestCase):
 
         crown = {"hotkey": "b", "body_sha256": "f" * 64, "rate": 1.0, "weight": 0.2}
         cases = {
-            "a819ba1fccca53c7768ce9d1917d68ea9b3b00286184af82f096d8686b04eb8b": (
+            "66a111ae340044b4505b51f3041882189551ea87c45447f98909f37f6878fd18": (
                 {"d3-mini": decision([("c", 0.4)])}
             ),
-            "77f98886dc48d86308c43c0e90ffbe762616a12bfc4735b4ebd5e6991ef36d20": (
+            "bef0da43b51aa1fd0879239d7b7ffa8c600c72c0c8c5eda10b7e2cf3df2d0283": (
                 {"d3-mini": decision([("b", 0.4), ("gone", 0.4)], crown)}
             ),
-            "2fe46e5037216850b83cccdf4337977c2a0b002d1c8667ffb26cf0159b91ff07": {},
+            "1ecce1a69b8ea4587e8338a30db371f29a04d2f27348ad8d18feaf41c3e9787c": {},
         }
         for expected, decisions in cases.items():
             for block in (None, 10**9):
@@ -81,7 +83,7 @@ class NoScheduleIsUnchangedTest(unittest.TestCase):
                     self.assertEqual(digest([sorted(weights.items()), record]), expected)
         self.assertEqual(
             digest(model_pools.validate(pools())),
-            "8893c1a648bee6ed1ace029b28ed85a5cc360b56eda3dda41e0bdd5c606102db",
+            "530bc19fc16da8be759ca0c85f086e3c80665dc9be6cb5a3536b4707cf2496d3",
         )
         with promoted_profile():
             weights, record = model_pools.weights(king_pools(), {}, KING_MEMBERS)
@@ -216,13 +218,24 @@ class LaunchDataTest(unittest.TestCase):
 
         expected = {
             "soup-house.json": {"vllm-sr/d3-mini"},
-            "soup-house-lite.json": {"vllm-sr/d3-lite", "internlm/Intern-Decision-0.8B"},
+            "soup-house-lite.json": {
+                "vllm-sr/d3-lite",
+                "internlm/Intern-Decision-0.8B",
+                "Maincode/Matilda-Decision-v1-Edge",
+                "zils-ai/jiwo-0.8b-full",
+            },
             "soup-house-flash.json": {"vllm-sr/d3-flash"},
             "soup-house-z3.json": {"vllm-sr/d3-ultra"},
         }
-        for name, repos in expected.items():
-            house = soup_rates.load_house(DATA / name)
-            self.assertLessEqual(repos, {h["repo"] for h in house}, name)
+        pools = {"d3-mini": "soup-house.json", "d3-lite": "soup-house-lite.json",
+                 "d3-flash": "soup-house-flash.json", "d3": "soup-house-z3.json"}  # fmt: skip
+        for pool, name in pools.items():
+            house = soup_rates.house(pool)
+            self.assertEqual(house, soup_rates.load_house(DATA / name), pool)
+            self.assertLessEqual(expected[name], {h["repo"] for h in house}, pool)
+        launch = json.loads((DATA / "base-pools-launch.json").read_text())["pools"]
+        for pool, entry in launch.items():  # the lists ship with the code, never in the config
+            self.assertFalse({"house", "known_public"} & set(entry), pool)
         # The house chassis entries are the pinned chassis revisions.
         for name, model in (
             ("soup-house-lite.json", "d3-lite-0.8b-v1"),
@@ -240,8 +253,7 @@ class LaunchDataTest(unittest.TestCase):
         config = json.loads((DATA / "base-pools-launch.json").read_text())
         checked = model_pools.validate(config)["pools"]
         lite = {
-            "cribl-ai/cribl-decision-2-0.8B", "eljiwo/jiwo-0.8b",
-            "Maincode/Matilda-Decision-v1-Edge", "OmniJev/OneJev1.6-0.8B",
+            "cribl-ai/cribl-decision-2-0.8B", "eljiwo/jiwo-0.8b", "OmniJev/OneJev1.6-0.8B",
             "OmniJev/OneJev1.5-0.8B", "OmniJev/OneJev-0.8B", "Mapika/decider-0.8b",
             "ken-jo/QEV-0.8B", "run-saina/saina-helm-0.8b", "run-saina/saina-helm-2-0.8b",
             "run-saina/saina-helm-3-0.8b", "jeff-legacy/Jeff-Qwen3.5-0.8B", "mstrasser/jeff-base",
@@ -260,19 +272,19 @@ class LaunchDataTest(unittest.TestCase):
         excluded = {"lambdasec/serin-0.8b", "startlux-models/StartLux-Decision-v1-0.8B"}
         for pool, (name, repos) in expected.items():
             with self.subTest(pool=pool):
-                self.assertEqual(checked[pool]["known_public"], f"zils/data/{name}")
-                listed = soup_rates.load_house(DATA / name)  # the house format and rules
+                listed = soup_rates.known_public(pool)
+                self.assertEqual(listed, soup_rates.load_house(DATA / name))  # the house format
                 self.assertEqual({e["repo"] for e in listed}, repos)
                 self.assertFalse(excluded & repos)
-                house = soup_rates.load_house(DATA / checked[pool]["house"].split("/")[-1])
+                house = soup_rates.house(pool)
                 pinned = {(h["repo"], h["revision"]) for h in house}
                 self.assertFalse(pinned & {(e["repo"], e["revision"]) for e in listed})
                 self.assertTrue(all(len(e["revision"]) == 40 for e in listed))
         # Each packaged list resolves in the first round: every download starts within the byte
         # budget (safetensors sizes at the pinned revisions, read from the Hub on 31 Oct 2026).
         gb = {
-            "d3-lite": [1.51, 1.51, 1.71, 1.71, 2.21, 2.21, 1.5, 1.71, 1.71, 1.72, 1.72, 1.71,
-                        1.71, 1.5, 1.84],
+            "d3-lite": [1.51, 1.51, 1.71, 2.21, 2.21, 1.5, 1.71, 1.71, 1.72, 1.72, 1.71, 1.71,
+                        1.5, 1.84],
             "d3-mini": [9.21, 9.08, 9.08, 9.32, 9.32, 8.41, 8.41, 10.35],
         }  # fmt: skip
         for pool, sizes in gb.items():
@@ -284,8 +296,8 @@ class LaunchDataTest(unittest.TestCase):
                 cap = soup_round.KNOWN_PUBLIC_CAP_FACTOR * bodies.max_bytes(pool)
                 self.assertTrue(all(size * 1e9 <= cap for size in sizes))
         # Pools without a list resolve nothing.
-        self.assertNotIn("known_public", checked["d3-flash"])
-        self.assertNotIn("known_public", checked["d3"])
+        self.assertEqual(soup_rates.known_public("d3-flash"), [])
+        self.assertEqual(soup_rates.known_public("d3"), [])
 
     def test_launch_template_follows_the_owner_split(self):
         config = json.loads((DATA / "base-pools-launch.json").read_text())
@@ -294,8 +306,10 @@ class LaunchDataTest(unittest.TestCase):
         self.assertTrue(all(model_pools.is_soup(e) and e["enabled"] for e in checked.values()))
         self.assertEqual(
             {p: e["share"] for p, e in checked.items()},
-            {"d3-lite": 0.35, "d3-mini": 0.30, "d3-flash": 0.20, "d3": 0.10},
+            {"d3-lite": 0.25, "d3-mini": 0.25, "d3-flash": 0.25, "d3": 0.25},
         )
+        # No boosts: a pool pays its plain share from the block it opens.
+        self.assertTrue(all("boost" not in e for e in checked.values()))
         self.assertIsNone(checked["d3-flash"]["opens_block"])
         self.assertIsNone(checked["d3"]["opens_block"])
         shares = model_pools.shares_at(model_pools.validate(config), 0)
@@ -303,6 +317,29 @@ class LaunchDataTest(unittest.TestCase):
         # Download caps fit at least one body of the pool's own size.
         for pool, entry in checked.items():
             self.assertGreaterEqual(entry["max_download_bytes_per_round"], bodies.max_bytes(pool))
+
+
+class LaunchSpotValueTest(unittest.TestCase):
+    """At launch every pool is 25%: a trainer seat is 4% of all emissions and a crown 5%."""
+
+    def config(self):
+        return json.loads((DATA / "base-pools-launch.json").read_text())
+
+    def test_a_lone_mini_seat_is_four_percent_of_emissions(self):
+        seat = soup_round.seat_weights(("x",), {"x": 1.0}, {"x": soup_round.TRAINER_RATE})["x"]
+        weights, record = model_pools.weights(
+            self.config(), {"d3-mini": decision([("c", seat)])}, MEMBERS, block=0
+        )
+        self.assertAlmostEqual(weights[3], 0.04)
+        self.assertAlmostEqual(weights[0], 0.96)  # lite unearned, flash and z3 closed
+
+    def test_a_crown_is_five_percent_of_emissions(self):
+        crown = {"hotkey": "c", "body_sha256": "f" * 64, "rate": 1.0}
+        crown["weight"] = soup_round.CROWN_SHARE * crown["rate"]
+        weights, _ = model_pools.weights(
+            self.config(), {"d3-mini": decision([], crown=crown)}, MEMBERS, block=0
+        )
+        self.assertAlmostEqual(weights[3], 0.05)
 
 
 class BodyCommitmentTest(unittest.TestCase):

@@ -8,7 +8,7 @@ local workflow, not a hosted customer service or a published model release.
 This page describes the local bundle workflow, where one fleet configuration
 pins one job. For a shared pool that claims different customer jobs without
 regenerating bundles, use the [Supabase training queue](https://github.com/ooo-hq/zils-platform/blob/main/docs/supabase-training.md).
-It adds private uploads and approved-miner assignments. A testnet validator can
+It adds private uploads and approved-miner assignments. A fleet validator can
 pay the adapter track from that queue's delivered customer jobs
 (`adapter_evidence`, merged and off by default; see
 [validators §7](validators.md#7-pay-the-adapter-track-from-hosted-queue-work)). The existing synthetic fleet remains supported.
@@ -25,7 +25,7 @@ confidential compute, legal authorization, or isolation from miner operators.
 **Outside miners (policy decided 18 October 2026, not yet in effect).** Zils is
 a Bittensor subnet. The [miner terms](mining-terms.md) were published on
 18 October 2026; once queue admission [opens](miner-admission.md) (built, off), a job's training split goes to the miner
-pool: any hotkey registered on subnet 579 and qualified for the base, whether or
+pool: any hotkey registered on subnet 127 and qualified for the base, whether or
 not Zils runs it. There is no per-job opt-out; authorizing training-data export
 when creating the job is the customer's consent, and the terms bind every miner
 in the pool to that one job: no retention, no redistribution, no training other
@@ -101,7 +101,7 @@ distribute it only to approved operators. The job freezes the selected model;
 the fleet rejects a mismatched reference. Legacy Kev jobs retain their
 original reference and recipe. No automatic model
 download, training, or chain transaction is triggered by building the job manifest.
-Fleet initialization requires the downloaded reference. Testnet fleets still
+Fleet initialization requires the downloaded reference. Chain fleets still
 use the existing explicit roster and publication flags.
 
 ## Inspect the result

@@ -13,15 +13,15 @@
 Miners train candidate models. Validators verify their artifacts, calibrate
 probabilities, evaluate held-out examples, and compute miner scores. This
 repository contains those workers, their shared model and protocol contracts,
-and the guarded Bittensor testnet integration.
+and the Bittensor subnet integration (mainnet subnet 127).
 
 ## Start here
 
 | Role | Guide |
 | --- | --- |
 | Run a d3 queue miner on NVIDIA hardware | [Queued miners](docs/queue-miners.md) |
-| Compete in the base tier on testnet subnet 579 | [Registration](docs/bittensor-registration.md), then [base tier from outside](docs/mining.md#compete-in-the-base-tier-from-outside) |
-| Join a closed Bittensor testnet fleet | [Registration](docs/bittensor-registration.md), then [miner setup](docs/mining.md) |
+| Compete in the base tier on mainnet subnet 127 | [Registration](docs/bittensor-registration.md), then [base tier from outside](docs/mining.md#compete-in-the-base-tier-from-outside) |
+| Join a closed Bittensor fleet | [Registration](docs/bittensor-registration.md), then [miner setup](docs/mining.md) |
 | Run a validator | [Validator setup](docs/validators.md) |
 | Develop or evaluate the subnet | [Local development](docs/development.md), [evaluation contract](docs/evaluation.md) |
 
@@ -32,22 +32,24 @@ readable, but nothing creates, trains, evaluates or serves them. Kev 0.8B jobs r
 Each fleet pins one job and model. Text and image scores are not combined into one
 reward vector.
 
-Two tracks pay from one testnet weight vector. In the **base tier**, a miner
-registered on testnet subnet 579 uploads a full-weight d3 candidate to Hugging Face
-and commits it on chain with `zils commit-candidate`; registration is the admission.
-Start with `curl -fsSL https://zils.ai/install.sh | sh`, then `zils doctor` names each next step. Only kings are paid: the last five distinct registered miners
+Two tracks pay from one weight vector on Bittensor mainnet subnet 127. In the **base tier**, a miner
+registered on subnet 127 uploads a full-weight d3 candidate to Hugging Face
+and commits it on chain with `zils-miner commit-candidate`; registration is the admission.
+Start with `curl -fsSL https://zils.ai/install.sh | sh`, then `zils-miner doctor` names each next step. Only kings are paid: the last five distinct registered miners
 whose candidates were promoted split the base share, and an unearned share is
 burned ([base candidates](docs/base-candidates.md),
-[two-track payment](docs/mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first)).
+[two-track payment](docs/mining.md#two-tracks-on-the-subnet-the-base-tier-pays-first)).
 **Adapter rounds** pay the rest. The hosted customer queue still requires operator
 admission and does not publish chain weights; its chain-derived admission is
-built but off. Mainnet participation is not implemented.
+built but off. Mainnet subnet 127 has been live since 3 November 2026. `zils-miner`
+never assumes mainnet: run `zils-miner setup --network finney --netuid 127` once and
+later chain commands use what it saved.
 
 ## Repository scope
 
 | Repository | Owns |
 | --- | --- |
-| **zils** — this repository | Miners, validators, training, evaluation, model integrity, signed protocols, testnet weights |
+| **zils** — this repository | Miners, validators, training, evaluation, model integrity, signed protocols, chain weights |
 | [zils-platform](https://github.com/ooo-hq/zils-platform) | Hosted APIs, account/billing logic, storage, database migrations, queue orchestration, serving |
 | [zils-sdk](https://github.com/ooo-hq/zils-sdk) | Python/TypeScript clients, CLI, MCP |
 | [zils-web](https://github.com/ooo-hq/zils-web) | Website, playground, customer dashboard |
@@ -72,7 +74,7 @@ export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
 d3 requires CUDA. The miner uses
 outbound HTTPS and receives only approved training data and signed upload URLs.
 Keep calibration/test data and operator service credentials off miner accounts.
-For the separate testnet fleet, run `./start-miner --rounds 1` from its assigned
+For the separate closed fleet, run `./start-miner --rounds 1` from its assigned
 bundle after completing the [fleet guide](docs/mining.md).
 
 ## Validator setup
@@ -97,7 +99,7 @@ code. Its deployment and database access are separate from miner installation.
 
 ### Repository setup
 
-For the Kev local/testnet fleet, install Git, Python 3.13, and `uv` on macOS,
+For the Kev local/closed fleet, install Git, Python 3.13, and `uv` on macOS,
 Linux, or WSL 2:
 
 ```sh
@@ -121,7 +123,7 @@ Install the [development dependencies](docs/development.md), then run:
 make check
 ```
 
-Checks exercise workers, signed submissions, evaluation, and testnet behavior
+Checks exercise workers, signed submissions, evaluation, and chain behavior
 with local fixtures. They need no live chain or hosted account. Optional GPU
 checks are explicitly gated. Node.js and hosted database services are not
 needed for this repository's checks.

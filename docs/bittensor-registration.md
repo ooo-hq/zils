@@ -2,10 +2,11 @@
 
 This guide joins an existing subnet; a miner does not create a subnet.
 
-Zils runs on Bittensor **testnet subnet 579**; the fleet rejects mainnet.
+Zils runs on Bittensor **mainnet subnet 127** (network `finney`). Mainnet is never
+a default: every Zils chain command names the network and netuid explicitly.
 Registration serves two paths:
 
-- **Base tier (open).** Registration on 579 is the admission: register, then
+- **Base tier (open).** Registration on 127 is the admission: register, then
   [compete from outside](mining.md#compete-in-the-base-tier-from-outside) by
   committing a d3-mini candidate on chain. No operator approval is needed.
 - **Closed, model-pinned fleets.** The operator selects a d3-mini 4.5B text job
@@ -34,22 +35,22 @@ python3.13 -m venv .venv-btcli
 .venv-btcli/bin/btcli --version
 ```
 
-The version must be `11.1.0`, matching Zils' testnet SDK. The Typer pin keeps this
+The version must be `11.1.0`, matching Zils' chain SDK. The Typer pin keeps this
 CLI's help and exit handling compatible. Bittensor v11 includes `btcli`; these
 commands use its [v11 CLI flags](https://www.bittensor.com/docs/cli).
 
 Set these values in the terminal you will use for the following steps:
 
 ```bash
-export ZILS_NETUID=579
-export ZILS_WALLET=zils-testnet-miner
+export ZILS_NETUID=127
+export ZILS_WALLET=zils-miner
 export ZILS_HOTKEY=miner-1
 export ZILS_WALLET_PATH="$HOME/.bittensor/wallets"
 ```
 
-579 is the Zils testnet subnet; for a closed fleet on another subnet, use the
-operator's numeric subnet ID (1–4095) instead. The wallet
-and hotkey names above are examples for a new, dedicated testnet identity.
+127 is the Zils subnet on mainnet; for a closed fleet on another subnet or on
+testnet, use the operator's network and numeric subnet ID (1–4095) instead. The wallet
+and hotkey names above are examples for a new, dedicated identity.
 If you already have an identity, use its names and wallet directory instead.
 
 ## 2. Create and fund the identity
@@ -57,7 +58,7 @@ If you already have an identity, use its names and wallet directory instead.
 For a **new** identity, create an encrypted coldkey and a separate hotkey:
 
 ```bash
-.venv-btcli/bin/btcli --network test \
+.venv-btcli/bin/btcli --network finney \
   --wallet "$ZILS_WALLET" --wallet-hotkey "$ZILS_HOTKEY" \
   --wallet-path "$ZILS_WALLET_PATH" wallet create
 .venv-btcli/bin/btcli --wallet-path "$ZILS_WALLET_PATH" wallet list
@@ -67,13 +68,13 @@ Record the recovery phrases privately when prompted. Skip creation when reusing
 an existing wallet; do not overwrite its keys. Keep the coldkey on the trusted
 administration workstation. Mining and weight signing use the hotkey.
 
-Ask the testnet operator for test TAO funding to the **coldkey's public address**.
-For public testnet funding channels, use the community link on the
-[official Bittensor site](https://www.bittensor.com/docs/quickstart).
+Fund the **coldkey's public address** with TAO from an exchange or another wallet.
+Registration burns the subnet's current price (about τ0.0074 on 3 November 2026;
+read it with the commands below) plus the transaction fee.
 Never send a recovery phrase or private key. Check the funded balance:
 
 ```bash
-.venv-btcli/bin/btcli --network test --wallet "$ZILS_WALLET" \
+.venv-btcli/bin/btcli --network finney --wallet "$ZILS_WALLET" \
   --wallet-path "$ZILS_WALLET_PATH" wallet balance
 ```
 
@@ -82,27 +83,33 @@ Never send a recovery phrase or private key. Check the funded balance:
 Read the current subnet details, registration price, and admission settings:
 
 ```bash
-.venv-btcli/bin/btcli --network test subnets show "$ZILS_NETUID"
-.venv-btcli/bin/btcli --network test query burn --netuid "$ZILS_NETUID"
-.venv-btcli/bin/btcli --network test query subnet-hyperparameters \
+.venv-btcli/bin/btcli --network finney subnets show "$ZILS_NETUID"
+.venv-btcli/bin/btcli --network finney query burn --netuid "$ZILS_NETUID"
+.venv-btcli/bin/btcli --network finney query subnet-hyperparameters \
   --netuid "$ZILS_NETUID"
 ```
 
 Stop if the subnet is missing or registration is disabled (and, for a closed
 fleet, if the operator has not confirmed admission). The price changes with chain state; check the current
-collateral settings too. Preview the coldkey-signed transaction first:
+collateral settings too.
+
+Subnet 127 is full (256 UIDs). A registration replaces the registered hotkey with
+the lowest pruning score that is past its immunity period (5,000 blocks, about
+17 hours). Your UID can be replaced the same way once your own immunity ends and
+you have earned nothing, so commit a candidate before then; an evicted hotkey
+must register again. Preview the coldkey-signed transaction first:
 
 ```bash
-.venv-btcli/bin/btcli --network test --wallet "$ZILS_WALLET" \
+.venv-btcli/bin/btcli --network finney --wallet "$ZILS_WALLET" \
   --wallet-hotkey "$ZILS_HOTKEY" --wallet-path "$ZILS_WALLET_PATH" \
   --dry-run tx burned-register --netuid "$ZILS_NETUID"
 ```
 
-The next command **submits a testnet registration and charges test TAO** after
+The next command **submits a mainnet registration and burns TAO** after
 you confirm. Review the network, subnet, hotkey, and cost in the terminal:
 
 ```bash
-.venv-btcli/bin/btcli --network test --wallet "$ZILS_WALLET" \
+.venv-btcli/bin/btcli --network finney --wallet "$ZILS_WALLET" \
   --wallet-hotkey "$ZILS_HOTKEY" --wallet-path "$ZILS_WALLET_PATH" \
   tx burned-register --netuid "$ZILS_NETUID"
 ```
@@ -116,17 +123,17 @@ check the registration before submitting again.
 Query the registered identity and subnet membership:
 
 ```bash
-.venv-btcli/bin/btcli --network test --wallet "$ZILS_WALLET" \
+.venv-btcli/bin/btcli --network finney --wallet "$ZILS_WALLET" \
   --wallet-hotkey "$ZILS_HOTKEY" --wallet-path "$ZILS_WALLET_PATH" \
   query uid --netuid "$ZILS_NETUID"
-.venv-btcli/bin/btcli --network test query metagraph --netuid "$ZILS_NETUID"
+.venv-btcli/bin/btcli --network finney query metagraph --netuid "$ZILS_NETUID"
 ```
 
 The UID query must return an integer, not `None`/`null`. Match that UID to the
 hotkey's public SS58 address in the metagraph. Do not assume the UID is `1` or
 reuse a local queue UID.
 
-Give the validator operator the network (`test`), netuid, public hotkey address,
+Give the validator operator the network (`finney`), netuid, public hotkey address,
 and actual UID. Wallet names and paths in a fleet configuration must match the
 machine that will run that identity; they are not key material.
 

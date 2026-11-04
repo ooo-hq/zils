@@ -1,6 +1,6 @@
 # Run a fleet miner
 
-Local and Bittensor testnet fleets support **d3-mini 4.5B** text jobs
+Local and Bittensor fleets support **d3-mini 4.5B** text jobs
 (`d3-mini-4.5b-v1`, the base since 17 October 2026). Existing Kev 0.8B bundles
 remain supported; H2O Lightning 4B, ImaJev and JevK5 4B bundles are retired and no
 longer run. d3 image jobs run in the [hosted queue](queue-miners.md), where a d3
@@ -128,12 +128,12 @@ From the repository root:
 Remove `--rounds 1` for continuous rounds. The validator evaluates after every
 miner submits or the collection deadline expires. It verifies signatures and
 hashes, calibrates each candidate, and scores the separate evaluation cases.
-Local mode never writes weights to Bittensor. Testnet mode needs registered
-wallets and explicit publication; follow the [testnet guide](testnet.md).
+Local mode never writes weights to Bittensor. Chain mode needs registered
+wallets and explicit publication; follow the [chain fleet guide](testnet.md).
 
-## Two tracks on the testnet: the base tier pays first
+## Two tracks on the subnet: the base tier pays first
 
-On a testnet fleet whose validator config carries `base_pools`, miners
+On a chain fleet whose validator config carries `base_pools`, miners
 earn on two tracks, paid from one weight vector on the configured subnet:
 
 - **Base tier (primary, continuous).** Beat the pinned incumbent in your
@@ -211,27 +211,34 @@ on the sealed exam.
 ## Compete in the base tier from outside
 
 You do not need a bundle, an operator or an invitation to enter the base tier:
-registration on subnet 579 is the admission. About an afternoon end to end, most
+registration on mainnet subnet 127 is the admission. About an afternoon end to end, most
 of it the training run.
 
 You do not need any validator's address or hotkey to compete: candidates are
 chain commitments that every validator reads itself. Validators are run by
 whoever operates them; find them on the metagraph
-(`btcli subnets metagraph --netuid 579 --network test`).
+(`btcli subnets metagraph 127 --network finney`).
 
 Start with the installer on the mining host. It clones Zils into `~/.zils/zils`,
 builds the miner runtime and, on Linux x86_64 with an NVIDIA GPU, the d3 training
-runtime, links `zils` into `~/.local/bin` and starts `zils setup`, which asks for
+runtime, links `zils-miner` and `btcli` into `~/.local/bin` and starts
+`zils-miner setup`, which asks for
 your wallet, base profile, candidate folder and Hugging Face repo, saves them to
 `~/.zils/miner.json` and runs the doctor. It installs the stable release, the
-commit named in [`release/stable`](../release/stable); `zils update` moves an
+commit named in [`release/stable`](../release/stable); `zils-miner update` moves an
 install to a newer one, and the doctor warns when yours is behind.
+
+The miner command is `zils-miner`. The `zils` command belongs to the customer CLI
+(`npm install -g @zils/cli`: sign-in, decisions, training); from version 0.4.8 it
+also runs miner commands, so `zils doctor` and `zils-miner doctor` do the same
+thing. Installs from before `zils-miner` linked the miner as `zils`; the
+installer (and `zils-miner update`) removes that old link.
 
 ```bash
 curl -fsSL https://zils.ai/install.sh | sh
 ```
 
-Every tier has a base to beat. `zils setup` lists the installed d3 profiles:
+Every tier has a base to beat. `zils-miner setup` lists the installed d3 profiles:
 lite, nano, mini, flash and d3, including registered promoted profiles. Choose
 the exact incumbent profile accepted by your validator. A listed profile does
 not mean that its competition is enabled or funded; see [model pools](model-pools.md).
@@ -240,8 +247,8 @@ not mean that its competition is enabled or funded; see [model pools](model-pool
 accepts the stock lite profile:
 
 ```bash
-zils setup --model d3-lite-0.8b-v1
-zils doctor --model d3-lite-0.8b-v1
+zils-miner setup --model d3-lite-0.8b-v1
+zils-miner doctor --model d3-lite-0.8b-v1
 ```
 
 The doctor prints a reference download command with that exact `--model` and
@@ -250,9 +257,12 @@ metadata. Existing candidates supply their profile when no selection is saved;
 without a candidate or selection, the CLI asks you to choose instead of assuming
 mini. A candidate for a different tier or parent profile is rejected before upload.
 
-From then on `zils doctor` names the next step and prints its command; the steps are:
+From then on `zils-miner doctor` names the next step and prints its command. Run
+`zils-miner setup --network finney --netuid 127` once: the CLI never assumes mainnet, but
+it saves the chain you named and every later chain command (`doctor`, `check`,
+`commit-candidate`, `commit-body`) uses it unless you pass `--network` again. The steps are:
 
-1. **Register a hotkey on testnet subnet 579** following the
+1. **Register a hotkey on mainnet subnet 127** following the
    [registration guide](bittensor-registration.md); keep the hotkey file on the
    mining host and the coldkey elsewhere.
 2. **Read the [miner terms](mining-terms.md).** Running a miner against a Zils
@@ -264,15 +274,15 @@ From then on `zils doctor` names the next step and prints its command; the steps
    passes the candidate contract; the exam is realistic decisions in families you
    have not seen, so what you train on decides everything.
 4. **Upload and commit.** Log in to Hugging Face once (`hf auth login`, a write
-   token), then let `zils commit-candidate` upload the candidate files to
+   token), then let `zils-miner commit-candidate` upload the candidate files to
    your public model repo and commit `zils1:<hash>:<revision>:<repo>` on chain
    with your hotkey (details in [base candidates: commit](base-candidates.md#commit)):
 
    ```bash
-   zils commit-candidate
+   zils-miner commit-candidate
    ```
 
-   It reads the wallet, base profile, candidate and repo saved by `zils setup`;
+   It reads the wallet, base profile, candidate and repo saved by `zils-miner setup`;
    flags such as `--model`, `--candidate` or `--repo` override them for one run.
    Upload and remote verification use the selected candidate's pinned file list,
    including the correct number of weight shards for its tier.
@@ -288,14 +298,14 @@ From then on `zils doctor` names the next step and prints its command; the steps
    failing one with the exact command that fixes it:
 
    ```bash
-   zils doctor
+   zils-miner doctor
    ```
 
    You can run it before step 1 (it tells you to create the wallet), before
    step 3 (it prints the merge recipe), before step 4 (it prints the commit
    command) and again after each fix.
 6. **Read the result.** Your payout is on chain: the validators' weights and your
-   incentive (`btcli subnets metagraph --netuid 579 --network test`). The
+   incentive (`btcli subnets metagraph 127 --network finney`). The
    aggregate row per round (Brier and accuracy against the incumbent, eligibility,
    the pending and confirmed winner) is in each validator's signed round result on
    its own API (`GET /results/<round>`), not on chain. Per-case results are never returned. An ineligible or
@@ -316,7 +326,9 @@ fifth model lowered the score. Treat the numbers in this section as launch polic
 that may change, not as measured results.
 
 Instead of one winner, each round builds the best **soup**: a uniform average of
-up to five bodies submitted by different miners. You earn by holding a seat in
+up to five bodies submitted by different miners. The average covers the language
+weights; the soup keeps the release's vision tower unchanged, since no exam grades
+images yet. A body still includes a vision tower (any one; usually its parent's). You earn by holding a seat in
 the round's soup, or by submitting the round's best single body.
 
 ### Four pools
@@ -340,9 +352,7 @@ longer than a pool's input cap are left out of that pool's rounds.
 
 Lite and mini run rounds from the start. Flash and z3 open later, each at a
 block fixed in the validator configuration. A pool pays nothing before it opens
-(its share burns), and it may pay a temporary **boosted share** for its first
-weeks that steps down to its long-run share; see
-[the emission schedule](model-pools.md#emission-schedule). Bodies committed to a
+(its share burns); see [the emission schedule](model-pools.md#emission-schedule). Bodies committed to a
 pool before it opens are admitted at its first round.
 
 ### What a body is
@@ -375,6 +385,21 @@ part of a submission. A body is eligible when:
 
 ### Commit a body
 
+A body must be the **full** Qwen3.5 model: the language weights under
+`language_model.` and the vision tower under `visual.` (an optional leading
+`model.` is fine). Many public fine-tunes, including most listed cousins, are
+text-only exports (`model.layers.*`, `model.embed_tokens.*`): to submit one,
+add the vision tower of the pool's Qwen parent, unchanged. Its language layers
+still match the listed model, so a re-upload pays the scout rate (see
+[Model pools](model-pools.md)). `zils merge` keeps the first model's layout, so a
+merge that starts from a full checkpoint (the pool's release or its Qwen parent)
+already has a vision tower; a mix of listed models also pays the scout rate.
+Check any folder first, with no wallet or repo needed:
+
+```bash
+zils-miner commit-body --pool <pool> --path ./my-body --check
+```
+
 Register a hotkey as in [the base tier](#compete-in-the-base-tier-from-outside) and
 install with `curl -fsSL https://zils.ai/install.sh | sh`. Then:
 
@@ -387,7 +412,7 @@ install with `curl -fsSL https://zils.ai/install.sh | sh`. Then:
    that is still private then fails):
 
    ```bash
-   zils commit-body --pool <pool> --repo <you>/<body-repo> --path ./my-body --write-owner
+   zils-miner commit-body --pool <pool> --repo <you>/<body-repo> --path ./my-body --write-owner
    ```
 
    `--pool` is `d3-lite`, `d3-mini` (the default), `d3-flash` or `d3` (z3).
@@ -408,8 +433,8 @@ install with `curl -fsSL https://zils.ai/install.sh | sh`. Then:
    commitment with your hotkey and reads it back:
 
    ```bash
-   zils commit-body --pool <pool> --repo <you>/<body-repo> --revision <upload commit> --path ./my-body
-   zils commit-body --pool <pool> --repo <you>/<body-repo> --revision <upload commit> --path ./my-body --yes
+   zils-miner commit-body --pool <pool> --repo <you>/<body-repo> --revision <upload commit> --path ./my-body
+   zils-miner commit-body --pool <pool> --repo <you>/<body-repo> --revision <upload commit> --path ./my-body --yes
    ```
 
    Without `--path` the command downloads the body at the revision instead. It
@@ -456,7 +481,7 @@ Validators run one soup round per day for each open soup pool:
 5. **Solo:** each pool body is graded alone on the chassis. Every score from here
    on (solo, greedy, contribution, crown) is on the items of this round and the
    validator's last two finished rounds pooled together (`decision_rounds`, default
-   3), because one subset's noise is larger than the 0.3-point margin. A new body is
+   3), because one subset's noise is larger than the greedy margin. A new body is
    graded on the earlier rounds' items too. Under the default `calibrated_brier`
    scoring, each body and soup first gets one temperature fitted on a private 20%
    of those items; the rest are scored on Brier skill (ranked probability score
@@ -464,26 +489,27 @@ Validators run one soup round per day for each open soup pool:
    softening a body's probabilities without changing its answers earns nothing
    ([model pools: scoring](model-pools.md#soup-pools)).
 6. **Greedy soup:** starting from the best single body, add the next best only if
-   the soup's score rises by at least **0.3** points; stop at **5** members.
+   the soup's score rises by at least **0.5** points; stop at **5** members.
 7. **Contribution:** each member's leave-one-out effect on the soup's score.
 
 ### Pay
 
-The pool's emission share splits **80% to soup seats and 20% to the best single
-body** (the crown). Seats are re-earned every round; a displaced member stops
-earning at once.
+Each pool's emission share pays **five seats of 16% each** (80% in all) and
+**20% to the best single body** (the crown). A seat's value is fixed: it does not
+grow when fewer members are seated. Seats are re-earned every round; a displaced
+member stops earning at once.
 
-- **Seats:** members whose contribution is at least **0.3** points share the 80%
-  equally, each share multiplied by its rate. If no member clears the floor, the
-  seat share burns.
+- **Seats:** each member whose contribution is at least **0.8** points earns one
+  seat, 16% of the pool's share multiplied by its rate. Empty seats, house seats
+  and seats below the floor burn.
 - **Fine-tunes (launch rule):** if at least half of your body's change comes from
   house ingredients, the soup or the release, your seat is paid only if your
-  body alone beats the best of those bases by at least **0.3** points. If part
+  body alone beats the best of those bases by at least **1.2** points. If part
   of it (10% or more) comes from a listed public model, it is paid at the scout
   rate. Train enough to beat what you started from.
 - **Crown:** the round's best single body that is not a house ingredient takes the
   20%, multiplied by its rate, only if it beats every house ingredient alone and
-  the current soup by at least **0.3** points on the pooled items; otherwise the
+  the current soup by at least **1.2** points on the pooled items; otherwise the
   crown burns. Since a soup usually beats its members, expect the crown to burn in
   most rounds; it pays for a body that is better than the soup by itself.
 - **Rates:** **1.0** for a trainer's body; **0.25** for a scout's body, an
@@ -498,7 +524,8 @@ earning at once.
 
 Each pool has its own house ingredients, the open decision models of its size
 already public at launch, listed in `zils/data/`: `soup-house.json` (mini),
-`soup-house-lite.json` (`vllm-sr/d3-lite` and `internlm/Intern-Decision-0.8B`),
+`soup-house-lite.json` (`vllm-sr/d3-lite`, `internlm/Intern-Decision-0.8B`,
+`Maincode/Matilda-Decision-v1-Edge` and `zils-ai/jiwo-0.8b-full`),
 `soup-house-flash.json` (`vllm-sr/d3-flash`) and `soup-house-z3.json`
 (`vllm-sr/d3-ultra`).
 
@@ -513,16 +540,34 @@ it. The first near re-upload of each listed model wins; another hotkey's later
 near re-upload of the same model is refused while the first stays in the pool,
 and a near-copy of any other hotkey's earlier body is refused as before.
 
+**Scouting.** The known-public list is not the limit of what a scout can
+commit. Any open fine-tune of the pool's Qwen parent that passes the eligibility
+checks above can be committed by the first hotkey to find it, listed or not. The
+list only names the public models validators already know about, and those pay
+0.25. A find that is not on the list, and whose weight change is far from every
+listed model (sketch cosine under 0.9), pays the trainer rate even though you did
+not train it: the pool cannot tell a find from a fine-tune and does not need to,
+because every body earns its seat the same way, by making the soup better on the
+round's items. If the find is itself a fine-tune of a house ingredient, the soup
+or the release, its seat pays only if it beats that base by 1.2 points, like any
+other fine-tune. Hunting Hugging Face for strong open decision models of the
+pool's size, adding the Qwen vision tower when the export is text-only, and
+committing them first is real work the pool pays for. Check a candidate before
+you upload it:
+
+```bash
+zils-miner commit-body --pool <pool> --path ./found-body --check
+```
+
 Every unearned part burns to the subnet owner's uid, as in the base tier. Until
 miners submit new bodies, most of the pool's share burns.
 
 **Pool shares.** The launch configuration (`zils/data/base-pools-launch.json`)
-gives the base emission to lite 35%, mini 30%, flash 20% and z3 10%; the other 5%
-is unassigned and burns. Flash and z3 burn their shares until their opening
-blocks. The launch configuration boosts flash to 30% for its first two weeks and
-25% for the next two, and z3 to 15% for its first two weeks; a boost is paid out
-of budget that would otherwise burn and never reduces another pool's share. The
-exact blocks are in each validator's configuration and its published report.
+gives each of lite, mini, flash and z3 25% of the base emission. With the base
+tier at the whole budget, a trainer's seat is 4% of all emissions and a crown 5%;
+a pool has five seats and one crown, so the four pools have 24 paid spots.
+Flash and z3 burn their shares until their opening blocks, which are in each
+validator's configuration and its published report.
 
 ### What validators publish
 
@@ -544,9 +589,12 @@ pass the 12-hour confirmation draw and the pinned three-seed adapter suite (the
 [release gate](base-election.md)); the owner's promotion PR then makes it the next
 z3 version. Members are paid through seats, not as kings.
 
-The margin (0.3), floor (0.3), member cap (5), pool size (20), change bound (0.15),
-80/20 split, rates (1.0 / 0.25 / 0) and release cadence are policy choices made
-for the launch, not tuned results.
+The member cap (5), pool size (20), change bound (0.15), 80/20 split, rates
+(1.0 / 0.25 / 0) and release cadence are policy choices made for the launch, not
+tuned results. The greedy margin (0.5), seat floor (0.8) and the crown and
+fine-tune bars (1.2) are about 2.5 standard errors of the differences they test,
+measured by resampling the items of a 3,000-item dry run and scaled to the pooled
+three-round window; a smaller real gain is not paid until the pool has more items.
 
 ## Results and restarts
 

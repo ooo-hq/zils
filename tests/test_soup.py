@@ -119,6 +119,15 @@ class SoupTest(unittest.TestCase):
             ),
         )
 
+    def test_the_vision_tower_is_the_chassis_tower(self):
+        shutil.rmtree(self.chassis)
+        self.chassis = chassis(self.root / "chassis", {"a": t(0), "visual.b": t(5)})
+        one = body(self.root / "one", {"a": t(1), "visual.b": t(1)})
+        two = body(self.root / "two", {"a": t(3), "visual.b": t(3)})
+        self.assertEqual(
+            read(self.build((one, None), (two, None))), {"a": [2.0, 2.0], "visual.b": [5.0, 5.0]}
+        )
+
     def test_single_body_build_equals_that_body(self):
         one = body(self.root / "one", {"a": t(1.5), "b": t(-2), "c": t(7)})
         out = self.build((one, None))

@@ -20,7 +20,9 @@ import hashlib
 import importlib
 import json
 import os
+import platform
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -50,6 +52,37 @@ def paint(code, text):
     if not os.isatty(1) or os.environ.get("NO_COLOR"):
         return text
     return f"\033[{code}m{text}\033[0m"
+
+
+# The Zils wordmark, as the customer CLI shows it (zils-sdk fit_guide.LOGO); kept in sync by hand.
+LOGO = """\
+                   ▄███  ▄▄▄▄▄
+  ████████████▀ ▄█ ▀██▀  ▀████
+  ███    ████▀ ██         ████
+  ▀▀    ████ ▄██  ▄███▄   ████   ▄▄██████▄
+  ▄▄▄▄▄███▀ ▄██▄▄  ████   ████  ███▀ ▀▀██
+  ███████▀ ██▀▀▀▀  ████   ████  ████▄▄
+    ████ ▄██       ████   ████   ▀██████▄
+   ████ ▄█▀    ██  ████   ████  ▄▄  ▀█████
+  ███▀ ███    ▄██  ████   ████  ██▄   ████
+  ██▀ ███████████  ▀████  █████ ████████▀"""
+SPECTRUM = (
+    "38;5;209",
+    "38;5;216",
+    "38;5;211",
+    "38;5;183",
+    "38;5;111",
+)  # orange to periwinkle, 256-colour
+
+
+def wordmark():
+    """The wordmark in brand purple over a spectrum rule, as `zils` and `zils fit` open."""
+    print()
+    for line in LOGO.splitlines():
+        print(paint("38;5;105", line))
+    rule = 42
+    print("  " + "".join(paint(SPECTRUM[i * len(SPECTRUM) // rule], "─") for i in range(rule)))
+    print(flush=True)
 
 
 def config_path():
@@ -95,7 +128,7 @@ def behind_release():
     if current != stable:
         return (
             f"this install is at {(current or 'an unknown commit')[:12]}, the stable release is"
-            f" {stable[:12]}; run zils update"
+            f" {stable[:12]}; run zils-miner update"
         )
 
 
@@ -143,7 +176,7 @@ def selected_model(model, candidate=None):
     if model is None and candidate:
         model = models.checkpoint_model(Path(candidate).expanduser())
     if model not in models.d3_family():
-        raise ValueError("choose a base profile with zils setup or --model (see --help)")
+        raise ValueError("choose a base profile with zils-miner setup or --model (see --help)")
     return model
 
 
@@ -197,7 +230,7 @@ def wallet(args):
 
 def commit_command(args, revision=None):
     command = [
-        "zils commit-candidate",
+        "zils-miner commit-candidate",
         f"--model {args.model}",
         f"--wallet-name {args.wallet_name} --wallet-hotkey {args.wallet_hotkey}"
         f" --wallet-path {args.wallet_path}",
@@ -318,7 +351,7 @@ def body_references(args):
 def owner_missing(repo, hotkey):
     return ValueError(
         f"the body has no zils-owner.json. Write one naming hotkey {hotkey} with"
-        f" `zils commit-body --repo {repo} --path <local body folder> --write-owner`, upload it"
+        f" `zils-miner commit-body --repo {repo} --path <local body folder> --write-owner`, upload it"
         " to the repo, then commit the new revision"
     )
 
@@ -359,9 +392,39 @@ def check_remote_body(repo, revision, folder):
                     raise ValueError(f"{name} on Hugging Face differs from the local body")
 
 
+def check_body(args):
+    """`commit-body --check`: the local body checks on a folder, with no wallet, repo or owner file."""
+    if args.yes or args.write_owner:
+        raise ValueError("--check only reads the folder; run it without --yes and --write-owner")
+    if not args.path:
+        raise ValueError("--check needs --path, the local body folder to check")
+    folder = Path(args.path).expanduser()
+    if not folder.is_dir():
+        raise ValueError(
+            f"{folder} is not a folder; pass the body folder (for example zils merge --out)"
+        )
+    folder = folder.resolve()
+    pool = body_pool(args)
+    chassis, base = body_references(args)
+    sha256 = bodies.validate_body(
+        folder, chassis, hotkey=None, base=base, trusted=True, max_bytes=bodies.max_bytes(pool)
+    )
+    print(
+        f"body {sha256} passes the local checks for pool {pool}. Next, name your hotkey in it,"
+        " upload it and commit that revision:\n"
+        f"  zils-miner commit-body --pool {pool} --repo <you>/<body-repo> --path {folder} --write-owner",
+        flush=True,
+    )
+
+
 def commit_body(args):
     """Validate a soup body at an uploaded revision, print its zilsb2 commitment and, with --yes,
     write it. --write-owner only writes zils-owner.json into --path and checks the body locally."""
+    if args.repo is None:
+        raise ValueError(
+            "commit-body needs --repo, your public Hugging Face model repo"
+            " (or --check --path <folder> to only check a body)"
+        )
     if args.write_owner and args.yes:
         raise ValueError("--write-owner writes a file to upload first; commit after the upload")
     if args.write_owner and not args.path:
@@ -394,7 +457,7 @@ def commit_body(args):
         print(
             f"body {sha256} passes the local checks. Upload the folder, then commit that"
             f" revision:\n  hf upload {args.repo} {folder} .\n"
-            f"  zils commit-body --pool {pool} --repo {args.repo} --revision <the new commit>"
+            f"  zils-miner commit-body --pool {pool} --repo {args.repo} --revision <the new commit>"
             f" --path {folder}",
             flush=True,
         )
@@ -534,7 +597,7 @@ def serve(args, interval=600.0):
     if announced != endpoint:
         raise ValueError(
             f"the chain shows axon {announced or 'none'} for {hotkey}, not {endpoint}; run"
-            f" zils announce-serving --public-ip {args.public_ip} --port {args.port} --yes first"
+            f" zils-miner announce-serving --public-ip {args.public_ip} --port {args.port} --yes first"
         )
     if args.runtime:
         from . import serving_runtime
@@ -561,11 +624,11 @@ def serve(args, interval=600.0):
         stop.wait()
         server.shutdown()
         raise RuntimeError(
-            f"the adapter runtime's identity changed ({loaded[0].changed}); restart zils serve"
+            f"the adapter runtime's identity changed ({loaded[0].changed}); restart zils-miner serve"
         )
     loaded[0].worker.exited.wait()
     server.shutdown()
-    raise RuntimeError("the inference worker exited; restart zils serve")
+    raise RuntimeError("the inference worker exited; restart zils-miner serve")
 
 
 def doctor(args):
@@ -596,10 +659,7 @@ def doctor(args):
     def d3_runtime():
         python = d3_python()
         if not python.exists():
-            return (
-                f"no d3 training runtime at {python}; it needs Linux x86_64 with an NVIDIA GPU."
-                f" On that host rerun the installer\n  {INSTALL}"
-            )
+            return missing_runtime(python)
         check = (
             "import sys, torch; from zils import d3; d3.verify_runtime(sys.argv[1]);"
             " assert torch.cuda.is_available() and torch.cuda.is_bf16_supported(),"
@@ -651,8 +711,8 @@ def doctor(args):
                 f" --out {adapter} --seed 553 --device cuda\n"
                 f"  {d3} candidate --adapter {adapter} --out {merged}"
                 f" > {args.model}-provenance.json\n"
-                "then run zils setup again, or\n"
-                f"  zils doctor --model {args.model} --candidate {merged}"
+                "then run zils-miner setup again, or\n"
+                f"  zils-miner doctor --model {args.model} --candidate {merged}"
             )
         try:
             state["path"], state["sha256"] = local_candidate(args.candidate, args.model)
@@ -663,7 +723,7 @@ def doctor(args):
         if args.repo is None:
             return (
                 "no --repo; pick a public model repo id under your Hugging Face account"
-                " (commit-candidate creates the repo) and run zils setup again"
+                " (commit-candidate creates the repo) and run zils-miner setup again"
             )
         if args.revision is None:
             from huggingface_hub import get_token
@@ -723,6 +783,115 @@ def doctor(args):
     return True
 
 
+KEYS = {"\x1b[A": "up", "\x1b[B": "down", "\r": "enter", "\n": "enter", "\x03": "ctrl-c"}
+
+
+def menu_key(index, key, count, closed=()):
+    """(new index, chosen) after one key: arrows or j/k move and wrap, a number jumps, Enter chooses.
+    Indexes in `closed` are skipped."""
+    if key == "ctrl-c":
+        raise KeyboardInterrupt
+    step = {"up": -1, "k": -1, "down": 1, "j": 1}.get(key)
+    if step:
+        moved = (index + step) % count
+        while moved in closed and moved != index:
+            moved = (moved + step) % count
+        return moved, False
+    if key.isdigit() and 1 <= int(key) <= count and int(key) - 1 not in closed:
+        return int(key) - 1, False
+    return index, key == "enter"
+
+
+def read_key():
+    """One key from a raw terminal, with arrow escape sequences read whole."""
+    import termios
+    import tty
+
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        key = os.read(fd, 1).decode(errors="ignore")
+        if key == "\x1b":
+            key += os.read(fd, 2).decode(errors="ignore")
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+    return KEYS.get(key, key)
+
+
+def choose(question, options, default=None, closed=()):
+    """Pick one of `options` ([(value, label)]): an arrow-key menu on a terminal, else a numbered prompt.
+    Values in `closed` are listed as opening later but can't be picked."""
+    values = [value for value, _ in options]
+    shut = {i for i, value in enumerate(values) if value in closed}
+    labels = [
+        f"{label} (opens later)" if i in shut else label for i, (_, label) in enumerate(options)
+    ]
+    index = values.index(default) if default in values else 0
+    if index in shut:
+        index = next(i for i in range(len(values)) if i not in shut)
+    if not (sys.stdin.isatty() and os.isatty(1)) or os.name == "nt":
+        for n, label in enumerate(labels, 1):
+            print(f"  {n}. {label}")
+        while True:
+            answer = ask(question, values[index])
+            if answer.isdigit() and 1 <= int(answer) <= len(options):
+                answer = values[int(answer) - 1]
+            if answer in closed:
+                print(f"  {answer} opens later; pick another")
+            elif answer in values:
+                return answer
+            else:
+                print(f"  pick 1 to {len(options)}, or type a name from the list")
+    print(f"{paint('36', '?')} {question} {paint('2', '(↑/↓ and Enter)')}")
+    chosen = False
+    while True:
+        for i, label in enumerate(labels):
+            if i == index:
+                line = f"{paint('36', '❯')} {paint('1', label)}"
+            else:
+                line = f"  {paint('2', label) if i in shut else label}"
+            print(f"\x1b[2K  {line}")
+        if chosen:
+            break
+        index, chosen = menu_key(index, read_key(), len(options), shut)
+        print(f"\x1b[{len(options)}F", end="")
+    print(
+        f"\x1b[{len(options) + 1}F\x1b[J{paint('36', '?')} {question}: {paint('1', options[index][1])}"
+    )
+    return values[index]
+
+
+def setup_profiles():
+    """([(model, label)], closed models) for setup's menu: d3 profiles in the launch pools, in their
+    order; a pool with an opening block (set or not) is shown as opening later."""
+    data = Path(zils.__file__).with_name("data") / "base-pools-launch.json"
+    pools = json.loads(data.read_text())["pools"]
+    order = list(pools)
+    found = [(models.pool_id(m), m) for m in models.d3_family()]
+    found = sorted((order.index(pool), pool, m) for pool, m in found if pool in pools)
+    profiles = [(m, f"{pool:<9} {m}") for _, pool, m in found]
+    closed = {m for _, pool, m in found if "opens_block" in pools[pool]}
+    return profiles, closed
+
+
+def missing_runtime(python):
+    """Why doctor can't find the d3 training runtime, and what to do on this kind of machine."""
+    system, machine = platform.system(), platform.machine().lower()
+    if system != "Linux" or machine not in ("x86_64", "amd64"):
+        name = {"Darwin": "Mac", "Windows": "Windows machine"}.get(
+            system, f"{system} {machine} machine"
+        )
+        return (
+            f"This {name} can't mine: training and checking a candidate need Linux x86_64 with an"
+            f" NVIDIA GPU. Run the installer on that machine; it sets up zils-miner and starts this"
+            f" setup there:\n  {INSTALL}"
+        )
+    return (
+        f"no d3 training runtime yet at {python}; rerun the installer on this machine\n  {INSTALL}"
+    )
+
+
 def ask(question, default=None):
     hint = paint("2", f" [{default}]") if default else ""
     answer = input(f"{paint('36', '?')} {question}{hint}: ").strip()
@@ -732,6 +901,7 @@ def ask(question, default=None):
 def setup(args):
     """Ask for each saved value (Enter keeps the shown one), save them, then run doctor."""
     config = load_config()
+    wordmark()
     print(
         f"{paint('1;32', '◆ Zils miner setup')}  {paint('2', 'Enter keeps the value in brackets')}"
     )
@@ -752,14 +922,13 @@ def setup(args):
         "Candidate folder from zils.d3 candidate (Enter if not trained yet)",
         config.get("candidate"),
     )
-    print("Base profiles (availability depends on the validator):")
-    for profile in models.d3_family():
-        print(f"  {models.pool_id(profile)}: {profile}")
-    model = selected_model(
-        args.model
-        or ask("Base profile (Enter to read it from the candidate)", config.get("model")),
-        candidate,
-    )
+    if args.model:
+        model = selected_model(args.model, candidate)
+    else:
+        found = models.checkpoint_model(Path(candidate).expanduser()) if candidate else None
+        profiles, closed = setup_profiles()
+        choice = choose("Base profile", profiles, found or config.get("model"), closed)
+        model = selected_model(choice, candidate)
     repo = ask("Public Hugging Face repo for it, owner/name", config.get("repo"))
     if not name:
         raise ValueError("a wallet name is needed; create one with btcli wallet create")
@@ -772,6 +941,7 @@ def setup(args):
         config.pop("revision", None)  # a changed target must not reuse the uploaded revision
     config |= {"wallet_path": path, "wallet_name": name, "wallet_hotkey": hotkey}
     config |= {"model": model, "candidate": candidate, "repo": repo}
+    config |= {"network": args.network, "netuid": args.netuid}  # later commands default to these
     write_config(config)
     print(f"{paint('32', '✓')} saved to {config_path()}\n", flush=True)
     for key in SAVED:
@@ -780,7 +950,7 @@ def setup(args):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog="zils", description=__doc__)
+    parser = argparse.ArgumentParser(prog="zils-miner", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     start = commands.add_parser("setup", help="choose a base profile, wallet, candidate and repo")
     check = commands.add_parser("doctor", help="check the setup and print the next command")
@@ -798,7 +968,12 @@ def main(argv=None):
         f" and, with --yes, write it. Note: {SLOT_NOTE}; committing a body"
         " replaces whatever the hotkey committed before.",
     )
-    body.add_argument("--repo", required=True, help="your public Hugging Face model repo")
+    body.add_argument("--repo", help="your public Hugging Face model repo")
+    body.add_argument(
+        "--check",
+        action="store_true",
+        help="only run the local body checks on --path (no wallet, repo or owner file needed)",
+    )
     body.add_argument(
         "--revision", help="40-hex commit sha of the uploaded body (not needed with --write-owner)"
     )
@@ -849,8 +1024,7 @@ def main(argv=None):
         command.add_argument(
             "--network",
             choices=tuple(testnet.ENDPOINTS),
-            default="test",
-            help="finney is mainnet and needs an explicit --netuid",
+            help="finney is mainnet and needs an explicit --netuid; default: what setup saved, else test",
         )
         command.add_argument("--netuid", type=int)
         if command in (start, check, commit):
@@ -873,6 +1047,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if hasattr(args, "netuid"):
+            # The chain setup saved is the default; an explicit --network brings its own netuid.
+            saved = load_config()
+            if args.network is None:
+                args.network = saved.get("network") or "test"
+                if args.netuid is None:
+                    args.netuid = saved.get("netuid")
             args.netuid = resolve_netuid(args.network, args.netuid)
         if args.command == "setup":
             if not setup(args):
@@ -880,6 +1060,9 @@ def main(argv=None):
             return
         if args.command == "update":
             update()
+            return
+        if args.command == "commit-body" and args.check:
+            check_body(args)
             return
         config = load_config()
         if args.command == "commit-candidate":
@@ -891,7 +1074,7 @@ def main(argv=None):
                 setattr(args, key, config.get(key))
         args.wallet_path = args.wallet_path or WALLET_PATH
         if args.wallet_name is None or args.wallet_hotkey is None:
-            raise ValueError("no wallet configured; run zils setup (or pass --wallet-name)")
+            raise ValueError("no wallet configured; run zils-miner setup (or pass --wallet-name)")
         if args.command in ("commit-body", "announce-serving", "serve"):
             run = {"commit-body": commit_body, "announce-serving": announce_serving, "serve": serve}
             run[args.command](args)
@@ -902,12 +1085,12 @@ def main(argv=None):
                 parser.exit(1)
             return
         if args.candidate is None or args.repo is None:
-            raise ValueError("no candidate or repo configured; run zils setup")
+            raise ValueError("no candidate or repo configured; run zils-miner setup")
         commit_candidate(args)
     except KeyboardInterrupt:
         print("Zils miner stopped.", flush=True)
     except (ValueError, OSError, RuntimeError, KeyError, EOFError) as error:
-        parser.exit(1, f"zils miner: {error}\n")
+        parser.exit(1, f"zils-miner: {error}\n")
 
 
 if __name__ == "__main__":

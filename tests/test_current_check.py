@@ -1,11 +1,11 @@
-"""Zils Current proof and cross-checks: every item's outcome re-derived by a second method."""
+"""Zils Outcomes proof and cross-checks: every item's outcome re-derived by a second method."""
 
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from tests.test_current import FakeHttp, at
+from tests.test_current import FakeHttp, at, setUpModule  # noqa: F401 (setUpModule)
 from zils import current, current_check
 
 NOW = at("2026-10-31T12:00:00Z")
@@ -331,6 +331,9 @@ class NightlyGateTest(unittest.TestCase):
                     wiki_first_hours=2,
                     se_pages=0,
                     afd_first_days=0,
+                    afc_first_days=0,
+                    arxiv_first_days=0,
+                    gerrit_first_days=0,
                     crosscheck_sample=20,
                 )
             finally:
@@ -379,3 +382,19 @@ class ReexportTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LineSeparatorTest(unittest.TestCase):
+    def test_a_unicode_line_separator_inside_an_item_is_not_a_row_break(self):
+        rows = [wiki_case(100, "true"), wiki_case(300, "false")]
+        rows[0]["state"]["text"] += "one line still the same line\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "2026-11-02"
+            folder.mkdir()
+            (folder / "items.jsonl").write_text(
+                "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
+            )
+            report = current_check.run(folder, FakeHttp(history_handler), sample=100, seed=1)
+            kept = [json.loads(x) for x in (folder / "items.jsonl").read_text().split("\n") if x]
+        self.assertEqual(report["proof_rejected"], {})
+        self.assertEqual([c["id"] for c in kept], [r["id"] for r in rows])

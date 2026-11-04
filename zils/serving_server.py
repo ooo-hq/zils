@@ -28,7 +28,7 @@ DRAIN_SECONDS = 2.0
 
 def log(text):
     """Operator log on stderr: exception classes and fixed text only, never request content."""
-    print(f"zils serve: {text}", file=sys.stderr, flush=True)
+    print(f"zils-miner serve: {text}", file=sys.stderr, flush=True)
 
 
 class WorkerError(Exception):

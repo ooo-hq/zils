@@ -1,4 +1,4 @@
-"""Zils Current: real-world decisions, labelled by what actually happened.
+"""Zils Outcomes: real-world decisions, labelled by what actually happened.
 
     python -m zils.current collect --source gharchive --start 2026-10-26-15 --hours 1
     python -m zils.current collect --source wikimedia --minutes 5 [--since 2026-10-28T12:00:00Z]
@@ -22,8 +22,11 @@ from urllib.parse import urlsplit
 
 from . import (
     ROOT,
+    current_afc,
     current_afd,
+    current_arxiv,
     current_bank,
+    current_gerrit,
     current_github,
     current_items,
     current_stackexchange,
@@ -178,6 +181,9 @@ class Store:
 RESOLVERS = {
     "stackexchange-": current_stackexchange.resolve,
     "wikipedia-afd": current_stackexchange.resolve,  # collected with the outcome: label now
+    "wikipedia-afc": current_stackexchange.resolve,
+    "arxiv-": current_stackexchange.resolve,
+    "gerrit-": current_stackexchange.resolve,
     "github-": current_github.resolve,
     "wikipedia-revert": current_wikimedia.resolve,
     "wikidata-": current_wikimedia.resolve,
@@ -355,7 +361,16 @@ def _parser():
     collect = commands.add_parser("collect", help="add new events to the waiting room")
     collect.add_argument(
         "--source",
-        choices=("gharchive", "wikimedia", "recentchanges", "stackexchange", "afd"),
+        choices=(
+            "gharchive",
+            "wikimedia",
+            "recentchanges",
+            "stackexchange",
+            "afd",
+            "afc",
+            "arxiv",
+            "gerrit",
+        ),
         required=True,
     )
     _recent_options(collect)
@@ -366,7 +381,12 @@ def _parser():
         help="recentchanges: kept edits per revert",
     )
     collect.add_argument("--target-positives", type=int, help="recentchanges: reverts per wiki")
-    collect.add_argument("--day", action="append", default=[], help="AfD log day YYYY-MM-DD")
+    collect.add_argument(
+        "--day",
+        action="append",
+        default=[],
+        help="YYYY-MM-DD: AfD log day, AfC review day, arXiv submission day or Gerrit outcome day",
+    )
     collect.add_argument("--site", action="append", help="Stack Exchange site (default: all)")
     collect.add_argument(
         "--pages", type=int, default=current_stackexchange.PAGES_PER_SITE, help="per site"
@@ -430,6 +450,24 @@ def _parser():
         type=int,
         default=current_afd.FIRST_DAYS,
         help="AfD log days a first run reads (0 skips AfD)",
+    )
+    nightly.add_argument(
+        "--afc-first-days",
+        type=int,
+        default=current_afc.FIRST_DAYS,
+        help="Articles for Creation review days a first run reads (0 skips AfC)",
+    )
+    nightly.add_argument(
+        "--arxiv-first-days",
+        type=int,
+        default=current_arxiv.FIRST_DAYS,
+        help="arXiv submission days a first run reads (0 skips arXiv)",
+    )
+    nightly.add_argument(
+        "--gerrit-first-days",
+        type=int,
+        default=current_gerrit.FIRST_DAYS,
+        help="Gerrit outcome days a first run reads (0 skips Gerrit)",
     )
     nightly.add_argument("--se-site", action="append", help="Stack Exchange site (default: all)")
     nightly.add_argument(
@@ -543,6 +581,9 @@ def main(argv=None, http=None, now=None):
             wiki_samples=args.wiki_samples,
             negatives_per_positive=args.negatives_per_positive,
             afd_first_days=args.afd_first_days,
+            afc_first_days=args.afc_first_days,
+            arxiv_first_days=args.arxiv_first_days,
+            gerrit_first_days=args.gerrit_first_days,
             se_sites=args.se_site,
             se_pages=args.se_pages,
             crosscheck_sample=args.crosscheck_sample,
@@ -623,6 +664,13 @@ def main(argv=None, http=None, now=None):
         if not args.day:
             raise SystemExit("give --day")
         result = current_afd.collect(store, http, now, days=args.day)
+        print(json.dumps({"source": args.source, **result}))
+        return 0
+    elif args.source in ("afc", "arxiv", "gerrit"):
+        if not args.day:
+            raise SystemExit("give --day")
+        module = {"afc": current_afc, "arxiv": current_arxiv, "gerrit": current_gerrit}[args.source]
+        result = module.collect(store, http, now, days=args.day)
         print(json.dumps({"source": args.source, **result}))
         return 0
     elif args.source == "stackexchange":

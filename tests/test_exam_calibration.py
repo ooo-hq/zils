@@ -332,7 +332,6 @@ class PoolScoringSettingTest(unittest.TestCase):
             "model": "d3-mini-4.5b-v1",
             "enabled": True,
             "share": 0.3,
-            "house": [],
             "schedule": {"deadline_utc": "03:00"},
             **changes,
         }

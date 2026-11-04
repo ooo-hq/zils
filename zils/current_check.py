@@ -1,4 +1,4 @@
-"""Zils Current proof and cross-checks: is every item a real event with a real outcome?
+"""Zils Outcomes proof and cross-checks: is every item a real event with a real outcome?
 
     python -m zils.current crosscheck --folder BANK/2026-10-31 [--sample 100] [--threshold 0.97]
 
@@ -17,7 +17,14 @@ Two gates run on a dated export, after it is written:
      or a redirect; keep or no consensus: an article; merge or redirect: a redirect or an
      article);
    - Stack Exchange (first fetch): a second fetch of the questions, and for accepted answers the
-     answers' own `is_accepted` flag, matched to our options by their text.
+     answers' own `is_accepted` flag, matched to our options by their text;
+   - Articles for Creation (review edit summary or move log): a decline or rejection needs the
+     review edit's own text to hold a declined or rejected submission box; an acceptance needs
+     the article to exist now (or a deletion log entry after the review);
+   - arXiv (API primary category): the paper's OAI-PMH record, whose first category is the
+     primary;
+   - Gerrit (the change's `status`): the change's detail read again, merged if it has a submit
+     time, abandoned if its history holds an "Abandoned" message and no submit.
 
    A stream whose agreement is under the threshold is removed from the export.
 
@@ -41,7 +48,8 @@ SAMPLE = 100
 SPOT = 20
 WINDOW = 60  # revisions read after the edit
 REVERT_TAGS = {"mw-undo", "mw-rollback", "mw-manual-revert"}
-ID_FIELDS = ("rev_id", "question_id", "number", "title")
+ID_FIELDS = ("rev_id", "question_id", "number", "title", "arxiv_id")
+REVIEWED_BOX = re.compile(r"\{\{\s*AfC submission\s*\|\s*[dr]\s*\|", re.I)
 
 
 def proof_reason(case):
@@ -197,6 +205,84 @@ def check_afd(cases, http):
     return results
 
 
+def check_afc(cases, http):
+    """Declines: the review edit holds a declined box. Accepts: the article exists (or was deleted)."""
+    from .current_afc import _content, _revisions
+
+    declines = [c["source"]["review"]["rev_id"] for c in cases if c["label"] == "false"]
+    edits = _revisions(http, declines, "ids|content")
+    targets = sorted({c["source"]["review"]["target"] for c in cases if c["label"] == "true"})
+    pages = {}
+    from .current_afd import _get
+
+    for start in range(0, len(targets), 50):
+        status, body = _get(
+            http,
+            {"action": "query", "prop": "info", "titles": "|".join(targets[start : start + 50])},
+        )
+        for page in (body.get("query") or {}).get("pages") or [] if status == 200 else []:
+            pages[page["title"]] = page
+    results = []
+    for case in cases:
+        review = case["source"]["review"]
+        if case["label"] == "false":
+            edit = edits.get(review["rev_id"])
+            boxed = bool(edit and REVIEWED_BOX.search(_content(edit)))
+            derived = "false" if boxed else "no declined box"
+            evidence = f"review edit {review['rev_id']}: " + (
+                "declined/rejected box" if boxed else "no declined or rejected box"
+            )
+            results.append({"derived": derived, "agree": boxed, "evidence": evidence})
+            continue
+        page = pages.get(review["target"]) or {}
+        exists = bool(page) and not page.get("missing") and page.get("ns", 0) == 0
+        note = "article exists"
+        if not exists:
+            deleted = _deleted_since(http, review["target"], case["outcome_at"])
+            exists, note = bool(deleted), f"deleted {deleted}" if deleted else "no article"
+        results.append(
+            {
+                "derived": "true" if exists else "no article",
+                "agree": exists,
+                "evidence": f"{review['target']}: {note}",
+            }
+        )
+    return results
+
+
+def check_gerrit(cases, http):
+    """Read each change again: a submit time means merged, an Abandoned message abandoned."""
+    from .current_gerrit import Api, recheck
+
+    api, results = Api(http), []
+    for case in cases:
+        source = case["source"]
+        derived, evidence = recheck(api, source["host"], source["project"], source["number"])
+        results.append(
+            {"derived": derived, "agree": derived == case["label"], "evidence": evidence}
+        )
+    return results
+
+
+def check_arxiv(cases, http):
+    """Compare each label's category with the first category of the paper's OAI-PMH record."""
+    from .current_arxiv import Api, primary_from_oai
+
+    api, results = Api(http), []
+    for case in cases:
+        chosen = case["question"]["criteria"][case["label"]]
+        labelled = re.search(r"\(([^()]+)\)$", chosen).group(1)
+        primary = primary_from_oai(api, case["source"]["arxiv_id"])
+        results.append(
+            {
+                "derived": primary,
+                "agree": primary == labelled,
+                "evidence": f"OAI-PMH primary {primary}; label {labelled}",
+            }
+        )
+    return results
+
+
 def _answers(text):
     parts = re.split(r"\n\nAnswer ([A-Z]):\n", text)
     return {parts[i]: parts[i + 1].strip() for i in range(1, len(parts) - 1, 2)}
@@ -300,6 +386,15 @@ def crosscheck(cases, http, *, sample=SAMPLE, seed=0, threshold=THRESHOLD):
         elif stream == "wikipedia-afd":
             results = check_afd(chosen, http)
             method = "article exists now"
+        elif stream == "wikipedia-afc":
+            results = check_afc(chosen, http)
+            method = "review edit text or article exists now"
+        elif stream == "gerrit-merge":
+            results = check_gerrit(chosen, http)
+            method = "change history (submitted, Abandoned)"
+        elif stream.startswith("arxiv-"):
+            results = check_arxiv(chosen, http)
+            method = "OAI-PMH record categories"
         elif stream.startswith("stackexchange-"):
             results = [se_results[id(c)] for c in chosen]
             method = "second fetch of the question and its answers"
@@ -336,7 +431,7 @@ def _excerpt(text, limit=600):
 
 def spotcheck(cases, streams, seed=0):
     """A Markdown sheet: 20 random items per stream with link, excerpt, label and evidence."""
-    lines = ["# Zils Current spot check", ""]
+    lines = ["# Zils Outcomes spot check", ""]
     lines.append("Each item: the source link, the start of the input, our label, and the evidence.")
     groups = defaultdict(list)
     for case in cases:
@@ -383,6 +478,12 @@ def _label_source(stream):
         return "closing statement (The result was ...)"
     if stream.startswith("stackexchange-"):
         return "Stack Exchange API fields"
+    if stream == "wikipedia-afc":
+        return "AFCH review edit summary or move log"
+    if stream.startswith("arxiv-"):
+        return "arXiv API primary category"
+    if stream == "gerrit-merge":
+        return "Gerrit change status"
     return "source API"
 
 
@@ -397,7 +498,7 @@ def run(folder, http, *, sample=SAMPLE, seed=0, threshold=THRESHOLD, now=None):
     original = folder / "items.unchecked.jsonl"
     if not original.exists():
         original.write_text(items.read_text())
-    cases = [json.loads(line) for line in original.read_text().splitlines() if line.strip()]
+    cases = [json.loads(line) for line in original.read_text().split("\n") if line.strip()]
     rejected, proven = Counter(), []
     for case in cases:
         reason = proof_reason(case)

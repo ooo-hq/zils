@@ -19,14 +19,14 @@
     "contribution": 48.3,
     "hotkey": "5Trainer2",
     "rate": 1.0,
-    "seat_weight": 0.4
+    "seat_weight": 0.16
    },
    {
     "body_sha256": "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed",
     "contribution": 51.7,
     "hotkey": "5Trainer1",
     "rate": 1.0,
-    "seat_weight": 0.4
+    "seat_weight": 0.16
    }
   ],
   "new": [
@@ -112,14 +112,14 @@
     "contribution": 48.3,
     "hotkey": "5Trainer2",
     "rate": 1.0,
-    "seat_weight": 0.4
+    "seat_weight": 0.16
    },
    {
     "body_sha256": "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed",
     "contribution": 51.7,
     "hotkey": "5Trainer1",
     "rate": 1.0,
-    "seat_weight": 0.4
+    "seat_weight": 0.16
    }
   ],
   "new": [],
@@ -197,14 +197,14 @@
     "contribution": 48.3,
     "hotkey": "5Trainer2",
     "rate": 1.0,
-    "seat_weight": 0.4
+    "seat_weight": 0.16
    },
    {
     "body_sha256": "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed",
     "contribution": 51.7,
     "hotkey": "5Trainer1",
     "rate": 1.0,
-    "seat_weight": 0.4
+    "seat_weight": 0.16
    }
   ],
   "new": [
@@ -300,14 +300,14 @@
     "contribution": 48.3,
     "hotkey": "5Trainer2",
     "rate": 1.0,
-    "seat_weight": 0.4
+    "seat_weight": 0.16
    },
    {
     "body_sha256": "f84fa2cd25c9b8f58c36f4e4244ecd0e4dc5e9656645555e88aeee689501d8ed",
     "contribution": 51.7,
     "hotkey": "5Trainer1",
     "rate": 1.0,
-    "seat_weight": 0.4
+    "seat_weight": 0.16
    }
   ],
   "new": [],

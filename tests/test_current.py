@@ -1,4 +1,4 @@
-"""Zils Current: collectors, waiting room, resolvers, items and export."""
+"""Zils Outcomes: collectors, waiting room, resolvers, items and export."""
 
 import contextlib
 import gzip
@@ -19,6 +19,13 @@ from zils import current, current_github, current_items, current_wikimedia
 
 FIXTURES = Path(__file__).with_name("current_fixtures")
 LOGINS = ("alice-dev", "carol-x", "dave-k", "erin", "bob-owner")
+
+
+def setUpModule():
+    # GitHub lookups pause between requests; tests that check the pauses patch `sleep` again.
+    patcher = patch.object(current_github, "sleep", lambda s: None)
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
 
 
 def at(text):
@@ -328,12 +335,69 @@ class GitHubResolveTest(unittest.TestCase):
                 },
             }
         )
+        # Five days after opening: an open issue is "not closed as completed within three days";
+        # its type question has no time limit and keeps waiting.
+        self.assertEqual(
+            [(r["stream"], r["source"]["number"]) for r in store.pending()],
+            [("github-issue-type", 7)],
+        )
+        resolved = {(r["stream"], r["source"]["number"]): r for r in store.resolved()}
+        self.assertEqual(resolved[("github-issue-close", 7)]["label"], "false")
+        self.assertNotIn("outcome_at", resolved[("github-issue-close", 7)])
+        self.assertEqual(resolved[("github-pr-merge", 8)]["label"], "false")
+        self.assertEqual({r["reason"] for r in store.dropped()}, {"deleted"})
+
+    def test_open_items_within_the_waiting_period_stay_pending(self):
+        issues = "https://api.github.com/repos/acme/widgets/issues/"
+        store, _, _ = self.resolve(
+            {
+                issues + "7": {
+                    "state": "open",
+                    "labels": [],
+                    "user": {"login": "alice-dev", "type": "User"},
+                },
+                "https://api.github.com/repos/acme/widgets/pulls/8": {
+                    "state": "open",
+                    "merged": False,
+                    "title": "t",
+                    "body": "b",
+                    "user": {"login": "dave-k", "type": "User"},
+                },
+            },
+            now="2026-10-27T12:00:00Z",
+        )
         self.assertEqual(
             sorted((r["stream"], r["source"]["number"]) for r in store.pending()),
-            [("github-issue-close", 7), ("github-issue-type", 7)],
+            [("github-issue-close", 7), ("github-issue-type", 7), ("github-pr-merge", 8)],
         )
-        self.assertEqual(store.resolved()[0]["label"], "false")
-        self.assertEqual({r["reason"] for r in store.dropped()}, {"deleted"})
+
+    def test_outcomes_after_the_waiting_period_count_as_no(self):
+        issues = "https://api.github.com/repos/acme/widgets/issues/"
+        store, _, _ = self.resolve(
+            {
+                issues + "7": {
+                    "state": "closed",
+                    "state_reason": "completed",
+                    "closed_at": "2026-10-30T10:00:00Z",
+                    "closed_by": {"login": "alice-dev", "type": "User"},
+                    "labels": [],
+                    "user": {"login": "alice-dev", "type": "User"},
+                },
+                "https://api.github.com/repos/acme/widgets/pulls/8": {
+                    "state": "closed",
+                    "merged": True,
+                    "merged_at": "2026-10-30T18:00:00Z",
+                    "closed_at": "2026-10-30T18:00:00Z",
+                    "title": "t",
+                    "body": "b",
+                    "user": {"login": "dave-k", "type": "User"},
+                },
+            }
+        )
+        resolved = {(r["stream"], r["source"]["number"]): r for r in store.resolved()}
+        self.assertEqual(resolved[("github-issue-close", 7)]["label"], "false")
+        self.assertEqual(resolved[("github-pr-merge", 8)]["label"], "false")
+        self.assertEqual(resolved[("github-pr-merge", 8)]["outcome_at"], "2026-10-30T18:00:00Z")
 
     def test_ambiguous_labels_bots_and_old_items_are_dropped(self):
         issues = "https://api.github.com/repos/acme/widgets/issues/"
@@ -364,11 +428,14 @@ class GitHubResolveTest(unittest.TestCase):
             reasons,
             {
                 ("github-issue-type", 7): "ambiguous-label",
-                ("github-issue-close", 7): "expired",
                 ("github-issue-type", 9): "expired",
-                ("github-issue-close", 9): "expired",
                 ("github-pr-merge", 8): "bot",
             },
+        )
+        # Open past the waiting period is an outcome, so these never expire.
+        self.assertEqual(
+            {(r["stream"], r["source"]["number"]): r["label"] for r in store.resolved()},
+            {("github-issue-close", 7): "false", ("github-issue-close", 9): "false"},
         )
 
     def test_rate_limit_keeps_the_rest_pending(self):
@@ -438,8 +505,131 @@ class GraphQLResolveTest(unittest.TestCase):
         self.assertTrue(counts["rate_limited"])
         self.assertEqual(len(store.pending()), 5)
 
+    def paced(self, handler, batch=50):
+        waits = []
+        with patch.object(current_github, "sleep", waits.append):
+            store, http, counts = self.resolve(handler, batch=batch)
+        return store, http, counts, waits
+
+    def test_requests_are_spaced(self):
+        _, http, _, waits = self.paced(graphql_handler(self.nodes()), batch=1)
+        self.assertEqual(len(http.calls), 3)
+        self.assertEqual(len(waits), 2)
+        self.assertTrue(all(0 < w <= current_github.GAP_SECONDS for w in waits))
+
+    def timed(self, handler, took, batch=1):
+        """Resolve with a fake clock: each request takes `took` seconds and each sleep passes."""
+        now, waits = [0.0], []
+
+        def slept(seconds):
+            waits.append(seconds)
+            now[0] += seconds
+
+        def slow(url, payload):
+            now[0] += took
+            return handler(url, payload)
+
+        with (
+            patch.object(current_github, "sleep", slept),
+            patch.object(current_github, "clock", lambda: now[0]),
+        ):
+            store, http, counts = self.resolve(slow, batch=batch)
+        return store, http, counts, waits
+
+    def test_gap_scales_with_how_long_the_request_took(self):
+        # 1 Nov: 3.3 s GraphQL queries one second apart still hit GitHub's secondary limit.
+        _, http, _, waits = self.timed(graphql_handler(self.nodes()), took=3.0)
+        self.assertEqual(len(http.calls), 3)
+        self.assertEqual(waits, [3.0 * current_github.GAP_PER_REQUEST_SECOND] * 2)
+
+    def test_gap_doubles_for_the_rest_of_the_pass_after_a_secondary_limit(self):
+        secondary = (
+            403,
+            {"message": "You have exceeded a secondary rate limit."},
+            {"retry-after": "30"},
+        )
+        _, http, counts, waits = self.timed(self.limited_then([secondary]), took=2.0)
+        gap = 2.0 * current_github.GAP_PER_REQUEST_SECOND
+        # Retry-After, then the retry goes at once (30 s already exceeds the doubled gap), then
+        # the two remaining requests each wait the doubled gap.
+        self.assertEqual(len(http.calls), 4)
+        self.assertEqual(waits, [30.0, 2 * gap, 2 * gap])
+        self.assertNotIn("rate_limited", counts)
+
+    def limited_then(self, responses):
+        """A handler that answers with each limited response once, then normally."""
+        answer = graphql_handler(self.nodes())
+        queue = list(responses)
+
+        def handler(url, payload):
+            return queue.pop(0) if queue else answer(url, payload)
+
+        return handler
+
+    def test_secondary_limit_waits_retry_after_and_retries(self):
+        secondary = (
+            403,
+            {"message": "You have exceeded a secondary rate limit."},
+            {"retry-after": "30"},
+        )
+        store, http, counts, waits = self.paced(self.limited_then([secondary]))
+        self.assertIn(30.0, waits)
+        self.assertEqual(len(http.calls), 2)
+        self.assertNotIn("rate_limited", counts)
+        self.assertEqual(counts["resolved"], 4)
+
+    def test_secondary_limit_without_retry_after_backs_off(self):
+        secondary = (403, {"message": "You have exceeded a secondary rate limit."}, {})
+        _, _, counts, waits = self.paced(self.limited_then([secondary, secondary]))
+        long_waits = [w for w in waits if w >= current_github.LIMIT_WAIT]
+        self.assertEqual(long_waits, [current_github.LIMIT_WAIT, 2 * current_github.LIMIT_WAIT])
+        self.assertNotIn("rate_limited", counts)
+
+    def test_repeated_secondary_limits_stop_the_pass(self):
+        def always(url, payload):
+            return 403, {"message": "You have exceeded a secondary rate limit."}, {}
+
+        store, http, counts, waits = self.paced(always)
+        self.assertTrue(counts["rate_limited"])
+        self.assertEqual(len(http.calls), current_github.LIMIT_RETRIES + 1)
+        self.assertLessEqual(max(waits), current_github.MAX_LIMIT_WAIT)
+        self.assertEqual(len(store.pending()), 5)
+
+    def test_exhausted_hourly_quota_stops_without_waiting(self):
+        def exhausted(url, payload):
+            return 403, {"message": "API rate limit exceeded"}, {"x-ratelimit-remaining": "0"}
+
+        _, http, counts, waits = self.paced(exhausted)
+        self.assertTrue(counts["rate_limited"])
+        self.assertEqual(len(http.calls), 1)
+        self.assertEqual([w for w in waits if w > current_github.GAP_SECONDS], [])
+
+    def test_rest_lookups_wait_out_a_secondary_limit(self):
+        answer = github_responses()
+        queue = [(429, {"message": "secondary rate limit"}, {"retry-after": "5"})]
+
+        def handler(url, params):
+            return queue.pop(0) if queue else answer(url, params)
+
+        waits = []
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(current_github, "sleep", waits.append),
+        ):
+            store = collected(tmp)
+            counts = current.resolve(
+                store, FakeHttp(json_handler=handler), now=at("2026-10-31T12:00:00Z")
+            )
+        self.assertIn(5.0, waits)
+        self.assertNotIn("rate_limited", counts)
+
     def test_without_a_token_the_rest_api_is_used(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {}, clear=True):
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(current_github, "sleep", lambda s: None),
+        ):
             store = collected(tmp)
             http = FakeGraphQLHttp(graphql_handler(self.nodes()), json_handler=github_responses())
             current.resolve(store, http, now=at("2026-10-31T12:00:00Z"))

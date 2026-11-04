@@ -1,4 +1,4 @@
-"""Zils Current Stack Exchange streams: closed, score and accepted answer, without an API key."""
+"""Zils Outcomes Stack Exchange streams: closed, score and accepted answer, without an API key."""
 
 import contextlib
 import io
@@ -223,6 +223,9 @@ class WiringTest(unittest.TestCase):
                 gh_max_hours=0,
                 wiki_max_hours=0,
                 afd_first_days=0,
+                afc_first_days=0,
+                arxiv_first_days=0,
+                gerrit_first_days=0,
                 se_sites=["stackoverflow"],
             )
         self.assertEqual(result["collected"]["stackexchange"]["status"], "rate-limited")

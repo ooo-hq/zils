@@ -13,7 +13,7 @@ language-model weight trains (FP32 masters, about 100 GB for d3-mini); `--lora 6
 LoRA that fits 20-24 GB cards, and `--train-answer-layer` also retrains readout.safetensors.
 `soup` averages candidates with the pinned parent (weight averaging); in the 26 Oct 2026 pilot a
 0.5 parent / 0.5 students soup kept most of the student's gain without its loss on the sealed exam.
-Outputs are ordinary base candidates; commit them with ``zils commit-candidate``.
+Outputs are ordinary base candidates; commit them with ``zils-miner commit-candidate``.
 
 Pool rows are JSON lines holding ``state`` and ``question`` (or ``questions.decision``); a ``label``
 is ignored. Answer rows add ``probabilities`` keyed like ``zils.options(question)``.

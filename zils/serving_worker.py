@@ -1,4 +1,4 @@
-"""Inference worker for `zils serve`, run under the pinned d3 interpreter (`miner.d3_python()`).
+"""Inference worker for `zils-miner serve`, run under the pinned d3 interpreter (`miner.d3_python()`).
 
 It loads each `--checkpoint`, writes one ready line, then answers JSON lines on stdin/stdout:
   out  {"ready": true, "served": [{"model", "weights_sha256", "max_input_tokens"}]}

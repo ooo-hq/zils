@@ -1,7 +1,7 @@
 # Base candidates
 
 Each [model tier](model-pools.md) competes against its own pinned incumbent.
-Use `zils setup` to choose that exact profile; `zils doctor` prints its reference
+Use `zils-miner setup` to choose that exact profile; `zils-miner doctor` prints its reference
 and training commands. The concrete shard layouts, sizes and hardware figures
 below describe the mini recipe, not every tier. Other tiers use their own
 `models.candidate_files(profile, "candidate")` manifest and pinned parent.
@@ -92,7 +92,7 @@ For unattended bootstrap attempts using the existing public-data recipe, see
 
 A candidate is two things: the artifact in **your own public Hugging Face model
 repo**, pinned by commit, and **one chain commitment** made with your registered
-miner hotkey on subnet 579 (the hotkey file only; the coldkey is never read):
+miner hotkey on subnet 127 (the hotkey file only; the coldkey is never read):
 
 ```text
 zils1:<checkpoint sha256>:<revision>:<owner/repo>
@@ -107,16 +107,16 @@ validator reads each registered hotkey's commitment at its round's preflight
 block, freezes it in that round's chain snapshot and pulls the revision itself.
 No validator URL, open port or long-running process is needed.
 
-Install with `scripts/install.sh` ([miner setup](mining.md)); `zils setup` saves
+Install with `scripts/install.sh` ([miner setup](mining.md)); `zils-miner setup` saves
 the wallet, base profile, candidate and repo that the commands below default to.
-`zils doctor` checks each prerequisite in order (requirements, d3 training
+`zils-miner doctor` checks each prerequisite in order (requirements, d3 training
 runtime, hotkey file, registration, candidate, Hugging Face login and repo at the
 revision, the commitment on chain) and prints the first fix or, when all pass,
-the block your commitment landed in. `zils commit-candidate` does the work:
+the block your commitment landed in. `zils-miner commit-candidate` does the work:
 
 ```bash
 hf auth login   # once, with a write token for your account
-zils commit-candidate   # --model, --candidate and --repo override the saved values
+zils-miner commit-candidate   # --model, --candidate and --repo override the saved values
 ```
 
 From a checkout without the installer, `.venv-kev/bin/python -m zils.miner` takes
@@ -175,7 +175,7 @@ eligibility, pending and confirmed winner) is published by each validator in its
 signed round result over its own HTTP API (`GET /results/<round>`); the chain does
 not carry it. What the chain does carry, readable without any URL, is the payout:
 the validator's weights and your incentive, for example
-`btcli subnets metagraph --netuid 579 --network test`. A validator could publish
+`btcli subnets metagraph 127 --network finney`. A validator could publish
 its API address on chain (`serve_axon`) so miners find it without an operator
 announcement; not done yet.
 
@@ -295,10 +295,10 @@ burned (below), not paid to anyone.
 Per-case results are never returned; you learn aggregate metrics only. The
 round's questions are published after the round closes and are not reused.
 
-On a testnet fleet with a `base_tier` track, the kings are paid at every
+On a chain fleet with a `base_tier` track, the kings are paid at every
 publication from the base tier's share of the one weight vector, blended with
 the adapter round's weights; a share with no recipient goes to the burn uid; see
-[the two-track rule](mining.md#two-tracks-on-the-testnet-the-base-tier-pays-first).
+[the two-track rule](mining.md#two-tracks-on-the-subnet-the-base-tier-pays-first).
 
 ## Validator and publisher tooling
 

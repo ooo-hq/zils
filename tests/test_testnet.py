@@ -32,13 +32,13 @@ class TestnetTest(unittest.TestCase):
             ],
         }
         wallet = SimpleNamespace(hotkey=SimpleNamespace(ss58_address="validator"))
-        # Even an unpaid frozen member must retain its identity. New registrations
-        # are safe when every frozen UID still belongs to the evaluated hotkey.
-        for keys, allowed in (
-            ({0: "validator", 1: "replacement", 2: "miner-b"}, False),
-            ({0: "validator", 2: "miner-b"}, False),
-            ({0: "validator", 1: "miner-a"}, False),
-            ({0: "validator", 1: "miner-a", 2: "miner-b", 3: "new-miner"}, True),
+        # A replaced or deregistered UID never inherits the evaluated hotkey's score: its
+        # weight is dropped and the rest publishes. New registrations are always safe.
+        for keys, expected, replaced in (
+            ({0: "validator", 1: "replacement", 2: "miner-b"}, None, {"1": "miner-a"}),
+            ({0: "validator", 2: "miner-b"}, None, {"1": "miner-a"}),
+            ({0: "validator", 1: "miner-a"}, {"1": 1.0}, {"2": "miner-b"}),
+            ({0: "validator", 1: "miner-a", 2: "miner-b", 3: "new-miner"}, {"1": 1.0}, {}),
         ):
             state = {
                 "NetworksAdded": True,
@@ -72,20 +72,89 @@ class TestnetTest(unittest.TestCase):
                 work = Path(tmp)
                 receipt = t.publish_round(config, work, report, sub, wallet, publish=True)
                 sub.plan.assert_not_called()
-                if allowed:
+                self.assertEqual(receipt["replaced"], replaced)
+                if expected:
                     self.assertEqual(receipt["status"], "included")
                     self.assertTrue(receipt["chain_write"])
-                    self.assertEqual(receipt["requested_weights"], {"1": 1.0})
+                    self.assertEqual(receipt["requested_weights"], expected)
                     sub.execute.assert_called_once()
                     self.assertEqual(sub.execute.call_args.args[0].uids, [1])
                 else:
-                    self.assertEqual(receipt["status"], "registration_changed")
+                    # The only earner was replaced and nothing burns: previous weights remain.
+                    self.assertEqual(receipt["status"], "no_weights")
                     self.assertIs(receipt["chain_write"], False)
                     self.assertIs(receipt["weights_verified"], False)
                     self.assertEqual(receipt["requested_weights"], {})
                     sub.execute.assert_not_called()
                     self.assertFalse((work / "chain-attempt.json").exists())
                     self.assertFalse((work / "chain-receipt.json").exists())
+
+    def test_replaced_uids_burn_or_renormalize(self):
+        from zils import testnet as t
+
+        # With a burn uid the dropped share burns there; without one the rest renormalizes.
+        self.assertEqual(
+            t.drop_replaced({1: 0.5, 2: 0.3, 0: 0.2}, {"2": "miner-b"}, 0), {1: 0.5, 0: 0.5}
+        )
+        self.assertEqual(t.drop_replaced({1: 0.5, 2: 0.5}, {"2": "miner-b"}, None), {1: 1.0})
+        self.assertEqual(t.drop_replaced({2: 1.0}, {"2": "miner-b"}, None), {})
+        self.assertEqual(t.drop_replaced({1: 1.0}, {}, 0), {1: 1.0})
+        with self.assertRaises(ValueError):
+            t.drop_replaced({1: 1.0}, {"0": "validator"}, 0)  # the burn uid itself changed
+
+    def test_verify_receipt_tolerates_archive_endpoints_and_unpaid_churn(self):
+        from zils import testnet as t
+
+        # A mainnet config names archive endpoints, and a full subnet replaces unpaid UIDs
+        # between publication and verification; the paid UIDs and the vector still verify.
+        config = {
+            "chain": {"network": "finney", "netuid": 127, "archive_endpoints": ["wss://a:443"]},
+            "admission": "chain",
+            "validator_hotkey": "validator",
+            "members": {},
+            "base_pools": {"share": 1.0, "burn_uid": 0, "pools": {}},
+        }
+        keys = {0: "validator", 1: "miner-a", 2: "replacement"}
+        state = {
+            "NetworksAdded": True,
+            "SubnetworkN": 3,
+            "Uids": {hotkey: uid for uid, hotkey in keys.items()},
+            "Keys": keys,
+            "ValidatorPermit": [True, False, False],
+            "SubnetOwnerHotkey": "validator",
+            "CommitRevealWeightsEnabled": False,
+            "MinAllowedWeights": 1,
+            "MaxWeightsLimit": 65535,
+            "WeightsSetRateLimit": 100,
+            "WeightsVersionKey": 0,
+            "LastUpdate": [600, 0, 0],
+            "Weights": {0: [(0, 65535)]},
+        }
+
+        def query(item, params, *, block):
+            value = state.get(item[1])  # no commitments on this subnet
+            return value.get(params[1]) if isinstance(value, dict) else value
+
+        sub = SimpleNamespace(
+            network="finney", endpoint=t.ENDPOINTS["finney"], block=700, query=query
+        )
+        record = {
+            "network": "finney",
+            "netuid": 127,
+            "block": 500,
+            "validator_hotkey": "validator",
+            "members": {"1": "miner-a", "2": "miner-b"},  # uid 2 was replaced, unpaid
+            "requested_weights": {"0": 1.0},
+            "max_weight_limit": 65535,
+            "chain_write": True,
+        }
+        result = t.verify_receipt(config, record, sub)
+        self.assertTrue(result["weights_verified"])
+        self.assertEqual(result["on_chain_weights"], {"0": 65535})
+        # A paid UID that changed hands is a different fleet: refuse.
+        paid = {**record, "requested_weights": {"0": 0.5, "2": 0.5}}
+        with self.assertRaises(ValueError):
+            t.verify_receipt(config, paid, sub)
 
     def test_registration_and_publication_fail_closed(self):
         from bittensor.result import ChainError, ErrorCode, ExtrinsicResult
@@ -166,6 +235,15 @@ class TestnetTest(unittest.TestCase):
         mainnet = copy.deepcopy(config)
         mainnet["chain"]["network"] = "finney"
         self.assertEqual(t.check_config(mainnet), 553)
+        # A waiting soup round reads state at a seed block days old; mainnet's default endpoint
+        # discards it, so a validator may name archive endpoints.
+        archived = copy.deepcopy(mainnet)
+        archived["chain"]["archive_endpoints"] = ["wss://archive.chain.opentensor.ai:443"]
+        self.assertEqual(t.check_config(archived), 553)
+        for bad_archive in ("wss://a", ["http://a"], [1], [], {"wss://a": 1}):
+            archived["chain"]["archive_endpoints"] = bad_archive
+            with self.assertRaises(ValueError):
+                t.check_config(archived)
         with self.assertRaisesRegex(ValueError, "pinned mainnet endpoint"):
             t.preflight(mainnet, sub)
         sub.network, sub.endpoint = "finney", t.ENDPOINTS["finney"]

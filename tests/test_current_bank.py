@@ -1,4 +1,4 @@
-"""Zils Current dated exports: leak filters, licence gate, overlap checks and manifests."""
+"""Zils Outcomes dated exports: leak filters, licence gate, overlap checks and manifests."""
 
 import contextlib
 import hashlib

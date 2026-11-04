@@ -29,21 +29,29 @@ BODY_POOLS = {
         "parent": ("Qwen/Qwen3.5-0.8B", "2fc06364715b967f1860aea9cf38778875588b17"),
         "max_bytes": 2 * GiB,
         "download_seconds": 3600,
+        "house": "soup-house-lite.json",
+        "known_public": "soup-known-lite.json",
     },
     MINI_POOL: {
         "parent": ("Qwen/Qwen3.5-4B", "851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a"),
         "max_bytes": None,  # MAX_BYTES, read at call time
         "download_seconds": None,  # commitments.DOWNLOAD_SECONDS
+        "house": "soup-house.json",
+        "known_public": "soup-known-mini.json",
     },
     "d3-flash": {
         "parent": ("Qwen/Qwen3.5-9B", "c202236235762e1c871ad0ccb60c8ee5ba337b9a"),
         "max_bytes": 24 * GiB,
         "download_seconds": 3600,
+        "house": "soup-house-flash.json",
+        "known_public": None,
     },
     "d3": {  # z3 27B: vllm-sr/d3-ultra is a fine-tune of Qwen3.8-27B (not Qwen3.5-27B)
         "parent": ("Qwen/Qwen3.8-27B", "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"),
         "max_bytes": 64 * GiB,
         "download_seconds": 3 * 3600,
+        "house": "soup-house-z3.json",
+        "known_public": None,
     },
 }
 LICENSES = {"apache-2.0", "mit", "bsd-3-clause", "bsd-2-clause"}
@@ -143,12 +151,25 @@ def map_names(keys, chassis_names):
         name = key.removeprefix("model.")
         if name.startswith(DROP):
             continue
+        if not name.startswith(KEEP) and "language_model." + name in chassis:
+            raise ValueError(
+                f"body is a text-only checkpoint ({key}): a soup body is the full Qwen3.5 model,"
+                " language weights under language_model. plus the vision tower under visual."
+                " To submit a text-only model (such as a listed cousin), add the vision tower of"
+                " the pool's Qwen parent, unchanged; a merge that starts from a full checkpoint"
+                " (the pool's release or its Qwen parent) already has one"
+            )
         if not name.startswith(KEEP) or name not in chassis:
             raise ValueError(f"body has a tensor outside the chassis: {key}")
         if name in mapped:
             raise ValueError(f"body names {mapped[name]} and {key} map to the same tensor")
         mapped[name] = key
     if missing := sorted(chassis - set(mapped)):
+        if all(name.startswith("visual.") for name in missing):
+            raise ValueError(
+                f"body has no vision tower (missing {missing[0]}): a soup body is the full Qwen3.5"
+                " model; keep the visual. tensors of the checkpoint you started from"
+            )
         raise ValueError(f"body is missing chassis tensor {missing[0]}")
     return mapped
 
@@ -406,11 +427,12 @@ def validate_body(
     body's safetensors (default `MAX_BYTES`, the d3-mini cap; see `max_bytes(pool)`)."""
     folder = Path(folder)
     limit = MAX_BYTES if max_bytes is None else max_bytes
-    owner = _owner(folder, trusted)
-    if owner != hotkey:
-        raise ValueError(
-            f"zils-owner.json names hotkey {owner}, not the committing hotkey {hotkey}"
-        )
+    if hotkey is not None:  # None: a miner's `commit-body --check`, before it writes the owner file
+        owner = _owner(folder, trusted)
+        if owner != hotkey:
+            raise ValueError(
+                f"zils-owner.json names hotkey {owner}, not the committing hotkey {hotkey}"
+            )
     license = _license(folder, trusted)
     if license not in LICENSES:
         raise ValueError(f"body license {license!r} is not one of {', '.join(sorted(LICENSES))}")

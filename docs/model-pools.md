@@ -66,7 +66,6 @@ A soup pool entry may add an opening block and a boost:
   "share": 0.20,
   "opens_block": 7300000,
   "boost": [{"share": 0.30, "blocks": 100800}, {"share": 0.25, "blocks": 100800}],
-  "house": "zils/data/soup-house-flash.json",
   "schedule": {"deadline_utc": "12:00"}
 }
 ```
@@ -90,19 +89,18 @@ A soup pool entry may add an opening block and a boost:
   `opens_block` or `boost` pays exactly as before and freezes no block.
 - Only soup pools take a schedule.
 
-The launch configuration gives lite 35% and mini 30% from the start, and flash
-20% and z3 10% once they open; 5% is unassigned and burns. Flash is boosted to
-30% for two weeks and 25% for two more; z3 to 15% for two weeks. Both opening
-blocks are `null` in `zils/data/base-pools-launch.json` and must be set to the
-same values on every validator before they open. z3 cannot open while flash is
-still boosted to 30%: 35 + 30 + 30 + 15 would exceed 100%.
+The launch configuration gives lite, mini, flash and z3 25% each, with no
+boosts. Lite and mini pay from the start; flash and z3 burn their shares until
+they open. Both opening blocks are `null` in `zils/data/base-pools-launch.json`
+and must be set to the same values on every validator before they open.
 
 ## Soup pools
 
 A pool entry with `"type": "soup"` pays from daily soup rounds instead of a king
 history (omit `type` for a king pool). Each round admits the pool's body
 commitments, grades the pool's bodies alone and as uniform averages ("soups") on
-a seeded subset of a private round bank, and pays the soup's seats and the best
+a seeded subset of a private round bank (a soup averages the language weights and
+keeps the release's vision tower, since no exam grades images yet), and pays the soup's seats and the best
 solo body (the crown). The mechanism and its constants live in
 `zils/soup_round.py`; copy and twin checks in `zils/soup_copies.py`; pay rates and
 the house registry in `zils/soup_rates.py`.
@@ -114,13 +112,12 @@ the house registry in `zils/soup_rates.py`.
 > later than that fails to read its commitments; it is retried, and until it
 > succeeds the previous decision keeps paying.
 
-A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
-`schedule`, and optionally `subset_size` (default 3,000), `screen_size` (300),
+A soup entry contains `type`, `model`, `enabled`, `share` and `schedule`, and
+optionally `subset_size` (default 3,000), `screen_size` (300),
 `max_pool` (20, at least 5), `max_new_per_round` (6), `max_claims_per_round`
 (12), `max_download_bytes_per_round` (60 GiB), `failed_claim_backoff_rounds` (3),
 `others_max` (0.3), `house_mix_max` (0.05), `max_decision_age_days` (3),
-`decision_rounds` (3, from 1 to 7), `known_public` (empty),
-`max_known_public_bytes_per_round` (16 GiB), `max_known_public_seconds_per_round`
+`decision_rounds` (3, from 1 to 7), `max_known_public_bytes_per_round` (16 GiB), `max_known_public_seconds_per_round`
 (7,200), `scoring` (`calibrated_brier`) and `sketch_seed`:
 
 ```json
@@ -129,19 +126,31 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
   "model": "d3-mini-4.5b-v1",
   "enabled": true,
   "share": 0.4,
-  "house": "zils/data/soup-house.json",
   "schedule": {"deadline_utc": "00:00"}
 }
 ```
 
-- `house` is the house registry inline (a list of `name`, `repo`, `revision`,
-  `body_sha256`) or a path to it relative to the validator directory. A
-  `body_sha256` of `null` is identified by the hash of the body at its revision.
-- `known_public` lists public models of the pool's size that are not house
-  ingredients, in the same format and forms as `house` (inline or a path). An
-  unchanged or near re-upload of one is paid at the scout rate (see below).
-  `zils/data/soup-known-lite.json` (lite) and `zils/data/soup-known-mini.json`
-  (mini) are the launch lists; flash and z3 have none.
+- The operator's own miner hotkeys (`zils/data/soup-house-hotkeys.json`, shipped with
+  the code) are **house hotkeys**: their bodies compete like any other and take seats when
+  they lift the soup, but earn nothing, so the operator never pays itself from its own exam.
+- The pool's **house list** (its unpaid ingredients) and **known-public list**
+  (public models of its size that are not house ingredients, whose unchanged or
+  near re-uploads are paid at the scout rate, see below) are not settings. They
+  ship with the code in `zils/data/` and change only through a release, so
+  every validator on a release uses the same lists:
+
+  | Pool | House | Known public |
+  |---|---|---|
+  | `d3-lite` | `soup-house-lite.json` | `soup-known-lite.json` |
+  | `d3-mini` | `soup-house.json` | `soup-known-mini.json` |
+  | `d3-flash` | `soup-house-flash.json` | none |
+  | `d3` | `soup-house-z3.json` | none |
+
+  Each entry is `name`, `repo`, `revision` and `body_sha256`; a `body_sha256`
+  of `null` is identified by the hash of the body at its revision. A soup entry
+  that still names `house` or `known_public` is refused: remove the keys. If a
+  list cannot be read, the pool runs no round and its last decision keeps
+  paying.
 - `schedule.deadline_utc` is the daily commit deadline. The round for a day uses
   the first block after that deadline as its seed and admits only commitments
   made before that block.
@@ -183,12 +192,12 @@ A soup entry contains `type`, `model`, `enabled`, `share`, `house` and
   The released soup's `model.json` carries the temperature fitted for it on the
   round's held-apart items, and the public round record publishes it. Bodies are
   always graded as temperature-1 candidates built by the validator; a
-  temperature in a body's own files is never read. Greedy margins, the
-  contribution floor and the crown bar stay at 0.3 points on whichever scale the
+  temperature in a body's own files is never read. The greedy margin,
+  the contribution floor and the crown bar are points on whichever scale the
   pool uses.
 - `decision_rounds` sets how many rounds' items each seat and crown decision is
   scored on. A body's measured gain moves by about 0.4 to 0.6 points from one
-  3,000-item subset to the next, more than the 0.3-point margin, so a single
+  3,000-item subset to the next, about the greedy margin, so a single
   subset seats a body with no real gain on a large share of nights. With the
   default of 3, the round scores every pool body, every soup it tries, each
   leave-one-out soup, the current soup (the crown bar) and the chassis baseline
@@ -224,10 +233,10 @@ validator grades the pools its `soup_grading` setting allows
 ([validators](validators.md#soup-pools-hardware-disk-and-the-emission-schedule));
 a pool it does not grade burns its share in that validator's weights.
 
-### Round items from Zils Current
+### Round items from Zils Outcomes
 
 By default every round draws its subset from `round_bank`. The optional `exam`
-setting points the pool at [Zils Current](current.md) dated exports instead:
+setting points the pool at [Zils Outcomes](current.md) dated exports instead:
 
 ```json
 "exam": {
@@ -249,37 +258,61 @@ defaults. `{"source": "bank"}`, or no `exam` at all, keeps the fixed bank.
 
 Each round's subset (`subset_size` items, 3,000 by default) has two parts:
 
-- **The Current part:** `current_items` items from the dated folders.
+- **The Outcomes part:** `current_items` items from the dated folders.
   - A folder is used only if its `manifest.json` checks out. The SHA-256 and row
-    count of `items.jsonl` must match the manifest, the overlap check must have
-    run, and the mode must be `local` or `publishable`. Any other folder is
+    count of `items.jsonl` must match the manifest, the overlap check and the
+    cross-check must have run, and the mode must be `local` or `publishable`. Any other folder is
     skipped and logged, and the round goes on.
   - An item is eligible when all of these hold:
-    - it resolved in the `max_age_days` before the round's commit deadline;
+    - it resolved in the `max_age_days` before the round's commit deadline. An
+      optional `wait_days` (1 to 14) changes this: the round runs that many days
+      after its deadline, bodies still freeze at the deadline's seed block, and
+      an item is eligible when it was **asked after the deadline**, so no graded
+      body could have seen its question or answer. A stream supplies such items
+      once its settle time plus the nightly export's lag (about two days) fits
+      in `wait_days`: with 5, about a day of Wikipedia reverts (48 h); arXiv
+      and GitHub (72 h) need 6. The pool's last decision stays paid `wait_days`
+      longer than `max_decision_age_days`. The round reads the chain at a seed
+      block days old; the default mainnet endpoint discards that state, so a
+      mainnet validator with a waiting pool sets `chain.archive_endpoints`
+      (for example `["wss://archive.chain.opentensor.ai:443"]`), which queries
+      for old blocks fall through to;
     - earlier rounds drew it fewer than `max_uses` times (the use ledger);
     - with the question, it fits the pool model's input cap (8,192 tokens for
-      d3-mini). The estimate is the same one Zils Current uses.
+      d3-mini). The estimate is the same one Zils Outcomes uses.
   - Yes/no streams keep their labels balanced. No stream may hold more than `stream_max`
     of the part, and at least `min_streams` streams must contribute.
+  - Streams in one `group_max` group share one cap. The default,
+    `{"arxiv-category-*": 0.15, "wikipedia-revert*": 0.2}`, holds the four arXiv
+    streams together to 15% of the Outcomes part and the Wikipedia revert streams
+    (one per language, all in the language/known cell) together to 20%. arXiv gives
+    about 1,600 items a day and its task, subject classification, has millions of
+    public labelled examples, so uncapped it took 44% of a 990-item part and would
+    reward a specialised classifier. Reverts were 89% of the 1 Nov 2026 export and
+    uncapped took 660 of a 990-item part, so the exam was mostly one task. A group's
+    budget goes to as few streams as possible, in an order the round's secret sets,
+    so one arXiv family or one wiki can reach `min_family_items` and rounds rotate
+    which. A budget below `min_family_items` leaves the group out. Set `group_max`
+    in `exam` to replace the default (`{}` turns it off).
   - Newer resolution days are drawn first. Within a day, items are ranked under
-    the validator's private `sketch_seed`, because anyone can rebuild Current
+    the validator's private `sketch_seed`, because anyone can rebuild Outcomes
     items from the public sources.
 - **The bank part:** the rest of the subset, drawn from `round_bank` as before.
-  Each Current stream is a family in its category and block cell of the base
-  score. In the cells the Current part covers, its streams replace the bank's
+  Each Outcomes stream is a family in its category and block cell of the base
+  score. In the cells the Outcomes part covers, its streams replace the bank's
   families. The bank fills every other cell, so the score keeps all ten cells.
   When the bank's remaining cells cannot fill the rest of the subset, the
-  Current part grows to take it. If Current streams cover every cell, the
-  whole subset comes from Current.
+  Outcomes part grows to take it. If Outcomes streams cover every cell, the
+  whole subset comes from Outcomes.
 
-If the Current part cannot meet these rules (too few streams, fewer than
+If the Outcomes part cannot meet these rules (too few streams, fewer than
 `min_items` items, or an unreadable bank), the whole round draws from
 `round_bank` exactly as it would without `exam`. The round record says so.
 
 #### Quality settings
 
 Every category and block cell of the base score has a fixed weight, and the
-families in a cell count equally. A Current stream that contributes a few dozen
+families in a cell count equally. A Outcomes stream that contributes a few dozen
 items can therefore move the whole score, and a stream whose labels no body can
 predict adds only noise. Three optional settings guard against both:
 
@@ -289,11 +322,11 @@ predict adds only noise. Three optional settings guard against both:
   "current_bank": "/var/lib/zils-current/bank",
   "current_share": 0.33,
   "min_family_items": 100,
-  "exclude_streams": ["stackexchange-score-*"]
+  "exclude_streams": ["stackexchange-score-*", "wikipedia-afd"]
 }
 ```
 
-- **`min_family_items`** (default 100): families are chosen before the Current
+- **`min_family_items`** (default 100): families are chosen before the Outcomes
   budget is spread, so no kept family falls below this size.
   - A stream's supply is what it can give: yes/no streams balanced, and at most
     `stream_max` of the budget. A stream whose supply is below the minimum joins
@@ -310,17 +343,18 @@ predict adds only noise. Three optional settings guard against both:
     them are kept and miners cannot predict it.
   - Each kept family gets the minimum, and the rest of the budget is spread
     over the kept families as evenly as their supply allows.
-  - A cell with no kept Current family is filled from `round_bank`. If fewer
+  - A cell with no kept Outcomes family is filled from `round_bank`. If fewer
     than `min_items` items or `min_streams` streams remain, the round falls
     back to `round_bank`.
-- **`exclude_streams`** (default `["stackexchange-score-*"]`): glob patterns of
-  stream names that are never drawn. Stack Exchange score streams show close to
-  zero skill for every body measured, so they are excluded by default. `[]`
-  draws every stream.
+- **`exclude_streams`** (default `["stackexchange-score-*", "wikipedia-afd"]`):
+  glob patterns of stream names that are never drawn. Stack Exchange score
+  streams show close to zero skill for every body measured, and an AfD item's
+  state holds the discussion's votes, so its label is mostly a vote count. Both
+  are excluded by default. `[]` draws every stream.
 - **`current_share`** (default 1, in (0, 1]): below 1 the round **blends**.
-  `round_bank` keeps its families in every cell, and Current families are added
+  `round_bank` keeps its families in every cell, and Outcomes families are added
   next to them, up to `current_share` of the subset (and at most
-  `current_items`). At 1, Current streams replace the bank's families in the
+  `current_items`). At 1, Outcomes streams replace the bank's families in the
   cells they cover, as described above.
 
 A pool that sets none of the three draws exactly as before they existed. A pool
@@ -328,10 +362,10 @@ that sets any of them gets the defaults above for the others; set
 `"min_family_items": 1` or `"exclude_streams": []` to turn one off.
 
 With any quality setting the round record also holds the excluded streams and
-their item counts (`excluded_streams`), every Current family with its streams,
+their item counts (`excluded_streams`), every Outcomes family with its streams,
 supply, items drawn and whether it was kept (`current_families`), the merged
 families among them (`merged_families`), the cells a blend
-added Current families to (`added_cells`), the items, families and Current
+added Outcomes families to (`added_cells`), the items, families and Outcomes
 items per cell (`cells`), and every cell resting on fewer than
 `min_family_items` items (`thin_cells`, also logged). A thin cell is still
 scored; the warning says its weight rests on few items.
@@ -347,11 +381,11 @@ The private round record (`rounds/<round id>/private.json`) holds `bank_source`:
 - the fallback reason, if there was one.
 
 The same record is saved as `bank-source.json`, next to `subset.json` and
-`current-items.jsonl` (the Current items drawn). A resumed round reuses all
-three. The Current items of the last eight rounds stay loadable after they leave
+`current-items.jsonl` (the Outcomes items drawn). A resumed round reuses all
+three. The Outcomes items of the last eight rounds stay loadable after they leave
 the freshness window, so a round can still score earlier rounds' items.
 
-Pooled decisions (`decision_rounds`) work the same way on a Current exam: each
+Pooled decisions (`decision_rounds`) work the same way on a Outcomes exam: each
 earlier round's items come from its `subset-cases.json`, item by item, so a bank
 that changes every day still pools. Cached predictions are scoped to the round
 bank's hash, though. On a day the bank changes, each pool body and soup is graded
@@ -359,10 +393,11 @@ again on the earlier rounds' items, not only on the new subset. That is about
 twice the grading of a fixed bank. The deadline fallback above still bounds it.
 
 Payout: the latest round's public record pays each seated hotkey its seat
-weight and the crown its crown weight, as fractions of the pool's share. The
-crown (20%) goes to the best non-house solo body only if its solo score beats
+weight and the crown its crown weight, as fractions of the pool's share. A seat
+is a fixed fifth of 80% (16%) times its rate, however many members are seated;
+empty and unpaid seats burn. The crown (20%) goes to the best non-house solo body only if its solo score beats
 every house body's solo score and the current soup's score on the same pooled
-items by at least the greedy margin (0.3 points); otherwise it burns. If the current
+items by at least the crown bar (1.2 points); otherwise it burns. If the current
 soup cannot be graded that round, the crown burns too. Before the first
 soup only the house bodies set the bar. Whatever a round does not pay goes to
 `burn_uid`; before the first round the whole share burns. A failed round keeps
@@ -391,11 +426,18 @@ other grading failure makes the body sit the round out, and a body that fails
 grading in three separate rounds is banned. A body out of the pool for three
 rounds loses its folder (its hash and sketch stay); cached soup predictions
 unused for three rounds are deleted.
-When the round bank has too few unretired items, the round is skipped and logged.
+A bank item retires once 100 rounds have drawn it (`RETIRE_AFTER`); items never leave the
+validator, so the cap only bounds how long a bank serves before it is refilled. When the round
+bank has too few unretired items, the round is skipped and logged.
 Only the public record (members, rates, rounded contributions, category scores and
 hashes of the subset, predictions and soup, all on the round's own subset, plus
 the pooled round ids and item count, the pool's scoring and the soup's fitted
 temperature) enters the published report.
+Every validator also serves these records, signed, at `GET /soup`: for each
+enabled soup pool, its newest 60 public records (newest first, each with a UTC
+`finished_at`) and, for every body those rounds seat or crown, its house name
+and repo when the validator knows them (null otherwise). Private round records,
+exam items and labels are never served.
 
 ### Submitting a body
 
@@ -449,7 +491,7 @@ its bases are those explaining at least 10%:
 - If one of its bases is a listed public model, it is paid at the scout rate.
   Listed models are not graded, so a fine-tune can't be compared with them.
 - Otherwise its seat is paid only if its solo score beats the best of its bases
-  by at least 0.3 points on the round's items. A house body's base score is its
+  by at least 1.2 points on the round's items. A house body's base score is its
   solo score; the soup's is the score of the soup the body was admitted against
   (never a soup built from the body itself); the release's is the chassis
   score. A base that can't be scored this round leaves the seat unpaid.
@@ -460,7 +502,7 @@ the reason.
 
 A known public model's re-upload is also paid at the scout rate: a body whose
 weight-change sketch has cosine at least 0.9 to the sketch of a model on the
-pool's `known_public` list. The check looks at the body as committed, so an
+pool's known-public list. The check looks at the body as committed, so an
 unchanged or lightly changed re-upload is a scout's, while a fine-tune that
 moves well away from the public model (cosine under 0.9) keeps the trainer rate.
 Listed models are also allowed bases in the copy check, like the house bodies,
@@ -488,7 +530,7 @@ miners' `max_download_bytes_per_round`), after `max_known_public_seconds_per_rou
 the remaining entries wait for a later round, and that round's copy and scout
 checks use the entries resolved so far (each skipped entry is logged). The launch
 byte budgets (32 GiB for lite, 80 GiB for mini) cover each packaged list: about
-26 GB for lite and 73 GB for mini, which takes about 1.6 hours at 100 Mbit/s, so
+24 GB for lite and 73 GB for mini, which takes about 1.6 hours at 100 Mbit/s, so
 the mini list resolves in the first round on a link of roughly that speed or
 faster. A pool's first round also downloads its house bodies before the list, and
 on a slower link the rest of the list resolves in later rounds.
@@ -497,6 +539,18 @@ skipped until its pin changes; a transport error is retried next round. Neither
 stops the round; both are recorded in the private round record. A list file that
 cannot be read runs the round with no list and is reported in the epoch summary.
 Public models are never graded, seated or paid themselves.
+
+The list is not an allowlist. Any body that passes the eligibility checks is
+admitted whether or not it matches a listed model; the list only decides the
+rate. A re-upload of an open model that is on no list and far from every listed
+model (cosine under 0.9) is indistinguishable from a trainer's body and is paid
+as one, subject to the same base rule above when it is a fine-tune of a house
+body, the soup or the release. This is deliberate: scouts who find strong open
+models of the pool's size and commit them first make the soup better, and the
+pool pays for the result, not for how the weights were made. Adding a model to a
+known-public list converts that find from the trainer rate to the scout rate, so
+the lists should name models that were public before the pool opened, not grow
+with every model miners discover.
 
 Only a near-exact re-upload (or a body with no change from the base) bans the
 body hash. "Explained by earlier" and behavioural twins judge the current pool:
@@ -516,7 +570,7 @@ and is retried in a later round.
 
 ## Submit, evaluate and promote
 
-Run `zils setup` to select the exact base profile to beat in your tier, or pass
+Run `zils-miner setup` to select the exact base profile to beat in your tier, or pass
 `--model <profile-id>` to `setup`, `doctor` or `commit-candidate`. `doctor` prints
 the matching reference/training recipe. The CLI reads older candidates' profiles
 from their metadata and checks uploads against each profile's own file list.

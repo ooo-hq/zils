@@ -101,6 +101,26 @@ class MapNamesTest(unittest.TestCase):
             with self.subTest(label), self.assertRaises(ValueError):
                 bodies.map_names(keys, NAMES)
 
+    def test_a_text_only_checkpoint_gets_a_plain_explanation(self):
+        language = [n for n in NAMES if n.startswith("language_model.")]
+        for prefix in ("model.", ""):
+            keys = [prefix + n.removeprefix("language_model.") for n in language]
+            with self.subTest(prefix=prefix), self.assertRaises(ValueError) as caught:
+                bodies.map_names(keys, NAMES)
+            message = str(caught.exception)
+            self.assertIn("text-only checkpoint", message)
+            self.assertIn("language_model.", message)
+            # a listed cousin is re-uploaded with its Qwen parent's vision tower added (scout rate)
+            self.assertIn("add the vision tower of the pool's Qwen parent", message)
+            self.assertNotIn("can't be bodies", message)
+
+    def test_a_missing_vision_tower_is_named(self):
+        language = [n for n in NAMES if n.startswith("language_model.")]
+        with self.assertRaises(ValueError) as caught:
+            bodies.map_names(language, NAMES)
+        self.assertIn("no vision tower", str(caught.exception))
+        self.assertIn("visual.patch.weight", str(caught.exception))
+
 
 class LayoutTest(unittest.TestCase):
     def test_load_index_single_and_sharded(self):

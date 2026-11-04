@@ -84,6 +84,23 @@ class RateTest(unittest.TestCase):
         self.assertEqual(self.rate(HOUSE_HASH, self.fresh), 0.0)
         self.assertEqual(self.rate(HOUSE_HASH, self.fresh, house=[HOUSE_HASH]), 0.0)
 
+    def test_a_house_hotkeys_body_earns_nothing(self):
+        # The operator's own miners are house hotkeys: seated when they lift the soup, never paid.
+        self.assertEqual(self.rate(BODY_HASH, self.fresh, house_hotkeys=[HOTKEY]), 0.0)
+        self.assertEqual(self.rate(BODY_HASH, self.fresh, house_hotkeys=[OTHER]), 1.0)
+        self.assertEqual(self.rate(BODY_HASH, self.fresh, house_hotkeys=[]), 1.0)
+
+    def test_house_hotkeys_ship_with_the_code(self):
+        keys = soup_rates.load_house_hotkeys()
+        self.assertIn("5GnLjWkMA6UhM4K7k94j8tWrxPGvECzwbRMdbEgPAUeMbJuj", keys)  # the 4090 miner
+        self.assertEqual(len(keys), len(set(keys)))
+        with self.assertRaises(ValueError):
+            soup_rates.validate_house_hotkeys(["not-an-address"])
+        with self.assertRaises(ValueError):
+            soup_rates.validate_house_hotkeys({"hotkeys": []})
+        # Without an explicit list, the shipped one applies.
+        self.assertEqual(self.rate(BODY_HASH, self.fresh, hotkey=keys[0]), 0.0)
+
     def test_near_known_model_is_a_scout(self):
         near = self.known_sketch + 0.1 * self.fresh
         self.assertEqual(self.rate(BODY_HASH, near), 0.25)

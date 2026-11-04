@@ -25,7 +25,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import model_pools
+from . import model_pools, soup_rates
 
 SOUP_PATHS = {
     "round_bank",
@@ -65,7 +65,13 @@ def fresh_decision(directory, pool, entry, *, now):
     hours, minutes = map(int, entry["schedule"]["deadline_utc"].split(":"))
     deadline = day + timedelta(hours=hours, minutes=minutes)
     age = now - deadline.timestamp()
-    return record if age <= entry["max_decision_age_days"] * 86400 else None
+    allowed = entry["max_decision_age_days"] + _wait(entry)
+    return record if age <= allowed * 86400 else None
+
+
+def _wait(entry):
+    """Days a pool's round waits after its commit deadline (``exam.wait_days``; 0 without one)."""
+    return entry.get("exam", {}).get("wait_days", 0)
 
 
 def recorded(directory, pool, round_id):
@@ -78,10 +84,11 @@ def recorded(directory, pool, round_id):
     )
 
 
-def due(schedule, head_time):
-    """(day, deadline timestamp) of the latest daily commit deadline at or before `head_time`."""
+def due(schedule, head_time, wait_days=0):
+    """(day, deadline timestamp) of the latest daily commit deadline at or before `head_time`,
+    less `wait_days` for a pool whose rounds wait that long after their deadline."""
     hours, minutes = map(int, schedule["deadline_utc"].split(":"))
-    now = datetime.fromtimestamp(head_time, UTC)
+    now = datetime.fromtimestamp(head_time, UTC) - timedelta(days=wait_days)
     deadline = now.replace(hour=hours, minute=minutes, second=0, microsecond=0)
     if deadline > now:
         deadline -= timedelta(days=1)
@@ -203,26 +210,6 @@ def paths(config, directory, pool):
     return {k: str((Path(directory) / v).resolve()) for k, v in value.items()}
 
 
-def house(entry, directory, key="house"):
-    """The pool's house registry (or, with ``key="known_public"``, its known-public list, empty when
-    absent): inline, or read from a path relative to the validator directory."""
-    from . import soup_rates
-
-    value = entry.get(key, []) if key == model_pools.SOUP_KNOWN else entry[key]
-    if isinstance(value, str):
-        return soup_rates.load_house(Path(directory) / value)
-    return soup_rates.validate_house(value)
-
-
-def known_public(entry, directory):
-    """The pool's known-public list, or ([], the reason) when it cannot be read: the list only lowers
-    the pay of re-uploads, so a bad file never stops the round."""
-    try:
-        return house(entry, directory, model_pools.SOUP_KNOWN), None
-    except (OSError, ValueError) as error:
-        return [], f"{type(error).__name__}: {error}"[:400]
-
-
 def _started(pid):
     """Process `pid`'s start time as `ps` reports it (Linux and macOS), or None."""
     try:
@@ -276,7 +263,7 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
     for pool, entry in soup_pools(config, int(snapshot["block"])).items():
         try:
             head = int(snapshot["block"])
-            day, deadline = due(entry["schedule"], _time(block_info(head)))
+            day, deadline = due(entry["schedule"], _time(block_info(head)), _wait(entry))
             round_id = f"{pool}-{day}"
             summary[pool] = {"round_id": round_id}
             summary[pool]["decision"] = decision(directory, pool) is not None
@@ -302,22 +289,21 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
             }
             secret = config["base_pools"]["pools"][pool].get(model_pools.SOUP_SECRET)
             exam = entry.get("exam")
-            if exam:  # a relative Zils Current bank is read from under the validator directory
+            if exam:  # a relative Zils Outcomes bank is read from under the validator directory
                 exam = {**exam, "current_bank": str((Path(directory) / exam["current_bank"]))}
-            known, known_error = known_public(entry, directory)
-            if known_error:
-                summary[pool]["known_public_error"] = known_error
             request = {
                 "round_id": round_id,
                 "seed_block": block,
                 "block_hash": block_hash,
                 "snapshot": {"members": snapshot["members"], "commitments": commitments},
                 "config": {
-                    **{k: v for k, v in entry.items() if k != "house"},
+                    **entry,
                     **({"exam": exam} if exam else {}),
                     "pool_id": pool,
-                    "house": house(entry, directory),
-                    model_pools.SOUP_KNOWN: known,
+                    # Unreadable lists stop the round: without the known list a public
+                    # re-upload would earn the trainer rate.
+                    "house": soup_rates.house(pool),
+                    "known_public": soup_rates.known_public(pool),
                     **({model_pools.SOUP_SECRET: secret} if secret else {}),
                 },
                 "state_dir": str(state_dir(directory, pool)),

@@ -1,4 +1,4 @@
-"""`zils announce-serving` and `zils serve` against a fake chain; no GPU, no network."""
+"""`zils-miner announce-serving` and `zils-miner serve` against a fake chain; no GPU, no network."""
 
 import contextlib
 import importlib.util

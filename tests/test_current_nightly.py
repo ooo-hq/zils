@@ -1,4 +1,4 @@
-"""Zils Current nightly runner: cursors, idempotent reruns, resumption, lock and run log."""
+"""Zils Outcomes nightly runner: cursors, idempotent reruns, resumption, lock and run log."""
 
 import contextlib
 import fcntl
@@ -10,7 +10,13 @@ import unittest
 from datetime import timedelta
 from pathlib import Path
 
-from tests.test_current import FIXTURES, FakeHttp, at, github_responses
+from tests.test_current import (  # noqa: F401 (setUpModule)
+    FIXTURES,
+    FakeHttp,
+    at,
+    github_responses,
+    setUpModule,
+)
 from zils import current, current_github, current_nightly
 
 NOW = at("2026-10-31T12:30:00Z")
@@ -63,6 +69,9 @@ class NightlyTest(unittest.TestCase):
             "check_overlap": False,
             "se_pages": 0,
             "afd_first_days": 0,
+            "afc_first_days": 0,
+            "arxiv_first_days": 0,
+            "gerrit_first_days": 0,
         }
 
     def tearDown(self):
@@ -164,6 +173,12 @@ class NightlyTest(unittest.TestCase):
                     "--se-pages",
                     "0",
                     "--afd-first-days",
+                    "0",
+                    "--afc-first-days",
+                    "0",
+                    "--arxiv-first-days",
+                    "0",
+                    "--gerrit-first-days",
                     "0",
                     "--wiki-source",
                     "stream",

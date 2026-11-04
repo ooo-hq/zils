@@ -7,7 +7,7 @@ from pathlib import Path
 
 from . import base_metrics
 
-RETIRE_AFTER = 24
+RETIRE_AFTER = 100  # rounds that may draw a bank item; items never leave the validator (ZIL-131)
 FAMILY_MINIMUM = 10
 
 

@@ -2,9 +2,10 @@
 
 Validators independently verify submitted artifacts, calibrate probabilities,
 and score held-out examples. Miner-reported metrics do not determine rewards.
-A testnet fleet validator publishes weights only after explicit configuration
-and review (`--publish-weights`). Base-tier miners join by registering on testnet
-subnet 579; mainnet is not implemented.
+A fleet validator publishes weights only after explicit configuration
+and review (`--publish-weights`). Base-tier miners join by registering on Bittensor
+mainnet subnet 127 (network `finney`). A validator config names its network and
+netuid explicitly; mainnet is never a default.
 
 ## Queue validator
 
@@ -87,7 +88,7 @@ hash-verified; a TLS terminator provides transport privacy.
 Run `python -m zils.testnet preflight --config CONFIG` before starting the unit.
 Inspect the frozen `chain-snapshot.json` member/commitment maps and each pool's
 intake and decision reports. Miners use
-[`zils commit-candidate`](base-candidates.md#commit); they need neither the
+[`zils-miner commit-candidate`](base-candidates.md#commit); they need neither the
 validator's URL nor its hotkey. One commitment per hotkey remains the submission
 contract. A registration change cannot inherit another hotkey's evidence.
 
@@ -96,7 +97,7 @@ Settle or explicitly handle pending rounds before changing configuration. Use
 close public admission. Disabling pool intake does not authorize returning to
 old-policy crowns; preserve the reviewed incumbent and existing customer pins.
 
-## Bittensor testnet validator
+## Bittensor fleet validator
 
 This path uses a model-pinned fleet, a static roster and private-network
 transport. For the base tier open to every registered hotkey, see
@@ -106,7 +107,7 @@ transport. For the base tier open to every registered hotkey, see
 
 Follow [Bittensor registration](bittensor-registration.md) using a dedicated
 validator hotkey, distinct from every miner hotkey. Use the operator-confirmed
-testnet netuid. Miners and validators both register a hotkey to obtain a UID.
+network and netuid (`finney` and 127 for the public subnet). Miners and validators both register a hotkey to obtain a UID.
 
 Registration alone does not grant validation rights. Check the live metagraph
 and subnet parameters for the validator's permit and stake requirements. The
@@ -121,7 +122,7 @@ Complete the [fleet model setup](mining.md) for the operator-selected text or im
 profile, including the matching reference and qualified hardware.
 Install `requirements/testnet.txt` in `.venv-kev`.
 Create the frozen job and registered identity file using
-[testnet fleet setup](testnet.md#provision-the-registered-identities).
+[chain fleet setup](testnet.md#provision-the-registered-identities).
 Keep test/calibration data on the validator and distribute only each miner's
 assigned bundle. The validator host needs its hotkey, not the coldkey.
 
@@ -132,7 +133,7 @@ With the generated configuration in place, run the read-only check:
   --config .private/testnet-fleet/validator/config.json
 ```
 
-Confirm the testnet/netuid, validator UID, every miner UID-to-hotkey mapping,
+Confirm the network and netuid, validator UID, every miner UID-to-hotkey mapping,
 permit, weight limits, required version, and publication cooldown. A changed
 registration requires a new roster, not reassignment of an old score.
 
@@ -155,7 +156,7 @@ weight without producing an accepted customer model.
 ### 4. Publish the reviewed round
 
 Replace `ROUND` below with the completed round directory's name. This command
-**submits a testnet weight transaction** using the validator hotkey:
+**submits a weight transaction on the configured network** using the validator hotkey:
 
 ```bash
 .venv-kev/bin/python -m zils.testnet publish \
@@ -166,7 +167,10 @@ Replace `ROUND` below with the completed round directory's name. This command
 Only one process should publish for this hotkey and subnet. For subsequent
 continuous rounds, run `zils.fleet validator` with `--publish-weights` and omit
 `--rounds 1`. Zils uses mechanism 0 and weight version 1. It stops if the chain
-requires a newer version. `no_weights` and `rate_limited` submit nothing.
+requires a newer version. `no_weights` and `rate_limited` submit nothing. A
+frozen member whose UID holds another hotkey (or none) by publication time is
+dropped from the vector and listed under `replaced`; its share burns at the
+fleet's burn uid, so a replacement never inherits the evaluated score.
 
 ### 5. Verify the revealed weights
 
@@ -225,10 +229,12 @@ operator actions. Stable migration cannot be inferred from an election result.
 
 Every base pool at launch is a [soup pool](model-pools.md#soup-pools): `d3-lite`,
 `d3-mini`, `d3-flash` and `d3` (z3). `zils/data/base-pools-launch.json` is the
-launch `base_pools` block: shares, house lists, daily commit deadlines, intake
+launch `base_pools` block: shares, daily commit deadlines, intake
 caps and the [emission schedule](model-pools.md#emission-schedule). Every
 validator must run the same `base_pools` block, including the same opening
-blocks, or its weights disagree with the others'.
+blocks, or its weights disagree with the others'. The pools' house and known-public lists are not
+part of the block: they ship with the code, so updating to a release updates
+them ([model pools](model-pools.md#soup-pools)).
 
 A soup round loads one model at a time on the GPU. Approximate memory for one
 grading in bf16, and disk for the pool's state at its launch caps:
@@ -270,7 +276,7 @@ folder of the pool's Qwen parent at its pinned revision (`Qwen/Qwen3.5-0.8B`,
 [mining](mining.md#four-pools)). Round items longer than a pool's input cap
 (4,096 tokens for lite, flash and z3; 8,192 for mini) are left out of that pool's
 rounds and counted in the round log. The cap is checked with the chassis
-tokenizer on the fixed round bank; Zils Current items are filtered by an
+tokenizer on the fixed round bank; Zils Outcomes items are filtered by an
 estimated token count ([current](current.md)).
 
 ### 7. Pay the adapter track from hosted-queue work
@@ -310,15 +316,15 @@ unregistered hotkey earns nothing. No earner: the adapter share burns at
 signer or window, an invalid row, one artifact hash earning twice, a report
 without evidence when the section is set, and evidence when it is not.
 Receipts record `"adapter_source": "queue"`. The fleet refuses the section on a
-non-testnet config.
+config without a `chain` section.
 
 Trust: the platform's processor evaluated the work; the signature proves the
 export came from the platform, not that the evaluation was right. Customer test
 data stays private, so other validators can audit the export but not re-score it.
 
 The [first verified testnet round](testnet-round-001.md) demonstrates this closed
-path. It does not establish current validator uptime, open access, mainnet
-support, or queue training-to-chain integration.
+path. It does not establish current validator uptime, open access,
+or queue training-to-chain integration.
 
 ### 8. Pay the serving share
 
