@@ -32,8 +32,10 @@ wallet and runtime provisioning unchanged. Add this top-level configuration bloc
 
 These are illustrative operator budgets, not a measured capacity recommendation.
 All five values are required positive integers. Download and cache budgets must
-fit the largest enabled candidate profile. The budgets are shared across all
-base pools on this validator; other validators maintain independent budgets.
+fit the largest candidate profile of an enabled king pool. Soup pools, open or
+closed, are not counted: their bodies are downloaded in soup rounds, not through
+this queue. The budgets are shared across all king pools on this validator; other
+validators maintain independent budgets.
 
 | Setting | Enforcement |
 | --- | --- |
