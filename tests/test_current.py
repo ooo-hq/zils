@@ -1,4 +1,4 @@
-"""Zils Current: collectors, waiting room, resolvers, items and export."""
+"""Zils Outcomes: collectors, waiting room, resolvers, items and export."""
 
 import contextlib
 import gzip

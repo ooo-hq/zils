@@ -1,4 +1,4 @@
-"""Zils Current exports: leak filters, overlap checks, the licence gate and dated bank folders.
+"""Zils Outcomes exports: leak filters, overlap checks, the licence gate and dated bank folders.
 
     python -m zils.current export --bank DIR [--date 2026-10-30] --reference EXAM.jsonl ...
 
@@ -158,7 +158,7 @@ def shingles(text):
 
 
 def passage_text(text):
-    """State text without the fixed lines of Zils Current's own templates (labels, sizes, flags),
+    """State text without the fixed lines of Zils Outcomes's own templates (labels, sizes, flags),
     so items never match each other, or an earlier export, on template wording alone."""
     kept = []
     for line in text.split("\n"):

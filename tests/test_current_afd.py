@@ -1,4 +1,4 @@
-"""Zils Current Articles for deletion stream: closed English Wikipedia deletion discussions."""
+"""Zils Outcomes Articles for deletion stream: closed English Wikipedia deletion discussions."""
 
 import json
 import tempfile

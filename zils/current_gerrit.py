@@ -1,4 +1,4 @@
-"""Zils Current Gerrit stream: will this proposed code change be merged?
+"""Zils Outcomes Gerrit stream: will this proposed code change be merged?
 
 Public Gerrit servers (OpenStack's OpenDev, Wikimedia, Android's AOSP) review every change before
 it lands. A change either merges or is abandoned. One query per server, status and day

@@ -1,4 +1,4 @@
-"""Zils Current Articles for deletion stream: will English Wikipedia keep or delete this article?
+"""Zils Outcomes Articles for deletion stream: will English Wikipedia keep or delete this article?
 
 Each day's log page (`Wikipedia:Articles for deletion/Log/2026 October 4`) transcludes that
 day's deletion discussions. Discussions close after about seven days (longer when relisted). A

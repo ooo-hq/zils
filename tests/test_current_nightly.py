@@ -1,4 +1,4 @@
-"""Zils Current nightly runner: cursors, idempotent reruns, resumption, lock and run log."""
+"""Zils Outcomes nightly runner: cursors, idempotent reruns, resumption, lock and run log."""
 
 import contextlib
 import fcntl

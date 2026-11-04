@@ -1,4 +1,4 @@
-"""Zils Current grading: shared GPU lock, cached predictions and per-stream scores (no GPU)."""
+"""Zils Outcomes grading: shared GPU lock, cached predictions and per-stream scores (no GPU)."""
 
 import contextlib
 import fcntl

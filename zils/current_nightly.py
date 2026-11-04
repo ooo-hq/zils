@@ -1,4 +1,4 @@
-"""Zils Current nightly run: collect since the cursors, resolve, export finished days.
+"""Zils Outcomes nightly run: collect since the cursors, resolve, export finished days.
 
     python -m zils.current nightly --state DIR --bank DIR --reference EXAM.jsonl ...
 

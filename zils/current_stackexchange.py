@@ -1,4 +1,4 @@
-"""Zils Current Stack Exchange streams: questions from a week or two ago and what happened to them.
+"""Zils Outcomes Stack Exchange streams: questions from a week or two ago and what happened to them.
 
 One request to the public API (`/2.3/questions`, `withbody` filter) returns up to 100 questions
 of one site with their title, body, tags, close state, score and accepted answer. Each question

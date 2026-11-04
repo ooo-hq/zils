@@ -1,4 +1,4 @@
-"""Zils Current: real-world decisions, labelled by what actually happened.
+"""Zils Outcomes: real-world decisions, labelled by what actually happened.
 
     python -m zils.current collect --source gharchive --start 2026-10-26-15 --hours 1
     python -m zils.current collect --source wikimedia --minutes 5 [--since 2026-10-28T12:00:00Z]

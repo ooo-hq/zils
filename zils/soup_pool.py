@@ -289,7 +289,7 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
             }
             secret = config["base_pools"]["pools"][pool].get(model_pools.SOUP_SECRET)
             exam = entry.get("exam")
-            if exam:  # a relative Zils Current bank is read from under the validator directory
+            if exam:  # a relative Zils Outcomes bank is read from under the validator directory
                 exam = {**exam, "current_bank": str((Path(directory) / exam["current_bank"]))}
             request = {
                 "round_id": round_id,

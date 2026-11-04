@@ -1,8 +1,12 @@
-# Zils Current
+# Zils Outcomes
 
 Real-world decisions, labelled by what actually happened.
 
-Zils Current (`python -m zils.current`) turns public events into decision questions and
+Zils Outcomes is the product name (formerly Zils Current). The tool and its settings keep the
+name `current` in the module, the command, the config keys (`exam.source`, `current_bank`) and
+the paths.
+
+Zils Outcomes (`python -m zils.current`) turns public events into decision questions and
 labels each one with what really happened later. A GitHub issue is opened; days later a
 maintainer labels it a bug or a feature request. A Wikipedia edit is saved; within days it is
 reverted or it stays. The text available when the event happened is the question, and the
@@ -354,7 +358,7 @@ rebuild-only datasets, are compared on that hash alone, and the manifest counts 
 - **`state`:** its normalized state text equals a reference row's;
 - **`passage`:** it shares a passage with a reference row. Passages are compared as 16-word
   windows, one window in four chosen by hash on both sides. Shared passages of about 50 words or
-  more are found almost surely. Zils Current's own template lines (field labels, size changes,
+  more are found almost surely. Zils Outcomes's own template lines (field labels, size changes,
   flags) are left out, so items never match each other on template wording alone.
 
 ## Licence gate
@@ -415,7 +419,7 @@ that owns only that directory:
 ```ini
 # /etc/systemd/system/zils-current.service
 [Unit]
-Description=Zils Current: collect, resolve and export
+Description=Zils Outcomes: collect, resolve and export
 Wants=network-online.target
 After=network-online.target
 
@@ -441,7 +445,7 @@ TimeoutStartSec=4h
 ```ini
 # /etc/systemd/system/zils-current.timer
 [Unit]
-Description=Run Zils Current daily
+Description=Run Zils Outcomes daily
 
 [Timer]
 OnCalendar=*-*-* 12:30:00 UTC
@@ -659,10 +663,10 @@ after the check are missed, and so are removals that do not restore an earlier v
   it; the stream is still collected.
 - **arXiv streams** are large (about 1,600 items a day) and their task, subject classification,
   has millions of public labelled examples. Soup exams cap the four arXiv streams together at
-  15% of the Current part (`group_max` in [model pools](model-pools.md)), so a model cannot win
+  15% of the Outcomes part (`group_max` in [model pools](model-pools.md)), so a model cannot win
   rounds by specialising in it.
 - **Revert streams** are most of every export (89% on 1 Nov 2026) and all one task in one
-  exam cell. Soup exams cap the Wikipedia revert streams together at 20% of the Current part,
+  exam cell. Soup exams cap the Wikipedia revert streams together at 20% of the Outcomes part,
   the same way; the GitHub, Gerrit and AfC streams fill the rest once a window holds
   `min_family_items` of them.
 - **Small streams.** Many streams resolve only tens of items in a freshness window. Graded as
@@ -672,13 +676,13 @@ after the check are missed, and so are removals that do not restore an earlier v
 
 ## Validators
 
-To grade a soup pool on Zils Current items:
+To grade a soup pool on Zils Outcomes items:
 
 1. Run the nightly job on the validator host (or anywhere that writes to a directory the
    validator can read). Pass the validator's exam draws and round bank as references, so the
    overlap check runs against them.
 2. Set the pool's `exam` setting. A blend keeps the fixed round bank in every cell of the base
-   score and adds Current families next to it:
+   score and adds Outcomes families next to it:
 
    ```json
    {
@@ -690,10 +694,10 @@ To grade a soup pool on Zils Current items:
    }
    ```
 
-   `{"source": "current", "current_bank": "<the --bank directory>"}` alone lets Current streams
+   `{"source": "current", "current_bank": "<the --bank directory>"}` alone lets Outcomes streams
    replace the bank's families in the cells they cover, with no minimum family size.
 
-Each round then reads every dated folder whose manifest checks out, and draws its Current part
+Each round then reads every dated folder whose manifest checks out, and draws its Outcomes part
 under the freshness, reuse, breadth and token rules in
 [model pools](model-pools.md#round-items-from-zils-current). The round falls back to the fixed
 round bank when those rules cannot be met. The four streams cover two cells of the base score:

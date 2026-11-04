@@ -1,4 +1,4 @@
-"""Zils Current Articles for Creation stream: will a reviewer accept this English Wikipedia draft?
+"""Zils Outcomes Articles for Creation stream: will a reviewer accept this English Wikipedia draft?
 
 New editors submit drafts (`Draft:` pages) for review at Articles for Creation. A reviewer, nearly
 always with the AFCH helper script, either declines or rejects the submission (an edit to the

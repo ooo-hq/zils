@@ -1,4 +1,4 @@
-"""Zils Current cases from resolved events: scrubbed state text, bank-format questions."""
+"""Zils Outcomes cases from resolved events: scrubbed state text, bank-format questions."""
 
 import hashlib
 import json

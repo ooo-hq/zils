@@ -1,4 +1,4 @@
-"""Zils Current Stack Exchange streams: closed, score and accepted answer, without an API key."""
+"""Zils Outcomes Stack Exchange streams: closed, score and accepted answer, without an API key."""
 
 import contextlib
 import io

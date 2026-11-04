@@ -276,7 +276,7 @@ folder of the pool's Qwen parent at its pinned revision (`Qwen/Qwen3.5-0.8B`,
 [mining](mining.md#four-pools)). Round items longer than a pool's input cap
 (4,096 tokens for lite, flash and z3; 8,192 for mini) are left out of that pool's
 rounds and counted in the round log. The cap is checked with the chassis
-tokenizer on the fixed round bank; Zils Current items are filtered by an
+tokenizer on the fixed round bank; Zils Outcomes items are filtered by an
 estimated token count ([current](current.md)).
 
 ### 7. Pay the adapter track from hosted-queue work

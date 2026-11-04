@@ -1,4 +1,4 @@
-"""Zils Current proof and cross-checks: is every item a real event with a real outcome?
+"""Zils Outcomes proof and cross-checks: is every item a real event with a real outcome?
 
     python -m zils.current crosscheck --folder BANK/2026-10-31 [--sample 100] [--threshold 0.97]
 
@@ -431,7 +431,7 @@ def _excerpt(text, limit=600):
 
 def spotcheck(cases, streams, seed=0):
     """A Markdown sheet: 20 random items per stream with link, excerpt, label and evidence."""
-    lines = ["# Zils Current spot check", ""]
+    lines = ["# Zils Outcomes spot check", ""]
     lines.append("Each item: the source link, the start of the input, our label, and the evidence.")
     groups = defaultdict(list)
     for case in cases:

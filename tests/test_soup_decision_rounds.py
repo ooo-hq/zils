@@ -334,7 +334,7 @@ class DecisionRoundsTest(unittest.TestCase):
         self.assertEqual(set(last["decision_ids"]), drawn)
         current = {i for i in records[0]["subset_ids"] if i.split("-2026")[0] in STREAMS}
         self.assertTrue(current)
-        self.assertLessEqual(current, set(last["decision_ids"]))  # round 1's Current items count
+        self.assertLessEqual(current, set(last["decision_ids"]))  # round 1's Outcomes items count
         ids = last["decision_ids"]
         pooled = [cases[i] for i in ids]
         for sha, value in last["solo"].items():

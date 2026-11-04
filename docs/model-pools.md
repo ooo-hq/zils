@@ -233,10 +233,10 @@ validator grades the pools its `soup_grading` setting allows
 ([validators](validators.md#soup-pools-hardware-disk-and-the-emission-schedule));
 a pool it does not grade burns its share in that validator's weights.
 
-### Round items from Zils Current
+### Round items from Zils Outcomes
 
 By default every round draws its subset from `round_bank`. The optional `exam`
-setting points the pool at [Zils Current](current.md) dated exports instead:
+setting points the pool at [Zils Outcomes](current.md) dated exports instead:
 
 ```json
 "exam": {
@@ -258,7 +258,7 @@ defaults. `{"source": "bank"}`, or no `exam` at all, keeps the fixed bank.
 
 Each round's subset (`subset_size` items, 3,000 by default) has two parts:
 
-- **The Current part:** `current_items` items from the dated folders.
+- **The Outcomes part:** `current_items` items from the dated folders.
   - A folder is used only if its `manifest.json` checks out. The SHA-256 and row
     count of `items.jsonl` must match the manifest, the overlap check and the
     cross-check must have run, and the mode must be `local` or `publishable`. Any other folder is
@@ -279,12 +279,12 @@ Each round's subset (`subset_size` items, 3,000 by default) has two parts:
       for old blocks fall through to;
     - earlier rounds drew it fewer than `max_uses` times (the use ledger);
     - with the question, it fits the pool model's input cap (8,192 tokens for
-      d3-mini). The estimate is the same one Zils Current uses.
+      d3-mini). The estimate is the same one Zils Outcomes uses.
   - Yes/no streams keep their labels balanced. No stream may hold more than `stream_max`
     of the part, and at least `min_streams` streams must contribute.
   - Streams in one `group_max` group share one cap. The default,
     `{"arxiv-category-*": 0.15, "wikipedia-revert*": 0.2}`, holds the four arXiv
-    streams together to 15% of the Current part and the Wikipedia revert streams
+    streams together to 15% of the Outcomes part and the Wikipedia revert streams
     (one per language, all in the language/known cell) together to 20%. arXiv gives
     about 1,600 items a day and its task, subject classification, has millions of
     public labelled examples, so uncapped it took 44% of a 990-item part and would
@@ -295,24 +295,24 @@ Each round's subset (`subset_size` items, 3,000 by default) has two parts:
     which. A budget below `min_family_items` leaves the group out. Set `group_max`
     in `exam` to replace the default (`{}` turns it off).
   - Newer resolution days are drawn first. Within a day, items are ranked under
-    the validator's private `sketch_seed`, because anyone can rebuild Current
+    the validator's private `sketch_seed`, because anyone can rebuild Outcomes
     items from the public sources.
 - **The bank part:** the rest of the subset, drawn from `round_bank` as before.
-  Each Current stream is a family in its category and block cell of the base
-  score. In the cells the Current part covers, its streams replace the bank's
+  Each Outcomes stream is a family in its category and block cell of the base
+  score. In the cells the Outcomes part covers, its streams replace the bank's
   families. The bank fills every other cell, so the score keeps all ten cells.
   When the bank's remaining cells cannot fill the rest of the subset, the
-  Current part grows to take it. If Current streams cover every cell, the
-  whole subset comes from Current.
+  Outcomes part grows to take it. If Outcomes streams cover every cell, the
+  whole subset comes from Outcomes.
 
-If the Current part cannot meet these rules (too few streams, fewer than
+If the Outcomes part cannot meet these rules (too few streams, fewer than
 `min_items` items, or an unreadable bank), the whole round draws from
 `round_bank` exactly as it would without `exam`. The round record says so.
 
 #### Quality settings
 
 Every category and block cell of the base score has a fixed weight, and the
-families in a cell count equally. A Current stream that contributes a few dozen
+families in a cell count equally. A Outcomes stream that contributes a few dozen
 items can therefore move the whole score, and a stream whose labels no body can
 predict adds only noise. Three optional settings guard against both:
 
@@ -326,7 +326,7 @@ predict adds only noise. Three optional settings guard against both:
 }
 ```
 
-- **`min_family_items`** (default 100): families are chosen before the Current
+- **`min_family_items`** (default 100): families are chosen before the Outcomes
   budget is spread, so no kept family falls below this size.
   - A stream's supply is what it can give: yes/no streams balanced, and at most
     `stream_max` of the budget. A stream whose supply is below the minimum joins
@@ -343,7 +343,7 @@ predict adds only noise. Three optional settings guard against both:
     them are kept and miners cannot predict it.
   - Each kept family gets the minimum, and the rest of the budget is spread
     over the kept families as evenly as their supply allows.
-  - A cell with no kept Current family is filled from `round_bank`. If fewer
+  - A cell with no kept Outcomes family is filled from `round_bank`. If fewer
     than `min_items` items or `min_streams` streams remain, the round falls
     back to `round_bank`.
 - **`exclude_streams`** (default `["stackexchange-score-*", "wikipedia-afd"]`):
@@ -352,9 +352,9 @@ predict adds only noise. Three optional settings guard against both:
   state holds the discussion's votes, so its label is mostly a vote count. Both
   are excluded by default. `[]` draws every stream.
 - **`current_share`** (default 1, in (0, 1]): below 1 the round **blends**.
-  `round_bank` keeps its families in every cell, and Current families are added
+  `round_bank` keeps its families in every cell, and Outcomes families are added
   next to them, up to `current_share` of the subset (and at most
-  `current_items`). At 1, Current streams replace the bank's families in the
+  `current_items`). At 1, Outcomes streams replace the bank's families in the
   cells they cover, as described above.
 
 A pool that sets none of the three draws exactly as before they existed. A pool
@@ -362,10 +362,10 @@ that sets any of them gets the defaults above for the others; set
 `"min_family_items": 1` or `"exclude_streams": []` to turn one off.
 
 With any quality setting the round record also holds the excluded streams and
-their item counts (`excluded_streams`), every Current family with its streams,
+their item counts (`excluded_streams`), every Outcomes family with its streams,
 supply, items drawn and whether it was kept (`current_families`), the merged
 families among them (`merged_families`), the cells a blend
-added Current families to (`added_cells`), the items, families and Current
+added Outcomes families to (`added_cells`), the items, families and Outcomes
 items per cell (`cells`), and every cell resting on fewer than
 `min_family_items` items (`thin_cells`, also logged). A thin cell is still
 scored; the warning says its weight rests on few items.
@@ -381,11 +381,11 @@ The private round record (`rounds/<round id>/private.json`) holds `bank_source`:
 - the fallback reason, if there was one.
 
 The same record is saved as `bank-source.json`, next to `subset.json` and
-`current-items.jsonl` (the Current items drawn). A resumed round reuses all
-three. The Current items of the last eight rounds stay loadable after they leave
+`current-items.jsonl` (the Outcomes items drawn). A resumed round reuses all
+three. The Outcomes items of the last eight rounds stay loadable after they leave
 the freshness window, so a round can still score earlier rounds' items.
 
-Pooled decisions (`decision_rounds`) work the same way on a Current exam: each
+Pooled decisions (`decision_rounds`) work the same way on a Outcomes exam: each
 earlier round's items come from its `subset-cases.json`, item by item, so a bank
 that changes every day still pools. Cached predictions are scoped to the round
 bank's hash, though. On a day the bank changes, each pool body and soup is graded
