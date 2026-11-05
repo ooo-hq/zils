@@ -1077,6 +1077,60 @@ class SoupRunTest(unittest.TestCase):
         self.assertTrue(record["new"])
         self.assertFalse([w for w in record["refused"].values() if "free disk" in w])
 
+    # ZIL-151: intake downloads the next few claims while it checks the current one.
+    def slow_fetch(self, seconds=0.2):
+        import threading
+        import time
+
+        lock, live, peak = threading.Lock(), [0], [0]
+
+        def fetch(claim, dest):
+            with lock:
+                live[0] += 1
+                peak[0] = max(peak[0], live[0])
+            try:
+                time.sleep(seconds)
+                return self.r.fetch(claim, dest)
+            finally:
+                with lock:
+                    live[0] -= 1
+
+        return fetch, peak
+
+    def test_intake_downloads_overlap(self):
+        self.assertEqual(soup_round.PREFETCH_CLAIMS, 3)
+        fetch, peak = self.slow_fetch()
+        record = self.r.run(fetch_body=fetch)
+        self.assertGreaterEqual(peak[0], 2)
+        self.assertEqual(len(record["new"]), 3)
+
+    def test_prefetching_gives_the_same_record_as_one_at_a_time(self):
+        snapshot = self.junk(5, 6)  # two made-up hashes that fail validation, ahead of the rest
+        records = {}
+        for window in (0, 3):
+            with (
+                tempfile.TemporaryDirectory() as tmp,
+                patch.object(soup_round, "PREFETCH_CLAIMS", window),
+            ):
+                rig = Round(tmp)
+                record = rig.run(config=rig.config(max_new_per_round=2), snapshot=snapshot)
+                records[window] = {k: record[k] for k in ("new", "refused", "failed", "rejected")}
+        self.assertEqual(records[0], records[3])
+        self.assertEqual(len(records[3]["new"]), 2)  # the cap still holds
+
+    def test_prefetched_claims_a_cap_skips_leave_no_files(self):
+        fetch, _ = self.slow_fetch(0.05)
+        record = self.r.run(fetch_body=fetch, config=self.r.config(max_new_per_round=1))
+        self.assertEqual(len(record["new"]), 1)
+        self.assertEqual(list((self.r.state / "bodies").glob(".*")), [])
+
+    def test_a_partial_folder_left_by_a_killed_round_is_cleared(self):
+        stale = self.r.state / "bodies" / f".{self.r.sha['t1']}.partial"
+        stale.mkdir(parents=True)
+        (stale / "half.safetensors").write_bytes(b"cut off")
+        record = self.r.run()
+        self.assertIn(self.r.sha["t1"], record["new"])
+
     def test_intake_progress_survives_a_crash(self):
         def dies_on_weak(claim, dest):
             if claim["sha256"] == self.r.sha["weak"]:
