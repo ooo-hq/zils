@@ -417,8 +417,8 @@ install with `curl -fsSL https://zils.ai/install.sh | sh`. Then:
    zils-miner commit-body --pool <pool> --repo <you>/<body-repo> --path ./my-body --write-owner
    ```
 
-   `--pool` is `d3-lite`, `d3-mini` (the default), `d3-flash` or `d3` (z3). Only lite and mini
-   are open now; a flash or z3 commitment made before its pool opens is ignored.
+   `--pool` is `d3-lite`, `d3-mini` (the default), `d3-flash` or `d3` (z3). A commitment to a
+   pool made before its opening block is ignored; see [four pools](#four-pools).
 
 2. Upload the folder to your Hugging Face model repo and note the commit sha the
    upload prints (`hf auth login` once with a write token):
