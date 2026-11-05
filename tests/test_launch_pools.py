@@ -502,6 +502,7 @@ class EpochFixture:
         self.config = config
         self.chain = FakeChain(at("2026-11-02T23:00:00"))
         self.calls = []
+        self.extra = {}
 
     def commitments_at(self, block):
         return {
@@ -509,6 +510,7 @@ class EpochFixture:
             "2": {"block": 251, "data": f"zilsb3:d3-lite:{'2' * 64}:{REV}:m/lite"},
             "3": {"block": 252, "data": f"zilsb3:d3-flash:{'3' * 64}:{REV}:m/flash"},
             "4": {"block": 253, "data": f"zils1:{'4' * 64}:{REV}:m/king"},
+            **self.extra,
         }
 
     def run_round(self, pool, request):
@@ -538,7 +540,7 @@ def rounds_config(base_pools, **extra):
 
 class EpochPoolsTest(unittest.TestCase):
     def test_each_pool_sees_only_its_own_bodies_as_zilsb2(self):
-        f = EpochFixture(self, rounds_config(four(FLASH)))
+        f = EpochFixture(self, rounds_config(four({**FLASH, "opens_block": 200})))
         f.epoch(block=1000)
         seen = {pool: request["snapshot"]["commitments"] for pool, request in f.calls}
         self.assertEqual(set(seen), {"d3-lite", "d3-mini", "d3-flash"})
@@ -560,6 +562,14 @@ class EpochPoolsTest(unittest.TestCase):
         self.assertIn("no opening block", summary["d3"]["closed"])
         f.epoch(block=1000)
         self.assertIn("d3-flash", {p for p, _ in f.calls})
+
+    def test_a_body_committed_before_its_pool_opened_is_ignored(self):
+        f = EpochFixture(self, rounds_config(four(FLASH)))
+        f.extra = {"5": {"block": 1001, "data": f"zilsb3:d3-flash:{'5' * 64}:{REV}:m/flash"}}
+        f.epoch(block=1000 + BLOCKS_PER_DAY)
+        seen = {pool: request["snapshot"]["commitments"] for pool, request in f.calls}
+        self.assertEqual(set(seen["d3-flash"]), {"5"})
+        self.assertEqual(set(seen["d3-lite"]), {"2"})
 
     def test_pools_this_validator_cannot_grade_are_skipped_and_logged(self):
         config = rounds_config(four(FLASH, Z3), soup_grading={"gpu_mib": 24564})
