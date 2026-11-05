@@ -163,7 +163,9 @@ optionally `subset_size` (default 3,000), `screen_size` (300),
   next `failed_claim_backoff_rounds` rounds (0 to 30). A
   commitment whose repo cannot be downloaded at all does not count toward the
   claims cap; after three rounds of failed downloads it is retired (that
-  commitment only, never the body hash). Each claim's outcome
+  commitment only, never the body hash). Intake also stops starting downloads
+  while the validator's free disk would fall below 60 GiB after a body of the
+  pool's largest size; those claims wait for the next round. Each claim's outcome
   is saved as it finishes, so a round cut off by its deadline resumes without
   downloading a claim twice.
 - `sketch_seed` (64 hex characters) seeds the weight sketches used by the copy
@@ -424,9 +426,10 @@ the ledger. Each body is built once per round and graded on the whole round
 subset, with rows cached every 200 items. A GPU, disk or out-of-memory error,
 or a chassis that cannot grade either, fails the round (it is retried); any
 other grading failure makes the body sit the round out, and a body that fails
-grading in three separate rounds is banned. A body out of the pool for three
-rounds loses its folder (its hash and sketch stay); cached soup predictions
-unused for three rounds are deleted.
+grading in three separate rounds is banned. A graded body loses its folder the
+first round it is out of the pool (its hash and sketch stay, so a re-upload is
+still refused); a body still waiting for a successful grading keeps its folder.
+Cached soup predictions unused for three rounds are deleted.
 A bank item retires once 100 rounds have drawn it (`RETIRE_AFTER`); items never leave the
 validator, so the cap only bounds how long a bank serves before it is refilled. When the round
 bank has too few unretired items, the round is skipped and logged.

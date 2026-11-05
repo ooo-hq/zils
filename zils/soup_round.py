@@ -220,7 +220,17 @@ MAX_POOL = 20  # bodies graded alone and offered to the greedy soup each round
 MAX_NEW_PER_ROUND = (
     6  # new bodies admitted per round (disk and download time); the rest wait a round
 )
-PRUNE_ROUNDS = 3  # a body out of the pool this many rounds loses its folder (hash and sketch kept)
+PRUNE_ROUNDS = 1  # a body out of the pool this many rounds loses its folder (hash and sketch kept)
+# Intake starts a download only while free disk would stay above this after a body of the pool's
+# largest size; later claims wait for the next round (ZIL-163: a full disk stops the validator).
+MIN_FREE_DISK_BYTES = 60 * 1024**3
+
+
+def free_disk_bytes(path):
+    """Free bytes on the filesystem holding `path`."""
+    return shutil.disk_usage(path).free
+
+
 SOUP_CACHE_ROUNDS = 3  # a soup's cached predictions are dropped after this many rounds unused
 DECISION_ROUNDS = 3  # seats and the crown are scored on the items of this round and the last two
 ITEM_SECONDS = 0.065  # GPU time to predict one item (54-62 ms measured on a 48 GB card)
@@ -540,6 +550,11 @@ def _intake(
             continue
         if progress["bytes"] >= max_bytes:
             refused[uid] = "the round's download budget is spent; retried next round"
+            continue
+        if free_disk_bytes(Path(folder(sha)).parent) < MIN_FREE_DISK_BYTES + limits.get(
+            "max_body_bytes", 0
+        ):
+            refused[uid] = "the validator's free disk is below its floor; retried next round"
             continue
         earlier = {
             s: folder(s)
@@ -1409,8 +1424,14 @@ def _finish(state_dir, round_dir, ledger):
             state["bodies"][sha]["pooled"] = max(state["bodies"][sha].get("pooled", 0), index)
     for sha, info in state["bodies"].items():
         # A body out of the pool for PRUNE_ROUNDS rounds is retired: its folder goes, its hash
-        # (so a re-commit is not re-admitted) and its sketch (for copy checks) stay.
-        if info["house"] or sha in state["members"] or info.get("pruned"):
+        # (so a re-commit is not re-admitted) and its sketch (for copy checks) stay. A body not yet
+        # graded (no solo score, e.g. a grading failure being retried) keeps its weights.
+        if (
+            info["house"]
+            or sha in state["members"]
+            or info.get("pruned")
+            or info.get("solo") is None
+        ):
             continue
         if index - info.get("pooled", index) >= PRUNE_ROUNDS:
             shutil.rmtree(state_dir / "bodies" / sha, ignore_errors=True)

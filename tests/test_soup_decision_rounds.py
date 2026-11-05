@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 from unittest.mock import patch
 
 from tests.test_soup_run import Round, pools, soup_entry
@@ -17,6 +18,18 @@ FIXTURE = Path(__file__).with_name("soup_fixtures") / "one-decision-round.json"
 
 def block(day):
     return "0x" + f"{day + 1:02x}" * 32
+
+
+# Rounds here must not depend on the test machine's free disk (soup_round.MIN_FREE_DISK_BYTES).
+_ROOMY_DISK = mock.patch.object(soup_round, "free_disk_bytes", return_value=1 << 50)
+
+
+def setUpModule():
+    _ROOMY_DISK.start()
+
+
+def tearDownModule():
+    _ROOMY_DISK.stop()
 
 
 class Recording:

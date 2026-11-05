@@ -12,6 +12,7 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 from unittest.mock import patch
 
 import torch
@@ -79,6 +80,18 @@ def known(name, body_sha256=None):
 
 def r_public(r, round_id="d3-mini-2026-11-03"):
     return json.loads((r.state / "rounds" / round_id / "public.json").read_text())
+
+
+# Rounds here must not depend on the test machine's free disk (soup_round.MIN_FREE_DISK_BYTES).
+_ROOMY_DISK = mock.patch.object(soup_round, "free_disk_bytes", return_value=1 << 50)
+
+
+def setUpModule():
+    _ROOMY_DISK.start()
+
+
+def tearDownModule():
+    _ROOMY_DISK.stop()
 
 
 class FakeRunner:
@@ -1042,6 +1055,28 @@ class SoupRunTest(unittest.TestCase):
         self.assertEqual(record["new"], [self.r.sha["t1"]])
         self.assertIn("download budget", record["refused"]["2"])
 
+    def test_intake_stops_downloading_below_the_free_disk_floor(self):
+        # ZIL-163: a claim downloads only while free disk stays above the floor after a body of the
+        # pool's largest size; the rest are retried next round, never failed.
+        floor = soup_round.MIN_FREE_DISK_BYTES
+        self.assertEqual(floor, 60 * 1024**3)
+        with patch.object(soup_round, "free_disk_bytes", return_value=floor):
+            record = self.r.run()
+        self.assertEqual(record["new"], [])
+        self.assertEqual(record["failed"], {})
+        reasons = {uid: why for uid, why in record["refused"].items() if "free disk" in why}
+        self.assertTrue(reasons)
+        self.assertTrue(all("retried next round" in why for why in reasons.values()))
+        again = self.r.run(round_id="d3-mini-2026-11-04")
+        self.assertTrue(again["new"])  # with room again, the same claims are admitted
+
+    def test_the_free_disk_floor_leaves_room_for_one_body(self):
+        roomy = soup_round.MIN_FREE_DISK_BYTES + 10 * 1024**4  # a body never reaches 10 TiB
+        with patch.object(soup_round, "free_disk_bytes", return_value=roomy):
+            record = self.r.run()
+        self.assertTrue(record["new"])
+        self.assertFalse([w for w in record["refused"].values() if "free disk" in w])
+
     def test_intake_progress_survives_a_crash(self):
         def dies_on_weak(claim, dest):
             if claim["sha256"] == self.r.sha["weak"]:
@@ -1069,19 +1104,21 @@ class SoupRunTest(unittest.TestCase):
     def test_default_new_body_cap_is_six(self):
         self.assertEqual(soup_round.MAX_NEW_PER_ROUND, 6)
 
-    def test_bodies_out_of_the_pool_for_three_rounds_are_pruned_and_old_soups_dropped(self):
+    def test_a_body_out_of_the_pool_is_pruned_at_once_and_old_soups_dropped(self):
+        # ZIL-163: a mini body is ~9 GB, so weights leave disk the first round a body is out of
+        # the pool; its hash and sketch stay for the copy checks.
+        self.assertEqual(soup_round.PRUNE_ROUNDS, 1)
         weak = self.r.sha["weak"]
         first = self.r.run()
         self.assertIn(weak, first["pool"])
+        self.assertTrue((self.r.state / "bodies" / weak).exists())
         small = self.r.config(max_pool=3)  # the two members and the house body only
         used = []
         for day in (4, 5, 6):
             record = self.r.run(round_id=f"d3-mini-2026-11-0{day}", config=small)
             self.assertNotIn(weak, record["pool"])
             used.append(set(record["soup_keys"]))
-            if day < 6:
-                self.assertTrue((self.r.state / "bodies" / weak).exists())
-        self.assertFalse((self.r.state / "bodies" / weak).exists())
+            self.assertFalse((self.r.state / "bodies" / weak).exists())
         state = json.loads((self.r.state / "pool.json").read_text())
         self.assertIn(weak, state["bodies"])  # the hash is kept, so a re-commit is not re-admitted
         self.assertTrue(list((self.r.state / "sketches").glob(f"{weak}.npz")))
