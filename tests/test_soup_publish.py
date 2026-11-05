@@ -452,7 +452,9 @@ class SoupLiveTest(unittest.TestCase):
         self.job()
         live = self.live()
         self.assertEqual(live["stage"], "starting")
-        self.assertEqual({c["state"] for c in live["claims"] if c["uid"] != 5}, {"waiting", "checking"})
+        self.assertEqual(
+            {c["state"] for c in live["claims"] if c["uid"] != 5}, {"waiting", "checking"}
+        )
 
     def test_scoring_once_the_decision_items_exist(self):
         self.job()
