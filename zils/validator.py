@@ -25,6 +25,9 @@ INCUMBENT_UID = 65535
 # leaves headroom; never below the old fixed 600 s.
 EVAL_SECONDS_PER_CASE = 3
 EVAL_MIN_SECONDS = 600
+# The weight pass waits at most this long for the GPU (ZIL-162): a soup round can hold it for hours,
+# and weights must keep being set meanwhile.
+EVALUATION_CAPACITY_WAIT = 600
 
 
 def evaluation_timeout(cases):
@@ -81,7 +84,7 @@ def run_evaluate(
         command.extend(["--images", str(images)])
     if lease is not None:
         lease.acquire()
-    waiting = False
+    waiting = None  # monotonic time the wait began
     while True:
         try:
             run_child(
@@ -96,16 +99,30 @@ def run_evaluate(
         except CapacityUnavailable:
             if not wait_for_capacity:
                 raise
-            if not waiting:
+            now = time.monotonic()
+            if waiting is None:
                 print("validator: waiting for evaluation capacity", flush=True)
-                waiting = True
+                waiting = now
+            elif wait_for_capacity is not True and now - waiting >= wait_for_capacity:
+                raise  # a bounded wait (seconds) gives up; True waits for as long as it takes
             time.sleep(max(1, args.poll))
     return json.loads(report.read_text())
 
 
 def evaluate_round(
-    config, directory, work, registry, args, *, fetch_checkpoint=None, wait_for_capacity=False
+    config,
+    directory,
+    work,
+    registry,
+    args,
+    *,
+    fetch_checkpoint=None,
+    wait_for_capacity=False,
+    baseline_without_submissions=True,
 ):
+    """`wait_for_capacity`: False, True (wait as long as it takes) or seconds. With
+    `baseline_without_submissions` False, a round with no submissions skips the job baseline, so it
+    never needs the GPU (the validator's weight pass, ZIL-162)."""
     from . import benchmark, calibrate, jobs
 
     if shutil.disk_usage(work).free < 2 * 1024**3:
@@ -158,7 +175,7 @@ def evaluate_round(
     baseline_model = model
     selection = manifest.get("selection")
     previous = selection["previous"] if selection else None
-    if "job_id" in config:
+    if "job_id" in config and (registry or baseline_without_submissions):
         # Calibrate the reference on the same population as each candidate. A
         # published reference may already carry a temperature from another task.
         source = directory / ("comparison" if previous else "reference")
@@ -275,6 +292,15 @@ def evaluate_round(
         )
         if selection:
             report.update(selection=selection, baseline_reference_sha256=baseline_reference_sha256)
+    elif "job_id" in config:  # nothing was submitted, so no baseline was scored
+        report.update(
+            job_id=config["job_id"],
+            job_sha256=config["job_sha256"],
+            benchmark_use="customer-held-out-reused-across-rounds",
+            baseline=None,
+            baseline_model=baseline_model,
+            delivery={"status": "no_submissions", "acceptance": manifest["acceptance"]},
+        )
     if "chain" in config:
         report.update(
             mode="testnet-closed-development",
@@ -283,6 +309,19 @@ def evaluate_round(
         )
     wire.write_json(work / "report.json", report)
     return report
+
+
+def round_report(config, directory, work, registry, args):
+    """The weight pass's job report. It waits at most EVALUATION_CAPACITY_WAIT for the GPU; if a soup
+    round still holds it, the job's submissions are recorded unscored and weights are set anyway."""
+    try:
+        return evaluate_round(
+            config, directory, work, registry, args,
+            wait_for_capacity=EVALUATION_CAPACITY_WAIT, baseline_without_submissions=False,
+        )  # fmt: skip
+    except CapacityUnavailable:
+        print("validator: GPU still busy; job evaluation skipped this round", flush=True)
+        return evaluate_round(config, directory, work, {}, args, baseline_without_submissions=False)
 
 
 def attach_base_tier(config, directory, work, report):
@@ -1112,9 +1151,7 @@ def validator(config, directory, args):
             report = (
                 json.loads((work / "report.json").read_text())
                 if (work / "report.json").exists()
-                else evaluate_round(
-                    settings_for_round, directory, work, registry, args, wait_for_capacity=True
-                )
+                else round_report(settings_for_round, directory, work, registry, args)
             )
             if draws is not None and not (work / "base-tier.json").exists():
                 base_tier_epoch(

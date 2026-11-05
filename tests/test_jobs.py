@@ -300,3 +300,16 @@ print(json.dumps({'runtime': {'temperature': meta.temperature}, 'predictions': [
             report = validator.evaluate_round(config, directory, empty, {}, args)
             self.assertEqual(report["delivery"]["status"], "no_qualifying_model")
             self.assertEqual(report["weights"], {})
+            # ZIL-162: the validator's weight pass skips the baseline when nothing was submitted,
+            # so it never needs the GPU (which a soup round may hold for hours).
+            idle = root / ("c" * 32)
+            idle.mkdir()
+            with patch("zils.validator.run_evaluate", side_effect=AssertionError("used the GPU")):
+                report = validator.evaluate_round(
+                    config, directory, idle, {}, args, baseline_without_submissions=False
+                )
+            self.assertEqual(report["delivery"]["status"], "no_submissions")
+            self.assertIsNone(report["baseline"])
+            self.assertEqual(report["weights"], {})
+            self.assertTrue(all(m["status"] == "missing" for m in report["miners"]))
+            self.assertTrue((idle / "report.json").exists())
