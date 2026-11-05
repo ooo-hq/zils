@@ -91,8 +91,9 @@ A soup pool entry may add an opening block and a boost:
 
 The launch configuration gives lite, mini, flash and z3 25% each, with no
 boosts. Lite and mini pay from the start; flash and z3 burn their shares until
-they open. Both opening blocks are `null` in `zils/data/base-pools-launch.json`
-and must be set to the same values on every validator before they open.
+they open, and a body committed to them before then is never admitted. Both
+opening blocks are `null` in `zils/data/base-pools-launch.json` and must be set
+to the same values on every validator before they open.
 
 ## Soup pools
 

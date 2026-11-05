@@ -282,10 +282,12 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
             if attempts >= MAX_ATTEMPTS:
                 raise RuntimeError(f"round skipped after {attempts} failed attempts")
             block, block_hash = seed_block(block_info, head, deadline)
+            # A body committed while the pool was closed is ignored, not queued: recommit after it opens.
+            opens = entry.get("opens_block") or 0
             commitments = {
                 uid: item
                 for uid, item in pool_commitments(commitments_at(block), pool).items()
-                if int(item["block"]) < block
+                if opens <= int(item["block"]) < block
             }
             secret = config["base_pools"]["pools"][pool].get(model_pools.SOUP_SECRET)
             exam = entry.get("exam")

@@ -352,8 +352,10 @@ longer than a pool's input cap are left out of that pool's rounds.
 
 Lite and mini run rounds from the start. Flash and z3 open later, each at a
 block fixed in the validator configuration. A pool pays nothing before it opens
-(its share burns); see [the emission schedule](model-pools.md#emission-schedule). Bodies committed to a
-pool before it opens are admitted at its first round.
+(its share burns); see [the emission schedule](model-pools.md#emission-schedule). A pool takes no
+submissions until then: validators ignore a body committed before the pool's
+opening block, even after it opens. Commit flash and z3 bodies only once the
+pool is open.
 
 ### What a body is
 
@@ -415,7 +417,8 @@ install with `curl -fsSL https://zils.ai/install.sh | sh`. Then:
    zils-miner commit-body --pool <pool> --repo <you>/<body-repo> --path ./my-body --write-owner
    ```
 
-   `--pool` is `d3-lite`, `d3-mini` (the default), `d3-flash` or `d3` (z3).
+   `--pool` is `d3-lite`, `d3-mini` (the default), `d3-flash` or `d3` (z3). A commitment to a
+   pool made before its opening block is ignored; see [four pools](#four-pools).
 
 2. Upload the folder to your Hugging Face model repo and note the commit sha the
    upload prints (`hf auth login` once with a write token):
