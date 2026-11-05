@@ -3,9 +3,11 @@
 import hashlib
 import json
 import math
+import re
 
 from .base_metrics import CATEGORY_WEIGHTS
 
+HEX64 = re.compile("[a-f0-9]{64}")
 MEMBER_FIELDS = ("hotkey", "body_sha256", "rate", "seat_weight")
 CROWN_FIELDS = ("hotkey", "body_sha256", "rate", "weight")
 
@@ -121,6 +123,77 @@ def _round_bodies(record):
     return out
 
 
+def _iso(timestamp):
+    from datetime import UTC, datetime
+
+    return datetime.fromtimestamp(timestamp, UTC).isoformat()
+
+
+def live(state):
+    """The pool's round in progress, or None: its stage, whether its process is alive, and one public
+    state per committed claim. Reasons for a refusal stay in the private records."""
+    from . import soup_pool
+
+    job = _read_object(state / "job.json") or {}
+    round_id = job.get("round_id")
+    if not isinstance(round_id, str) or not isinstance(job.get("started"), (int, float)):
+        return None
+    folder = state / "rounds" / round_id
+    if (folder / "public.json").exists():
+        return None
+    request = _read_object(state / f"request-{round_id}.json") or {}
+    snapshot = request.get("snapshot") if isinstance(request.get("snapshot"), dict) else {}
+    commits = snapshot.get("commitments") if isinstance(snapshot.get("commitments"), dict) else {}
+    members = snapshot.get("members") if isinstance(snapshot.get("members"), dict) else {}
+    progress = _read_object(folder / "intake-progress.json")
+    stage = "starting" if progress is None else "intake"
+    if (folder / "decision-items.json").exists():
+        stage = "scoring"
+    progress = progress or {}
+    pool = _read_object(state / "pool.json") or {}
+    known = pool.get("bodies") if isinstance(pool.get("bodies"), dict) else {}
+    new = progress.get("new") if isinstance(progress.get("new"), dict) else {}
+    admitted = {str(v.get("uid")) for v in new.values() if isinstance(v, dict)}
+    refused = progress.get("refused") if isinstance(progress.get("refused"), dict) else {}
+    rejected = progress.get("rejected") if isinstance(progress.get("rejected"), dict) else {}
+    done = {str(u) for u in progress.get("done") or []}
+
+    claims = []
+    for uid, item in commits.items():
+        if not (str(uid).isdigit() and isinstance(item, dict)):
+            continue
+        parts = str(item.get("data") or "").split(":")
+        sha = next((p for p in parts if HEX64.fullmatch(p)), None)
+        claims.append((int(item.get("block") or 0), str(members.get(uid) or ""), int(uid), sha))
+    out, checking = [], stage != "scoring"
+    for _, _, uid, sha in sorted(claims):  # the order intake works through them
+        key = str(uid)
+        if key in admitted:
+            state_name = "admitted"
+        elif key in refused:
+            state_name = "deferred" if "retried next round" in str(refused[key]) else "refused"
+        elif sha in rejected or key in done:
+            state_name = "refused"
+        elif sha in known:
+            state_name = "in_pool"
+        elif checking:
+            state_name, checking = "checking", False
+        else:
+            state_name = "waiting"
+        out.append({"uid": uid, "state": state_name})
+    out.sort(key=lambda c: c["uid"])
+    started = float(job["started"])
+    return {
+        "round_id": round_id,
+        "attempt": job.get("attempts") if type(job.get("attempts")) is int else None,
+        "running": soup_pool._alive(job.get("pid"), job.get("pid_started")),
+        "stage": stage,
+        "started_at": _iso(started),
+        "deadline_at": _iso(started + soup_pool.ROUND_SECONDS),
+        "claims": out,
+    }
+
+
 def feed(config, directory, *, limit=FEED_ROUNDS):
     """The payload of the validator's ``GET /soup``: each enabled soup pool's newest public round
     records and, for every body those rounds seat or crown, its house name and repo when known.
@@ -167,4 +240,6 @@ def feed(config, directory, *, limit=FEED_ROUNDS):
                 repo = item["repo"] if item else info.get("repo")
                 bodies[sha] = {"house": name, "repo": repo if isinstance(repo, str) else None}
         pools[pool] = {"bodies": bodies, "rounds": rounds}
+        if (now := live(state)) is not None:  # only while a round is in progress
+            pools[pool]["live"] = now
     return {"kind": "soup", "pools": pools}

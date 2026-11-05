@@ -381,3 +381,96 @@ class SoupFeedTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SoupLiveTest(unittest.TestCase):
+    """GET /soup's `live` block: the round in progress, its stage and each claim's state, no reasons."""
+
+    def setUp(self):
+        self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.state = self.directory / "base-pools" / "d3-mini" / "soup"
+        self.enterContext(patch("zils.soup_rates.house", return_value=FEED_HOUSE))
+        self.round = self.state / "rounds" / "d3-mini-2026-11-05"
+        self.round.mkdir(parents=True)
+        self.shas = {uid: f"{uid:x}" * 64 for uid in range(1, 7)}
+        self.shas = {uid: sha[:64] for uid, sha in self.shas.items()}
+        commitments = {
+            str(uid): {"block": 100 + uid, "data": f"zilsb2:{sha}:{'0' * 40}:someone/body-{uid}"}
+            for uid, sha in self.shas.items()
+        }
+        (self.state / f"request-{self.round.name}.json").write_text(json.dumps({
+            "round_id": self.round.name, "snapshot": {"members": {}, "commitments": commitments},
+        }))  # fmt: skip
+        (self.state / "pool.json").write_text(json.dumps({"bodies": {self.shas[5]: {"uid": 5}}}))
+        self.started = datetime.fromisoformat("2026-11-05T01:22:10+00:00").timestamp()
+
+    def job(self, pid=None):
+        from zils import soup_pool
+
+        pid = os.getpid() if pid is None else pid
+        (self.state / "job.json").write_text(json.dumps({
+            "round_id": self.round.name, "attempts": 1, "started": self.started, "pid": pid,
+            "pid_started": soup_pool._started(pid),
+        }))  # fmt: skip
+
+    def progress(self):
+        (self.round / "intake-progress.json").write_text(json.dumps({
+            "done": ["1", "2"],
+            "new": {self.shas[1]: {"uid": 1, "hotkey": "h1"}},
+            "refused": {
+                "2": "copy: explained by earlier; zz-private-reason",
+                "3": "the round's new-body cap is reached; retried next round",
+            },
+            "rejected": {}, "failed": {}, "explained": {}, "backoff": {}, "bytes": 1, "claims": 2,
+        }))  # fmt: skip
+
+    def live(self):
+        feed = soup_publish.feed(feed_config({"d3-mini": soup_entry()}), self.directory)
+        return feed["pools"]["d3-mini"].get("live")
+
+    def test_a_running_intake_names_each_claims_state(self):
+        self.job()
+        self.progress()
+        live = self.live()
+        self.assertEqual(live["round_id"], "d3-mini-2026-11-05")
+        self.assertEqual((live["stage"], live["running"], live["attempt"]), ("intake", True, 1))
+        self.assertEqual(live["started_at"], "2026-11-05T01:22:10+00:00")
+        self.assertEqual(live["deadline_at"], "2026-11-05T07:22:10+00:00")
+        states = {c["uid"]: c["state"] for c in live["claims"]}
+        self.assertEqual(states, {1: "admitted", 2: "refused", 3: "deferred", 4: "checking",
+                                  5: "in_pool", 6: "waiting"})  # fmt: skip
+        self.assertEqual([c["uid"] for c in live["claims"]], [1, 2, 3, 4, 5, 6])
+
+    def test_reasons_never_leak(self):
+        self.job()
+        self.progress()
+        text = json.dumps(soup_publish.feed(feed_config({"d3-mini": soup_entry()}), self.directory))
+        self.assertNotIn("zz-private-reason", text)
+        self.assertNotIn("explained", text)
+
+    def test_before_intake_writes_progress_it_is_starting(self):
+        self.job()
+        live = self.live()
+        self.assertEqual(live["stage"], "starting")
+        self.assertEqual({c["state"] for c in live["claims"] if c["uid"] != 5}, {"waiting", "checking"})
+
+    def test_scoring_once_the_decision_items_exist(self):
+        self.job()
+        self.progress()
+        (self.round / "decision-items.json").write_text("[]")
+        live = self.live()
+        self.assertEqual(live["stage"], "scoring")
+        self.assertNotIn("checking", {c["state"] for c in live["claims"]})
+
+    def test_a_dead_process_is_not_running(self):
+        self.job(pid=2**22 + 12345)
+        self.assertFalse(self.live()["running"])
+
+    def test_a_published_round_has_no_live_block(self):
+        self.job()
+        self.progress()
+        (self.round / "public.json").write_text(json.dumps(public_round(self.round.name, [])))
+        self.assertIsNone(self.live())
+
+    def test_no_job_has_no_live_block(self):
+        self.assertIsNone(self.live())
