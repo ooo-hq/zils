@@ -224,6 +224,10 @@ PRUNE_ROUNDS = 1  # a body out of the pool this many rounds loses its folder (ha
 # Intake starts a download only while free disk would stay above this after a body of the pool's
 # largest size; later claims wait for the next round (ZIL-163: a full disk stops the validator).
 MIN_FREE_DISK_BYTES = 60 * 1024**3
+# Intake downloads up to this many later claims while it checks the current one (ZIL-151): one
+# slow repo no longer holds up the rest. Checks and admission still run one at a time in claim
+# order, so the round's records match a serial run. 0 downloads one claim at a time.
+PREFETCH_CLAIMS = 3
 
 
 def free_disk_bytes(path):
@@ -522,7 +526,116 @@ def _intake(
     new, rejected, failed = progress["new"], progress["rejected"], progress["failed"]
     refused.update(progress["refused"])
     progress["refused"] = refused
-    for claim in sorted(claims, key=lambda c: (c["block"], c["hotkey"], c["uid"])):
+    ordered = sorted(claims, key=lambda c: (c["block"], c["hotkey"], c["uid"]))
+    ahead = _Prefetch(
+        ordered, download, folder, limits.get("max_body_bytes", 0),
+        eligible=lambda c: _settled_skip(c, known, new, prior_rejected, rejected, prior_failed,
+                                         failed, progress, prior_backoff, index, backoff_rounds,
+                                         prior_explained, state) is None,
+        # Slots the current claim leaves under the new-body and claims caps: never run past them.
+        slots=lambda: min(max_new - len(new), max_claims - progress["claims"]) - 1,
+    )  # fmt: skip
+    try:
+        _intake_claims(
+            ordered, ahead, state, known, new, rejected, failed, refused, progress, save, limits,
+            prior_rejected, prior_failed, prior_backoff, prior_transient, prior_explained, index,
+            max_new, max_claims, max_bytes, backoff_rounds, chassis, base, copies, folder,
+            round_id, residual,
+        )  # fmt: skip
+    finally:
+        ahead.close()
+    return new, rejected, refused, failed
+
+
+def _settled_skip(claim, known, new, prior_rejected, rejected, prior_failed, failed, progress,
+                  prior_backoff, index, backoff_rounds, prior_explained, state):  # fmt: skip
+    """Why intake would skip `claim` for a reason no later claim in this round can change, or None.
+    Only claims with None are downloaded ahead; the loop still makes every decision itself."""
+    sha, uid, key = claim["sha256"], str(claim["uid"]), claim_key(claim)
+    if uid in progress["done"] or sha in known or sha in new:
+        return "done or known"
+    if sha in prior_rejected or sha in rejected or key in prior_failed or key in failed:
+        return "rejected or failed"
+    last = progress["backoff"].get(claim["hotkey"], prior_backoff.get(claim["hotkey"]))
+    if last is not None and 0 < index - last <= backoff_rounds:
+        return "backing off"
+    if key in prior_explained or key in state.get("twins", {}):
+        return "explained or twin"
+    return None
+
+
+class _Prefetch:
+    """Downloads later claims in background threads, each into its own partial folder."""
+
+    def __init__(self, ordered, download, folder, body_bytes, *, eligible, slots):
+        self.ordered, self.download, self.folder = ordered, download, folder
+        self.body_bytes, self.eligible, self.slots = body_bytes, eligible, slots
+        self.started = {}  # uid -> (future, partial folder, sha)
+        self.pool = None
+        if PREFETCH_CLAIMS > 0:
+            from concurrent.futures import ThreadPoolExecutor
+
+            self.pool = ThreadPoolExecutor(max_workers=PREFETCH_CLAIMS)
+
+    def partial(self, claim):
+        return self.folder(claim["sha256"]).with_name(f".{claim['sha256']}.partial")
+
+    def fill(self, current):
+        """Start downloads of the claims after `current`, up to PREFETCH_CLAIMS in flight."""
+        if self.pool is None:
+            return
+        position = next(i for i, c in enumerate(self.ordered) if c is current)
+        busy = {sha for _, _, sha in self.started.values()} | {current["sha256"]}
+        for claim in self.ordered[position + 1 :]:
+            waiting = [u for u in self.started if u != str(current["uid"])]
+            if len(waiting) >= min(PREFETCH_CLAIMS, self.slots()):
+                return
+            uid = str(claim["uid"])
+            if uid in self.started or claim["sha256"] in busy or not self.eligible(claim):
+                continue
+            # Every download in flight may still grow to a full body.
+            room = MIN_FREE_DISK_BYTES + self.body_bytes * (len(waiting) + 2)
+            if free_disk_bytes(self.partial(claim).parent) < room:
+                return
+            future = self.pool.submit(self.download, claim, self.partial(claim))
+            self.started[uid] = (future, self.partial(claim), claim["sha256"])
+            busy.add(claim["sha256"])
+
+    def prefetched(self, claim):
+        return str(claim["uid"]) in self.started
+
+    def fetch(self, claim, partial):
+        """`claim`'s download into `partial`: the prefetched one if started, else run now."""
+        self.fill(claim)
+        entry = self.started.pop(str(claim["uid"]), None)
+        if entry is None:
+            self.download(claim, partial)
+        else:
+            entry[0].result()  # re-raises the download's own error
+
+    def close(self):
+        """Wait for downloads the loop never took and delete their files."""
+        for future, partial, _ in self.started.values():
+            future.cancel()
+            try:
+                future.result()
+            except BaseException:  # noqa: BLE001 - a discarded download's failure is moot
+                pass
+            shutil.rmtree(partial, ignore_errors=True)
+        self.started.clear()
+        if self.pool is not None:
+            self.pool.shutdown(wait=True)
+
+
+def _intake_claims(
+    ordered, ahead, state, known, new, rejected, failed, refused, progress, save, limits,
+    prior_rejected, prior_failed, prior_backoff, prior_transient, prior_explained, index,
+    max_new, max_claims, max_bytes, backoff_rounds, chassis, base, copies, folder, round_id,
+    residual,
+):  # fmt: skip
+    from . import bodies
+
+    for claim in ordered:
         sha, uid, key = claim["sha256"], str(claim["uid"]), claim_key(claim)
         if uid in progress["done"]:
             continue
@@ -551,9 +664,9 @@ def _intake(
         if progress["bytes"] >= max_bytes:
             refused[uid] = "the round's download budget is spent; retried next round"
             continue
-        if free_disk_bytes(Path(folder(sha)).parent) < MIN_FREE_DISK_BYTES + limits.get(
-            "max_body_bytes", 0
-        ):
+        if not ahead.prefetched(claim) and free_disk_bytes(
+            Path(folder(sha)).parent
+        ) < MIN_FREE_DISK_BYTES + limits.get("max_body_bytes", 0):
             refused[uid] = "the validator's free disk is below its floor; retried next round"
             continue
         earlier = {
@@ -575,7 +688,7 @@ def _intake(
         try:
             shutil.rmtree(folder(sha), ignore_errors=True)  # never trust files of an unknown hash
             try:
-                download(claim, partial)
+                ahead.fetch(claim, partial)
             finally:
                 progress["bytes"] += _folder_bytes(partial)
             bodies.check_layout(partial, chassis)
@@ -625,7 +738,6 @@ def _intake(
             shutil.rmtree(partial, ignore_errors=True)
         progress["done"].append(uid)
         save(progress)
-    return new, rejected, refused, failed
 
 
 def _previous_rounds(state_dir, ledger, round_id, wanted):
