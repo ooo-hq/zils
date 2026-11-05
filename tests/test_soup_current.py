@@ -7,6 +7,7 @@ import unittest
 from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest import mock
 
 from tests.test_soup_exam import bank as exam_bank
 from zils import base_metrics, model_pools, models, soup_current, soup_exam, soup_round
@@ -72,6 +73,18 @@ def export(root, day, items, **manifest_changes):
 def day_items(day, per_stream=40, streams=STREAMS):
     resolved = datetime.fromisoformat(day).replace(hour=12, tzinfo=UTC)
     return [item(s, i, resolved) for s in streams for i in range(per_stream)]
+
+
+# Rounds here must not depend on the test machine's free disk (soup_round.MIN_FREE_DISK_BYTES).
+_ROOMY_DISK = mock.patch.object(soup_round, "free_disk_bytes", return_value=1 << 50)
+
+
+def setUpModule():
+    _ROOMY_DISK.start()
+
+
+def tearDownModule():
+    _ROOMY_DISK.stop()
 
 
 class Fixture:
