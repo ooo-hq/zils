@@ -328,7 +328,7 @@ class D3ModuleTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "placeholder"):
             encoder.encode(IMAGE, QUESTION, images=[png()])
         processor.length = 8193  # expanded image tokens count toward the cap; nothing is truncated
-        with self.assertRaisesRegex(ValueError, "token d3 input limit"):
+        with self.assertRaisesRegex(ValueError, "8,192-token d3 input limit"):
             encoder.encode({}, QUESTION, images=[png()])
 
     def test_predict_runs_a_processor_batch_through_the_fp32_readout(self):
