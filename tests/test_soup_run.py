@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
@@ -2187,6 +2188,42 @@ class SoupEpochTest(unittest.TestCase):
         self.assertTrue(summary["d3-mini"]["started"])
         self.assertFalse(soup_pool._alive(os.getpid(), "another process"))
         self.assertTrue(soup_pool._alive(os.getpid(), soup_pool._started(os.getpid())))
+
+    # ZIL-164: a pool whose round is due while another pool's round holds the GPU waits for the
+    # next pass without starting, so the wait never uses up its daily attempts.
+    def busy_lite(self):
+        lite = soup_pool.state_dir(self.directory, "d3-lite")
+        lite.mkdir(parents=True)
+        job = {"round_id": "d3-lite-2026-11-03", "attempts": 1, "started": time.time(),
+               "pid": os.getpid(), "pid_started": soup_pool._started(os.getpid())}  # fmt: skip
+        (lite / "job.json").write_text(json.dumps(job))
+        return lite / "job.json"
+
+    def test_a_round_waits_while_another_pools_round_runs(self):
+        self.busy_lite()
+        summary = self.epoch()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(summary["d3-mini"]["waiting"], "the GPU is busy with the d3-lite round")
+        self.assertFalse((soup_pool.state_dir(self.directory, "d3-mini") / "job.json").exists())
+
+    def test_waiting_never_uses_up_a_pools_attempts(self):
+        busy = self.busy_lite()
+        for _ in range(soup_pool.MAX_ATTEMPTS + 2):
+            self.epoch()
+        self.assertEqual(self.calls, [])
+        busy.unlink()  # the other round finished
+        summary = self.epoch()
+        self.assertEqual(len(self.calls), 1)
+        self.assertNotIn("error", summary["d3-mini"])
+
+    def test_a_dead_round_elsewhere_does_not_block(self):
+        busy = self.busy_lite()
+        job = json.loads(busy.read_text())
+        busy.write_text(
+            json.dumps({**job, "pid_started": "another process"})
+        )  # its process is gone
+        self.epoch()
+        self.assertEqual(len(self.calls), 1)
 
     def test_a_dead_round_is_restarted_a_bounded_number_of_times(self):
         starts = []

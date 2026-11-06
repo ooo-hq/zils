@@ -240,6 +240,26 @@ def _alive(pid, started=None):
     return started is None or _started(pid) == started
 
 
+def _running_elsewhere(directory, pool):
+    """Another soup pool whose round is running now (its process alive, its round unrecorded)."""
+    for path in sorted(Path(directory, "base-pools").glob("*/soup/job.json")):
+        other = path.parent.parent.name
+        if other == pool:
+            continue
+        try:
+            job = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if (
+            isinstance(job.get("round_id"), str)
+            and _alive(job.get("pid"), job.get("pid_started"))
+            and not recorded(directory, other, job["round_id"])
+            and time.time() < job.get("started", 0) + ROUND_SECONDS + 3600
+        ):
+            return other
+    return None
+
+
 def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round):
     """Start each enabled soup pool's due round once; never waits for one. Returns {pool: summary}.
 
@@ -281,6 +301,10 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
                 continue
             if attempts >= MAX_ATTEMPTS:
                 raise RuntimeError(f"round skipped after {attempts} failed attempts")
+            if other := _running_elsewhere(directory, pool):
+                # The pools share one GPU: wait for the next pass without using up an attempt.
+                summary[pool]["waiting"] = f"the GPU is busy with the {other} round"
+                continue
             block, block_hash = seed_block(block_info, head, deadline)
             # A body committed while the pool was closed is ignored, not queued: recommit after it opens.
             opens = entry.get("opens_block") or 0
