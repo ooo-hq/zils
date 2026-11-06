@@ -63,6 +63,36 @@ class SubsetTest(unittest.TestCase):
             chosen = soup_exam.subset(cases, seed, 600, exclude=retired)
             self.assertFalse(retired & {c["id"] for c in chosen})
 
+    def test_a_family_with_more_labels_than_its_quota_is_still_drawn(self):
+        # ZIL-178: CLINC, ChessBench and similar families have more labels than a family's share
+        # of a round; they draw their quota in the seeded order without the per-label minimum.
+        many = exam("choice", [f"l{i}" for i in range(40)], prefix="many")
+        for case in many:
+            case["family"] = "many-" + case["family"]
+            case["question"]["criteria"] = {f"l{i}": f"L{i}" for i in range(40)}
+        cases = bank() + many
+        chosen = soup_exam.subset(cases, b"seed", 500)
+        counts = Counter(c["family"] for c in chosen if c["id"].startswith("many"))
+        self.assertEqual(set(counts), {c["family"] for c in many})
+        self.assertGreaterEqual(min(counts.values()), soup_exam.FAMILY_MINIMUM)
+        self.assertEqual(chosen, soup_exam.subset(list(reversed(cases)), b"seed", 500))
+        for family in {c["family"] for c in chosen if c["family"].endswith("noul")}:
+            self.assertEqual(
+                {c["label"] for c in chosen if c["family"] == family}, {"false", "true"}
+            )
+
+    def test_banks_that_draw_today_draw_the_same_subsets(self):
+        # Fingerprints of the subsets before ZIL-178 (origin/main 210531f): live rounds keep their draws.
+        import hashlib
+
+        expected = {"round-1:500": "7965ff892cdbc8bd", "seed:400": "4c44b6acf1608d39",
+                    "s:300": "a62cb6f6f053ca74", "x:600": "3165ff13a2097c96"}  # fmt: skip
+        cases = bank()
+        for key, digest in expected.items():
+            seed, size = key.split(":")
+            ids = [c["id"] for c in soup_exam.subset(cases, seed.encode(), int(size))]
+            self.assertEqual(hashlib.sha256("\n".join(ids).encode()).hexdigest()[:16], digest, key)
+
     def test_impossible_bank_raises(self):
         cases = bank()
         missing_cell = [c for c in cases if c["category"] != "arts"]
