@@ -276,11 +276,18 @@ class SoupFeedTest(unittest.TestCase):
         })  # fmt: skip
         feed = soup_publish.feed(config, self.directory)
         self.assertEqual(feed["kind"], "soup")
+        empty = {
+            "round_id": None,
+            "max_new_per_round": 6,
+            "graded": [],
+            "rejected": [],
+            "claims": [],
+        }
         self.assertEqual(
             feed["pools"],
             {
-                "d3-mini": {"bodies": {}, "rounds": []},
-                "d3-lite": {"bodies": {}, "rounds": []},
+                "d3-mini": {"bodies": {}, "rounds": [], "intake": empty},
+                "d3-lite": {"bodies": {}, "rounds": [], "intake": empty},
             },
         )
 
@@ -476,3 +483,81 @@ class SoupLiveTest(unittest.TestCase):
 
     def test_no_job_has_no_live_block(self):
         self.assertIsNone(self.live())
+
+
+class SoupIntakeTest(unittest.TestCase):
+    """GET /soup's `intake` block: the newest finished intake, by uid and body hash, so a page can
+    rank waiting bodies against chain. Only reasons that say "retried next round" are published."""
+
+    def setUp(self):
+        self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.state = self.directory / "base-pools" / "d3-mini" / "soup"
+        self.enterContext(patch("zils.soup_rates.house", return_value=FEED_HOUSE))
+        self.shas = {uid: (f"{uid:x}" * 64)[:64] for uid in range(1, 6)}
+        (self.state / "rounds").mkdir(parents=True)
+        (self.state / "pool.json").write_text(json.dumps({
+            "bodies": {self.shas[1]: {"uid": 1, "house": False}, "f" * 64: {"house": True}},
+            "rejected": {self.shas[4]: "zz-private-weights"},
+        }))  # fmt: skip
+
+    def finished(self, round_id, refused, uids=range(1, 6)):
+        commitments = {
+            str(uid): {"block": 100 + uid, "data": f"zilsb2:{self.shas[uid]}:{'0' * 40}:a/b-{uid}"}
+            for uid in uids
+        }
+        (self.state / f"request-{round_id}.json").write_text(json.dumps({
+            "round_id": round_id, "snapshot": {"members": {}, "commitments": commitments},
+        }))  # fmt: skip
+        folder = self.state / "rounds" / round_id
+        folder.mkdir()
+        (folder / "intake.json").write_text(json.dumps({"refused": refused, "new": {}}))
+
+    def intake(self, **entry):
+        feed = soup_publish.feed(feed_config({"d3-mini": soup_entry(**entry)}), self.directory)
+        return feed["pools"]["d3-mini"].get("intake")
+
+    def test_deferred_claims_keep_their_reason_and_hash(self):
+        self.finished("d3-mini-2026-11-06", {
+            "2": "the round's new-body cap is reached; retried next round",
+            "3": "copy: explained by earlier; zz-private-reason",
+        })  # fmt: skip
+        intake = self.intake(max_new_per_round=12)
+        self.assertEqual(intake["round_id"], "d3-mini-2026-11-06")
+        self.assertEqual(intake["max_new_per_round"], 12)
+        self.assertEqual(intake["claims"], [
+            {"uid": 2, "sha256": self.shas[2], "state": "deferred",
+             "reason": "the round's new-body cap is reached; retried next round"},
+            {"uid": 3, "sha256": self.shas[3], "state": "refused", "reason": None},
+        ])  # fmt: skip
+
+    def test_graded_and_rejected_hashes_without_house_bodies(self):
+        self.finished("d3-mini-2026-11-06", {})
+        intake = self.intake()
+        self.assertEqual(intake["graded"], [self.shas[1]])
+        self.assertEqual(intake["rejected"], [self.shas[4]])
+        self.assertEqual(intake["max_new_per_round"], 6)  # the pool default
+
+    def test_private_reasons_never_leak(self):
+        self.finished("d3-mini-2026-11-06", {"3": "copy: explained by earlier; zz-private-reason"})
+        text = json.dumps(soup_publish.feed(feed_config({"d3-mini": soup_entry()}), self.directory))
+        self.assertNotIn("zz-private", text)
+
+    def test_the_newest_finished_intake_wins(self):
+        self.finished(
+            "d3-mini-2026-11-05", {"2": "the round's claims cap is reached; retried next round"}
+        )
+        self.finished("d3-mini-2026-11-06", {}, uids=(1, 2))
+        (self.state / "rounds" / "d3-mini-2026-11-07").mkdir()  # in progress: no intake.json yet
+        intake = self.intake()
+        self.assertEqual((intake["round_id"], intake["claims"]), ("d3-mini-2026-11-06", []))
+
+    def test_a_claim_missing_from_the_snapshot_is_skipped(self):
+        self.finished(
+            "d3-mini-2026-11-06", {"9": "the round's new-body cap is reached; retried next round"}
+        )
+        self.assertEqual(self.intake()["claims"], [])
+
+    def test_before_any_intake_there_is_still_a_block(self):
+        intake = self.intake()
+        self.assertEqual((intake["round_id"], intake["claims"]), (None, []))
+        self.assertEqual(intake["graded"], [self.shas[1]])
