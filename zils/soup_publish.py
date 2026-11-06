@@ -194,6 +194,56 @@ def live(state):
     }
 
 
+DEFERRED = "retried next round"  # the only refusal reasons published: the round's own limits
+
+
+def intake(state, max_new):
+    """The newest finished intake of the pool: the hashes this validator has graded or rejected and,
+    by uid and committed hash, each claim that round passed over, so a page can rank waiting bodies
+    against chain. A reason is published only for a deferral (``DEFERRED``); others stay private."""
+    pool = _read_object(state / "pool.json") or {}
+    known = pool.get("bodies") if isinstance(pool.get("bodies"), dict) else {}
+    rejected = pool.get("rejected") if isinstance(pool.get("rejected"), dict) else {}
+    try:
+        folders = sorted(
+            f.name for f in (state / "rounds").iterdir() if (f / "intake.json").exists()
+        )
+    except OSError:
+        folders = []
+    round_id, claims = (folders[-1] if folders else None), []
+    if round_id is not None:
+        record = _read_object(state / "rounds" / round_id / "intake.json") or {}
+        refused = record.get("refused") if isinstance(record.get("refused"), dict) else {}
+        request = _read_object(state / f"request-{round_id}.json") or {}
+        snapshot = request.get("snapshot") if isinstance(request.get("snapshot"), dict) else {}
+        commits = (
+            snapshot.get("commitments") if isinstance(snapshot.get("commitments"), dict) else {}
+        )
+        for uid, reason in refused.items():
+            item = commits.get(uid)
+            parts = str(item.get("data") or "").split(":") if isinstance(item, dict) else []
+            sha = next((p for p in parts if HEX64.fullmatch(p)), None)
+            if not (str(uid).isdigit() and sha):
+                continue
+            deferred = DEFERRED in str(reason)
+            claims.append({
+                "uid": int(uid), "sha256": sha, "state": "deferred" if deferred else "refused",
+                "reason": str(reason)[:200] if deferred else None,
+            })  # fmt: skip
+        claims.sort(key=lambda c: c["uid"])
+    return {
+        "round_id": round_id,
+        "max_new_per_round": max_new,
+        "graded": sorted(
+            s
+            for s, info in known.items()
+            if HEX64.fullmatch(s) and isinstance(info, dict) and not info.get("house")
+        ),  # fmt: skip
+        "rejected": sorted(s for s in rejected if HEX64.fullmatch(s)),
+        "claims": claims,
+    }
+
+
 def feed(config, directory, *, limit=FEED_ROUNDS):
     """The payload of the validator's ``GET /soup``: each enabled soup pool's newest public round
     records and, for every body those rounds seat or crown, its house name and repo when known.
@@ -239,7 +289,11 @@ def feed(config, directory, *, limit=FEED_ROUNDS):
                     name = info["name"]
                 repo = item["repo"] if item else info.get("repo")
                 bodies[sha] = {"house": name, "repo": repo if isinstance(repo, str) else None}
-        pools[pool] = {"bodies": bodies, "rounds": rounds}
+        pools[pool] = {
+            "bodies": bodies,
+            "rounds": rounds,
+            "intake": intake(state, entry["max_new_per_round"]),
+        }
         if (now := live(state)) is not None:  # only while a round is in progress
             pools[pool]["live"] = now
     return {"kind": "soup", "pools": pools}
