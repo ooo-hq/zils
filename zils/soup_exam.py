@@ -39,15 +39,21 @@ def subset(bank, seed: bytes, size: int, *, exclude=(), minimum=FAMILY_MINIMUM, 
         if case["id"] not in exclude:
             families[case["family"]][case["label"]].append(case)
     counts = {f: sum(map(len, labels.values())) for f, labels in families.items()}
+
+    def ranked(rows):
+        return sorted(rows, key=lambda c: hashlib.sha256(seed + b"\0" + c["id"].encode()).digest())
+
     chosen = []
     for family, quota in _allocate(counts, size, minimum).items():
         labels = families[family]
+        if len(labels) > quota:
+            # More labels than the family's quota (ZIL-178): the quota in seeded order, without the
+            # per-label minimum. Families with fewer labels draw exactly as before.
+            chosen += ranked([c for rows in labels.values() for c in rows])[:quota]
+            continue
         per_label = _allocate({k: len(v) for k, v in labels.items()}, quota, 1)
         for label, rows in labels.items():
-            rows = sorted(
-                rows, key=lambda c: hashlib.sha256(seed + b"\0" + c["id"].encode()).digest()
-            )
-            chosen += rows[: per_label[label]]
+            chosen += ranked(rows)[: per_label[label]]
     chosen.sort(key=lambda c: c["id"])
     if whole:
         base_metrics.baselines(chosen)
