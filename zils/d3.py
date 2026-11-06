@@ -214,7 +214,9 @@ class Encoder:
             ids = batch["input_ids"][0].tolist()
         maximum = models.spec(getattr(self, "model", models.D3))["max_input_tokens"]
         if not ids or len(ids) > maximum:
-            raise ValueError("Decision exceeds the 4096-token d3 input limit; shorten the example")
+            raise ValueError(
+                f"Decision exceeds the {maximum:,}-token d3 input limit; shorten the example"
+            )
         return batch, normalized.keys
 
     def encode(self, state, question, images=(), videos=()):
