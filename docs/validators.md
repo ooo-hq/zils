@@ -279,48 +279,53 @@ rounds and counted in the round log. The cap is checked with the chassis
 tokenizer on the fixed round bank; Zils Outcomes items are filtered by an
 estimated token count ([current](current.md)).
 
-### 7. Pay the adapter track from hosted-queue work
+### 7. Pay the adapter track from paid adapter use
 
-Off by default. With an `adapter_evidence` section the adapter share pays real
-customer work from the hosted queue instead of the frozen-job round, whose rows
-are then ignored for weights:
+Off by default. With an `adapter_evidence` section the adapter share pays miners
+whose delivered customer adapters earn paid API use, instead of the frozen-job
+round, whose rows are then ignored for weights:
 
 ```json
 "adapter_evidence": {
   "url": "https://TRAINING_API/v1/network/adapter-evidence",
   "signer": "SS58_OF_THE_PLATFORM_EVIDENCE_HOTKEY",
-  "window_hours": 72
+  "window_hours": 72,
+  "revenue_cap": 0.5
 }
 ```
 
 Each round, before its first publish attempt, the validator requests the window
 of `window_hours` ending at the current whole UTC hour, verifies the payload is
 signed by `signer` (a dedicated platform key, not a miner's) for exactly that
-window and schema `zils-adapter-evidence/v1`, and freezes the signed document in
+window and schema `zils-adapter-evidence/v2`, and freezes the signed document in
 the round as `adapter-evidence.json`. The report embeds it, so the report hash
 binds it and a restart republishes the same vector. A failed fetch stops the
 round; it retries after a restart rather than burning the share.
 
-The platform exports facts per finished attempt (hotkey, purpose, outcome,
-tokens, artifact hash, delivered or not, held-out skill, whether the job is
-operator-owned, an owner hash); no job ids, names or owners. `zils.queue_evidence`
-applies the rule per hotkey over the window: score = Σ `total_tokens × skill`
-over customer attempts that are valid, delivered to the customer with that
-attempt's artifact, and not operator-owned; weight = score × reliability, where
-reliability is `(valid + 1) / (valid + failures + 2)` over all its attempts
-(failures: `invalid_artifact`, `worker_failure`, `abandoned`, as graded routing
-counts them). Qualification runs never earn. A hotkey is paid at the uid it
-holds in the round's chain snapshot (the queue's own UID is unrelated); an
-unregistered hotkey earns nothing. No earner: the adapter share burns at
-`base_tier.burn_uid`, as in §6. The publisher refuses evidence from another
-signer or window, an invalid row, one artifact hash earning twice, a report
-without evidence when the section is set, and evidence when it is not.
-Receipts record `"adapter_source": "queue"`. The fleet refuses the section on a
-config without a `chain` section.
+The platform exports, per hotkey, the live API spend on open-tier adapters it
+delivered, credited for 30 days after delivery, and the window's TAO/USD price;
+no job ids, hashes or owners. `zils.queue_evidence` applies the rule:
 
-Trust: the platform's processor evaluated the work; the signature proves the
-export came from the platform, not that the evaluation was right. Customer test
-data stays private, so other validators can audit the export but not re-score it.
+- **Cap.** `paid = min(1, revenue_cap × revenue / value)`, where `value` is the
+  adapter share of the miners' 41% of the subnet's alpha emission over the
+  window, at the subnet's moving alpha price (`SubnetMovingPrice`,
+  `SubnetAlphaOutEmission`, read at the round block) times `tao_usd`. A miner
+  posing as a customer pays at least `1 / revenue_cap` of what it earns back.
+- **Split.** Each registered hotkey gets `paid × spend / revenue` of the share.
+  The rest, including spend credited to unregistered hotkeys, burns at the burn
+  uid (`base_pools.burn_uid` or `base_tier.burn_uid`; the section needs one).
+
+No paid spend: the adapter share burns. A hotkey is paid at the uid it holds in
+the round's chain snapshot. The publisher refuses evidence from another signer
+or window, an invalid row, a hotkey listed twice, a report without evidence when
+the section is set, and evidence when it is not. Receipts record
+`"adapter_source": "queue"`, `adapter_paid` and the chain price inputs. The fleet
+refuses the section on a config without a `chain` section.
+
+Trust: the platform's processor evaluated the work and its billing ledger
+recorded the spend; the signature proves the export came from the platform, not
+that either was right. Customer data and usage stay private, so other validators
+can check the export's signature and the chain price but not re-count the spend.
 
 The [first verified testnet round](testnet-round-001.md) demonstrates this closed
 path. It does not establish current validator uptime, open access,
