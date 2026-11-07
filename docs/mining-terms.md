@@ -1,21 +1,22 @@
 # Zils miner terms
 
-Version 18 October 2026. In force once [admission](miner-admission.md) opens;
+Version 7 November 2026. In force once [admission](miner-admission.md) opens;
 until then no outside miner is admitted.
 
 These terms apply to anyone who runs a miner against the Zils hosted training
 queue or a Zils validator ("you") and are made with Zils, the operator of
-Bittensor subnet 579 ("Zils").
+Bittensor subnet 127 on mainnet ("Zils").
 
 ## 1. What you receive
 
-- **Customer training data.** For each customer job assigned to you, the job's
-  training split only: states, questions and labels. Calibration and test
-  splits, acceptance thresholds and customer identity stay on the Zils
-  processor. Each job carries a job ID and a manifest hash.
-- **Base weights.** The pinned base model (today `d3-mini-4.5b-v1`, a public
+- **Customer training data.** Only jobs on the open tier, whose customers chose
+  to have their adapter trained by network miners. For each such job assigned
+  to you, the job's training split only: states, questions and labels.
+  Calibration and test splits, acceptance thresholds and customer identity stay
+  on the Zils processor. Each job carries a job ID and a manifest hash.
+- **Base weights.** The pinned z3-mini base model (`d3-mini-4.5b-v1`, a public
   release under its own vendor licence) and Zils' training runtime from the
-  public repository.
+  public repository. z3-mini is the only model admitted miners train.
 - **Qualification material.** Synthetic benchmark jobs used to grade your host.
   They are not customer data.
 
@@ -26,9 +27,12 @@ submit the signed artifact. That is all.
 
 ## 3. What you may not do with it
 
-- **No retention beyond the job.** Delete the job's training data, intermediate
-  checkpoints and logs that contain examples within 7 days of the job finishing
-  (accepted, rejected, cancelled or expired), and at once on revocation.
+- **No retention beyond the job.** Delete the job's training data, the adapter
+  you trained, intermediate checkpoints and logs that contain examples within
+  7 days of the job finishing (accepted, rejected, cancelled or expired), and at
+  once on revocation.
+- **No serving.** Zils hosts accepted adapters; customers use them only through
+  the Zils API. Do not serve, publish or hand over an adapter you trained.
 - **No redistribution.** Do not copy customer data off the qualified host, share
   it, publish it, or let any other person or service read it.
 - **No other training.** Do not train, fine-tune, evaluate or prompt any other
@@ -70,10 +74,19 @@ accepts it. You keep no rights in it.
 
 ## 6. Payment reality
 
-Zils runs on Bittensor **testnet** subnet 579. Testnet tokens have no value.
-Queue jobs publish no chain weights. **No earnings are promised**, now or when a
-mainnet subnet exists. Your costs (hardware, power, qualification credit) are
-yours. Nothing here is investment advice or an offer of securities.
+Zils runs on Bittensor mainnet subnet 127. Miners earn only the emissions that
+validators assign through chain weights. Validators running the published Zils
+rule pay for adapter work ([validators §7](validators.md#7-pay-the-adapter-track-from-paid-adapter-use)):
+a share in proportion to paid API use of open-tier adapters you trained and Zils
+delivered, for 30 days after delivery, capped against that revenue. The rest of
+the share is burned. Free, test-mode and Zils' own use earns nothing, and a job
+whose adapter was not delivered earns nothing. Zils may change this rule; the
+change applies from the round it is published.
+
+**No earnings are promised.** There may be no paid use, emissions and token
+prices move, and the cap can pay you little or nothing. Your costs (hardware,
+power, qualification) are yours. Nothing here is investment advice or an offer
+of securities.
 
 ## 7. Liability, briefly
 
@@ -84,15 +97,15 @@ from mining.
 
 ## 8. Acceptance
 
-- **Registering a hotkey on subnet 579 and mining with it is acceptance.** The
+- **Registering a hotkey on subnet 127 and mining with it is acceptance.** The
   hotkey that signs your claims is the accepting identity; the first signed
   claim records it. One person may run several hotkeys; each accepts separately.
 - **Terms version** = the SHA-256 of this file at the commit you accepted, plus
   the date in the heading. Your worker config (`.private/queue-miner.json`,
-  `terms_sha256`) carries it into every claim and into the qualification report.
-  (Documented only today; see [admission](miner-admission.md) for the code.)
+  `terms_sha256`) carries it into every claim and into the qualification report
+  (see [admission](miner-admission.md)).
 - Zils records your hotkey, the terms version and the first-claim time with your
   worker row.
 
-Every customer job goes to the whole miner pool; there is no per-job opt-out.
-A mainnet subnet, when it exists, gets a new version of these terms.
+Zils assigns each open-tier job to one miner at a time by its
+[graded routing](miner-grading.md); there is no per-job opt-out.
