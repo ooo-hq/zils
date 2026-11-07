@@ -306,6 +306,9 @@ def performance_grade(attempts, context, now):
     )[:50]
     successes = sum(a["outcome"] == "valid" for a in rows)
     failures = sum(a["outcome"] in FAILURES for a in rows)
+    # `delivered` is set once a customer job finishes: whether this attempt's adapter shipped.
+    judged = [a for a in rows if a["outcome"] == "valid" and a.get("delivered") in (True, False)]
+    delivered = sum(a["delivered"] is True for a in judged)
     rates = []
     for a in rows:
         if a["outcome"] == "valid":
@@ -323,6 +326,9 @@ def performance_grade(attempts, context, now):
         "successes": successes,
         "failures": failures,
         "neutral": len(rows) - successes - failures,
+        "delivered": delivered,
+        "judged": len(judged),
+        "delivery_rate": (delivered + 1) / (len(judged) + 2),
         "p90_seconds_per_token": rates[math.ceil(0.9 * len(rates)) - 1] if rates else None,
     }
 
@@ -421,6 +427,7 @@ def rank_candidates(job, workers, now, *, max_seconds=MAX_TRAINING_SECONDS):
     else:
         candidates.sort(
             key=lambda c: (
+                -c["delivery_rate"],  # results on assigned jobs outrank the fixed benchmark
                 -c["quality_band"],
                 -c["reliability"],
                 c["estimated_seconds"],
