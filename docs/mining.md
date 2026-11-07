@@ -156,11 +156,12 @@ earn on two tracks, paid from one weight vector on the configured subnet:
   unchanged; each round's calibrated test-split skill is the adapter weight.
   A validator may instead take the adapter track from real customer work in the
   [hosted queue](queue-miners.md) (`adapter_evidence`, off by default; see
-  [validators §7](validators.md#7-pay-the-adapter-track-from-hosted-queue-work)).
-  Then you earn for customer jobs the queue routed to your hotkey and delivered
-  to the customer, weighted by training tokens × held-out skill × your
-  reliability over the window. Qualification runs and operator-owned jobs earn
-  nothing, and your queue hotkey must be registered on the subnet.
+  [validators §7](validators.md#7-pay-the-adapter-track-from-paid-adapter-use)).
+  Then you earn when an open-tier customer adapter you trained is delivered and
+  customers pay to use it through the API: your share of that paid use over the
+  window, for 30 days after delivery, capped by the validator's `revenue_cap`.
+  Free, test-mode and operator use earn nothing, and your queue hotkey must be
+  registered on the subnet.
 
 Split: the base tier takes `base_pools.share` of the vector (for example **0.7**;
 the validator records the share in every chain attempt and receipt), adapters

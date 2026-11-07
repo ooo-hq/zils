@@ -11,8 +11,8 @@ and ImaJev image profiles are retired and take no jobs. For a
 **Bittensor fleet**, use
 [registration](bittensor-registration.md) and
 [bundle setup](mining.md). Queue assignments publish no Bittensor weights by
-themselves. A fleet validator can pay delivered queue work from its adapter
-share ([validators §7](validators.md#7-pay-the-adapter-track-from-hosted-queue-work),
+themselves. A fleet validator can pay for paid API use of delivered queue
+adapters from its adapter share ([validators §7](validators.md#7-pay-the-adapter-track-from-paid-adapter-use),
 off by default); only hotkeys registered on that subnet earn.
 
 Operators can enable [graded job assignment](miner-grading.md) after qualification.

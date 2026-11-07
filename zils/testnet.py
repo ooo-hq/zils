@@ -256,6 +256,16 @@ def preflight(config, sub):
         "last_update": last_update,
         "retry_after_block": last_update + rate if last_update else block,
         **({"commitments": commitments} if "base_tier" in config or "base_pools" in config else {}),
+        **(
+            {
+                # The adapter revenue cap prices the share at this block: the moving alpha price
+                # (I96F32 TAO per alpha, harder to push than the pool spot) and alpha per block.
+                "alpha_price_tao": query("SubnetMovingPrice", netuid)["bits"] / 2**32,
+                "alpha_per_block": query("SubnetAlphaOutEmission", netuid) / 1e9,
+            }
+            if "adapter_evidence" in config
+            else {}
+        ),
     }
 
 
@@ -373,6 +383,7 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
     if any(str(row["uid"]) not in config["members"] for row in rows):
         raise ValueError("report contains a miner outside this registered fleet")
     evidence = report.get("adapter_evidence")
+    payload = paid = None
     if evidence is not None and "adapter_evidence" not in config:
         raise ValueError("report carries queue evidence but the fleet takes no adapter evidence")
     if "adapter_evidence" in config:
@@ -382,9 +393,12 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
         if evidence is None:
             raise ValueError("fleet takes adapter weights from queue evidence; the report has none")
         source = queue_evidence.validate_track(config["adapter_evidence"])
-        adapter = queue_evidence.track_weights(
-            queue_evidence.verify(evidence, source), config["members"]
-        )
+        payload = queue_evidence.verify(evidence, source)
+        if pools is None and "base_tier" not in config:
+            raise ValueError(
+                "queue adapter evidence needs base_pools or base_tier for its burn uid"
+            )
+        adapter = {}  # set once the adapter share is known; the revenue cap depends on it
     else:
         adapter = zils.weight_vector(
             [
@@ -431,10 +445,15 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
         if adapter_share < -1e-9:
             raise ValueError("base, feature and serving shares exceed the reward budget")
         adapter_share = max(0.0, adapter_share)  # a budget filled to exactly 1 can round below 0
+        if payload is not None:
+            paid = queue_evidence.paid_fraction(payload, source, adapter_share, state)
+            adapter = queue_evidence.track_weights(payload, config["members"], paid, burn)
         weights = zils.blend_weights(
             {**vectors, "adapter": adapter}, {**shares, "adapter": adapter_share}, burn_uid=burn
         )
-        burned = share * pool_record["burned"] + (0 if adapter else adapter_share)
+        burned = share * pool_record["burned"] + adapter_share * (
+            adapter.get(burn, 0.0) if adapter else 1
+        )
         if feature_record is not None:
             burned += feature_share * feature_record["burned"]
         if serving_record is not None:
@@ -478,6 +497,9 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
 
         track = base_round.validate_track(track)
         share, burn = track["share"], track["burn_uid"]
+        if payload is not None:
+            paid = queue_evidence.paid_fraction(payload, source, 1 - share, state)
+            adapter = queue_evidence.track_weights(payload, config["members"], paid, burn)
         burn_target = burn
         # Only kings earn the base share, with or without a decision this epoch; exam winners earn
         # nothing. An empty track (no registered king, e.g. the unowned vendor base; no adapter
@@ -492,7 +514,7 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
             {"base": share, "adapter": 1 - share},
             burn_uid=burn,
         )
-        burned = (0 if base else share) + (0 if adapter else 1 - share)
+        burned = (0 if base else share) + (1 - share) * (adapter.get(burn, 0.0) if adapter else 1)
         if burned > 0 and burn != state["owner_uid"]:
             # Subtensor burns incentive only at the owner's hotkey and masks other self-weights.
             raise ValueError("base_tier.burn_uid must be the subnet owner hotkey's uid")
@@ -510,7 +532,7 @@ def publish_round(config, work, report, sub, wallet, *, publish=False):
         "requested_weights": {str(k): v for k, v in weights.items()},
         "replaced": replaced,
         **({"tracks": tracks} if tracks else {}),
-        **({"adapter_source": "queue"} if "adapter_evidence" in config else {}),
+        **({"adapter_source": "queue", "adapter_paid": paid} if payload is not None else {}),
         "chain_write": False,
         "weights_verified": False,
     }
