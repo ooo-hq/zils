@@ -320,6 +320,51 @@ class GradingTests(unittest.TestCase):
         self.assertEqual(grade["p90_seconds_per_token"], 0.2)
         self.assertEqual(grading.performance_grade([], CONTEXT, NOW)["reliability"], 0.5)
 
+    def test_delivery_rate_counts_only_judged_customer_attempts(self):
+        def attempt(i, outcome="valid", delivered=None):
+            return {
+                "id": str(i),
+                "context": CONTEXT,
+                "outcome": outcome,
+                "finished_at": NOW.isoformat(),
+                "total_tokens": 1000,
+                "delivered": delivered,
+            }
+
+        attempts = [
+            attempt(0, delivered=True),
+            attempt(1, delivered=False),  # evaluated, lost to the baseline
+            attempt(2, delivered=False),
+            attempt(3),  # job still open, or a qualification run: not judged
+            attempt(4, "invalid_artifact", delivered=False),  # a failure, already in reliability
+        ]
+        grade = grading.performance_grade(attempts, CONTEXT, NOW)
+        self.assertEqual((grade["delivered"], grade["judged"]), (1, 3))
+        self.assertEqual(grade["delivery_rate"], 0.4)
+        self.assertEqual(grading.performance_grade([], CONTEXT, NOW)["delivery_rate"], 0.5)
+
+    def test_a_miner_whose_adapters_lose_ranks_below_a_new_miner(self):
+        def history(hotkey, delivered):
+            return [
+                {
+                    "id": f"{hotkey}-{i}",
+                    "context": CONTEXT,
+                    "outcome": "valid",
+                    "finished_at": NOW.isoformat(),
+                    "started_at": (NOW - timedelta(seconds=10)).isoformat(),
+                    "submitted_at": NOW.isoformat(),
+                    "total_tokens": 1000,
+                    "delivered": delivered,
+                }
+                for i in range(5)
+            ]
+
+        lazy = worker("lazy", improvement=0.3, attempts=history("lazy", False))
+        new = worker("new", improvement=0.1)
+        honest = worker("honest", improvement=0.1, attempts=history("honest", True))
+        decision = grading.rank_candidates(job(), [lazy, new, honest], NOW)
+        self.assertEqual([c["hotkey"] for c in decision["candidates"]], ["honest", "new", "lazy"])
+
     def test_deterministic_ties_inputs_immutable_and_hash_stable(self):
         workers = [worker("b"), worker("a")]
         original = copy.deepcopy(workers)
