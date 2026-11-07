@@ -1,13 +1,15 @@
-"""The adapter track from hosted-queue customer work (signed platform evidence), not frozen-job rounds.
+"""The adapter track from paid API spend on delivered customer adapters (signed platform evidence).
 
-The platform exports facts per finished attempt (zils_platform.adapter_evidence); this module applies
-the payout rule. Per hotkey over the window:
+The platform exports, per hotkey, the live API spend on open-tier adapters it delivered, credited for
+EARNING_DAYS after delivery (zils_platform.adapter_spend), plus the window's TAO/USD price. This
+module applies the payout rule over the window:
 
-    score       = sum(total_tokens * skill) over delivered customer attempts (not operator-owned)
-    reliability = (valid + 1) / (valid + failures + 2) over all its attempts, as graded routing uses
-    weight      = score * reliability, paid at the uid the hotkey holds in the round's chain snapshot
+    paid   = min(1, revenue_cap * revenue / adapter budget value)
+    weight = paid * spend / revenue for each registered hotkey; the rest of the share burns
 
-Qualification runs and undelivered work earn nothing. Unregistered hotkeys earn nothing.
+Budget value is the adapter share of the miners' emission over the window, at the subnet's moving
+alpha price read from the chain at the round block. A miner posing as a customer must pay at least
+1 / revenue_cap of what it earns back. Unregistered hotkeys' spend burns too.
 """
 
 import json
@@ -16,32 +18,27 @@ import re
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlencode
 
-from .miner_grading import FAILURES
 from .runtime import verified
 
-SCHEMA = "zils-adapter-evidence/v1"
+SCHEMA = "zils-adapter-evidence/v2"
 MAX_BYTES = 8 * 1024**2
 SS58 = re.compile("[1-9A-HJ-NP-Za-km-z]{40,64}")
 HEX64 = re.compile("[a-f0-9]{64}")
-ROW = {
-    "hotkey",
-    "job_sha256",
-    "purpose",
-    "internal",
-    "owner_sha256",
-    "outcome",
-    "total_tokens",
-    "finished_at",
-    "sha256",
-    "accepted",
-    "skill",
-}
+ROW = {"hotkey", "spend_nanos"}
+MINER_SPLIT = 0.41  # dTAO: miners take 41% of a subnet's alpha emission (owner 18%, validators 41%)
+BLOCKS_PER_HOUR = 300  # 12-second blocks
 
 
 def validate_track(track):
-    if not isinstance(track, dict) or set(track) != {"url", "signer", "window_hours"}:
-        raise ValueError("adapter_evidence needs exactly url, signer and window_hours")
+    if not isinstance(track, dict) or set(track) != {
+        "url",
+        "signer",
+        "window_hours",
+        "revenue_cap",
+    }:
+        raise ValueError("adapter_evidence needs exactly url, signer, window_hours and revenue_cap")
     url, signer, hours = track["url"], track["signer"], track["window_hours"]
+    cap = track["revenue_cap"]
     if not isinstance(url, str) or not (
         url.startswith("https://") or url.startswith("http://127.0.0.1:")
     ):
@@ -50,6 +47,8 @@ def validate_track(track):
         raise ValueError("adapter_evidence.signer must be the platform evidence ss58 hotkey")
     if type(hours) is not int or not 1 <= hours <= 720:
         raise ValueError("adapter_evidence.window_hours must be an integer in 1..720")
+    if type(cap) not in (int, float) or not 0 < cap <= 1:
+        raise ValueError("adapter_evidence.revenue_cap must be a number in (0, 1]")
     return track
 
 
@@ -89,74 +88,54 @@ def verify(message, track, until=None):
         hours=track["window_hours"]
     ):
         raise ValueError("adapter evidence is for another window")
-    rows = payload.get("attempts")
+    price = payload.get("tao_usd")
+    if type(price) not in (int, float) or not math.isfinite(price) or price <= 0:
+        raise ValueError("adapter evidence has no TAO/USD price")
+    rows = payload.get("miners")
     if not isinstance(rows, list):
-        raise ValueError("adapter evidence has no attempts")
+        raise ValueError("adapter evidence has no miners")
     for row in rows:
         if (
             not isinstance(row, dict)
             or set(row) != ROW
             or not isinstance(row["hotkey"], str)
             or not SS58.fullmatch(row["hotkey"])
-            or row["purpose"] not in ("customer", "qualification")
-            or type(row["internal"]) is not bool
-            or row["accepted"] not in (True, False, None)
-            or not isinstance(row["outcome"], str)
-            or type(row["total_tokens"]) is not int
-            or row["total_tokens"] <= 0
-            or not (row["sha256"] is None or HEX64.fullmatch(str(row["sha256"])))
-            or not (
-                row["skill"] is None
-                or (
-                    type(row["skill"]) in (int, float)
-                    and math.isfinite(row["skill"])
-                    and 0 <= row["skill"] <= 1
-                )
-            )
+            or type(row["spend_nanos"]) is not int
+            or row["spend_nanos"] <= 0
         ):
             raise ValueError("adapter evidence row is invalid")
+    if len({row["hotkey"] for row in rows}) != len(rows):
+        raise ValueError("a hotkey appears twice in the adapter evidence")
     return payload
 
 
-def earns(row):
-    return (
-        row["purpose"] == "customer"
-        and not row["internal"]
-        and row["outcome"] == "valid"
-        and row["accepted"] is True
-        and row["skill"] is not None
-        and row["sha256"] is not None
+def paid_fraction(payload, track, share, chain):
+    """How much of the adapter share the window's revenue pays: revenue_cap times revenue over the
+    share's value, at most all of it. `chain` holds the round block's alpha price and emission."""
+    revenue = sum(row["spend_nanos"] for row in payload["miners"]) / 1e9
+    blocks = track["window_hours"] * BLOCKS_PER_HOUR
+    value = (
+        share
+        * MINER_SPLIT
+        * chain["alpha_per_block"]
+        * blocks
+        * chain["alpha_price_tao"]
+        * payload["tao_usd"]
     )
+    return min(1.0, track["revenue_cap"] * revenue / value) if value > 0 else 0.0
 
 
-def hotkey_scores(payload):
-    """Per-hotkey breakdown before uid mapping; refuses an artifact that earns twice."""
-    seen, stats = set(), {}
-    for row in payload["attempts"]:
-        item = stats.setdefault(
-            row["hotkey"], {"valid": 0, "failures": 0, "earning": 0, "score": 0.0}
-        )
-        item["valid"] += row["outcome"] == "valid"
-        item["failures"] += row["outcome"] in FAILURES
-        if earns(row):
-            if row["sha256"] in seen:
-                raise ValueError("one adapter artifact earns twice in the evidence")
-            seen.add(row["sha256"])
-            item["earning"] += 1
-            item["score"] += row["total_tokens"] * row["skill"]
-    for item in stats.values():
-        item["reliability"] = (item["valid"] + 1) / (item["valid"] + item["failures"] + 2)
-        item["weight"] = item["score"] * item["reliability"]
-    return stats
-
-
-def track_weights(payload, members):
-    """{uid: weight} for registered members; the hotkey at the snapshot block decides the uid."""
+def track_weights(payload, members, paid, burn_uid):
+    """{uid: weight}: each registered hotkey's slice of spend times `paid`, the rest at `burn_uid`.
+    The hotkey at the snapshot block decides the uid. Empty when no registered hotkey earns."""
     uid_of = {item["hotkey"]: int(uid) for uid, item in members.items()}
+    revenue = sum(row["spend_nanos"] for row in payload["miners"])
     weights = {
-        uid_of[hotkey]: item["weight"]
-        for hotkey, item in hotkey_scores(payload).items()
-        if hotkey in uid_of and item["weight"] > 0
+        uid_of[row["hotkey"]]: paid * row["spend_nanos"] / revenue
+        for row in payload["miners"]
+        if row["hotkey"] in uid_of and paid > 0
     }
-    total = sum(weights.values())
-    return {uid: w / total for uid, w in sorted(weights.items())} if total else {}
+    if not weights:
+        return {}
+    burned = 1 - sum(weights.values())
+    return dict(sorted({**weights, **({burn_uid: burned} if burned > 1e-12 else {})}.items()))

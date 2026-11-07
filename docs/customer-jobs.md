@@ -11,7 +11,7 @@ regenerating bundles, use the [Supabase training queue](https://github.com/ooo-h
 It adds private uploads and approved-miner assignments. A fleet validator can
 pay the adapter track from that queue's delivered customer jobs
 (`adapter_evidence`, merged and off by default; see
-[validators §7](validators.md#7-pay-the-adapter-track-from-hosted-queue-work)). The existing synthetic fleet remains supported.
+[validators §7](validators.md#7-pay-the-adapter-track-from-paid-adapter-use)). The existing synthetic fleet remains supported.
 
 ## Prepare data
 
