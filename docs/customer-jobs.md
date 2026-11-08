@@ -117,6 +117,16 @@ strictly improves the calibrated baseline's Brier loss, and meets the configured
 minimum Brier improvement. The lowest-Brier qualifying candidate wins; accuracy
 then UID break ties. Otherwise `delivery.status` is `no_qualifying_model`.
 
+A job can teach several decisions at once: each question family in the dataset is
+one decision. The validator also scores each decision on its own test examples
+(`decisions` on the baseline and on every evaluated candidate). A candidate
+qualifies only if every decision meets `min_accuracy` and improves on the
+baseline's Brier loss for that decision by the minimum, so a strong decision
+cannot carry a weak one. Version upgrades hold each decision to the same
+no-regression rule. When no candidate qualifies and the job has more than one
+decision, `delivery.failed_decisions` names the decisions that held a candidate
+back. A job with one decision is judged exactly as before.
+
 The hosted queue additionally supports [explicit customer version upgrades](version-selection.md).
 Those runs compare with the previous accepted model's exact serving checkpoint,
 evaluated on the new test set. The local fleet workflow above continues to use

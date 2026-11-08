@@ -207,7 +207,7 @@ def evaluate_round(
             "baseline-test",
             base_revision=models.spec(baseline_model)["base_revision"],
         )
-        jobs.verify_report(data, baseline_report, "test")
+        test_cases = jobs.verify_report(data, baseline_report, "test")
         baseline = baseline_report["miners"][0]
         if baseline["status"] != "evaluated":
             raise RuntimeError(
@@ -253,6 +253,10 @@ def evaluate_round(
         submitted={uid: m["claim"]["sha256"] for uid, m in registry.items()},
     )
     if baseline is not None:
+        # Score each decision on its own, so a strong decision cannot carry a weak one.
+        for row in [baseline, *report["miners"]]:
+            if row["status"] == "evaluated":
+                row["decisions"] = jobs.decisions(test_cases, row["predictions"])
         delivery = jobs.select(baseline, report["miners"], manifest["acceptance"])
         if delivery["status"] == "accepted":
             winner = next(entry for entry in fitted if entry["uid"] == delivery["uid"])

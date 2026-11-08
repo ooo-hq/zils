@@ -288,6 +288,13 @@ print(json.dumps({'runtime': {'temperature': meta.temperature}, 'predictions': [
             self.assertEqual(summary["job_id"], "support-v1")
             self.assertEqual(summary["miners"][0]["overall"]["accuracy"], 1)
             self.assertEqual(report["baseline"]["accuracy"], 0)
+            # Each decision is scored on its own test examples, for the gate and the job record.
+            self.assertEqual(set(report["baseline"]["decisions"]), {"routing"})
+            self.assertEqual(report["baseline"]["decisions"]["routing"]["accuracy"], 0)
+            self.assertEqual(report["miners"][0]["decisions"]["routing"]["accuracy"], 1)
+            self.assertEqual(
+                report["miners"][0]["decisions"]["routing"]["brier"], report["miners"][0]["brier"]
+            )
             self.assertEqual(report["weights"], {1: 1})
             release = work / report["delivery"]["checkpoint"]
             self.assertEqual(zils.checkpoint_hash(release), report["delivery"]["sha256"])

@@ -181,28 +181,92 @@ def verify_report(root, report, split):
     return cases
 
 
+def decisions(cases, predictions):
+    """Each decision (question family) scored on its own test examples, with the pinned scorer:
+    {family: {"accuracy", "brier", "cases"}}. One family scores exactly as the whole job does."""
+    zils.score(cases, predictions)  # the whole set first: one valid prediction per case
+    by_id = {row["id"]: row for row in predictions}
+    families = {}
+    for case in cases:
+        families.setdefault(case["family"], []).append(case)
+    result = {}
+    for family, rows in sorted(families.items()):
+        scored = zils.score(rows, [by_id[case["id"]] for case in rows])
+        result[family] = {
+            "accuracy": scored["accuracy"],
+            "brier": scored["brier"],
+            "cases": len(rows),
+        }
+    return result
+
+
+def _decisions(row):
+    value = row.get("decisions")
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not value:
+        raise ValueError("decision scores must name at least one decision")
+    for family, scores in value.items():
+        if (
+            not isinstance(family, str)
+            or not isinstance(scores, dict)
+            or set(scores) != {"accuracy", "brier", "cases"}
+            or type(scores["cases"]) is not int
+            or scores["cases"] < 1
+            or any(
+                type(scores[k]) not in (int, float) or not math.isfinite(scores[k])
+                for k in ("accuracy", "brier")
+            )
+            or not 0 <= scores["accuracy"] <= 1
+            or not 0 <= scores["brier"] <= 2
+        ):
+            raise ValueError("invalid decision scores")
+    return value
+
+
+def _clears(scores, baseline_brier, policy):
+    """The customer's bar, for the whole model or for one decision."""
+    improvement = baseline_brier - scores["brier"]
+    return scores["accuracy"] >= policy["min_accuracy"] and (
+        scores["brier"] <= baseline_brier
+        if policy.get("migration") == "no_regression"
+        else improvement >= -MIGRATION_TOLERANCE
+        if policy.get("migration")
+        else improvement > 0 and improvement >= policy["min_brier_improvement"]
+    )
+
+
 def select(baseline, rows, policy):
-    """Delivery gate only; miner rewards remain governed by the round rubric."""
+    """Delivery gate only; miner rewards remain governed by the round rubric.
+
+    A row with `decisions` (see `decisions`) must also clear the bar on every decision, against the
+    starting model's score for that decision, so a strong decision cannot carry a weak one. Rows
+    recorded before decision scores keep the whole-job rule."""
     validate_policy(policy)
     if baseline.get("status") != "evaluated":
         raise ValueError("a valid baseline evaluation is required for delivery")
-    eligible = [
-        row
-        for row in rows
-        if row["status"] == "evaluated"
-        and row["skill"] > 0
-        and row["accuracy"] >= policy["min_accuracy"]
-        and (
-            row["brier"] <= baseline["brier"]
-            if policy.get("migration") == "no_regression"
-            else baseline["brier"] - row["brier"] >= -MIGRATION_TOLERANCE
-            if policy.get("migration")
-            else baseline["brier"] - row["brier"] > 0
-            and baseline["brier"] - row["brier"] >= policy["min_brier_improvement"]
-        )
-    ]
+    before = _decisions(baseline) or {}
+    failed, eligible, several = set(), [], False
+    for row in rows:
+        if row["status"] != "evaluated":
+            continue
+        scored = _decisions(row) or {}
+        several |= len(scored) > 1
+        weak = {
+            family
+            for family, scores in scored.items()
+            if not _clears(scores, before.get(family, {}).get("brier", baseline["brier"]), policy)
+        }
+        failed |= weak
+        if row["skill"] > 0 and _clears(row, baseline["brier"], policy) and not weak:
+            eligible.append(row)
     if not eligible:
-        return {"status": "no_qualifying_model", "acceptance": policy}
+        return {
+            "status": "no_qualifying_model",
+            "acceptance": policy,
+            # With one decision the failure needs no name, and the record stays as it was.
+            **({"failed_decisions": sorted(failed)} if failed and several else {}),
+        }
     winner = min(eligible, key=lambda row: (row["brier"], -row["accuracy"], row["uid"]))
     return {
         "status": "accepted",
