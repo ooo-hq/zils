@@ -138,6 +138,25 @@ def fine_tune_gates(shares, solo, *, house, soup_scores, release_score, margin=N
     return gated, scouts
 
 
+def base_soup_score(members, *, solo, current, soup_bar, evaluate, fallback):
+    """The score a fine-tune's admission soup ``members`` is compared at (``fine_tune_gates``).
+
+    The current soup is its bar. A soup with a member not graded this round (pruned once it left
+    the pool, or failed) cannot be rebuilt, so the best still-gradable base stands in (``fallback()``:
+    the house bodies' and the release's scores), or None if there is none (ZIL-192). A rebuilt soup
+    that fails to grade is None, and gates the body as before."""
+    if members == current:
+        return soup_bar
+    if any(m not in solo for m in members):
+        return fallback()
+    try:
+        return evaluate(members)
+    except Exception as error:
+        if _round_fault(error):
+            raise
+        return None
+
+
 def _check_rate(rate):
     if rate not in RATES:
         raise ValueError("rate must be one of " + ", ".join(map(str, RATES)))
@@ -1386,24 +1405,38 @@ def run(
                 and split.get(name, 0.0) >= BASE_MIN - _EPS
             }
 
-        def soup_score_of(members):
-            if members == current:
-                return soup_bar
-            if any(m not in solo for m in members):
-                return None  # a member not graded this round (pruned or failed): cannot compare
+        release_scores = {}
+
+        def release_score():
+            if "score" not in release_scores:
+                release_scores["score"] = chassis_score()
+            return release_scores["score"]
+
+        def best_gradable_base():
+            scores = [solo[h] for h in house if solo.get(h) is not None]
             try:
-                return evaluate(members)
-            except Exception as error:
+                scores.append(release_score())
+            except Exception as error:  # the house bodies still stand in; only a fault fails
                 if _round_fault(error):
                     raise
-                return None
+            return max(scores, default=None)
 
         gated, scouts = fine_tune_gates(
             shares,
             solo,
             house=house,
-            soup_scores={sha: soup_score_of(started[sha]) for sha in based("soup")},
-            release_score=chassis_score() if based("release") else None,
+            soup_scores={
+                sha: base_soup_score(
+                    started[sha],
+                    solo=solo,
+                    current=current,
+                    soup_bar=soup_bar,
+                    evaluate=evaluate,
+                    fallback=best_gradable_base,
+                )
+                for sha in based("soup")
+            },
+            release_score=release_score() if based("release") else None,
         )
         for sha in scouts:
             rate_map[sha] = min(rate_map[sha], SCOUT_RATE)
