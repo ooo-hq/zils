@@ -252,6 +252,59 @@ class FineTuneGateTest(unittest.TestCase):
         self.assertEqual(self.gate({"h": {"house:h": 1.0}}, {"h": 60.0}), ({}, set()))
 
 
+class BaseSoupScoreTest(unittest.TestCase):
+    """ZIL-192: the score a fine-tune's admission soup is compared at. A soup that cannot be rebuilt
+    because a member was not graded this round (pruned once it left the pool) is replaced by the best
+    still-gradable base, so its fine-tunes are not gated for good."""
+
+    def score(self, members, **kwargs):
+        options = {
+            "solo": {"a": 30.0, "b": 32.0, "h": 25.0},
+            "current": ("a", "b"),
+            "soup_bar": 33.0,
+            "evaluate": lambda members: 31.5,
+            "fallback": lambda: 28.0,
+            **kwargs,
+        }
+        return soup_round.base_soup_score(members, **options)
+
+    def test_the_current_soup_is_its_bar(self):
+        self.assertEqual(self.score(("a", "b")), 33.0)
+
+    def test_a_graded_soup_is_rebuilt_and_scored(self):
+        self.assertEqual(self.score(("a", "h")), 31.5)
+
+    def test_a_soup_with_a_pruned_member_falls_back_to_the_best_gradable_base(self):
+        self.assertEqual(self.score(("a", "gone")), 28.0)
+
+    def test_without_any_gradable_base_it_still_cannot_be_scored(self):
+        self.assertIsNone(self.score(("a", "gone"), fallback=lambda: None))
+
+    def test_a_rebuilt_soup_that_fails_to_grade_still_gates(self):
+        def broken(members):
+            raise ValueError("bad body")
+
+        self.assertIsNone(self.score(("a", "h"), evaluate=broken))
+
+    def test_the_fallback_is_only_computed_when_needed(self):
+        calls = []
+        self.score(("a", "h"), fallback=lambda: calls.append(1))
+        self.assertEqual(calls, [])
+
+    def test_a_fine_tune_of_a_pruned_soup_is_seated_when_it_beats_the_fallback(self):
+        bar = self.score(("a", "gone"))
+        gated, _ = soup_round.fine_tune_gates(
+            {"v9": {"soup": 0.9}}, {"v9": 37.2}, house={"h"}, soup_scores={"v9": bar},
+            release_score=None,
+        )  # fmt: skip
+        self.assertEqual(gated, {})
+        gated, _ = soup_round.fine_tune_gates(
+            {"v9": {"soup": 0.9}}, {"v9": 28.5}, house={"h"}, soup_scores={"v9": bar},
+            release_score=None,
+        )  # fmt: skip
+        self.assertIn("soup", gated["v9"])
+
+
 class SoupWeightsTest(unittest.TestCase):
     ROSTER = {"3": {"hotkey": "hk-a"}, "7": {"hotkey": "hk-b"}, "9": {"hotkey": "hk-c"}}
 
