@@ -252,6 +252,40 @@ class FineTuneGateTest(unittest.TestCase):
         self.assertEqual(self.gate({"h": {"house:h": 1.0}}, {"h": 60.0}), ({}, set()))
 
 
+class KeepCurrentTest(unittest.TestCase):
+    """ZIL-193: the current soup stays unless greedy's soup beats it by the greedy margin, so a light
+    re-tune of the soup cannot take its place (and its members' seats) for a gain within noise."""
+
+    SOLO = {"retune": 56.26, "v2": 55.24, "s1": 54.0, "new": 60.0}
+
+    def keep(self, members, current=("s1", "v2"), soup_bar=56.12, **kwargs):
+        scores = {("s1", "v2"): 56.12, ("new",): 60.0, ("retune",): 56.26, ("new", "v2"): 60.7}
+        options = {"solo": self.SOLO, "evaluate": scores.__getitem__, **kwargs}
+        return soup_round.keep_current(members, current=current, soup_bar=soup_bar, **options)
+
+    def test_a_soup_within_the_margin_of_the_current_one_keeps_the_current(self):
+        # d3-mini-2026-11-09: a re-tune of qhoenix v2 + Charlie320 s1 alone, 56.26 against 56.12.
+        members, row = self.keep(("retune",))
+        self.assertEqual(members, ("s1", "v2"))
+        self.assertEqual(row["try"], ["retune"])
+        self.assertEqual((row["score"], row["best_before"], row["accepted"]), (56.26, 56.12, False))
+
+    def test_a_soup_better_by_the_margin_replaces_the_current(self):
+        self.assertEqual(self.keep(("new",)), (("new",), {
+            "try": ["new"], "score": 60.0, "best_before": 56.12, "accepted": True, "versus": "current",
+        }))  # fmt: skip
+        self.assertEqual(self.keep(("new",), soup_bar=59.5)[0], ("new",))  # exactly the margin
+
+    def test_greedy_soup_equal_to_the_current_needs_no_comparison(self):
+        self.assertEqual(self.keep(("s1", "v2")), (("s1", "v2"), None))
+
+    def test_without_a_gradable_current_soup_greedy_stands(self):
+        self.assertEqual(self.keep(("retune",), current=()), (("retune",), None))
+        self.assertEqual(self.keep(("retune",), soup_bar=None), (("retune",), None))
+        # A member left the pool and was not graded: the current soup cannot be served again.
+        self.assertEqual(self.keep(("retune",), current=("gone", "v2")), (("retune",), None))
+
+
 class BaseSoupScoreTest(unittest.TestCase):
     """ZIL-192: the score a fine-tune's admission soup is compared at. A soup that cannot be rebuilt
     because a member was not graded this round (pruned once it left the pool) is replaced by the best

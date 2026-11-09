@@ -76,6 +76,27 @@ def greedy(solo, evaluate, *, margin=MARGIN, max_members=MAX_MEMBERS, order_key)
     return soup, trace
 
 
+def keep_current(members, *, current, soup_bar, solo, evaluate, margin=MARGIN):
+    """Greedy's soup ``members`` replaces the ``current`` soup only if it scores at least ``margin``
+    above ``soup_bar`` (the current soup on the same items), like a body joining the soup (ZIL-193).
+    Otherwise a light re-tune of the current soup could take its place, and its members' seats,
+    for a gain within noise. A current soup with a member not graded this round cannot be served
+    again, so greedy's soup stands. Returns (members, trace row or None)."""
+    members = tuple(sorted(members))
+    if not current or soup_bar is None or members == current or any(m not in solo for m in current):
+        return members, None
+    score = evaluate(members)
+    accepted = score - soup_bar >= margin - _EPS
+    row = {
+        "try": list(members),
+        "score": score,
+        "best_before": soup_bar,
+        "accepted": accepted,
+        "versus": "current",
+    }
+    return (members if accepted else current), row
+
+
 def leave_one_out(members, evaluate, *, baseline=None):
     """Each member's contribution: the soup's score minus the score of the soup without that member.
 
@@ -1379,6 +1400,12 @@ def run(
             )
             bar_missing = True
     members, trace = greedy(solo, evaluate, order_key=order)
+    whole = current if len(current) == len(state["members"]) else ()  # never a part of it
+    members, kept = keep_current(
+        members, current=whole, soup_bar=soup_bar, solo=solo, evaluate=evaluate
+    )
+    if kept is not None:
+        trace.append(kept)
 
     def chassis_score():
         key = f"chassis-{soup.soup_hash(chassis)[:32]}-{scope}"
