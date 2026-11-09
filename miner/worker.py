@@ -36,8 +36,6 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
             raise ValueError("validator round differs from the installed customer job")
     if not re.fullmatch("[a-f0-9]{32}", job.get("round_id", "")):
         raise ValueError("invalid round id")
-    if digest(directory / "miner-training.jsonl") != config["training_sha256"]:
-        raise ValueError("training data changed")
     if zils.checkpoint_hash(directory / "reference") != config["initial_sha256"]:
         raise ValueError("initial checkpoint changed")
     work = directory / "state/jobs" / job["round_id"]
@@ -48,6 +46,14 @@ def train_candidate(config, directory, job, runtime, device, *, check_lease=None
         if zils.checkpoint_hash(entry["checkpoint"]) != entry["sha256"]:
             raise ValueError("saved submission was modified")
         return entry
+    # Only training needs the rows: a round already trained returns its frozen candidate above.
+    if not (directory / "miner-training.jsonl").exists():
+        raise ValueError(
+            "This job's training data was deleted after its last round, as the miner terms require. "
+            "Build a new bundle with zils.fleet init to train it again."
+        )
+    if digest(directory / "miner-training.jsonl") != config["training_sha256"]:
+        raise ValueError("training data changed")
     if shutil.disk_usage(work).free < 2 * 1024**3:
         raise RuntimeError("less than 2 GiB free; archive completed rounds before training again")
     if not (work / "job.json").exists():
@@ -246,3 +252,6 @@ def miner(config, directory, args):
                     )
                     last_error = message
             time.sleep(args.poll)
+
+        # The last round is done: delete this bundle's copy of the customer rows (miner terms).
+        (directory / "miner-training.jsonl").unlink(missing_ok=True)
