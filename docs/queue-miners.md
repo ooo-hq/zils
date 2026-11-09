@@ -147,8 +147,17 @@ after evaluation. Installing the miner does not guarantee work or acceptance.
 ## 5. Inspect and restart
 
 Job data, frozen candidates, and training logs live under
-`.private/queue-miner/<job-id>/`. Keep this directory private and retain it across
+`.private/queue-miner/<job-id>/`. Keep this directory private and keep it across
 restarts. Logs identify the individual training log for each attempt.
+
+The worker deletes a job's training rows (`miner-training.jsonl`), its training
+photos (`images/`) and any partial download as soon as it leaves the job: after
+it submits, when the lease is lost or the job is cancelled or fails, and when it
+hands the job back for lack of GPU memory. Anything a crash left behind is
+deleted before the next claim. A retry downloads the rows again under the same
+hash check. The trained candidate, the raw training output and the logs stay for
+the validator; the [miner terms](mining-terms.md) require deleting those too
+within 7 days of the job finishing, and the worker does not do that yet.
 
 Stop a foreground worker with Ctrl+C. Restart with the same configuration and
 state path so completed candidates can be reused. Only one worker process can

@@ -3,6 +3,7 @@
 import argparse
 import json
 import re
+import shutil
 import sys
 import time
 import uuid
@@ -76,6 +77,20 @@ def admit(client, config):
         return None
 
 
+def delete_customer_data(state):
+    """Delete the customer's training rows, photos and partial downloads from every job folder under `state`.
+
+    Miner terms require deleting a job's training data after the round. Checkpoints and the job record stay: the
+    validator fetches the checkpoint, and a retry re-downloads the rows under the same hash check."""
+    for job in Path(state).glob("*"):
+        if not job.is_dir():
+            continue
+        (job / "miner-training.jsonl").unlink(missing_ok=True)
+        shutil.rmtree(job / "images", ignore_errors=True)
+        for partial in job.glob("download-*"):
+            partial.unlink(missing_ok=True)
+
+
 def run_once(
     client,
     state,
@@ -90,6 +105,7 @@ def run_once(
     budget_mib=None,
     qualifications=None,
 ):
+    delete_customer_data(state)  # anything a crash left behind, before taking new work
     if not gpu_ready(device):
         return False
     claim = None
@@ -218,6 +234,7 @@ def run_once(
             pass
         raise
     finally:
+        delete_customer_data(state)  # submitted, handed back or failed: the rows go either way
         if busy is not None:
             busy.clear()
     return True

@@ -608,6 +608,12 @@ candidates; an interrupted training epoch starts again. The validator reloads
 accepted submissions after restart. Service locks prevent duplicate launches,
 and a per-device compute lock serializes work on shared hardware.
 
+When a miner finishes its last round (`--rounds`), it deletes its bundle's
+`miner-training.jsonl`, as the [miner terms](mining-terms.md) require; candidates,
+results and logs stay. Starting that bundle again stops with a message to build a
+new one with `zils.fleet init`. A miner run without `--rounds` keeps the rows until
+it is stopped; delete them then.
+
 Keep started bundles at their original location: saved checkpoint paths are
 absolute. Archive completed rounds between runs if disk space fills; training
 and evaluation stop when less than 2 GiB is free. Regenerate bundles to upgrade
