@@ -2,8 +2,8 @@
 
 A customer-job miner claims customer training jobs from the hosted queue at
 `https://training.zils.ai`, downloads each job's training examples, trains an
-adapter on z3-mini (`d3-mini-4.5b-v1`) and submits signed artifacts. Validators
-evaluate every candidate on held-out examples the miner never sees. The worker
+adapter on z3-mini (`d3-mini-4.5b-v1`) and submits signed artifacts. Every
+candidate is graded on held-out examples the miner never sees. The worker
 connects over outbound HTTPS; it needs no inbound port and no database
 credentials.
 
