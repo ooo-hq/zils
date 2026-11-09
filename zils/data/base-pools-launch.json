@@ -1,12 +1,12 @@
 {
-  "share": 1.0,
+  "share": 0.8,
   "burn_uid": 0,
   "pools": {
     "d3-lite": {
       "type": "soup",
       "model": "d3-lite-0.8b-v1",
       "enabled": true,
-      "share": 0.25,
+      "share": 0.3125,
       "max_known_public_bytes_per_round": 34359738368,
       "schedule": {
         "deadline_utc": "06:00"
@@ -17,7 +17,7 @@
       "type": "soup",
       "model": "d3-mini-4.5b-v1",
       "enabled": true,
-      "share": 0.25,
+      "share": 0.3125,
       "max_known_public_bytes_per_round": 85899345920,
       "schedule": {
         "deadline_utc": "00:00"
@@ -27,7 +27,7 @@
       "type": "soup",
       "model": "d3-flash-8.4b-v1",
       "enabled": true,
-      "share": 0.25,
+      "share": 0.1875,
       "schedule": {
         "deadline_utc": "12:00"
       },
@@ -41,7 +41,7 @@
       "type": "soup",
       "model": "d3-ultra-26b-v1",
       "enabled": true,
-      "share": 0.25,
+      "share": 0.1875,
       "schedule": {
         "deadline_utc": "18:00"
       },

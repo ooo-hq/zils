@@ -567,11 +567,12 @@ Every unearned part burns to the subnet owner's uid, as in the base tier. Until
 miners submit new bodies, most of the pool's share burns.
 
 **Pool shares.** The launch configuration (`zils/data/base-pools-launch.json`)
-gives each of lite, mini, flash and z3 25% of the base emission. With the base
-tier at the whole budget, a trainer's seat is 4% of all emissions and a crown 5%;
-a pool has five seats and one crown, so the four pools have 24 paid spots.
-Flash and z3 burn their shares until their opening blocks, which are in each
-validator's configuration and its published report.
+gives the base pools 80% of all emissions and the adapter track the other 20%.
+Lite and mini get 25% of all emissions each, so a trainer's seat there is 4% and
+a crown 5%; flash and z3 get 15% each (a seat 2.4%, a crown 3%). A pool has five
+seats and one crown, so the four pools have 24 paid spots. Flash and z3 burn
+their shares until their opening blocks, which are in each validator's
+configuration and its published report.
 
 ### What validators publish
 
