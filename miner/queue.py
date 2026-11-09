@@ -16,6 +16,7 @@ import zils
 from miner.worker import train_candidate
 from zils import image_jobs, miner_grading, models, protocol, queue_protocol, settings
 from zils.cloud import MAX_DATA_BYTES, APIError, download, trusted_url, upload
+from zils.miner import installed_release
 from zils.miner_presence import presence_loop
 from zils.queue_protocol import identifier, lease_heartbeat
 from zils.runtime import (
@@ -47,6 +48,10 @@ class Client:
                 503, "Coordinator unavailable; retrying with the saved candidate."
             ) from None
         try:
+            if (
+                response.status_code == 426
+            ):  # too old a release for customer jobs; the message says to update
+                raise APIError(426, str(response.json().get("error", ""))[:300])
             if response.status_code != 200:
                 raise APIError(response.status_code, "Coordinator rejected the worker request.")
             if len(response.content) > 64 * 1024:
@@ -75,6 +80,13 @@ def admit(client, config):
             raise
         print(f"Chain admission not applied ({error.status}); continuing.", file=sys.stderr)
         return None
+
+
+def attempt_failed(error):
+    """The log line for a failed attempt: only the outdated-release refusal shows the coordinator's words."""
+    if isinstance(error, APIError) and error.status == 426:
+        return f"Queued worker attempt failed: {error}"
+    return f"Queued worker attempt failed ({type(error).__name__})."
 
 
 def delete_customer_data(state):
@@ -127,6 +139,8 @@ def run_once(
         if not available:
             return False
         claim = {"supported_profiles": available}
+        if release := installed_release():
+            claim["release"] = release  # customer jobs go only to accepted releases
         if terms_sha256:
             claim["terms_sha256"] = (
                 terms_sha256  # the accepted terms version travels in every claim
@@ -375,11 +389,7 @@ def main():
                     RuntimeError,
                     requests.RequestException,
                 ) as error:
-                    print(
-                        f"Queued worker attempt failed ({type(error).__name__}).",
-                        file=sys.stderr,
-                        flush=True,
-                    )
+                    print(attempt_failed(error), file=sys.stderr, flush=True)
                     if args.once:
                         raise
                 if args.once:
