@@ -1,5 +1,11 @@
 # Checkpoint evaluation
 
+This is the local adapter evaluator (`python -m zils evaluate`) that fleet rounds
+and local experiments use. The file list and examples below are for its default,
+the original 0.8B development profile (`kev-0.8b-v1`); a z3 adapter is evaluated
+with its own profile's files and runner, chosen by `--base-revision`. Soup pools
+grade bodies in soup rounds instead ([model pools](model-pools.md#soup-pools)).
+
 ## Contract
 
 A local submission contains `uid`, an absolute `checkpoint` directory, and
@@ -10,7 +16,7 @@ files. Duplicate UIDs and identical checkpoint hashes reject the local batch.
 This detects exact duplicates only; it is not plagiarism or Sybil resistance.
 
 Each JSONL case has `id`, `family`, `state`, `question`, and `label`. Questions use
-Kev's `noul`, `choice`, or `score` format. Labels are strings: `false`/`true`, a
+the `noul`, `choice`, or `score` format. Labels are strings: `false`/`true`, a
 Choice option key, or a Score level index. Each question needs at least two
 outcomes. All benchmark metadata and ground-truth labels stay out of the inference
 request. Model confidence fields are never treated as measured accuracy.
@@ -62,7 +68,7 @@ These timings are diagnostic and do not affect rewards in this rubric.
 
 The measured Mac M4 Pro FP32 path took approximately **122 ms median / 180 ms
 p95 per question** on the latest 40-case run. Model loading is measured separately.
-This is not a Jev comparison. The competition selects downloadable weights;
+It was measured on the 0.8B development profile and is not a Jev comparison. The competition selects downloadable weights;
 an application can keep its chosen Zils checkpoint resident without routing every
 decision through the miner/validator network. CUDA kernels, serving precision,
 and batching need a separate, quality-checked benchmark on the target hardware.

@@ -12,8 +12,11 @@ experiments.
 
 The lowest-Brier qualifying candidate wins; accuracy and then worker UID break
 ties. `min_brier_improvement` is an absolute decrease in the queue's equal-family
-Brier loss, not a relative percentage. First-version status does not waive a
-quality requirement. Research-only checkpoints do not become accepted customer
+Brier loss, not a relative percentage. A job that teaches several decisions (one
+per question family) must meet the requirements on every decision, each scored on
+its own test examples, so a strong decision cannot carry a weak one; a job with no
+qualifying candidate names the decisions that held it back. First-version status
+does not waive a quality requirement. Research-only checkpoints do not become accepted customer
 jobs by changing these rules; their original results remain unchanged.
 
 ## Request an upgrade
@@ -62,7 +65,7 @@ data across jobs. Acceptance measures this dataset, not guaranteed future qualit
 ### Changing the base profile
 
 A task stays on its base profile unless the request says otherwise. To move a
-task from one profile to another, for example from H2O to d3-mini, set
+task from one profile to another, for example to a newer z3 profile, set
 `"base_change": true` in the acceptance policy next to `previous_job_id`:
 
 ```json
@@ -81,10 +84,8 @@ The validator scores the frozen previous release with its own base and runtime,
 then scores the new candidate on the same test data. The usual upgrade
 requirements apply. Without `base_change`, a profile change is refused. After
 acceptance, the task alias follows the new release as it does for any other
-version; earlier immutable IDs remain callable. Since 17 October 2026 d3-mini is
-the default for new jobs on both the `stable` and `latest` channels. The owner
-elected it on capability grounds after the base tier's confirmation draw tied.
-H2O is retired: its serving is off and its frozen jobs are no longer evaluated.
+version; earlier immutable IDs remain callable. New jobs train on z3-mini
+(`d3-mini-4.5b-v1`).
 
 ### Migrating an adapter to a newer base
 

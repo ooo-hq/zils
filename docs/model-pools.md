@@ -1,8 +1,10 @@
 # Model pools
 
-Zils runs four base pools, one per model size: `d3-lite` (0.8B), `d3-mini`
-(4.5B), `d3-flash` (9B) and `d3` (z3, 27B). Each is a [soup pool](#soup-pools)
-with its own bodies, rounds, house list, allocation and exact model profile.
+Zils runs four base pools, one per z3 model size: `d3-lite` (z3-lite, 0.8B),
+`d3-mini` (z3-mini, 4.5B), `d3-flash` (z3-flash, 8.4B) and `d3` (z3, 26B). The
+pool ids and profile ids keep the older `d3` names. Each is a
+[soup pool](#soup-pools) with its own bodies, rounds, house list, allocation and
+exact model profile.
 (The `d3-nano` lineage stays registered so older records stay readable; it has no
 pool.) Registration does not make a pool available for training or serving;
 qualification, channel configuration and healthy capacity are separate
@@ -18,6 +20,12 @@ for the `d3` pool fails validation; set that entry's `model` to the new profile
 before upgrading.
 
 ## Stage an existing mini validator
+
+This section and [submit, evaluate and promote](#submit-evaluate-and-promote)
+cover **king pools**: a pool entry without `"type": "soup"`, paid from a king
+history. The code still supports them, but every launch pool is a soup pool, and
+a soup pool refuses `zils1` candidates. A validator starting from
+`zils/data/base-pools-launch.json` can skip to the [emission schedule](#emission-schedule).
 
 From a checkout installed with the normal validator dependencies, write a **new**
 configuration for review. `validator/config.json` must be your existing working
@@ -316,7 +324,7 @@ If the Outcomes part cannot meet these rules (too few streams, fewer than
 #### Quality settings
 
 Every category and block cell of the base score has a fixed weight, and the
-families in a cell count equally. A Outcomes stream that contributes a few dozen
+families in a cell count equally. An Outcomes stream that contributes a few dozen
 items can therefore move the whole score, and a stream whose labels no body can
 predict adds only noise. Three optional settings guard against both:
 
@@ -379,7 +387,7 @@ The private round record (`rounds/<round id>/private.json`) holds `bank_source`:
 - the folders skipped, and why;
 - the items excluded, by reason;
 - each stream's drawn, available and per-label counts;
-- the cells Current replaced;
+- the cells Outcomes replaced;
 - with the quality settings, the excluded streams, merged families, blended
   cells and per-cell item counts;
 - the fallback reason, if there was one.
@@ -389,7 +397,7 @@ The same record is saved as `bank-source.json`, next to `subset.json` and
 three. The Outcomes items of the last eight rounds stay loadable after they leave
 the freshness window, so a round can still score earlier rounds' items.
 
-Pooled decisions (`decision_rounds`) work the same way on a Outcomes exam: each
+Pooled decisions (`decision_rounds`) work the same way on an Outcomes exam: each
 earlier round's items come from its `subset-cases.json`, item by item, so a bank
 that changes every day still pools. Cached predictions are scoped to the round
 bank's hash, though. On a day the bank changes, each pool body and soup is graded
@@ -595,7 +603,7 @@ The [decision-quality election runbook](base-election.md) defines the fixed scor
 independent exam qualification, candidate-specific 12-hour confirmation delay,
 three-seed adapter gate and common closing draw. Every eligible candidate can
 qualify. Each pool needs its own admission document: a passing pilot receipt or an explicit
-incumbent-challenge contract. A mini document cannot enable lite, nano, flash or d3. A weight-only release preserves the execution
+incumbent-challenge contract. A mini document cannot enable lite, flash or d3. A weight-only release preserves the execution
 contract, while changed runtime, blueprint or score semantics require requalification.
 
 Promotion uses `promote_base.py --config ... --pool ... --window-report ...`.
@@ -603,9 +611,10 @@ It rechecks the closed window against installed state and produces a reviewable
 profile/king update. Stable/latest movement remains separate from election and
 existing adapters' exact model pins.
 
-### Soup releases
+## Soup releases
 
-A soup pool (see [soup pools](#soup-pools)) has no committing king. The soup changes the pool's served model only through the release gate. At a
+A soup pool (see [soup pools](#soup-pools)) has no committing king. The soup
+changes the pool's served model only through the release gate. At a
 release window (every 14 to 28 days) the soup must beat the incumbent on two
 sealed release draws, pass the confirmation draw and the adapter suite, and be
 promoted by the owner's promotion PR. Members are paid through seats, never

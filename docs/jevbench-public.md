@@ -1,10 +1,14 @@
 # Fez versus Kev on JevBench's public questions
 
+> **Dated record (24 September 2026).** Kev and Fez are the earlier 0.8B line,
+> before z3; neither is served, trained or rewarded by the subnet today. The page
+> is kept as history.
+
 Both frozen models ran all **231 public items** on the RTX 4090, using the
 same Kev runtime, FP32 precision, and JevBench's native HTTP adapter and scorer.
 All responses had valid probability distributions.
 
-| Metric | Published Kev 0.8B | Current Fez candidate |
+| Metric | Published Kev 0.8B | Fez candidate |
 | --- | ---: | ---: |
 | Correct / 231 | 147 (63.64%) | 147 (63.64%) |
 | Easy / 48 | 48 | 48 |

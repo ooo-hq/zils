@@ -18,7 +18,6 @@ If nyc2 rejects the size, try `tor1` then `atl1`.
 ## Provision and qualify
 
     ssh root@<ip> 'curl -fsSL https://raw.githubusercontent.com/ooo-hq/zils/main/scripts/provision_node.sh | ZILS_SUBNET_REF=main bash'
-    ssh root@<ip> cat /var/lib/zils-node/qualification/qualification.json
     ssh root@<ip> cat /var/lib/zils-node/qualification-d3/qualification.json
 
 The script fetches its own Python interpreters through `uv` into
@@ -72,13 +71,15 @@ the role check refuses the file until they match. Then:
 and does the same for `/etc/zils-node/fleet` when it exists (directories 0770,
 files 0640). The miner config it writes enables graded presence
 (`graded_scheduling`, `graded_min_free_mib` 12288), so the node heartbeats to the
-coordinator; it still receives customer jobs only after the operator binds a
-resource and qualifies it (platform `docs/miner-grading.md`). Before training,
+coordinator. It has no `terms_sha256` or `qualification` key, so the worker skips
+[chain admission](miner-admission.md) at startup. Add both keys as described in
+[queued miners](queue-miners.md) to admit the node; `apply_role.sh` rewrites the
+file on every run, so add them again after re-running it. Before training,
 the miner checks each job's longest example against its GPU (total memory, or
 `gpu_budget_mib` in the miner config when another service shares the card) and
 refuses jobs that cannot fit, so the coordinator offers them to another miner. The
 `fleet-validator` role is installed but has no runbook path yet; a first
-multi-host d3 round is its acceptance test.
+multi-host round is its acceptance test.
 
 ## Verify
 
