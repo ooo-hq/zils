@@ -1,36 +1,36 @@
-# Customer decision jobs
+# Customer decision jobs in a local fleet
 
-Zils can run a customer dataset through its existing approved-miner competition:
-train candidates, calibrate each candidate and the starting checkpoint, compare
-their test results, and export a qualifying candidate. This is an experimental
-local workflow, not a hosted customer service or a published model release.
+This page runs one customer dataset through a closed local fleet: miners train
+candidates, the validator calibrates each candidate and the starting checkpoint,
+compares their test results, and exports a qualifying candidate. One fleet
+configuration pins one job. It is a local workflow, not the hosted service and
+not a published model release.
 
-This page describes the local bundle workflow, where one fleet configuration
-pins one job. For a shared pool that claims different customer jobs without
-regenerating bundles, use the [Supabase training queue](https://github.com/ooo-hq/zils-platform/blob/main/docs/supabase-training.md).
-It adds private uploads and approved-miner assignments. A fleet validator can
-pay the adapter track from that queue's delivered customer jobs
-(`adapter_evidence`, merged and off by default; see
-[validators §7](validators.md#7-pay-the-adapter-track-from-paid-adapter-use)). The existing synthetic fleet remains supported.
+On the network, customer jobs go through the hosted queue instead: customers
+submit them on zils.ai, registered miners claim them
+([customer-job miners](queue-miners.md)), and validators pay those miners from
+the adapter track ([validators §7](validators.md#7-pay-the-adapter-track-from-paid-adapter-use)).
+The queue's operator guide is the platform's
+[training queue](https://github.com/ooo-hq/zils-platform/blob/main/docs/supabase-training.md).
 
 ## Prepare data
 
-Complete the Python 3.13 [d3 setup](queue-miners.md#2-install-and-verify-the-reference),
+Complete the [d3 setup](queue-miners.md#2-install-the-stable-release),
 including creation of `models/d3-reference` on a qualified host. Work from the
 repository root; the setup guide identifies supported CUDA hardware.
 Use only data authorized for training and for export to the configured miners.
 The export flag records an operator decision; it does not provide encryption,
 confidential compute, legal authorization, or isolation from miner operators.
 
-**Outside miners (policy decided 18 October 2026, not yet in effect).** Zils is
-a Bittensor subnet. The [miner terms](mining-terms.md) were published on
-18 October 2026; once queue admission [opens](miner-admission.md) (built, off), a job's training split goes to the miner
-pool: any hotkey registered on subnet 127 and qualified for the base, whether or
-not Zils runs it. There is no per-job opt-out; authorizing training-data export
-when creating the job is the customer's consent, and the terms bind every miner
-in the pool to that one job: no retention, no redistribution, no training other
-models on it, deletion on completion. Calibration and test splits never leave
-the processor. Until admission opens, every miner in the pool is run by Zils.
+**Who sees the training split.** In the hosted queue the customer picks a tier
+per run. An open-tier job's training split goes to the miner pool: any hotkey
+registered on subnet 127 and qualified for the base, whether or not Zils runs
+it. Choosing the open tier is the customer's consent, and the
+[miner terms](mining-terms.md) bind every miner to that one job: no retention,
+no redistribution, no training other models on it, and deletion within the
+terms' deadlines. A
+private-tier job trains on Zils hardware and its data is never sent to miners.
+Calibration and test splits never leave the processor in either tier.
 
 Create three JSONL files under ignored `.private/` storage: `train.jsonl`,
 `calibration.jsonl`, and `test.jsonl`. Each line uses the existing decision-case
@@ -88,7 +88,7 @@ output directories and a new job version when changing inputs or thresholds.
   --config .private/fleet-example-decisions-v1/validator/config.json --rounds 1
 ```
 
-In separate terminals, start each miner as in the [fleet setup](../README.md#miner-setup):
+In separate terminals, start each miner as in the [fleet setup](mining.md#set-up-each-machine-once):
 
 ```bash
 ZILS_PYTHON="$PWD/.venv-kev/bin/python" HF_HOME="$PWD/.cache/huggingface" \
@@ -97,9 +97,8 @@ ZILS_PYTHON="$PWD/.venv-kev/bin/python" HF_HOME="$PWD/.cache/huggingface" \
 ```
 
 Repeat for `miner-2` and `miner-3`. Each bundle contains the job's training data;
-distribute it only to approved operators. The job freezes the selected model;
-the fleet rejects a mismatched reference. Legacy Kev jobs retain their
-original reference and recipe. No automatic model
+distribute it only to the fleet's own operators. The job freezes the selected model;
+the fleet rejects a mismatched reference. No automatic model
 download, training, or chain transaction is triggered by building the job manifest.
 Fleet initialization requires the downloaded reference. Chain fleets still
 use the existing explicit roster and publication flags.
@@ -138,7 +137,7 @@ with job/round identity, model hashes, base revision, and acceptance information
 Keep the round report alongside it for full measured results. This is a local
 artifact export: it neither publishes weights nor deploys an inference service.
 
-Miner rewards remain the existing normalized skill scores within a round.
+In a local fleet, miner rewards are the normalized skill scores within a round.
 Customer acceptance is separate: miners can receive proposed weights even when
 no model meets the delivery criteria. Scores from different customer jobs must
 not be pooled as if they measured the same task. Repeated rounds reuse test data;
@@ -146,5 +145,5 @@ acceptance is a measured threshold on that set, not a guarantee of generalizatio
 or statistical significance. Reserve independent final evaluation data for real
 deployment decisions. The separate [Zils decision API](https://github.com/ooo-hq/zils-platform/blob/main/docs/decision-api.md) serves approved
 shared weights through the hosted service. Deployment of these local training artifacts and automated release
-approval/rollback remain future work; the hosted queue's cross-job adapter
-payment is the opt-in `adapter_evidence` track above.
+approval/rollback remain future work; on the network, customer-job miners are
+paid through the `adapter_evidence` track above.

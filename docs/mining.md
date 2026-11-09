@@ -1,224 +1,28 @@
-# Run a fleet miner
+# Mining on Zils
 
-Local and Bittensor fleets support **d3-mini 4.5B** text jobs
-(`d3-mini-4.5b-v1`, the base since 17 October 2026). Existing Kev 0.8B bundles
-remain supported; H2O Lightning 4B, ImaJev and JevK5 4B bundles are retired and no
-longer run. d3 image jobs run in the [hosted queue](queue-miners.md), where a d3
-miner downloads a job's frozen training photos itself. For workers that claim different customer jobs,
-use the [queue miner guide](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md).
-Queue and fleet miners use the same trainers but different credentials and startup commands.
-To serve public z3 checkpoints to validators, see [serving miners](serving-miners.md).
+Zils runs on Bittensor mainnet subnet 127 (network `finney`). Registering a
+hotkey on 127 is the admission: there is no application and no operator
+approval ([registration](bittensor-registration.md)). Read the
+[miner terms](mining-terms.md) first; mining under a registered hotkey means
+you accept them.
 
-For the synthetic bounding-box adapter pilot, see the
-[feature competition guide](feature-tracks.md). It covers public training data,
-exact-parent adapters, feature commitments, and the planned 50/20/30 allocation;
-each validator's signed round records which tracks and reward shares it enables.
+Under the launch configuration (`zils/data/base-pools-launch.json`) miners earn
+in two ways:
 
-After the one-time setup below, run this in your assigned miner folder:
+- **Soup pools, 80% of emissions.** Upload a fine-tune (a *body*) to Hugging
+  Face and commit it on chain. Validators average the best bodies into each
+  pool's soup and pay its seats. See [soup pool](#soup-pool) below.
+- **Customer jobs, 20% of emissions (the adapter track).** Train customer
+  adapters claimed from the hosted queue. You are paid from paid API use of the
+  open-tier adapters you delivered. See
+  [customer-job miners](queue-miners.md).
 
-```bash
-./start-miner
-```
+Serving z3 checkpoints to validators is described in
+[serving miners](serving-miners.md); the launch configuration gives it no
+share. The [closed development fleet](#closed-development-fleet) at the end of
+this page is a local test loop, not a way to earn.
 
-The miner trains one candidate per round, submits its signed checkpoint, receives
-the validator's result, and waits for the next round. Stop with Ctrl+C, or use
-`./start-miner --rounds 1` for a single result. The first start downloads the
-pinned base model. Later starts reuse the cache.
-
-## Prepare bundles on the validator
-
-For a text fleet, create the d3 reference with the
-[queue miner setup](https://github.com/ooo-hq/zils/blob/main/docs/queue-miners.md#2-install-and-verify-the-reference)
-Prepare authorized, independent training/calibration/test JSONL files using the
-[customer data format](https://github.com/ooo-hq/zils/blob/main/docs/customer-jobs.md#prepare-data).
-The following freezes those files and an example acceptance policy; choose your
-policy before evaluating candidates:
-
-```bash
-.venv-kev/bin/python -m zils.jobs --job-id text-v1 \
-  --model d3-mini-4.5b-v1 --train .private/train.jsonl \
-  --calibration .private/calibration.jsonl --test .private/test.jsonl \
-  --min-accuracy 0.80 --min-brier-improvement 0.01 \
-  --allow-training-data-export --out .private/jobs/text-v1
-.venv-kev/bin/python -m zils.fleet init --out .private/fleet-local \
-  --benchmark .private/jobs/text-v1 --checkpoint models/d3-reference \
-  --host VALIDATOR_PRIVATE_IPV4
-```
-
-Replace `VALIDATOR_PRIVATE_IPV4` with the validator's numeric private address
-(RFC 1918 or a Tailscale `100.64.0.0/10` address; public addresses are refused).
-Use new output paths or reuse an existing audited benchmark. The default ports
-are 8900 for the validator and 8901–8903 for three miners. Assign one
-`miner-N.tar.gz` to each machine.
-
-Only training data goes into a miner bundle. The validator keeps calibration
-cases, test cases, and full reports. Local bundles contain disposable signing
-keys and must stay private. [Testnet bundles](testnet.md) contain public wallet
-references instead; provision each hotkey separately.
-
-Each model uses its own fleet directory and ports. Never combine text and image
-scores into one reward vector. Only one validator may publish for a hotkey/subnet;
-do not run competing vertical publishers that overwrite each other's weights.
-
-For a legacy Kev rehearsal, keep `zils.benchmark build` and `models/reference`.
-Do not relabel a Kev manifest as a different model.
-
-## Set up each machine once
-
-1. Unpack its assigned archive and enter the `miner-N` folder.
-2. Install Git and Python 3.13, then install the pinned dependencies:
-
-   ```bash
-   python3.13 -m venv .venv-kev
-   .venv-kev/bin/python -m pip install -r requirements/model.txt -r requirements/rehearsal.txt
-   ```
-
-   With `uv`, use `uv venv --python 3.13 .venv-kev` and
-   `uv pip install --python .venv-kev/bin/python -r requirements/model.txt -r requirements/rehearsal.txt`.
-
-3. Allow the assigned miner TCP port from the validator's private address.
-   Allow validator TCP 8900 from the miner machines.
-4. Run `./start-miner --rounds 1`. It can start before the validator and will retry.
-
-d3 needs a qualified CUDA host and the isolated runtime below on every miner
-and the validator. CPU and Apple MPS fallback apply only to Kev. Use `--device cuda`
-explicitly. To reuse an environment or cache, set `ZILS_PYTHON`
-to its absolute Python path and `HF_HOME` to the cache directory.
-
-For d3 bundles, install the isolated runtime on each host and export it before
-every start (the validator needs the same variable):
-
-```bash
-uv venv --python 3.12 .venv-d3
-uv pip install --python .venv-d3/bin/python --torch-backend=cu130 -r requirements/d3.txt
-export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
-./start-miner --device cuda --rounds 1
-```
-
-d3 training waits until at least 12,288 MiB of GPU memory is free
-(`ZILS_D3_MIN_FREE_MIB` raises that floor). Neither side silently substitutes
-another runtime. The pins are `zils/d3-pins.json`.
-
-### Windows / NVIDIA GPU
-
-Run the miner inside WSL 2, using the supported NVIDIA driver installed on
-Windows. Do not install a Linux NVIDIA display driver inside WSL. Check CUDA
-from the miner environment:
-
-```bash
-.venv-kev/bin/python -c 'import torch; assert torch.cuda.is_available(), "CUDA is not ready"; print(torch.cuda.get_device_name(0))'
-```
-
-The validator must reach the miner directly at its private IPv4 address.
-Default WSL NAT does not support this callback layout without additional
-network setup. Use [WSL mirrored networking](https://learn.microsoft.com/en-us/windows/wsl/networking#mirrored-mode-networking)
-and limit the Windows/Hyper-V firewall rule to the assigned port and validator.
-See [NVIDIA's WSL setup](https://docs.nvidia.com/cuda/wsl-user-guide/index.html).
-Native Windows service execution and NAT traversal are not implemented.
-
-## Start the validator
-
-From the repository root:
-
-```bash
-.venv-kev/bin/python -m zils.fleet validator \
-  --config .private/fleet-local/validator/config.json --rounds 1
-```
-
-Remove `--rounds 1` for continuous rounds. The validator evaluates after every
-miner submits or the collection deadline expires. It verifies signatures and
-hashes, calibrates each candidate, and scores the separate evaluation cases.
-Local mode never writes weights to Bittensor. Chain mode needs registered
-wallets and explicit publication; follow the [chain fleet guide](testnet.md).
-
-## Two tracks on the subnet: the base tier pays first
-
-On a chain fleet whose validator config carries `base_pools`, miners
-earn on two tracks, paid from one weight vector on the configured subnet:
-
-- **Base tier (primary, continuous).** Beat the pinned incumbent in your
-  [model tier](model-pools.md). Submit a full-weight candidate under the
-  [base candidate contract](base-candidates.md). The validator's base-tier
-  scorer follows the [decision-quality election](base-election.md): at least +1 point,
-  a positive paired lower 95% bound and Brier regression at most 0.005, followed
-  by candidate-specific confirmation, the three-seed adapter suite and a common
-  release-window closing exam. Only crowned kings are paid.
-  Winning the exam makes you a challenger and pays nothing. You are crowned
-  only after you also pass the confirmation draw and the adapter regression
-  suite and the owner's promotion PR makes your candidate the incumbent and
-  your hotkey the newest entry in the track's king history. The base share of
-  every publication is split equally over the last five distinct kings still
-  registered, so a dethroned king keeps earning until five newer kings have
-  reigned; deregister and your slice goes to the others. The vendor base has no
-  owner, so until the first promotion the base share is burned; a resubmitted
-  stock base or a copy of the king is never eligible.
-- **Adapter rounds (alongside).** The frozen customer job rounds above continue
-  unchanged; each round's calibrated test-split skill is the adapter weight.
-  A validator may instead take the adapter track from real customer work in the
-  [hosted queue](queue-miners.md) (`adapter_evidence`, off by default; see
-  [validators §7](validators.md#7-pay-the-adapter-track-from-paid-adapter-use)).
-  Then you earn when an open-tier customer adapter you trained is delivered and
-  customers pay to use it through the API: your share of that paid use over the
-  window, for 30 days after delivery, capped by the validator's `revenue_cap`.
-  Free, test-mode and operator use earn nothing, and your queue hotkey must be
-  registered on the subnet.
-
-Split: the base tier takes `base_pools.share` of the vector (for example **0.7**;
-the validator records the share in every chain attempt and receipt), adapters
-the rest. Each track is normalized over its own earners first, so a miner with
-no eligible base candidate still earns its adapter share and a miner that trains
-no customer adapter still earns its base share. A track nobody earned on is
-not handed to the other track: its share goes to `base_pools.burn_uid` (default
-0), as Teutonic burns to the subnet owner's uid. For example, with no king the
-vector is 0.7 to the burn uid and 0.3 to adapter earners in their own
-proportions. If nobody earned on either track, the whole vector goes to the
-burn uid, so the validator keeps setting weights. Subtensor burns incentive
-paid to the subnet owner's hotkey and keeps the owner's own self-weight, so
-the validator refuses to publish a burn slice unless `burn_uid` is the subnet
-owner hotkey's uid at that block.
-
-With a `serving_share` section, serving is a third track: miners that serve
-z3 checkpoints and pass the validator's [serving grader](serving-validators.md)
-earn `serving_share.share` of the vector (for example **0.10**). To keep base
-and adapters in their old proportion, operators lower `base_pools.share` from
-0.7 to 0.63; adapters take what is left (0.27). A miner's serving weight is the
-sum of its per-model serving scores. The serving share burns, like any empty
-track, until `switch_on_miners` different miners earn it, and whenever the
-grader's scores are missing or older than `max_age_seconds`. With `receipts`
-configured, 30% of the serving share (`volume_share`) pays by the input tokens a
-miner answered through the gateway, and the rest by grading score. A miner the
-gateway catches failing or mismatching a check in the window is struck: it earns
-nothing from either part.
-
-Anti-gaming: one adapter submission per hotkey per round and one base candidate
-commitment per hotkey on chain; a claim cannot change within a round; a candidate
-hash another hotkey committed at an earlier block is refused; every
-sealed split is audited against its manifest before scoring, and payment goes
-only to registered roster UIDs. You receive aggregate metrics, never per-case
-outcomes; a round's cases are published after it closes and are not reused.
-
-For the mini tier specifically, the 20–24 GB cards in the measured fleet cannot
-full-fine-tune the 4.5B backbone, but a d3 LoRA trains in about 10.5 GB of
-GPU memory. Train a LoRA on d3 and merge it with `zils.d3 candidate`, which
-writes the two bf16 shards in the parent's layout plus the untouched contract
-files and validates the result (see
-[the reference recipe](base-candidates.md#reference-recipe-train-a-lora-merge-it));
-the merge needs about 10 GB of RAM and 10 GB of disk per candidate, and the
-upload is at most 9.5 GiB. Customer jobs take priority on a shared card; base
-training fills the idle time. What you train on decides everything: the 18
-October rehearsal candidate, trained only on synthetic rule cases, tied stock d3
-on the sealed exam.
-
-## Compete in the base tier from outside
-
-You do not need a bundle, an operator or an invitation to enter the base tier:
-registration on mainnet subnet 127 is the admission. About an afternoon end to end, most
-of it the training run.
-
-You do not need any validator's address or hotkey to compete: candidates are
-chain commitments that every validator reads itself. Validators are run by
-whoever operates them; find them on the metagraph
-(`btcli subnets metagraph 127 --network finney`).
+## Install
 
 Start with the installer on the mining host. It clones Zils into `~/.zils/zils`,
 builds the miner runtime and, on Linux x86_64 with an NVIDIA GPU, the d3 training
@@ -227,106 +31,41 @@ runtime, links `zils-miner` and `btcli` into `~/.local/bin` and starts
 your wallet, base profile, candidate folder and Hugging Face repo, saves them to
 `~/.zils/miner.json` and runs the doctor. It installs the stable release, the
 commit named in [`release/stable`](../release/stable); `zils-miner update` moves an
-install to a newer one, and the doctor warns when yours is behind.
-
-The miner command is `zils-miner`. The `zils` command belongs to the customer CLI
-(`npm install -g @zils/cli`: sign-in, decisions, training); from version 0.4.8 it
-also runs miner commands, so `zils doctor` and `zils-miner doctor` do the same
-thing. Installs from before `zils-miner` linked the miner as `zils`; the
-installer (and `zils-miner update`) removes that old link.
+install to a newer one, and the doctor warns when yours is behind
+([releases](releases.md)).
 
 ```bash
 curl -fsSL https://zils.ai/install.sh | sh
 ```
 
-Every tier has a base to beat. `zils-miner setup` lists the installed d3 profiles:
-lite, nano, mini, flash and d3, including registered promoted profiles. Choose
-the exact incumbent profile accepted by your validator. A listed profile does
-not mean that its competition is enabled or funded; see [model pools](model-pools.md).
+The miner command is `zils-miner` (`setup`, `doctor`, `update`, `commit-body`,
+plus `commit-candidate`, `announce-serving` and `serve`). The `zils` command
+belongs to the customer CLI (`npm install -g @zils/cli`: sign-in, decisions,
+training); it also runs miner commands, so `zils doctor` and `zils-miner doctor`
+do the same thing. Installs from before `zils-miner` linked the miner as `zils`;
+the installer (and `zils-miner update`) removes that old link.
 
-`--model` overrides the saved profile for one run. For example, if your validator
-accepts the stock lite profile:
-
-```bash
-zils-miner setup --model d3-lite-0.8b-v1
-zils-miner doctor --model d3-lite-0.8b-v1
-```
-
-The doctor prints a reference download command with that exact `--model` and
-separate working folders per profile. Training and merging follow the reference's
-metadata. Existing candidates supply their profile when no selection is saved;
-without a candidate or selection, the CLI asks you to choose instead of assuming
-mini. A candidate for a different tier or parent profile is rejected before upload.
-
-From then on `zils-miner doctor` names the next step and prints its command. Run
-`zils-miner setup --network finney --netuid 127` once: the CLI never assumes mainnet, but
-it saves the chain you named and every later chain command (`doctor`, `check`,
-`commit-candidate`, `commit-body`) uses it unless you pass `--network` again. The steps are:
-
-1. **Register a hotkey on mainnet subnet 127** following the
-   [registration guide](bittensor-registration.md); keep the hotkey file on the
-   mining host and the coldkey elsewhere.
-2. **Read the [miner terms](mining-terms.md).** Running a miner against a Zils
-   validator means you accept them.
-3. **Train and merge a candidate** with the
-   [reference recipe](base-candidates.md#reference-recipe-train-a-lora-merge-it):
-   `zils.d3 reference`, `zils.d3 train` on data of your choosing, `zils.d3 candidate`
-   to merge the adapter into the parent's shards. The result is a directory that
-   passes the candidate contract; the exam is realistic decisions in families you
-   have not seen, so what you train on decides everything.
-4. **Upload and commit.** Log in to Hugging Face once (`hf auth login`, a write
-   token), then let `zils-miner commit-candidate` upload the candidate files to
-   your public model repo and commit `zils1:<hash>:<revision>:<repo>` on chain
-   with your hotkey (details in [base candidates: commit](base-candidates.md#commit)):
-
-   ```bash
-   zils-miner commit-candidate
-   ```
-
-   It reads the wallet, base profile, candidate and repo saved by `zils-miner setup`;
-   flags such as `--model`, `--candidate` or `--repo` override them for one run.
-   Upload and remote verification use the selected candidate's pinned file list,
-   including the correct number of weight shards for its tier.
-
-   Without `--yes` it is a dry run that prints the commitment; with `--yes` it
-   uploads, checks the public repo at the new commit, writes the commitment and
-   reads it back. No validator URL, no open port, nothing left running: every
-   validator reads the commitments at the start of its round and pulls the
-   revision from Hugging Face, once per distinct hash.
-5. **Let the doctor check.** It runs the checks in order (requirements, d3
-   training runtime and GPU, hotkey file, registration, candidate, Hugging Face
-   login and repo at the revision, commitment on chain) and stops at the first
-   failing one with the exact command that fixes it:
-
-   ```bash
-   zils-miner doctor
-   ```
-
-   You can run it before step 1 (it tells you to create the wallet), before
-   step 3 (it prints the merge recipe), before step 4 (it prints the commit
-   command) and again after each fix.
-6. **Read the result.** Your payout is on chain: the validators' weights and your
-   incentive (`btcli subnets metagraph 127 --network finney`). The
-   aggregate row per round (Brier and accuracy against the incumbent, eligibility,
-   the pending and confirmed winner) is in each validator's signed round result on
-   its own API (`GET /results/<round>`), not on chain. Per-case results are never returned. An ineligible or
-   rejected candidate earns nothing; fix it, merge again and commit the new hash.
-   Leave an unchanged commitment alone: it stays in every round at no cost, and
-   committing it again moves your block later, which can hand the hash to a copier
-   who committed it in between.
+`zils-miner` never assumes mainnet. Run
+`zils-miner setup --network finney --netuid 127` once: it saves the chain you
+named, and every later chain command (`doctor`, `commit-body`,
+`commit-candidate`) uses it unless you pass `--network` again. From then on
+`zils-miner doctor` checks the requirements, the d3 training runtime and GPU, the
+hotkey file and its registration, and prints the command that fixes the first
+failing step. Its later candidate and commitment steps are for
+[king-pool candidates](#king-pools); check a soup body with
+`zils-miner commit-body --check` instead.
 
 ## Soup pool
 
-The soup pool is **new at the mainnet launch** and replaces the king election in
-a pool whose validator config sets `"type": "soup"` ([model pools](model-pools.md#soup-pools)).
-Nothing below has run as a live competition yet: no miner-submitted body has been
-graded or paid. The design rests on one internal experiment on public open models,
-in which plain uniform averages of two or three public Qwen3.5-4B decision
-fine-tunes scored above stock z3-mini on two sealed exam draws, and adding a
-fifth model lowered the score. Treat the numbers in this section as launch policy
-that may change, not as measured results.
+Every pool in the launch configuration is a soup pool: its validator config sets
+`"type": "soup"` ([model pools](model-pools.md#soup-pools)). The design rests on
+one internal experiment on public open models, in which plain uniform averages of
+two or three public Qwen3.5-4B decision fine-tunes scored above stock z3-mini on
+two sealed exam draws, and adding a fifth model lowered the score. Treat the
+numbers in this section as launch policy that may change, not as measured
+results.
 
-Instead of one winner, each round builds the best **soup**: a uniform average of
+Each round builds the best **soup**: a uniform average of
 up to five bodies submitted by different miners. The average covers the language
 weights; the soup keeps the release's vision tower unchanged, since no exam grades
 images yet. A body still includes a vision tower (any one; usually its parent's). You earn by holding a seat in
@@ -340,10 +79,10 @@ to.
 
 | Pool | Chassis (pinned) | Body parent (pinned revision) | Chassis tensors | Body size cap | Input cap | Commitment |
 |---|---|---|---|---|---|---|
-| `d3-lite` (0.8B) | `vllm-sr/d3-lite` | `Qwen/Qwen3.5-0.8B` @ `2fc06364715b967f1860aea9cf38778875588b17` | 473 | 2 GiB | 4,096 tokens | `zilsb3:d3-lite:…` |
-| `d3-mini` (4.5B) | `zils-ai/d3-mini-4.5b-v1` | `Qwen/Qwen3.5-4B` @ `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a` | 723 | 10 GiB | 8,192 tokens | `zilsb2:…` |
-| `d3-flash` (9B) | `vllm-sr/d3-flash` | `Qwen/Qwen3.5-9B` @ `c202236235762e1c871ad0ccb60c8ee5ba337b9a` | 759 | 24 GiB | 4,096 tokens | `zilsb3:d3-flash:…` |
-| `d3` (z3, 27B) | `vllm-sr/d3-ultra` | `Qwen/Qwen3.8-27B` @ `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0` | 1,183 | 64 GiB | 4,096 tokens | `zilsb3:d3:…` |
+| `d3-lite` (z3-lite, 0.8B) | `vllm-sr/d3-lite` | `Qwen/Qwen3.5-0.8B` @ `2fc06364715b967f1860aea9cf38778875588b17` | 473 | 2 GiB | 4,096 tokens | `zilsb3:d3-lite:…` |
+| `d3-mini` (z3-mini, 4.5B) | `zils-ai/d3-mini-4.5b-v1` | `Qwen/Qwen3.5-4B` @ `851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a` | 723 | 10 GiB | 8,192 tokens | `zilsb2:…` |
+| `d3-flash` (z3-flash, 8.4B) | `vllm-sr/d3-flash` | `Qwen/Qwen3.5-9B` @ `c202236235762e1c871ad0ccb60c8ee5ba337b9a` | 759 | 24 GiB | 4,096 tokens | `zilsb3:d3-flash:…` |
+| `d3` (z3, 26B) | `vllm-sr/d3-ultra` | `Qwen/Qwen3.8-27B` @ `1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0` | 1,183 | 64 GiB | 4,096 tokens | `zilsb3:d3:…` |
 
 The chassis revisions are in `zils/d3-lite-pins.json`, `zils/d3-pins.json`,
 `zils/d3-flash-pins.json` and `zils/d3-ultra-pins.json`. The z3 chassis uses
@@ -403,8 +142,8 @@ Check any folder first, with no wallet or repo needed:
 zils-miner commit-body --pool <pool> --path ./my-body --check
 ```
 
-Register a hotkey as in [the base tier](#compete-in-the-base-tier-from-outside) and
-install with `curl -fsSL https://zils.ai/install.sh | sh`. Then:
+Register a hotkey ([registration](bittensor-registration.md)) and
+[install](#install) the miner. Then:
 
 1. Put the body's safetensors and `README.md` (with the licence) in one folder and
    let the CLI write the ownership file for your hotkey. It also checks the body
@@ -445,7 +184,7 @@ install with `curl -fsSL https://zils.ai/install.sh | sh`. Then:
    also downloads the pool's pinned chassis and Qwen parent (about 2 GB each for
    lite, 9 GB for mini, 17 to 19 GB for flash and 52 to 56 GB for z3) unless you
    pass local copies with `--chassis` and `--base`. Wallet flags,
-   `--network` and `--netuid` work as for `commit-candidate`.
+   `--network` and `--netuid` work as for the other `zils-miner` commands.
 
 A hotkey has **one commitment slot, shared by `zils1` base candidates and soup
 bodies of every pool**: committing a body replaces the hotkey's base candidate or
@@ -459,8 +198,9 @@ Validators run one soup round per day for each open soup pool:
 
 1. **Seed.** The hash of the first block after the commit deadline picks the
    round's private exam subset and breaks ties.
-2. **Admit** new bodies with the checks above, at most 6 new bodies and 12
-   claims per round in commitment order. A hotkey whose claim fails a check or a
+2. **Admit** new bodies with the checks above, in commitment order: at most 6
+   new bodies and 12 claims per round in lite and mini (flash 4 and 6, z3 2 and
+   3, in the launch configuration). A hotkey whose claim fails a check or a
    download sits out the next 3 rounds.
 3. **Reject copies:** a re-upload, whose change from Qwen is nearly identical
    (cosine ≥ 0.999) to an earlier commitment's, a house ingredient's, the current
@@ -481,7 +221,7 @@ Validators run one soup round per day for each open soup pool:
    apply to that commitment only.
 4. **Pool:** new bodies are screened on a few hundred items; the pool is the
    current members, the house ingredients, the best screened new bodies and the
-   best past single bodies, at most 20.
+   best past single bodies, at most 20 (10 in flash, 5 in z3).
 5. **Solo:** each pool body is graded alone on the chassis. Every score from here
    on (solo, greedy, contribution, crown) is on the items of this round and the
    validator's last two finished rounds pooled together (`decision_rounds`, default
@@ -493,7 +233,11 @@ Validators run one soup round per day for each open soup pool:
    softening a body's probabilities without changing its answers earns nothing
    ([model pools: scoring](model-pools.md#soup-pools)).
 6. **Greedy soup:** starting from the best single body, add the next best only if
-   the soup's score rises by at least **0.5** points; stop at **5** members.
+   the soup's score rises by at least **0.5** points; stop at **5** members. The
+   current soup stays unless the new one beats it by at least **0.5** points too,
+   so a light re-tune of the soup cannot take its members' seats for a gain
+   within noise. A current soup with a member that was not graded this round is
+   not kept.
 7. **Contribution:** each member's leave-one-out effect on the soup's score.
 
 ### Pay
@@ -563,7 +307,7 @@ you upload it:
 zils-miner commit-body --pool <pool> --path ./found-body --check
 ```
 
-Every unearned part burns to the subnet owner's uid, as in the base tier. Until
+Every unearned part burns to the subnet owner's uid, as in every track. Until
 miners submit new bodies, most of the pool's share burns.
 
 **Pool shares.** The launch configuration (`zils/data/base-pools-launch.json`)
@@ -594,14 +338,271 @@ pass the 12-hour confirmation draw and the pinned three-seed adapter suite (the
 [release gate](base-election.md)); the owner's promotion PR then makes it the next
 z3 version. Members are paid through seats, not as kings.
 
-The member cap (5), pool size (20), change bound (0.15), 80/20 split, rates
+The member cap (5), pool sizes, change bound (0.15), seat/crown split (80/20), rates
 (1.0 / 0.25 / 0) and release cadence are policy choices made for the launch, not
 tuned results. The greedy margin (0.5), seat floor (0.8) and the crown and
 fine-tune bars (1.2) are about 2.5 standard errors of the differences they test,
 measured by resampling the items of a 3,000-item dry run and scaled to the pooled
 three-round window; a smaller real gain is not paid until the pool has more items.
 
-## Results and restarts
+## Customer jobs
+
+The adapter track pays for customer adapters trained from the hosted queue at
+`https://training.zils.ai`. The path is: register a hotkey on 127, install the
+current stable release, accept the miner terms, qualify the host, start
+`python -m miner.queue`, pass the qualification jobs, then take customer jobs.
+It needs Linux with an NVIDIA GPU and 12 GB of free GPU memory. The full setup
+is in [customer-job miners](queue-miners.md); payment is in
+[validators §7](validators.md#7-pay-the-adapter-track-from-paid-adapter-use).
+
+## How a validator splits the weight vector
+
+Every track pays from one weight vector. With `base_pools` in its config, the
+validator gives the base pools `base_pools.share` of the vector (**0.8** in the
+launch configuration; the validator records the share in every chain attempt and
+receipt) and the adapter track the rest. Each track is normalized over its own
+earners first, so a miner with no seat still earns its adapter share and a miner
+that trains no customer adapter still earns its pool share. A track nobody
+earned on is not handed to another track: its share goes to
+`base_pools.burn_uid` (default 0), as Teutonic burns to the subnet owner's uid.
+If nobody earned on any track, the whole vector goes to the burn uid, so the
+validator keeps setting weights. Subtensor burns incentive paid to the subnet
+owner's hotkey and keeps the owner's own self-weight, so the validator refuses to
+publish a burn slice unless `burn_uid` is the subnet owner hotkey's uid at that
+block.
+
+On the adapter track ([validators §7](validators.md#7-pay-the-adapter-track-from-paid-adapter-use),
+`adapter_evidence`), you earn when an open-tier customer adapter you trained is
+delivered and customers pay to use it through the API: your share of that paid
+use over each 72-hour window, for 30 days after delivery, capped by the
+validator's `revenue_cap` (0.5: miners as a group earn at most half of that
+spend; the rest burns). Free, test-mode and operator use earn nothing, and your
+queue hotkey must be registered on the subnet.
+
+With a `serving_share` section, serving is a third track: miners that serve
+z3 checkpoints and pass the validator's [serving grader](serving-validators.md)
+earn `serving_share.share` of the vector, and the other tracks shrink to make
+room. The serving share burns, like any empty track, until `switch_on_miners`
+different miners earn it, and whenever the grader's scores are missing or older
+than `max_age_seconds`. With `receipts` configured, 30% of the serving share
+(`volume_share`) pays by the input tokens a miner answered through the gateway,
+and the rest by grading score. A miner the gateway catches failing or
+mismatching a check in the window is struck: it earns nothing from either part.
+The launch configuration has no `serving_share`.
+
+## King pools
+
+A validator can also run a pool as a **king pool** instead of a soup. The launch
+configuration has none: every pool in it is a soup pool, and a soup pool refuses
+`zils1` candidates. Because a hotkey has one commitment slot, committing a
+`zils1` candidate also replaces the soup body that hotkey committed. Commit one
+only to a validator whose config runs a king pool for your profile.
+
+In a king pool, a miner beats the pinned incumbent in its
+[model tier](model-pools.md) with a full-weight candidate under the
+[base candidate contract](base-candidates.md). The scorer follows the
+[decision-quality election](base-election.md): at least +1 point, a positive
+paired lower 95% bound and Brier regression at most 0.005, followed by
+candidate-specific confirmation, the three-seed adapter suite and a common
+release-window closing exam. Winning the exam makes you a challenger and pays
+nothing. You are crowned only after you also pass the confirmation draw and the
+adapter regression suite and a promotion makes your candidate the incumbent and
+your hotkey the newest entry in the track's king history. The pool's share is
+split equally over the last five distinct kings still registered, so a dethroned
+king keeps earning until five newer kings have reigned; deregister and your slice
+goes to the others. The vendor base has no owner, so until the first promotion
+the share is burned; a resubmitted stock base or a copy of the king is never
+eligible.
+
+### Submit a king-pool candidate
+
+You do not need a bundle, an operator, an invitation or any validator's address:
+candidates are chain commitments that every validator reads itself. Validators
+are on the metagraph (`btcli subnets metagraph 127 --network finney`).
+
+`zils-miner setup` lists the installed d3 profiles: lite, nano, mini, flash and
+d3, including registered promoted profiles. Choose the exact incumbent profile
+accepted by your validator. A listed profile does not mean that its competition
+is enabled or funded; see [model pools](model-pools.md). `--model` overrides the
+saved profile for one run:
+
+```bash
+zils-miner setup --model d3-lite-0.8b-v1
+zils-miner doctor --model d3-lite-0.8b-v1
+```
+
+The doctor prints a reference download command with that exact `--model` and
+separate working folders per profile. Training and merging follow the reference's
+metadata. A candidate for a different tier or parent profile is rejected before
+upload.
+
+1. **Register a hotkey on mainnet subnet 127** following the
+   [registration guide](bittensor-registration.md); keep the hotkey file on the
+   mining host and the coldkey elsewhere.
+2. **Train and merge a candidate** with the
+   [reference recipe](base-candidates.md#reference-recipe-train-a-lora-merge-it):
+   `zils.d3 reference`, `zils.d3 train` on data of your choosing, `zils.d3 candidate`
+   to merge the adapter into the parent's shards. On 20–24 GB cards a d3-mini LoRA
+   trains in about 10.5 GB of GPU memory; the merge needs about 10 GB of RAM and
+   10 GB of disk, and the upload is at most 9.5 GiB.
+3. **Upload and commit.** Log in to Hugging Face once (`hf auth login`, a write
+   token), then let `zils-miner commit-candidate` upload the candidate files to
+   your public model repo and commit `zils1:<hash>:<revision>:<repo>` on chain
+   with your hotkey (details in [base candidates: commit](base-candidates.md#commit)).
+   Without `--yes` it is a dry run that prints the commitment; with `--yes` it
+   uploads, checks the public repo at the new commit, writes the commitment and
+   reads it back:
+
+   ```bash
+   zils-miner commit-candidate
+   zils-miner commit-candidate --yes
+   ```
+
+   It reads the wallet, base profile, candidate and repo saved by `zils-miner setup`;
+   flags such as `--model`, `--candidate` or `--repo` override them for one run.
+4. **Let the doctor check** (`zils-miner doctor`): it runs through the candidate,
+   the Hugging Face login and repo at the revision, and the commitment on chain.
+5. **Read the result.** Your payout is on chain: the validators' weights and your
+   incentive (`btcli subnets metagraph 127 --network finney`). The aggregate row
+   per round is in each validator's signed round result on its own API
+   (`GET /results/<round>`), not on chain. Per-case results are never returned.
+   Leave an unchanged commitment alone: it stays in every round at no cost, and
+   committing it again moves your block later, which can hand the hash to a copier
+   who committed it in between.
+
+Anti-gaming: one base candidate commitment per hotkey on chain; a candidate hash
+another hotkey committed at an earlier block is refused; every sealed split is
+audited against its manifest before scoring, and payment goes only to registered
+UIDs. You receive aggregate metrics, never per-case outcomes.
+
+## Closed development fleet
+
+A closed fleet is a validator and a few miners on a private network, all
+started from bundles that one operator generates. It runs frozen customer-job
+rounds on **d3-mini 4.5B** text jobs (`d3-mini-4.5b-v1`); each round's calibrated
+test-split skill is the miner's score. It is for development and rehearsals: a
+local fleet never writes weights, and a [chain fleet](testnet.md) publishes only
+for its explicit roster. To earn on subnet 127, use the soup pools or customer
+jobs above.
+
+After the one-time setup below, run this in your assigned miner folder:
+
+```bash
+./start-miner
+```
+
+The miner trains one candidate per round, submits its signed checkpoint, receives
+the validator's result, and waits for the next round. Stop with Ctrl+C, or use
+`./start-miner --rounds 1` for a single result. The first start downloads the
+pinned base model. Later starts reuse the cache.
+
+### Prepare bundles on the validator
+
+For a text fleet, create the d3 reference with the
+[customer-job miner setup](queue-miners.md#2-install-the-stable-release).
+Prepare authorized, independent training/calibration/test JSONL files using the
+[customer data format](customer-jobs.md#prepare-data).
+The following freezes those files and an example acceptance policy; choose your
+policy before evaluating candidates:
+
+```bash
+.venv-kev/bin/python -m zils.jobs --job-id text-v1 \
+  --model d3-mini-4.5b-v1 --train .private/train.jsonl \
+  --calibration .private/calibration.jsonl --test .private/test.jsonl \
+  --min-accuracy 0.80 --min-brier-improvement 0.01 \
+  --allow-training-data-export --out .private/jobs/text-v1
+.venv-kev/bin/python -m zils.fleet init --out .private/fleet-local \
+  --benchmark .private/jobs/text-v1 --checkpoint models/d3-reference \
+  --host VALIDATOR_PRIVATE_IPV4
+```
+
+Replace `VALIDATOR_PRIVATE_IPV4` with the validator's numeric private address
+(RFC 1918 or a Tailscale `100.64.0.0/10` address; public addresses are refused).
+Use new output paths or reuse an existing audited benchmark. The default ports
+are 8900 for the validator and 8901–8903 for three miners. Assign one
+`miner-N.tar.gz` to each machine.
+
+Only training data goes into a miner bundle. The validator keeps calibration
+cases, test cases, and full reports. Local bundles contain disposable signing
+keys and must stay private. [Chain fleet bundles](testnet.md) contain public wallet
+references instead; provision each hotkey separately.
+
+Each model uses its own fleet directory and ports. Never combine text and image
+scores into one reward vector. Only one validator may publish for a hotkey/subnet;
+do not run competing vertical publishers that overwrite each other's weights.
+
+For a legacy Kev rehearsal, keep `zils.benchmark build` and `models/reference`.
+Do not relabel a Kev manifest as a different model.
+
+### Set up each machine once
+
+1. Unpack its assigned archive and enter the `miner-N` folder.
+2. Install Git and Python 3.13, then install the pinned dependencies:
+
+   ```bash
+   python3.13 -m venv .venv-kev
+   .venv-kev/bin/python -m pip install -r requirements/model.txt -r requirements/rehearsal.txt
+   ```
+
+   With `uv`, use `uv venv --python 3.13 .venv-kev` and
+   `uv pip install --python .venv-kev/bin/python -r requirements/model.txt -r requirements/rehearsal.txt`.
+
+3. Allow the assigned miner TCP port from the validator's private address.
+   Allow validator TCP 8900 from the miner machines.
+4. Run `./start-miner --rounds 1`. It can start before the validator and will retry.
+
+d3 needs a qualified CUDA host and the isolated runtime below on every miner
+and the validator. CPU and Apple MPS fallback apply only to Kev. Use `--device cuda`
+explicitly. To reuse an environment or cache, set `ZILS_PYTHON`
+to its absolute Python path and `HF_HOME` to the cache directory.
+
+For d3 bundles, install the isolated runtime on each host and export it before
+every start (the validator needs the same variable):
+
+```bash
+uv venv --python 3.12 .venv-d3
+uv pip install --python .venv-d3/bin/python --torch-backend=cu130 -r requirements/d3.txt
+export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
+./start-miner --device cuda --rounds 1
+```
+
+d3 training waits until at least 12,288 MiB of GPU memory is free
+(`ZILS_D3_MIN_FREE_MIB` raises that floor). Neither side silently substitutes
+another runtime. The pins are `zils/d3-pins.json`.
+
+#### Windows / NVIDIA GPU
+
+Run the miner inside WSL 2, using the supported NVIDIA driver installed on
+Windows. Do not install a Linux NVIDIA display driver inside WSL. Check CUDA
+from the miner environment:
+
+```bash
+.venv-kev/bin/python -c 'import torch; assert torch.cuda.is_available(), "CUDA is not ready"; print(torch.cuda.get_device_name(0))'
+```
+
+The validator must reach the miner directly at its private IPv4 address.
+Default WSL NAT does not support this callback layout without additional
+network setup. Use [WSL mirrored networking](https://learn.microsoft.com/en-us/windows/wsl/networking#mirrored-mode-networking)
+and limit the Windows/Hyper-V firewall rule to the assigned port and validator.
+See [NVIDIA's WSL setup](https://docs.nvidia.com/cuda/wsl-user-guide/index.html).
+Native Windows service execution and NAT traversal are not implemented.
+
+### Start the validator
+
+From the repository root:
+
+```bash
+.venv-kev/bin/python -m zils.fleet validator \
+  --config .private/fleet-local/validator/config.json --rounds 1
+```
+
+Remove `--rounds 1` for continuous rounds. The validator evaluates after every
+miner submits or the collection deadline expires. It verifies signatures and
+hashes, calibrates each candidate, and scores the separate evaluation cases.
+Local mode never writes weights to Bittensor. Chain mode needs registered
+wallets and explicit publication; follow the [chain fleet guide](testnet.md).
+
+### Results and restarts
 
 Miner logs, frozen candidates, and results are in `state/jobs/`. Full validator
 reports are in `validator/state/rounds/`. Restarting a miner reuses completed

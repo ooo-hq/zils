@@ -8,6 +8,14 @@ hotkey. It uses the same training and candidate validation as `zils.d3` and
 customer adapters. The example below targets mainnet subnet 127; mainnet is never a
 default, so the configuration names both `network` and `netuid`.
 
+**This runner commits `zils1` base candidates, which only king pools take.** The
+launch configuration (`zils/data/base-pools-launch.json`) has no king pools:
+every pool is a soup pool, and soup pools refuse `zils1` candidates. A hotkey has
+one commitment slot, so a commit from this runner also replaces any soup body the
+hotkey committed. Run it only against a validator that runs a king pool for your
+profile ([king pools](mining.md#king-pools)). Soup miners commit bodies with
+`zils-miner commit-body` ([soup pool](mining.md#soup-pool)).
+
 This is a bootstrap recipe: one epoch of the existing LoRA trainer, with a new
 seed for each attempt. Repeating seeds/data variants is not evidence of model
 improvement. Validators independently assess each submitted checkpoint.
@@ -19,7 +27,7 @@ attempt; training cadence and election confirmation timing are separate.
 
 ## Configuration
 
-Install the regular miner and d3 runtime first (see [mining](mining.md)). Prepare
+Install the regular miner and d3 runtime first (see [mining](mining.md#install)). Prepare
 an operator-owned public training export in the format accepted by `zils.d3 train`
 and a reference using `python -m zils.d3 reference --out /srv/miner/reference`.
 Never supply customer exports or validator-private exams as base-training data.

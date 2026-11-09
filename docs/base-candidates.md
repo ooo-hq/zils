@@ -298,7 +298,7 @@ round's questions are published after the round closes and are not reused.
 On a chain fleet with a `base_tier` track, the kings are paid at every
 publication from the base tier's share of the one weight vector, blended with
 the adapter round's weights; a share with no recipient goes to the burn uid; see
-[the two-track rule](mining.md#two-tracks-on-the-subnet-the-base-tier-pays-first).
+[how a validator splits the weight vector](mining.md#how-a-validator-splits-the-weight-vector).
 
 ## Validator and publisher tooling
 

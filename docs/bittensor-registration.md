@@ -4,27 +4,21 @@ This guide joins an existing subnet; a miner does not create a subnet.
 
 Zils runs on Bittensor **mainnet subnet 127** (network `finney`). Mainnet is never
 a default: every Zils chain command names the network and netuid explicitly.
-Registration serves two paths:
+Registration on 127 is the admission; no operator approval is needed. A
+registered hotkey can:
 
-- **Base tier (open).** Registration on 127 is the admission: register, then
-  [compete from outside](mining.md#compete-in-the-base-tier-from-outside) by
-  committing a d3-mini candidate on chain. No operator approval is needed.
-- **Closed, model-pinned fleets.** The operator selects a d3-mini 4.5B text job
-  (or a Kev job) and qualifies the participating hardware.
-  To receive work there, the operator must also add your UID and hotkey to the
-  validator's roster. Confirm the subnet ID with that operator.
+- **Commit soup bodies.** See [soup pool](mining.md#soup-pool).
+- **Take customer jobs.** The hosted queue admits any hotkey registered on 127;
+  see [customer-job miners](queue-miners.md) and [admission](miner-admission.md).
 
-The [hosted queue](queue-miners.md) uses approved hotkeys and local queue UIDs;
-it does not require on-chain registration or publish chain weights. Its
-chain-derived [admission](miner-admission.md) is built but off.
-
-Registration gives a hotkey a chain UID.
-For validator operation, continue with [Run a validator](validators.md).
+Registration gives a hotkey a chain UID. A closed, model-pinned
+[chain fleet](testnet.md) also needs the operator to add your UID and hotkey to
+its roster. For validator operation, continue with [Run a validator](validators.md).
 
 ## 1. Install the pinned CLI
 
 Use a trusted Linux or macOS workstation with Git and Python 3.13. These wallet
-steps also work in WSL 2; run the Bittensor fleet on Linux or macOS. From a fresh
+steps also work in WSL 2. From a fresh
 clone, create a separate environment for wallet administration:
 
 ```bash
@@ -96,8 +90,8 @@ collateral settings too.
 Subnet 127 is full (256 UIDs). A registration replaces the registered hotkey with
 the lowest pruning score that is past its immunity period (5,000 blocks, about
 17 hours). Your UID can be replaced the same way once your own immunity ends and
-you have earned nothing, so commit a candidate before then; an evicted hotkey
-must register again. Preview the coldkey-signed transaction first:
+you have earned nothing, so commit a body or start taking customer jobs before
+then; an evicted hotkey must register again. Preview the coldkey-signed transaction first:
 
 ```bash
 .venv-btcli/bin/btcli --network finney --wallet "$ZILS_WALLET" \
@@ -133,29 +127,16 @@ The UID query must return an integer, not `None`/`null`. Match that UID to the
 hotkey's public SS58 address in the metagraph. Do not assume the UID is `1` or
 reuse a local queue UID.
 
-Give the validator operator the network (`finney`), netuid, public hotkey address,
-and actual UID. Wallet names and paths in a fleet configuration must match the
-machine that will run that identity; they are not key material.
+Copy only the hotkey file (`<wallet path>/<wallet>/hotkeys/<hotkey>`) to the
+mining host, through a private channel. Your miner reads the hotkey from that
+wallet directory; wallet names and paths in
+a miner config must match the machine that runs that identity. They are not key
+material. Never give anyone your recovery phrase or coldkey.
 
-## 5. Join the Zils fleet
+## 5. Next
 
-For the base tier, stop here and continue with
-[compete from outside](mining.md#compete-in-the-base-tier-from-outside). For a
-closed fleet, the operator uses those public identities to generate the
-[registered fleet and run preflight](testnet.md#provision-the-registered-identities).
-Receive your assigned `miner-UID.tar.gz`, provision only your hotkey on the miner
-host through a private channel, and follow the [miner setup](mining.md#set-up-each-machine-once).
-Install `requirements/testnet.txt` in the miner's model environment as well.
-Never give the validator your recovery phrase or coldkey.
-
-From the unpacked, configured miner directory, start one round:
-
-```bash
-./start-miner --rounds 1
-```
-
-Zils uses private-network artifact exchange and an explicit roster; publishing
-a generic Axon endpoint does not connect this fleet. Keep the configured miner
-port reachable from the validator and the validator port reachable from miners.
-If the chain replaces your UID or hotkey, stop and have the operator regenerate
-the roster. Registration alone does not establish work availability or rewards.
+- Soup pools: [install](mining.md#install), then [commit a body](mining.md#commit-a-body).
+- Customer jobs: [customer-job miners](queue-miners.md), from step 2.
+- A closed chain fleet: give its operator the network (`finney`), netuid, public
+  hotkey address and actual UID, then follow [chain fleet](testnet.md). Registration
+  alone does not establish work availability or rewards there.

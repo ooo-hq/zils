@@ -2,7 +2,11 @@
 
 A miner can serve a public z3 checkpoint over HTTP so validators and gateways can
 send it decision requests. Serving is text only: public z3 checkpoints, no images,
-no adapters. It is separate from training and the base tier ([mining](mining.md)).
+no adapters. It is separate from the soup pools and customer jobs ([mining](mining.md)).
+
+A validator pays for serving only when its config has a `serving_share` section
+([validators §8](validators.md#8-pay-the-serving-share)). The launch
+configuration has none, so serving earns nothing there.
 
 ## Requirements
 

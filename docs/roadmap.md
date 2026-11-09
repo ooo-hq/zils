@@ -1,90 +1,55 @@
 # Subnet milestones
 
-The local training loop and Bittensor subnet integration are implemented;
-mainnet subnet 127 went live on 3 November 2026.
-The [first registered training-to-chain round](testnet-round-001.md) recorded a
-completed commit–reveal cycle. That evidence does not establish current uptime,
-open participation or production model quality.
+Mainnet subnet 127 went live on 3 November 2026. This page lists what is merged
+on `main` and what remains, as of 9 November 2026. It does not record what a
+given validator runs; check its signed round results for that.
 
-Status of the work for an open competition, as of 19 October 2026 (merged on
-`main`; this page does not record what a given host runs):
+## Merged
 
-1. Admission rules: base-tier entry is registration on mainnet subnet 127. Miners
-   upload a candidate to Hugging Face and commit it on chain with
-   `zils.miner commit-candidate` (ooo-hq/zils#59); `zils.miner doctor` checks
-   each setup step (#57). A validator reads the commitments itself
-   ([open admission](validators.md#open-admission-base-tier), intake #53). The
-   [miner terms](mining-terms.md) are published (#52) and their hash travels in
-   every signed queue claim (#56). The hosted queue's chain-derived
-   [admission](miner-admission.md) is built and off.
-2. Isolated evaluation: the sandboxed evaluation subprocess is merged.
-3. Refreshed held-out benchmarks: the round-one sealed holdout is authored
-   (1,458 cases in six families). The first confirmation draw, run on
-   17 October 2026 on a second, disjoint sealed set (291 calibration and 1,156
-   test cases), did not confirm a winner; see [d3-mini](#d3-mini).
-4. Promotion and rollback: two channels and the adapter regression suite are
-   decided and implemented. The suite has run once, on 17 October 2026, and
-   passed on its single reference job (the rule asks for three or four). The
-   channel is platform configuration today; since 17 October 2026 `stable` and
-   `latest` both name d3-mini by owner decision. A registry alias and automatic
-   follow-stable upgrades remain.
-5. Payment: base and adapter tracks pay from one weight vector (#49). King of
-   the hill (#60): the last five distinct registered kings split the base share,
-   and an empty track burns at `base_tier.burn_uid`. The adapter track can pay
-   from delivered hosted-queue customer jobs (`adapter_evidence`, #61, off by
-   default).
-6. Public health, chain reporting and a public leaderboard: remaining.
+1. **Admission.** Registration on subnet 127 is the admission. Validators read
+   soup-body commitments from the chain themselves, and the hosted queue admits
+   any registered hotkey that accepts the [miner terms](mining-terms.md) and
+   qualifies ([miner admission](miner-admission.md)).
+2. **Soup pools.** Four pools, one per z3 size, each a uniform average of up to
+   five miner bodies with five paid seats and a crown
+   ([soup pool](mining.md#soup-pool)). Lite and mini are open in the launch
+   configuration; flash and z3 open at a block set in the validator config.
+3. **Adapter track.** Validators pay customer-job miners from paid API spend on
+   the open-tier adapters they delivered, from platform-signed evidence
+   (`adapter_evidence`, [validators §7](validators.md#7-pay-the-adapter-track-from-paid-adapter-use)).
+   The launch split is 80% base pools, 20% adapter track.
+4. **Releases.** Miners install the commit in `release/stable`; customer-job
+   claims name it, and customer jobs go only to accepted releases
+   ([releases](releases.md)).
+5. **Isolated evaluation.** Submissions are evaluated in a sandboxed subprocess.
+6. **Soup releases.** A soup is served only after it passes the release gate:
+   sealed release draws, a confirmation draw and the adapter regression suite
+   ([base election](base-election.md)).
 
-## Base tier
+## Remaining
 
-Miners can submit a full-weight replacement for the pinned base of a text
-profile. [Base candidates](base-candidates.md) describes the submission
-contract, scoring, the confirmation draw, the regression suite and the `latest`
-and `stable` channels. Candidate loading, round decisions, sandboxed evaluation,
-the regression suite, chain-derived admission and the dry-run promotion script
-are merged. A chain fleet pays the last five kings, the promoted bases'
-miners, from the base tier's share of the one weight vector (challengers earn
-nothing until promoted; an unpaid share is burned), blended with adapter rounds
-([two-track payment](mining.md#two-tracks-on-the-subnet-the-base-tier-pays-first)).
-No outside miner has been crowned king yet.
+- Outside re-grading of soup rounds: the round bank is private, so a round can
+  be audited against hashes but not re-scored by others.
+- Deleting a job's candidate, raw output and logs within 7 days, as the miner
+  terms require; the queue worker deletes only the training data today.
+- Public health and chain reporting beyond the per-validator round results.
 
-## d3-mini
+## History
 
-The profile `d3-mini-4.5b-v1` (vendor model `vllm-sr/d3-mini`, mirrored as
-`zils-ai/d3-mini-4.5b-v1`) was merged on 16–17 October 2026: the profile and
-pins, the runtime module, node provisioning and qualification, images and video
-through the runtime, platform routing, a `latest` channel that can point at d3
-when configured, and cross-profile upgrades with `base_change`
-(see [version selection](version-selection.md#changing-the-base-profile)).
+The [first registered training-to-chain round](testnet-round-001.md) ran on
+testnet subnet 579 on 25 September 2026.
 
-d3 was not promoted by the exam; it is the default for new jobs since
-17 October 2026 by the owner's decision (below). On the night of
-16–17 October 2026, on one rented B300 over 6.75 hours, the base tier's rules
-were applied and stock d3-mini is **not promotable today**. The first draw
-cleared (Brier 0.142 against 0.184 for H2O), but the confirmation draw, on a
-second disjoint teacher-authored sealed set, did not confirm a winner: d3 0.1790
-and H2O 0.1794, an improvement of 0.0004 with a paired-bootstrap 95% interval of
-[−0.022, +0.023], where the rule needs at least 0.01 with a positive lower
-bound. The adapter regression suite passed, on one reference job where the rule
-asks for three or four.
+### d3-mini
 
-Decision, 17 October 2026: the owner adopted d3-mini as the base anyway, on
-capability grounds (adapters trained on d3 beat adapters trained on H2O on the
-reference job and on ABCD; d3 takes images and video), recorded as an override of
-the promotion rule rather than a win under it. The same afternoon the hosted
-platform set `stable` and `latest` to d3-mini, qualified a d3 miner and serving
-host, moved the owner's H2O task to d3 through a `base_change` upgrade and
-switched H2O serving off. JevK5 was retired from the code on 17 October 2026 (its
-frozen checkpoints stay readable). Imajev is retired too: d3 serves image jobs,
-and existing frozen Imajev jobs keep their profile.
-Stock d3-mini is the base-tier incumbent for round two. The recorded evidence is in
-[model research](model-research.md#d3-mini-evidence-16-october-2026).
+On 17 October 2026 d3-mini
+(`d3-mini-4.5b-v1`) became the only base by the owner's decision, after its
+confirmation draw tied (an override of the promotion rule, not a win under it);
+the evidence is in [model research](model-research.md#d3-mini-evidence-16-october-2026).
+The z3 names replaced d3 in public text later that month. King-of-the-hill base
+pools ([king pools](mining.md#king-pools)) were the first base-tier design; the
+launch configuration replaced them with soup pools.
 
 Customer-job data contracts, calibration, and acceptance are shared with the
 hosted platform. Hosted account management, APIs, billing, storage, and serving
 belong to [zils-platform](https://github.com/ooo-hq/zils-platform); SDKs and agent
 interfaces belong to [zils-sdk](https://github.com/ooo-hq/zils-sdk).
-
-The [public model page](https://zils.ai/model) presents recorded research and
-subnet evidence. Live views require an explicit aggregate feed; unavailable
-information must remain labeled as unavailable.

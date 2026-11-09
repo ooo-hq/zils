@@ -1,26 +1,27 @@
 # Miner and validator documentation
 
-This repository covers workers, evaluation, signed protocols, and subnet
-participation. d3-mini (`d3-mini-4.5b-v1`) is the only served base for text and image jobs
-since 17 October 2026. The retired H2O, Imajev and JevK5 profiles remain readable in
-job history only; one model is pinned per job. Start with the guide matching your role.
+This repository covers miners, validators, evaluation, signed protocols, and
+subnet participation on Bittensor mainnet subnet 127. The models are the z3
+family; code and config names keep `d3` (z3-mini is `d3-mini-4.5b-v1`).
+Start with the guide matching your role.
 
 | Task | Guide |
 | --- | --- |
-| Operate a miner | [Queued miners](queue-miners.md), [closed fleet](mining.md) |
+| Start mining | [Mining on Zils](mining.md), [registration](bittensor-registration.md), [miner terms](mining-terms.md) |
+| Commit soup bodies | [Soup pool](mining.md#soup-pool), [model pools](model-pools.md) |
+| Train customer jobs | [Customer-job miners](queue-miners.md), [admission](miner-admission.md), [grading](miner-grading.md) |
+| Update a miner | [Releases](releases.md) |
 | Serve z3 checkpoints as a miner | [Serving miners](serving-miners.md) |
-| Grade serving miners as a validator | [Serving validators](serving-validators.md) |
-| Operate a validator | [Validator setup](validators.md), [evaluation contract](evaluation.md) |
-| Register on mainnet subnet 127 | [Registration](bittensor-registration.md); closed-fleet operation: [chain fleet guide](testnet.md) |
-| Prepare models or training data | [d3 reference](queue-miners.md#2-install-and-verify-the-reference), [customer data contract](customer-jobs.md), [version selection](version-selection.md) |
-| Compare tuned open models and miner hardware tradeoffs | [Official Jev comparisons and B300 research](model-research.md) |
-| Submit a replacement base on subnet 127 | [Base candidates](base-candidates.md), [compete from outside](mining.md#compete-in-the-base-tier-from-outside), [two-track payment](mining.md#two-tracks-on-the-subnet-the-base-tier-pays-first) |
+| Operate a validator | [Validator setup](validators.md), [evaluation contract](evaluation.md), [serving validators](serving-validators.md) |
+| Run a king pool or submit a base candidate | [King pools](mining.md#king-pools), [base candidates](base-candidates.md), [scheduled base mining](automatic-base-mining.md) |
+| Run a closed fleet | [Development fleet](mining.md#closed-development-fleet), [chain fleet](testnet.md), [local customer jobs](customer-jobs.md) |
+| Prepare models or training data | [d3 reference](queue-miners.md#2-install-the-stable-release), [customer data contract](customer-jobs.md#prepare-data), [version selection](version-selection.md) |
+| Compare tuned open models and miner hardware tradeoffs | [Model research](model-research.md) |
 | Develop and inspect evidence | [Development](development.md), [benchmark](benchmark.md), [experiments](experiments.md), [JevBench](jevbench-public.md), [recorded testnet round](testnet-round-001.md) |
 | Collect fresh questions labelled by real outcomes | [Zils Outcomes](current.md) |
 
 [Repository boundaries](repositories.md) explains where hosted services, client
-SDKs, and the website live. [Miner grading](miner-grading.md) describes the
-quality/assignment policy. [Roadmap](roadmap.md) identifies remaining subnet work.
+SDKs, and the website live. [Roadmap](roadmap.md) lists remaining subnet work.
 
 Paths in operator examples are relative to this repository. Keep private data,
 wallets, generated bundles, and checkpoints outside Git. Historical reports
