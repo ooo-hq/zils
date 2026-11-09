@@ -89,8 +89,9 @@ A soup pool entry may add an opening block and a boost:
   `opens_block` or `boost` pays exactly as before and freezes no block.
 - Only soup pools take a schedule.
 
-The launch configuration gives lite, mini, flash and z3 25% each, with no
-boosts. Lite and mini pay from the start; flash and z3 burn their shares until
+The launch configuration gives the pools 80% of emissions (`share` 0.8; the
+adapter track gets the other 20%) and, of all emissions, lite and mini 25% each
+and flash and z3 15% each (pool shares 0.3125 and 0.1875), with no boosts. Lite and mini pay from the start; flash and z3 burn their shares until
 they open, and a body committed to them before then is never admitted. Both
 opening blocks are `null` in `zils/data/base-pools-launch.json` and must be set
 to the same values on every validator before they open.

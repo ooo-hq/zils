@@ -306,7 +306,14 @@ class LaunchDataTest(unittest.TestCase):
         self.assertTrue(all(model_pools.is_soup(e) and e["enabled"] for e in checked.values()))
         self.assertEqual(
             {p: e["share"] for p, e in checked.items()},
-            {"d3-lite": 0.25, "d3-mini": 0.25, "d3-flash": 0.25, "d3": 0.25},
+            {"d3-lite": 0.3125, "d3-mini": 0.3125, "d3-flash": 0.1875, "d3": 0.1875},
+        )
+        # Of all emissions (owner, 9 Nov 2026): lite and mini 25%, flash and z3 15%; the other 20% is
+        # the adapter track's (1 - base share).
+        self.assertEqual(config["share"], 0.8)
+        self.assertEqual(
+            {p: round(config["share"] * e["share"], 9) for p, e in checked.items()},
+            {"d3-lite": 0.25, "d3-mini": 0.25, "d3-flash": 0.15, "d3": 0.15},
         )
         # No boosts: a pool pays its plain share from the block it opens.
         self.assertTrue(all("boost" not in e for e in checked.values()))
@@ -320,7 +327,8 @@ class LaunchDataTest(unittest.TestCase):
 
 
 class LaunchSpotValueTest(unittest.TestCase):
-    """At launch every pool is 25%: a trainer seat is 4% of all emissions and a crown 5%."""
+    """Lite and mini are 25% of all emissions: a trainer seat there is 4% and a crown 5%. The pools'
+    vector is the base track's; the base share scales it to all emissions."""
 
     def config(self):
         return json.loads((DATA / "base-pools-launch.json").read_text())
@@ -330,8 +338,9 @@ class LaunchSpotValueTest(unittest.TestCase):
         weights, record = model_pools.weights(
             self.config(), {"d3-mini": decision([("c", seat)])}, MEMBERS, block=0
         )
-        self.assertAlmostEqual(weights[3], 0.04)
-        self.assertAlmostEqual(weights[0], 0.96)  # lite unearned, flash and z3 closed
+        share = self.config()["share"]
+        self.assertAlmostEqual(share * weights[3], 0.04)
+        self.assertAlmostEqual(share * weights[0], 0.76)  # lite unearned, flash and z3 closed
 
     def test_a_crown_is_five_percent_of_emissions(self):
         crown = {"hotkey": "c", "body_sha256": "f" * 64, "rate": 1.0}
@@ -339,7 +348,7 @@ class LaunchSpotValueTest(unittest.TestCase):
         weights, _ = model_pools.weights(
             self.config(), {"d3-mini": decision([], crown=crown)}, MEMBERS, block=0
         )
-        self.assertAlmostEqual(weights[3], 0.05)
+        self.assertAlmostEqual(self.config()["share"] * weights[3], 0.05)
 
 
 class BodyCommitmentTest(unittest.TestCase):
