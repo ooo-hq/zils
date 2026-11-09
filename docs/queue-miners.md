@@ -140,6 +140,13 @@ no assignment is available or a configured capacity gate is waiting for GPU
 memory. Ask the operator to check worker approval, job assignment, and capacity
 before treating an idle worker as a failure.
 
+Every claim names the zils commit the miner is installed at. Customer jobs go
+only to accepted releases: the current stable release and, for a set time after
+a required release, the one before it. An older install gets no job and logs
+`Queued worker attempt failed: This miner is at ...; Run zils-miner update.`
+Run `zils-miner update`, then restart the worker. Installs without git history
+send no commit and get no customer jobs while the coordinator checks releases.
+
 A successful submission prints `Submitted candidate for job ...`. That means
 the artifacts reached the coordinator; acceptance is determined by the validator
 after evaluation. Installing the miner does not guarantee work or acceptance.
