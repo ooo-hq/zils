@@ -1,40 +1,38 @@
 # Base candidates
 
-Each [model tier](model-pools.md) competes against its own pinned incumbent.
-Use `zils-miner setup` to choose that exact profile; `zils-miner doctor` prints its reference
-and training commands. The concrete shard layouts, sizes and hardware figures
-below describe the mini recipe, not every tier. Other tiers use their own
-`models.candidate_files(profile, "candidate")` manifest and pinned parent.
+> **King pools only.** Every launch pool is a [soup pool](model-pools.md#soup-pools):
+> miners commit bodies (`zilsb2` or `zilsb3`, see [mining](mining.md#soup-pool))
+> and are paid through seats and a crown. A soup pool refuses the `zils1`
+> candidates described here. This page covers king pools, which the code still
+> supports but no launch pool uses.
 
-A base candidate is a full-weight replacement for the pinned text base,
-`d3-mini-4.5b-v1` (the base on both channels since 17 October 2026, adopted by
-owner decision after it tied the H2O incumbent on the confirmation draw; see
-[d3-mini](roadmap.md#d3-mini)). H2O Lightning 4B v1.2.3 is retired: no longer
-served, no new jobs; its candidate contract is kept below for the record.
-Everything below describes d3 unless it says H2O. Miners may train a candidate
-however they like; validators score it on a sealed holdout against the current
-base and, for a pending winner, retrain a fixed suite of reference adapters on
-both. The 17/18 October rehearsal exercised the earlier Brier election and
-is historical evidence only. The current [decision-quality election](base-election.md)
+Each king pool competes against its own pinned incumbent. Use `zils-miner setup`
+to choose that exact profile; `zils-miner doctor` prints its reference and
+training commands. The concrete shard layouts, sizes and hardware figures below
+describe the z3-mini recipe (`d3-mini-4.5b-v1`), not every pool. Other pools use
+their own `models.candidate_files(profile, "candidate")` manifest and pinned
+parent.
+
+A base candidate is a full-weight replacement for the pool's pinned base. Miners
+may train a candidate however they like; validators score it on a sealed holdout
+against the current base and, for a pending winner, retrain a fixed suite of
+reference adapters on both. The [decision-quality election](base-election.md)
 requires pool-specific admission before accepting candidates: an independently
 qualified pilot or an explicit pinned-incumbent challenge contract. Both retain
-private exam audits and the same candidate promotion safeguards.
-Candidates enter through a public Hugging Face revision and a chain commitment;
-qualified validators discover those commitments and score the pinned artifacts.
-The channel setting on the platform
-is a configuration value (`ZILS_TRAINING_MODEL_LATEST`), not yet a registry
-alias; automatic "follow stable" upgrades are not implemented.
+private exam audits and the same candidate promotion safeguards. Candidates
+enter through a public Hugging Face revision and a chain commitment; qualified
+validators discover those commitments and score the pinned artifacts.
 
 ## Promoted profiles
 
-A confirmed d3 winner becomes a new profile, not a new revision of `d3-mini-4.5b-v1`:
+A confirmed z3-mini winner becomes a new profile, not a new revision of `d3-mini-4.5b-v1`:
 The [verified-window promotion command](base-election.md#qualify-candidates-and-close-a-release-window) stages the candidate's
 files with a Zils `NOTICE` and `README.md`, optionally uploads them to `zils-ai/d3-mini-4.5b-zils-rN`,
 and prints the `SPECS` entry (`parent` names the profile it was trained from), the
 pins file `d3-mini-4.5b-zils-rN-pins.json` (the parent's runtime pins over the
 published files) and the registration the runtime needs: the new id joins
 `TEXT_ADAPTER_MODELS`, `TEXT_RUNTIME_MODULES` (`.d3`), `RUNTIME_PYTHON_ENV` (the
-same interpreter), `CANDIDATE_BASE_ENV` and `PINS_FILES`. Every d3-family profile
+same interpreter), `CANDIDATE_BASE_ENV` and `PINS_FILES`. Every z3 profile
 shares the vendor runtime code, which is loaded from the vendor release only; the
 profile a checkpoint belongs to comes from its `model.json`, so a reference
 written with `zils.d3 reference --model <id>` trains, evaluates and serves
@@ -46,7 +44,7 @@ the 152 language targets, contract files copied byte for byte.
 
 ## What stays fixed
 
-Only the weights and the answer layer change. A d3 candidate must keep:
+Only the weights and the answer layer change. A z3-mini candidate must keep:
 
 - the architecture, layer sizes and tokenizer of the pinned base, so the
   production LoRA recipe attaches to the same 152 language modules;
@@ -60,7 +58,7 @@ Only the weights and the answer layer change. A d3 candidate must keep:
 - the pool's input limit (8,192 tokens for mini, 4,096 for the other pools) and the pinned runtime (`zils/d3-pins.json`, or
   the pool's own pins file).
 
-Before loading a d3 candidate the validator checks that its index `weight_map`
+Before loading a z3-mini candidate the validator checks that its index `weight_map`
 names exactly the parent index's tensors, maps them only to the two shard file
 names, and that each shard holds exactly the tensors the index assigns to it;
 transformers then rejects any tensor whose shape differs from the parent. Vendor
@@ -109,7 +107,7 @@ No validator URL, open port or long-running process is needed.
 
 Install with `scripts/install.sh` ([miner setup](mining.md)); `zils-miner setup` saves
 the wallet, base profile, candidate and repo that the commands below default to.
-`zils-miner doctor` checks each prerequisite in order (requirements, d3 training
+`zils-miner doctor` checks each prerequisite in order (requirements, z3 training
 runtime, hotkey file, registration, candidate, Hugging Face login and repo at the
 revision, the commitment on chain) and prints the first fix or, when all pass,
 the block your commitment landed in. `zils-miner commit-candidate` does the work:
@@ -202,12 +200,12 @@ before returning; it needs about 10 GB of RAM and 10 GB of disk. Keep
 `provenance.json` yourself; it must not go in the artifact. Whatever you train
 on, the exam is realistic decisions in families you have not seen: the 18
 October rehearsal candidate, trained on 8,400 synthetic rule cases, learned the
-format perfectly and still tied stock d3 on the sealed draws.
+format perfectly and still tied stock z3-mini on the sealed draws.
 
 ### Zils Relay recipe (experimental): learn from a larger model, then soup
 
 In Zils Relay the largest z3 model teaches the smaller sizes. `zils.teacher`
-trains a student on a larger d3-family model's answers instead of single labels.
+trains a student on a larger z3 model's answers instead of single labels.
 The teacher answers a question pool with a probability for every declared option;
 the student is fitted so its distribution matches the teacher's (KL divergence),
 scored exactly as validators score; `soup` then averages the student back toward
@@ -224,7 +222,7 @@ size comes from its reference (any z3 pool); `soup --model` names the pool.
 ```
 
 Without `--lora` every language-model weight trains with FP32 master weights:
-about 100 GB for d3-mini at about 7 rows per second on one NVIDIA H200, so it
+about 100 GB for z3-mini at about 7 rows per second on one NVIDIA H200, so it
 does not fit 20–24 GB cards; learning rate 1e-5 diverged and 1e-6 is the default.
 `--lora 64` (default learning rate 5e-5) peaked at 21.9 GB with the answer layer
 training. `--start KING` builds on an existing candidate instead of stock.
@@ -234,8 +232,8 @@ tilelang` (Triton 3.6 is refused by flash-linear-attention). The 27B teachers
 need 51–54 GB; vllm-sr/d3 answered about 11 questions per second on one H200
 and vllm-sr/d3-ultra about 5.4 (two processes on one card: about 9).
 
-Results of the 26–27 October 2026 runs on d3-mini, unfavorable ones included.
-Gaps are paired against stock d3-mini with 95% bootstrap intervals, on the
+Results of the 26–27 October 2026 runs on z3-mini, unfavorable ones included.
+Gaps are paired against stock z3-mini with 95% bootstrap intervals, on the
 development exam built from the Decision Index's task sources ("index check")
 and on the current exam's two qualification draws (the exam that decides
 elections). Teacher: vllm-sr/d3 27B. The first pool covered 17 task families
@@ -255,7 +253,7 @@ students trained on 238,806 teacher answers.
 | Its soup, 0.5 parent | +5.25 [+3.04, +6.80], +3.83 [+1.85, +5.11] | +0.02 [−0.87, +0.82], +0.46 [−0.32, +1.33] |
 | Its soup, 0.75 parent | +3.24 [+1.45, +4.46], +2.22 [+0.76, +3.23] | +0.47 [+0.02, +0.96], +0.27 [−0.21, +0.86] |
 
-On the same election exam the teachers themselves lead stock d3-mini by
+On the same election exam the teachers themselves lead stock z3-mini by
 +14.59 [+12.99, +16.37] and +17.30 [+15.53, +19.08] (vllm-sr/d3) and by
 +17.18 and +19.97 (vllm-sr/d3-ultra, which beats vllm-sr/d3 by +2.59
 [+1.52, +3.53] and +2.67 [+1.64, +3.72]). Students gain on the index check,
@@ -267,7 +265,7 @@ starting point to beat, not a winning recipe.
 
 ## How it is scored
 
-All five text pools use the [decision-quality election](base-election.md).
+King pools use the [decision-quality election](base-election.md).
 A candidate needs at least a +1 point gain, positive paired lower 95% bound and no more
 than 0.005 Brier regression on each of two independent draws. Confirmation starts
 at least 12 hours after that candidate and the incumbent finish the first draw.
@@ -298,7 +296,7 @@ round's questions are published after the round closes and are not reused.
 On a chain fleet with a `base_tier` track, the kings are paid at every
 publication from the base tier's share of the one weight vector, blended with
 the adapter round's weights; a share with no recipient goes to the burn uid; see
-[the two-track rule](mining.md#two-tracks-on-the-subnet-the-base-tier-pays-first).
+[how a validator splits the weight vector](mining.md#how-a-validator-splits-the-weight-vector).
 
 ## Validator and publisher tooling
 

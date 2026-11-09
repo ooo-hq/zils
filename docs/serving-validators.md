@@ -5,7 +5,9 @@ The grader checks that each miner answers real requests, and that its answers ma
 the validator's own run of the same pinned model. It reads the chain. The grader
 itself sets no weights and writes nothing to the chain; it only keeps scores and
 evidence on disk. The validator pays from those scores when `serving_share` is
-configured (see [Pay](#pay)).
+configured (see [Pay](#pay)). The launch configuration has no `serving_share`:
+it pays the base pools 80% of emissions and the adapter track 20%, and nothing
+for serving.
 
 ## What it does each round
 
@@ -120,7 +122,7 @@ Each miner and model gets a rolling summary over the last `window_hours`.
 - `score` is 0 if `pass_rate` is below `floor` or the miner is struck. Otherwise
   it is `pass_rate * availability`.
 
-Our own failures never count against a miner. `reference_unavailable` (the worker
+The validator's own failures never count against a miner. `reference_unavailable` (the worker
 would not start, failed, or refused one request) and `lock_timeout` go to the
 evidence file only. If the worker fails partway through, miners already compared
 keep their outcome and the rest get `reference_unavailable`.
@@ -135,8 +137,8 @@ All are in `state`.
 - `serving-scores.json`: rewritten each round. Per hotkey and model: `rounds`,
   `pass_rate`, `availability`, `median_latency_s`, `struck_until` (Unix time, 0 if
   never) and `score`.
-- `serving-evidence.jsonl`: one line per miner and model per round, including our
-  own failures. Fields: `v`, `kind` (`validator`), `at`, `round_id`, `hotkey`,
+- `serving-evidence.jsonl`: one line per miner and model per round, including the
+  validator's own failures. Fields: `v`, `kind` (`validator`), `at`, `round_id`, `hotkey`,
   `model`, `seed`, `verified` (indexes of the checked questions), `messages` (the
   signed answers), `mean`, `worst`, `latency_s` and `outcome`. It holds miner
   answers and grows without limit. To rotate, rename it. The grader opens the file

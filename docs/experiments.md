@@ -1,5 +1,9 @@
 # Experiment results
 
+> **Dated record (September 2026).** These results come from the earlier
+> 0.8B Kev and Fez line, before z3. Kev and Fez are not served, trained or
+> rewarded by the subnet today. The page is kept as history.
+
 These are development measurements, not release certifications. No experiment
 below promoted a Fez release or published chain weights. Different datasets have
 different difficulty and aggregation rules; compare models within a result table.

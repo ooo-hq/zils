@@ -1,10 +1,13 @@
 # Bounding-box feature competition
 
-The box track is a **synthetic-only pilot on Bittensor subnet 127**.
-Miners train a bounding-box adapter for an exact parent model, publish an
-immutable bundle, and commit its location with a registered hotkey. Validators
-evaluate the adapter on private exams; a confirmed challenger becomes a paid
-feature king only after a reviewed configuration update.
+The box track is a **synthetic-only pilot**. It is not part of the launch
+configuration: at launch the base pools get 80% of emissions and the adapter
+track 20% ([validators](validators.md#6-pay-the-base-tier-from-the-same-vector)),
+and no share goes to box features. Miners train a bounding-box adapter for an
+exact parent model, publish an immutable bundle, and commit its location with a
+registered hotkey. Validators evaluate the adapter on private exams; a confirmed
+challenger becomes a paid feature king only after a reviewed configuration
+update.
 
 This guide describes the feature-track implementation and planned pilot
 allocation. It does not establish that a particular validator has deployed or
@@ -16,8 +19,9 @@ promised, and this pilot does not establish real-image box quality.
 
 ## Tracks and rewards
 
-The pilot allocation is 50% base models, 20% box features, and 30% customer
-adapters. Mini/lite receive 80%/20% within both the base and box budgets:
+The planned pilot allocation, written before the launch split, is 50% base
+models, 20% box features, and 30% customer adapters. Mini/lite receive 80%/20%
+within both the base and box budgets:
 
 | Competition | Share of the full weight vector |
 | --- | ---: |
@@ -27,9 +31,10 @@ adapters. Mini/lite receive 80%/20% within both the base and box budgets:
 | `box/d3-lite` | 4% |
 | Customer adapters | 30% |
 
-Each base or feature track has its own king history. Among its five most recent
-distinct king hotkeys, those still registered split that track's allocation
-equally. A sixth-oldest king does not move back into the paid history when a
+In this plan each base or feature track has its own king history (the launch
+base pools are soup pools instead, paid through seats and a crown). Among its
+five most recent distinct king hotkeys, those still registered split that
+track's allocation equally. A sixth-oldest king does not move back into the paid history when a
 newer king deregisters. A track with no eligible earner burns its share at the
 subnet owner's UID; its allocation does not enlarge another track. Customer
 adapter rewards continue to use the validator's configured customer evidence.

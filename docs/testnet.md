@@ -1,35 +1,30 @@
-# Zils on Bittensor testnet
+# Run a chain fleet
 
-The [first closed round](testnet-round-001.md) completed on **testnet subnet 579**
-on September 25, 2026. Three fresh checkpoints were trained and scored; their
-timelocked weights were revealed and independently verified on-chain.
+A chain fleet is a closed, model-pinned fleet whose validator publishes weights
+on a Bittensor subnet for a static roster of registered hotkeys. It keeps the
+private LAN artifact transport of the [development fleet](mining.md#closed-development-fleet).
+The network (`test` or `finney`) and subnet ID are always named explicitly in
+the config; mainnet is never a default. The fleet uses registered wallet hotkeys
+for signed submissions, checks UID ↔ hotkey registrations before each round and
+before publication, and submits weights through `bittensor==11.1.0`.
 
-The fleet has an optional Bittensor path for testnet.
-The subnet ID is configured explicitly; mainnet is rejected. It uses registered
-wallet hotkeys for signed submissions, checks UID ↔
-hotkey registrations before each round and before publication, and submits
-weights through `bittensor==11.1.0`. A closed fleet keeps the private LAN artifact
-transport and a static roster. A validator can instead open the base tier to
-every hotkey registered on the subnet ([open admission](validators.md#open-admission-base-tier)):
-miners commit candidates on chain and the validator scores them in its sandboxed
-runner. Base and adapter tracks pay from one weight vector; an unearned share is
-burned at `base_tier.burn_uid`
-([two-track payment](mining.md#two-tracks-on-the-subnet-the-base-tier-pays-first)).
-Which validators are running is on the metagraph, not in these docs. The public
-subnet is mainnet 127; this page covers the closed rehearsal fleet on testnet 579.
+This is not how outside miners join subnet 127: they commit soup bodies or take
+customer jobs ([mining](mining.md)). A chain fleet is for rehearsals. The
+[first closed round](testnet-round-001.md) ran on **testnet subnet 579** on
+25 September 2026: three fresh checkpoints were trained and scored, and their
+timelocked weights were revealed and verified on chain.
 
-Local fleets remain offline from Bittensor. Testnet fleets also require the
+Local fleets remain offline from Bittensor. Chain fleets also require the
 validator's explicit `--publish-weights` flag before their loop sends weights.
 This does not register keys, spend registration funds, change hyperparameters,
 stop an existing validator, or launch background services.
 
 ## Provision the registered identities
 
-Obtain the current testnet subnet ID from the operator, then register each
-validator/miner hotkey on that existing subnet using the
-[registration guide](https://docs.zils.ai/operations/bittensor-registration).
+Choose the network and subnet ID, then register each validator/miner hotkey on
+that existing subnet using the [registration guide](bittensor-registration.md).
 Miners do not need to create a subnet. The
-[validator guide](https://docs.zils.ai/operations/validators#bittensor-fleet-validator)
+[validator guide](validators.md#bittensor-fleet-validator)
 covers eligibility, evaluation, publication, and verification.
 
 Install the additional SDK on each participant, using the existing environment:
@@ -66,14 +61,14 @@ entry for each machine:
 
 `chain` takes an optional `archive_endpoints` list (`wss://` URLs) for queries at blocks the
 network's default endpoint has discarded; a soup pool that waits after its deadline needs it on
-mainnet ([model pools](model-pools.md#round-items-from-zils-current)).
+mainnet ([model pools](model-pools.md#round-items-from-zils-outcomes)).
 
 `777` is an example only; use the operator-confirmed subnet ID. Each miner UID
 must be the value returned by the chain for that hotkey, not a local queue ID.
 
-Create a frozen d3 text job (or reuse a legacy Kev job) and its
-matching reference using the [miner guide](mining.md#prepare-bundles-on-the-validator). Legacy Kev benchmarks
-remain supported. A fleet and its round scores always belong to one model profile.
+Create a frozen d3 text job and its matching reference using the
+[fleet guide](mining.md#prepare-bundles-on-the-validator). A fleet and its round
+scores always belong to one model profile.
 Replace `VALIDATOR_PRIVATE_IPV4` with the validator's numeric private address.
 Generate a fresh fleet. Match `--miner-ports` to the roster's order and count
 (use `8901 8902 8903` for three miners). The output folder names use chain UIDs.

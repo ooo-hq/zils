@@ -35,8 +35,10 @@ API, billing, and SDK checks live with their respective repositories.
 
 ## Score the reference checkpoint
 
-Complete the [model installation steps](../README.md#setup) to download
-`models/reference` and cache the pinned base model before these examples.
+These CPU examples use the small Kev 0.8B reference (`models/reference`), which
+the local tooling still supports; network work runs on z3. Complete the
+[repository setup](../README.md#repository-setup) to download it and cache the
+pinned base model before these examples.
 
 ```bash
 .venv-kev/bin/python -m zils submit \
@@ -53,7 +55,7 @@ example questions are diagnostics, not an emissions benchmark.
 
 The commands below also default to `cpu`. For GPU execution, replace that device
 with `mps` on Apple Silicon or `cuda` on a configured NVIDIA host. See
-[miner setup](mining.md) for Windows/WSL requirements.
+[Windows / NVIDIA GPU](mining.md#windows--nvidia-gpu) for WSL requirements.
 
 ## Train a smoke-test candidate
 
@@ -92,7 +94,7 @@ three when evaluation finishes or fails. It generates disposable signing keys
 and saves `validator/report.json` beneath the output directory. CPU evaluation
 can take several minutes; the command allows up to 30 minutes per checkpoint.
 
-This rehearsal submits existing checkpoints. The [persistent fleet](mining.md)
+This rehearsal submits existing checkpoints. The [development fleet](mining.md#closed-development-fleet)
 trains a new candidate each round. Neither local mode writes chain weights.
 
 ## Image models

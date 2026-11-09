@@ -1,9 +1,18 @@
 # Decision-quality base elections
 
-This is the text-base election contract for `d3-lite`, `d3-nano`, `d3-mini`,
-`d3-flash` and `d3`. Every pool has its own incumbent, candidates, qualification,
-king history and stable/latest channels. Mini is the first bootstrap target.
-Vision and box competitions keep their own metrics. CPU fixtures establish
+> **Soup pools at launch.** Every launch pool is a [soup pool](model-pools.md#soup-pools),
+> paid through seats and a crown from daily soup rounds. No king election runs in
+> the launch configuration, and every launch pool refuses `zils1` candidates.
+> Two parts of this page still apply to soups: the
+> [release gate](#qualify-candidates-and-close-a-release-window), which is how a
+> soup becomes a pool's next served model, and the
+> [evidence after releases](#evidence-after-releases). The rest covers king pools,
+> which the code still supports.
+
+This is the text-base election contract for king pools of `d3-lite`, `d3-mini`,
+`d3-flash` and `d3` (z3-lite, z3-mini, z3-flash and z3). Every pool has its own
+incumbent, candidates, qualification, king history and stable/latest channels.
+Box competitions keep their own metrics. CPU fixtures establish
 software behavior; they do not qualify an exam, measure model improvement or
 establish an official leaderboard result.
 
@@ -226,11 +235,13 @@ The external ranking scores Choice and yes/no families only: Decision Index refe
 answer Score questions, and on 22 Oct 2026 Score families alone moved the five-model Spearman
 from 1.0 to 0.7 by favouring the d3 runtime. Score families stay in every election, where all
 candidates share the pool's runtime, and in the within-pool precision comparisons.
-Every nondegenerate predeclared interval must be within half the crown bar
-(1.0 point at +2) of the estimate on each side. On 23–24 Oct 2026, 1,680-item test splits
-(56 per family) gave a mean 95% half-width of 1.16 points on real candidates. A 75-per-family
-pilot (24 Oct) measured the within-pool pair at 0.79 and 1.09 on its two draws, so draws keep 100
-test items per family (3,000), about 0.94 expected. Identical or clipping-degenerate pairs provide no sizing evidence;
+Every nondegenerate predeclared interval must be within half the score bar
+(`min_score_improvement` / 2: 0.5 points at the current +1 bar) of the estimate on each side. The
+draw sizes below were chosen under the earlier +2 bar, when the limit was 1.0 point. On 23–24 Oct
+2026, 1,680-item test splits (56 per family) gave a mean 95% half-width of 1.16 points on real
+candidates. A 75-per-family pilot (24 Oct) measured the within-pool pair at 0.79 and 1.09 on its two
+draws, so draws keep 100 test items per family (3,000), about 0.94 expected. That clears 1.0, not
+0.5: a pilot under the +1 bar needs larger draws or a tighter pair. Identical or clipping-degenerate pairs provide no sizing evidence;
 the required within-pool pair must have nonzero paired variance. Failed validation
 requires a new untouched validation draw after any retuning. A pilot never crowns.
 

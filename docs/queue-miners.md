@@ -1,129 +1,135 @@
-# Run a text or image queue miner
+# Run a customer-job miner
 
-A queue miner downloads assigned training examples, trains the pinned adapter, and
-submits signed artifacts for independent evaluation. It connects to the
-coordinator over outbound HTTPS. It needs an approved hotkey and model hardware;
-it does not need Supabase credentials or an inbound public server.
+A customer-job miner claims customer training jobs from the hosted queue at
+`https://training.zils.ai`, downloads each job's training examples, trains an
+adapter on z3-mini (`d3-mini-4.5b-v1`) and submits signed artifacts. Every
+candidate is graded on held-out examples the miner never sees. The worker
+connects over outbound HTTPS; it needs no inbound port and no database
+credentials.
 
-The setup below is for **d3-mini 4.5B** (`d3-mini-4.5b-v1`), the base on both
-channels since 17 October 2026; it trains text and image jobs. The H2O Lightning 4B
-and ImaJev image profiles are retired and take no jobs. For a
-**Bittensor fleet**, use
-[registration](bittensor-registration.md) and
-[bundle setup](mining.md). Queue assignments publish no Bittensor weights by
-themselves. A fleet validator can pay for paid API use of delivered queue
-adapters from its adapter share ([validators §7](validators.md#7-pay-the-adapter-track-from-paid-adapter-use),
-off by default); only hotkeys registered on that subnet earn.
+Registering a hotkey on mainnet subnet 127 is the admission
+([miner admission](miner-admission.md)): there is no application and no operator
+approval. The path, end to end:
 
-Operators can enable [graded job assignment](miner-grading.md) after qualification.
-Miners opt into signed availability only after the coordinator upgrade; existing
-configurations retain their current request flow.
+1. Register a hotkey on subnet 127.
+2. Install the current stable release.
+3. Accept the miner terms.
+4. Qualify the host.
+5. Start the worker (`python -m miner.queue`).
+6. Pass the qualification jobs; customer jobs follow.
+7. Get paid from the adapter track.
 
-## 1. Confirm access and hardware
+## 1. Register and check the hardware
 
-Get the following from the operator before downloading models:
+Register a hotkey on subnet 127 with the [registration guide](bittensor-registration.md).
+Keep the coldkey and recovery phrases off the miner host; the worker reads only
+the hotkey file.
 
-- The coordinator's exact HTTPS base URL and confirmation that its channels
-  name `d3-mini-4.5b-v1` (`GET /v1/config`, `channels.stable` and `channels.latest`).
-- Approval for your hotkey's public SS58 address. The operator registers the
-  worker and approves assignments through [miner administration](https://github.com/ooo-hq/zils-platform/blob/main/docs/supabase-training.md#approve-miners-and-run-a-queued-miner).
-- The wallet name, hotkey name, and local wallet directory for the hotkey you
-  control. Provision the hotkey privately on the miner host; keep the coldkey
-  and recovery phrases off the host and out of the repository.
+Use Linux or WSL 2 with Git, a BF16-capable NVIDIA GPU and its CUDA driver. The
+worker needs at least 12,288 MiB (12 GB) of free GPU memory; the runtime was
+checked on an RTX 4090, where z3-mini training at its 8,192-token input cap peaks
+at about 12 GB, so 20 GB cards qualify. Allow at least 25 GB of free disk for
+models and dependencies, plus space for job data and candidates. CPU and Apple
+MPS training are not supported. Customer jobs run on z3-mini only.
 
-Use Linux or WSL 2 with Git, Python 3.13, `uv`, a BF16-capable NVIDIA GPU and its
-CUDA driver. Allow at least 25 GB of free disk for models and dependencies,
-plus space for assigned data and candidates. The runtime was checked on an
-RTX 4090 (d3 training peaks about 10.5 GB; the worker needs 12,288 MiB free).
-d3 uses the isolated CUDA runtime below. CPU and Apple MPS training are
-unsupported; the retired JevK5 Mac path no longer exists.
+## 2. Install the stable release
 
-The operator assigns a local queue UID. It is not your subnet UID. On-chain
-registration is not required for this queue, and a Bittensor UID alone does not
-authorize job access; to earn on chain for queue work, register the same hotkey
-on the subnet.
-
-Operators standing up a rented node can run `scripts/provision_node.sh` in
-place of step 2 (it performs the same installation and writes a qualification
-report) and configure the worker through `/etc/zils-node/role.json` and
-`scripts/apply_role.sh` in place of steps 3–4. See
-[fleet nodes](fleet-nodes.md) and the [runbook](fleet-node-runbook.md).
-
-## 2. Install and verify the reference
-
-From a fresh clone:
+Customer jobs go only to miners on an accepted release (see [releases](releases.md)).
+The installer checks out the commit named in [`release/stable`](../release/stable)
+and builds both runtimes: `.venv-kev` (Python 3.13, the worker) and `.venv-d3`
+(Python 3.12, CUDA 13.0, the pinned d3 runtime). `ZILS_SKIP_SETUP=1` skips the
+soup-miner setup questions:
 
 ```bash
-git clone https://github.com/ooo-hq/zils.git
-cd zils
-uv venv --python 3.13 .venv-kev
-uv pip install --python .venv-kev/bin/python --torch-backend=cu128 \
-  -r requirements/model.txt -r requirements/rehearsal.txt \
-  -r requirements/testnet.txt
-.venv-kev/bin/python -c 'import torch; assert torch.cuda.is_available(); assert torch.cuda.is_bf16_supported()'
-uv venv --python 3.12 .venv-d3
-uv pip install --python .venv-d3/bin/python --torch-backend=cu130 -r requirements/d3.txt
+curl -fsSL https://zils.ai/install.sh | ZILS_SKIP_SETUP=1 sh
+cd ~/.zils/zils
 export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
 .venv-d3/bin/python -m zils.d3 reference --out models/d3-reference
 ```
 
-The Bittensor SDK is installed here to read the wallet hotkey; these commands
-send no chain transactions. The reference command downloads and verifies the
-pinned base weights (9.1 GB for d3) and writes `models/d3-reference/model.json`.
-The pins are `zils/d3-pins.json` (vendor release `zils-ai/d3-mini-4.5b-v1`,
-8,192-token inputs on a card with at least 20 GB, up to four images or one video per decision). The operator
-must explicitly qualify this hotkey for d3 on your actual hardware
-(`scripts.qualify_node --model d3-mini-4.5b-v1` writes the report); an approval
-for another profile does not qualify it for d3.
+The reference command downloads and verifies the pinned base weights (9.1 GB)
+and writes `models/d3-reference/model.json`. The pins are `zils/d3-pins.json`
+(vendor release `zils-ai/d3-mini-4.5b-v1`, 8,192-token inputs, up to four images
+or one video per decision).
 
-## 3. Configure your worker
+Every claim names the commit the worker is installed at. A checkout without git
+history sends no commit and gets no customer jobs. A manual `git clone` works
+only when it is checked out at the commit in `release/stable`; update it with git.
 
-From the repository root, create a private state directory:
+## 3. Accept the miner terms
+
+Read the [miner terms](mining-terms.md). You accept them by sending their
+SHA-256 with your worker's claims. Take the hash from the file in your install,
+and check it matches the one the coordinator publishes (`admission.terms_sha256`
+in `GET https://training.zils.ai/v1/config`):
+
+```bash
+sha256sum docs/mining-terms.md
+curl -s https://training.zils.ai/v1/config
+```
+
+When the terms change, the coordinator refuses the old hash. Update to the new
+release, read the new terms, and restart with the new hash in both the
+qualification report and the worker config.
+
+## 4. Qualify the host
+
+The qualification run checks the pinned runtime, trains one step at the
+8,192-token cap, reloads the adapter and compares its readout with the vendor's.
+It writes `qualification.json`, which the worker sends to the coordinator:
+
+```bash
+.venv-kev/bin/python -m scripts.qualify_node --model d3-mini-4.5b-v1 \
+  --runtime-python .venv-d3/bin/python --out .private/qualification-d3 \
+  --terms-sha256 <hash from step 3>
+```
+
+Use a fresh `--out` folder for each run. A report that failed, is for another
+profile, or carries another terms hash is refused at admission.
+
+## 5. Configure and start the worker
+
+Create a private state directory:
 
 ```bash
 mkdir -p .private
 chmod 700 .private
 ```
 
-Save this as `.private/queue-miner.json`, replacing every placeholder with the
-operator-confirmed URL and your own wallet details:
+Save this as `.private/queue-miner.json`, replacing every placeholder with your
+own wallet details:
 
 ```json
 {
-  "coordinator": "https://YOUR_COORDINATOR_HOST",
+  "coordinator": "https://training.zils.ai",
   "hotkey": "YOUR_PUBLIC_HOTKEY_SS58_ADDRESS",
   "wallet": {
     "name": "YOUR_WALLET_NAME",
     "hotkey": "YOUR_HOTKEY_NAME",
     "path": "/absolute/path/to/your/wallets"
-  }
+  },
+  "terms_sha256": "HASH_FROM_STEP_3",
+  "qualification": "/absolute/path/to/.private/qualification-d3/qualification.json",
+  "graded_scheduling": true,
+  "graded_min_free_mib": 12288
 }
 ```
-
-The wallet directory must contain the named hotkey on this machine. The worker
-checks that its public address matches `hotkey` before it starts.
-
-Two optional keys apply once [chain admission](miner-admission.md) is on:
-`"terms_sha256"` (the SHA-256 of [the miner terms](mining-terms.md) you accept)
-and `"qualification"` (path to the `qualification.json` written by
-`scripts.qualify_node --terms-sha256 <same hash>`). The worker then admits
-itself at startup and sends the hash with every claim. Operator-registered
-nodes leave both out.
 
 ```bash
 chmod 600 .private/queue-miner.json
 ```
 
-Use a dedicated miner operating-system account. Never load the validator's
-`.private/training.env` or Supabase service-role key into it. If training and
-evaluation share a GPU, have the operator set the same `ZILS_COMPUTE_LOCK` path for
-both services before starting: an administrator-owned directory with group
-read/write access whose parent miners cannot replace. Without it, locking is per
-user and device.
+The wallet directory must contain the named hotkey on this machine; the worker
+checks that its public address matches `hotkey` before it starts.
+`graded_scheduling` makes the worker send a signed heartbeat every 15 seconds,
+which is how the coordinator sees that it is online and has free GPU memory.
+When another service shares the card, add `"gpu_budget_mib"`: the worker then
+refuses jobs whose longest example would not fit in that budget, and the
+coordinator offers them to another miner. If that service also trains or
+evaluates on the GPU, set the same `ZILS_COMPUTE_LOCK` path for both.
 
-## 4. Start the miner
-
-Run from the repository root (also set this environment variable in a service supervisor):
+Start the worker from `~/.zils/zils` (set the same environment variable in a
+service supervisor):
 
 ```bash
 export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
@@ -132,28 +138,48 @@ export ZILS_D3_RUNTIME_PYTHON="$PWD/.venv-d3/bin/python"
   --reference models/d3-reference --device cuda
 ```
 
-The miner refuses to start when a `--reference` directory is missing, belongs to a
-retired profile, or its runtime interpreter variable is unset.
+At startup the worker admits itself: it sends the terms hash and the
+qualification report to the coordinator, signed by the hotkey. The coordinator
+checks that the hotkey is registered on subnet 127, the hash is current and the
+report passed, then creates your worker record. A hotkey that is deregistered
+loses access within five minutes. The worker refuses to start when a
+`--reference` directory is missing or belongs to a retired profile, or when
+`ZILS_D3_RUNTIME_PYTHON` is unset.
 
-The worker checks for assigned work every ten seconds. It can remain quiet when
-no assignment is available or a configured capacity gate is waiting for GPU
-memory. Ask the operator to check worker approval, job assignment, and capacity
-before treating an idle worker as a failure.
+## 6. Qualification jobs, then customer jobs
 
-Every claim names the zils commit the miner is installed at. Customer jobs go
-only to accepted releases: the current stable release and, for a set time after
-a required release, the one before it. An older install gets no job and logs
-`Queued worker attempt failed: This miner is at ...; Run zils-miner update.`
-Run `zils-miner update`, then restart the worker. Installs without git history
-send no commit and get no customer jobs while the coordinator checks releases.
+After admission the coordinator queues a qualification job for your hotkey: a
+synthetic job that grades the host's training quality, reliability and speed.
+Zils pays for one qualification run per hotkey every 30 days. Customer jobs are
+offered once three qualification reports pass in the job's size band
+([miner grading](miner-grading.md)). Chain-admitted miners get open-tier
+customer jobs only; private-tier data never leaves Zils hardware.
 
-A successful submission prints `Submitted candidate for job ...`. That means
-the artifacts reached the coordinator; acceptance is determined by the validator
-after evaluation. Installing the miner does not guarantee work or acceptance.
+The worker checks for work every ten seconds. It can stay quiet for a long time
+when no job is waiting or when it is waiting for GPU memory; an idle worker is
+not a failure.
 
-## 5. Inspect and restart
+A successful submission prints `Submitted candidate for job ...`. That means the
+artifacts reached the coordinator; the validator decides acceptance after
+evaluation. Installing the miner does not guarantee work or acceptance.
 
-Job data, frozen candidates, and training logs live under
+When a required release ships, the previous release keeps customer jobs for 24
+hours. After that the worker logs
+`Queued worker attempt failed: This miner is at ...; customer jobs need a current release. Run zils-miner update.`
+Run `zils-miner update`, then restart the worker.
+
+## 7. Get paid
+
+Customer jobs are paid from the adapter track, 20% of emissions under the
+launch configuration. When an open-tier adapter you trained is delivered,
+validators count the customers' paid API spend on it for 30 days, settled over
+72-hour windows. Miners as a group earn at most half of that spend; the rest
+burns. Only hotkeys registered on the subnet earn. The evidence is signed by the
+platform; see [validators §7](validators.md#7-pay-the-adapter-track-from-paid-adapter-use).
+
+## Inspect and restart
+
+Job data, frozen candidates and training logs live under
 `.private/queue-miner/<job-id>/`. Keep this directory private and keep it across
 restarts. Logs identify the individual training log for each attempt.
 
@@ -172,27 +198,28 @@ hold a given state directory. Use a service supervisor for continuous operation.
 `--once` performs one claim attempt and exits; it is not a readiness check or a
 wait for the next available job.
 
-If a job references a different base model, stop and ask the operator to resolve
-the configuration. Do not change model identifiers or hashes to make an incompatible reference pass.
+If a job references a different base model, stop. Do not change model
+identifiers or hashes to make an incompatible reference pass.
 
 ## Image jobs
 
-Since 17 October 2026 image jobs are d3 jobs with a frozen image intake: the same
-d3 reference, runtime and qualification cover them, and no separate image runtime
-is installed (see the platform's
+Image jobs are z3-mini jobs with a frozen image intake: the same reference,
+runtime and qualification cover them, and no separate image runtime is
+installed (see the platform's
 [image training](https://github.com/ooo-hq/zils-platform/blob/main/docs/image-training.md)
-guide for the intake and asset flow). Image workers receive only training photos;
-validation photos and labels remain on the processor. Retain a Kev reference only
-for explicitly supported legacy assignments.
+guide for the intake and asset flow). Image workers receive only training
+photos; validation photos and labels stay with the processor.
 
-## Base-tier candidates
+## Fleet nodes
 
-Queue work is customer adapters. The network's primary job, improving the pinned
-base itself, is the [base tier](base-candidates.md): a full-weight candidate you
-train and merge yourself, examined on a sealed holdout by a fleet validator and
-paid from the chain's weight vector (king of the hill: only the miners of
-promoted bases are paid). It needs a hotkey
-registered on mainnet subnet 127, a public Hugging Face repo and
-`zils.miner commit-candidate`; see
-[compete from outside](mining.md#compete-in-the-base-tier-from-outside) and
-[open admission](validators.md#open-admission-base-tier).
+Operators standing up a rented node can run `scripts/provision_node.sh` in place
+of steps 2 and 4 (it installs the same runtimes and writes a qualification
+report) and configure the worker through `/etc/zils-node/role.json` and
+`scripts/apply_role.sh` in place of step 5. See [fleet nodes](fleet-nodes.md)
+and the [runbook](fleet-node-runbook.md).
+
+## Soup pools
+
+Customer jobs are one way to earn. The other is the soup pools, which take 80%
+of emissions: upload a fine-tune to Hugging Face and commit it on chain with
+`zils-miner commit-body`. See [mining](mining.md#soup-pool).
