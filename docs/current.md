@@ -699,7 +699,7 @@ To grade a soup pool on Zils Outcomes items:
 
 Each round then reads every dated folder whose manifest checks out, and draws its Outcomes part
 under the freshness, reuse, breadth and token rules in
-[model pools](model-pools.md#round-items-from-zils-current). The round falls back to the fixed
+[model pools](model-pools.md#round-items-from-zils-outcomes). The round falls back to the fixed
 round bank when those rules cannot be met. With the default blocks the streams reach every cell
 of the base score (see [Categories and blocks](#categories-and-blocks)). The fixed bank fills any
 cell the Outcomes part does not cover. Without a blend (`current_share` 1), when Outcomes streams

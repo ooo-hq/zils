@@ -3,7 +3,9 @@
 The benchmark compares decision accuracy, probability quality, and latency using
 explicit synthetic rules. It uses the [checkpoint evaluator](evaluation.md) and
 the subnet's reward calculation. It is a development benchmark, not an independent
-measure of general-purpose capability or resistance to benchmark gaming.
+measure of general-purpose capability or resistance to benchmark gaming. Its
+commands use the original 0.8B development profile (`kev-0.8b-v1`), which no
+pool or customer job uses.
 
 ## Build a benchmark
 
@@ -26,7 +28,7 @@ If the README's fleet setup already created this directory, audit and reuse it.
 | File | Questions | Paired groups | Rule scenarios | Use |
 | --- | ---: | ---: | ---: | --- |
 | `train.jsonl` | 224 | 112 | 16 | Training cases and answer rules |
-| `miner-training.jsonl` | 224 | 112 | 16 | The same cases in Kev's native training format |
+| `miner-training.jsonl` | 224 | 112 | 16 | The same cases in the native training format |
 | `calibration.jsonl` | 112 | 56 | 8 | Development and temperature calibration |
 | `test.jsonl` | 224 | 112 | 16 | Frozen evaluation |
 

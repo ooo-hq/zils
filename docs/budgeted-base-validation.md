@@ -1,9 +1,14 @@
 # Budgeted base validation
 
+> **King pools only.** This queue evaluates `zils1` candidates for king pools.
+> Every launch pool is a [soup pool](model-pools.md#soup-pools), whose bodies are
+> downloaded and graded in soup rounds, so a validator on the launch
+> configuration has nothing to queue here.
+
 A validator can receive nominations from hundreds of independent miners without
 performing every download and evaluation in its weight-publication loop. Enable
 an explicit local budget and run the base-evaluation worker separately. This is
-opt-in and applies to `base_pools`; the synchronous path remains available when
+opt-in and applies to the king pools in `base_pools`; the synchronous path remains available when
 `base_validation_queue` is absent.
 
 Miners choose their training cadence. The validator queues one nominated immutable

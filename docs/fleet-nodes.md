@@ -1,12 +1,14 @@
 # Fleet nodes on DigitalOcean
 
-> **Dated design (14 October 2026).** This page records the plan as written then,
-> when H2O was the served text base. Since 17 October 2026 d3-mini is the only
-> served base; H2O and Imajev were removed from the code on 22 October 2026, so the
-> H2O and image steps below no longer run. `scripts/provision_node.sh` now builds
-> and qualifies d3 only. For current setup read
-> [queued miners](queue-miners.md), [mining](mining.md) and
-> [validators](validators.md).
+> **Dated design (14 October 2026).** This page records the operator's plan, as
+> written then, for rented GPU nodes, when H2O was the served text base and the
+> subnet ran on testnet. It is history, not a setup guide. Since then H2O and
+> Imajev were removed from the code (22 October 2026), the subnet moved to
+> mainnet subnet 127 (3 November 2026), and customer-job miners are admitted on
+> chain with no operator approval ([miner admission](miner-admission.md)). `scripts/provision_node.sh`
+> now builds and qualifies z3-mini (`d3-mini-4.5b-v1`) only. For current setup read
+> [queued miners](queue-miners.md), [mining](mining.md),
+> [validators](validators.md) and the [node runbook](fleet-node-runbook.md).
 
 Status: design, 14 October 2026; phase 1 (node image, miner and fleet-validator roles, provisioning, runbook) is implemented on this branch; serving roles and release delivery are not.
 

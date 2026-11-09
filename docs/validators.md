@@ -3,7 +3,7 @@
 Validators independently verify submitted artifacts, calibrate probabilities,
 and score held-out examples. Miner-reported metrics do not determine rewards.
 A fleet validator publishes weights only after explicit configuration
-and review (`--publish-weights`). Base-tier miners join by registering on Bittensor
+and review (`--publish-weights`). Miners join by registering on Bittensor
 mainnet subnet 127 (network `finney`). A validator config names its network and
 netuid explicitly; mainnet is never a default.
 
@@ -12,12 +12,12 @@ netuid explicitly; mainnet is never a default.
 The model evaluation and acceptance code lives in this repository. The hosted
 queue processor connects that evaluator to customer jobs and protected storage;
 its setup moved to
-[zils-platform's queue validator guide](https://github.com/ooo-hq/zils-platform/blob/main/docs/validators.md#jevk5-queue-validator).
+[zils-platform's queue validator guide](https://github.com/ooo-hq/zils-platform/blob/main/docs/validators.md#queue-validator).
 Only approved operators should receive its service credentials. Miners need no
 platform installation or database credential.
 
-d3-mini serves both text and image jobs, so one d3 reference covers both. The
-retired H2O and Imajev profiles are no longer evaluated.
+Customer jobs train on z3-mini (`d3-mini-4.5b-v1`, 8,192-token inputs), so one
+z3-mini reference covers them.
 
 To grade miners that serve z3 checkpoints, see [grading serving miners](serving-validators.md).
 
@@ -39,38 +39,29 @@ section:
 
 A validator that takes adapter weights from signed queue evidence (`adapter_evidence`)
 can use `"admission": "chain"` without `public_endpoints`. It needs no inbound
-address: base candidates come from chain commitments and adapter work from the
+address: soup bodies come from chain commitments and adapter work from the
 evidence export, so it refuses adapter announcements from chain members.
 
 Registration on the subnet is the admission check; there is no further vetting.
-Every submission is still hash-verified, size-bounded, and scored in the
-isolated runner described in [evaluation](evaluation.md).
+Every submission is still hash-verified and size-bounded. Frozen-job adapters
+are scored in the isolated runner described in [evaluation](evaluation.md); soup
+bodies are graded in soup rounds ([model pools](model-pools.md#soup-pools)).
 
-### What opening the door means today
+### What open admission exposes
 
-Open admission is a property of the fleet validator, and the fleet validator
-runs **adapter rounds**: one frozen customer job per fleet, whose training split
-is shipped to every admitted miner. Opening it therefore hands customer training
-data to anyone who pays the registration burn. The base tier needs no customer
-data (candidates come in, the sealed holdout never leaves the validator), and a
-qualified validator configured with `base_pools` collects and scores base candidates
-itself (section 6 below). So, in order:
+The fleet validator still runs a **frozen-job round** each round, and with
+`public_endpoints` it ships that job's training split to every admitted miner
+that announces. Use a job built from public data, never a customer's. With
+`adapter_evidence` (section 7) the frozen-job rows do not set weights, and with
+`"admission": "chain"` and no `public_endpoints` the validator takes no
+announcements at all: soup bodies come from chain commitments and adapter pay
+from the signed evidence.
 
-1. **Policy (owner, decided 18 October 2026).** Outside miners may train customer
-   jobs as well as base candidates, under the [miner terms](mining-terms.md)
-   (published 18 October 2026; their hash travels in every signed queue claim).
-   The hosted queue's chain-derived admission is built but off, so a public
-   validator carries a Zils-authored job (public data), not a customer's.
-2. **Qualified pool intake.** Configure `base_pools` plus the private paths for
-   each qualified pool in `base_pool_rounds`. Every round freezes chain
-   commitments, routes each candidate by its pinned parent, rejects incumbent
-   copies and evaluates eligible candidates in the isolated runner. Per-pool
-   stores retain checkpoint bytes and actual evaluation times across epochs.
-3. **Preparation and rollout.** Follow the [base-election runbook](base-election.md).
-   New intake requires v2 private exams, public family history, a pinned adapter
-   suite and a pool-specific admission document (a passing independent pilot or an
-   explicit incumbent-challenge contract). The old single-base Brier configuration
-   is archival and cannot start new-policy intake.
+Customer data reaches miners only through the hosted queue, under the
+[miner terms](mining-terms.md) (their hash travels in every signed queue claim)
+and [chain admission](miner-admission.md). The base pools need no customer data:
+bodies come in, and the private round bank never leaves the validator. Configure
+`base_pools` and each graded pool's `base_pool_rounds` entry as in section 6.
 
 ### Network and operator setup
 
@@ -79,7 +70,7 @@ qualified for the selected pool and exam. Keep the validator hotkey on the host,
 never a coldkey. Reserve disk space for each distinct accepted checkpoint; the
 per-pool store keeps downloaded weights across epochs.
 
-Base candidates require outbound HTTPS to Hugging Face and its allowed CDN
+Soup bodies require outbound HTTPS to Hugging Face and its allowed CDN
 redirects. The announcement port serves adapter rounds and signed results.
 Adapter artifacts are fetched from each miner's announced endpoint, pinned to
 the announcing connection's source address. Claims are signed and artifacts
@@ -87,20 +78,19 @@ hash-verified; a TLS terminator provides transport privacy.
 
 Run `python -m zils.testnet preflight --config CONFIG` before starting the unit.
 Inspect the frozen `chain-snapshot.json` member/commitment maps and each pool's
-intake and decision reports. Miners use
-[`zils-miner commit-candidate`](base-candidates.md#commit); they need neither the
+round records. Miners use
+[`zils-miner commit-body`](mining.md#commit-a-body); they need neither the
 validator's URL nor its hotkey. One commitment per hotkey remains the submission
 contract. A registration change cannot inherit another hotkey's evidence.
 
 Settle or explicitly handle pending rounds before changing configuration. Use
 `admission: "members"` with a static roster and remove `public_endpoints` to
-close public admission. Disabling pool intake does not authorize returning to
-old-policy crowns; preserve the reviewed incumbent and existing customer pins.
+close public admission.
 
 ## Bittensor fleet validator
 
 This path uses a model-pinned fleet, a static roster and private-network
-transport. For the base tier open to every registered hotkey, see
+transport. For pools open to every registered hotkey, see
 [open admission](#open-admission-base-tier) above.
 
 ### 1. Register and check eligibility
@@ -118,8 +108,8 @@ SDK still enforces the chain's transaction requirements.
 
 ### 2. Prepare the registered fleet
 
-Complete the [fleet model setup](mining.md) for the operator-selected text or image
-profile, including the matching reference and qualified hardware.
+Complete the [fleet model setup](mining.md) for the operator-selected profile,
+including the matching reference and qualified hardware.
 Install `requirements/testnet.txt` in `.venv-kev`.
 Create the frozen job and registered identity file using
 [chain fleet setup](testnet.md#provision-the-registered-identities).
@@ -190,40 +180,16 @@ See [testnet outcomes](testnet.md#read-the-outcome) for restart behavior.
 
 ### 6. Pay the base tier from the same vector
 
-New text-base elections use `base_pools` and the
-[decision-quality runbook](base-election.md). Stage old configurations using
-`migrate_model_pools`; every pool remains disabled until its own admission document,
-private paths and v2 draws are installed. The previous single-base Brier policy
-and untimed caches cannot qualify new candidates. Settle pending old-publication
-attempts with the old release before cutover; retain uncertain chain receipts.
+`base_pools` pays the base pools from the same weight vector. At launch it holds
+80% of emissions (`share` 0.8) across four soup pools; the adapter track
+(section 7) gets the other 20%. Lite and mini get 25% of all emissions each and
+are open; flash and z3 get 15% each and stay closed, burning their share, until
+their opening blocks are set. Anything a pool does not pay burns at `burn_uid`,
+the subnet owner's uid; one pool's failure never moves its share to another.
 
-The existing base budget is split by pool allocation. Within a pool, the last
-five distinct registered king hotkeys split its share. Exam winners and ready
-candidates earn nothing until an approved promotion changes the incumbent and
-king history. Disabled/unowned allocations burn under the existing subnet-owner
-rule; failures in one pool do not transfer its allocation to another.
-
-For bounded asynchronous candidate evaluation, enable the
-[budgeted base-validation queue](budgeted-base-validation.md) and its separate
-worker. Pending candidate work does not replace the existing king history.
-
-Each pool's private `base_pool_rounds` entry names `base_reference`,
-`base_round_dir`, `family_history`, `suite_manifest` and `pilot_report`. The
-validator audits current history, score policy, pool admission and draw independence
-before inference. Candidate and incumbent cache files retain their actual start
-and completion times. A second draw cannot begin for a candidate until its own
-first evidence and the incumbent's evidence are at least 12 hours old.
-
-Private evidence is retained under `base-pools/<pool>/base-tier/decisions` and
-`store`. The public decision sidecar contains aggregate scores and evidence hashes.
-Each pending round freezes pool configuration and public results before a publish
-attempt. Changing configuration cannot rewrite that already-frozen result.
-
-At scheduled 14–28 day windows, `base_release` verifies every ready receipt,
-freezes the complete roster and evaluates a common fresh draw. `promote_base`
-rechecks the window against the active configuration and proposes the king/profile
-change. Upload, live config installation and chain publication remain separate
-operator actions. Stable migration cannot be inferred from an election result.
+A pool entry without `"type": "soup"` is a king pool, paid from a king history
+through [base elections](base-election.md). The code still supports king pools,
+but no launch pool is one.
 
 #### Soup pools: hardware, disk and the emission schedule
 
@@ -283,7 +249,9 @@ estimated token count ([current](current.md)).
 
 Off by default. With an `adapter_evidence` section the adapter share pays miners
 whose delivered customer adapters earn paid API use, instead of the frozen-job
-round, whose rows are then ignored for weights:
+round, whose rows are then ignored for weights. The adapter share is what
+`base_pools`, `feature_tracks` and `serving_share` leave: 20% in the launch
+configuration.
 
 ```json
 "adapter_evidence": {
@@ -327,13 +295,13 @@ recorded the spend; the signature proves the export came from the platform, not
 that either was right. Customer data and usage stay private, so other validators
 can check the export's signature and the chain price but not re-count the spend.
 
-The [first verified testnet round](testnet-round-001.md) demonstrates this closed
-path. It does not establish current validator uptime, open access,
-or queue training-to-chain integration.
+The [first verified testnet round](testnet-round-001.md) is a historical record
+of the earlier frozen-job path, before adapter pay came from spend.
 
 ### 8. Pay the serving share
 
-Off by default. With a `serving_share` section the validator pays a share of the
-vector to miners that serve z3 checkpoints, from the scores its
+Off by default, and not part of the launch configuration. With a
+`serving_share` section the validator pays a share of the vector to miners that
+serve z3 checkpoints, from the scores its
 [serving grader](serving-validators.md#pay) writes. The share burns until enough
 miners earn it.
