@@ -153,6 +153,8 @@ else:
                     self.assertEqual(report["model"]["id"], model)
                     self.assertEqual(report["delivery"]["status"], "accepted", report)
                     self.assertEqual(report["weights"], {"1": 1.0})
+                    # Its last round done, the miner deleted the bundle's copy of the customer rows.
+                    self.assertFalse((out / "miner-1/miner-training.jsonl").exists())
                     result = next((out / "miner-1/state/jobs").glob("*/result.json"))
                     self.assertEqual(json.loads(result.read_text())["model"]["id"], model)
                     entry = json.loads(
