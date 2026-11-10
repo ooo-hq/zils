@@ -365,6 +365,34 @@ class GradingTests(unittest.TestCase):
         decision = grading.rank_candidates(job(), [lazy, new, honest], NOW)
         self.assertEqual([c["hotkey"] for c in decision["candidates"]], ["honest", "new", "lazy"])
 
+    def test_open_jobs_go_to_chain_miners_before_operator_workers(self):
+        shipped = [
+            {
+                "id": f"ours-{i}",
+                "context": CONTEXT,
+                "outcome": "valid",
+                "finished_at": NOW.isoformat(),
+                "total_tokens": 1000,
+                "delivered": True,
+            }
+            for i in range(20)
+        ]
+        ours = worker("ours", improvement=0.3, operator=True, attempts=shipped)
+        miner = worker("miner", improvement=0.1)
+        open_job = job(tier="open")
+        ranked = grading.rank_candidates(open_job, [ours, miner], NOW)
+        self.assertEqual([c["hotkey"] for c in ranked["candidates"]], ["miner", "ours"])
+        # Ours is the fallback when no chain miner can take the job.
+        busy = worker("miner", improvement=0.1, reserved=True)
+        self.assertEqual(
+            grading.rank_candidates(open_job, [ours, busy], NOW)["selected_hotkey"], "ours"
+        )
+        # Private jobs keep the plain order.
+        self.assertEqual(
+            grading.rank_candidates(job(tier="private"), [ours, miner], NOW)["selected_hotkey"],
+            "ours",
+        )
+
     def test_deterministic_ties_inputs_immutable_and_hash_stable(self):
         workers = [worker("b"), worker("a")]
         original = copy.deepcopy(workers)

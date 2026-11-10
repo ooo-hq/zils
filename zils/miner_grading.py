@@ -418,6 +418,7 @@ def rank_candidates(job, workers, now, *, max_seconds=MAX_TRAINING_SECONDS):
                     "received_at": worker["received_at"],
                     "last_assigned_at": worker.get("last_assigned_at") or "",
                     "last_qualification_at": worker.get("last_qualification_at") or "",
+                    "operator": worker.get("operator") is True,
                 }
             )
     if job.get("purpose") == "qualification":
@@ -425,8 +426,10 @@ def rank_candidates(job, workers, now, *, max_seconds=MAX_TRAINING_SECONDS):
             key=lambda c: (c["status"] == "qualified", c["last_qualification_at"], c["hotkey"])
         )
     else:
+        open_job = job.get("tier") == "open"
         candidates.sort(
             key=lambda c: (
+                open_job and c["operator"],  # open jobs pay miners; operator workers are fallback
                 -c["delivery_rate"],  # results on assigned jobs outrank the fixed benchmark
                 -c["quality_band"],
                 -c["reliability"],
