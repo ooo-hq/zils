@@ -150,8 +150,9 @@ loses access within five minutes. The worker refuses to start when a
 
 After admission the coordinator queues a qualification job for your hotkey: a
 synthetic job that grades the host's training quality, reliability and speed.
-Zils pays for one qualification run per hotkey every 30 days. Customer jobs are
-offered once three qualification reports pass in the job's size band
+Zils pays for up to three qualification runs per hotkey every 30 days, one at a
+time: when one finishes, the next is queued. Customer jobs are offered once three
+qualification reports pass in the job's size band
 ([miner grading](miner-grading.md)). Chain-admitted miners get open-tier
 customer jobs only; private-tier data never leaves Zils hardware.
 
