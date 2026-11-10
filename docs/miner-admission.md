@@ -51,8 +51,9 @@ with `zils-miner commit-body` from the chain themselves.
 
 Zils pays it. Registration already costs the miner a burn, which is the spam
 gate Bittensor provides; a second gate here would be a form by another name.
-The cap is three qualification runs per hotkey per 30 days, queued one at a
-time; customer work needs three passing reports. As reports expire, older runs
+The cap is three qualification runs trained by the hotkey per 30 days, queued
+one at a time and only while its worker is online; customer work needs three
+passing reports. As reports expire, older runs
 leave the window and the coordinator queues new ones.
 
 ## 4. Operator duties
