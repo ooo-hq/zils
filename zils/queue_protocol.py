@@ -67,17 +67,28 @@ def identifier(value):
     return value
 
 
+RENEW_ATTEMPTS = 3  # renewals in a row that may go unanswered; leases outlast many intervals
+
+
 @contextmanager
 def lease_heartbeat(renew, interval=60):
+    """Renew now, then every `interval` seconds. A renewal the coordinator did not answer (a timeout
+    or a 5xx) is tried again at the next interval, RENEW_ATTEMPTS times in a row; a refusal or any
+    other error ends the attempt at once."""
     stopped, errors = threading.Event(), []
 
     def keep_alive():
+        missed = 0
         while not stopped.wait(interval):
             try:
                 renew()
+                missed = 0
             except Exception as error:
-                errors.append(error)
-                return
+                missed += 1
+                unanswered = isinstance(error, APIError) and error.status >= 500
+                if not unanswered or missed >= RENEW_ATTEMPTS:
+                    errors.append(error)
+                    return
 
     renew()
     thread = threading.Thread(target=keep_alive, daemon=True)
