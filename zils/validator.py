@@ -942,6 +942,7 @@ def validator(config, directory, args):
     pools = pool_rounds(config, directory)
     features = feature_round.rounds(config, directory)
     recent = collections.defaultdict(collections.deque)
+    report_nonces = {}
 
     def throttled(address):
         now, queue = time.time(), recent[address]
@@ -985,6 +986,14 @@ def validator(config, directory, args):
                 message = json.loads(self.rfile.read(length))
                 if not isinstance(message, dict):
                     raise ValueError("message must be an object")
+                if self.path == "/soup/report":  # a miner's own round report; files only, no lock
+                    from . import soup_report
+
+                    if throttled(self.client_address[0]):
+                        self.send(429, {"error": "too many requests from this address"})
+                        return
+                    self.send(*soup_report.answer(config, directory, message, report_nonces))
+                    return
                 with condition:
                     if self.path == "/submit":
                         if public_endpoints and throttled(self.client_address[0]):

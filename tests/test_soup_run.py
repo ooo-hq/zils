@@ -254,6 +254,34 @@ class SoupRunTest(unittest.TestCase):
         self.assertTrue((round_dir / "soup" / "readout.safetensors").exists())
         self.assertEqual(list((self.r.state / "tmp").iterdir()), [])
 
+    def test_each_miner_gets_a_private_report_of_its_own_bodies(self):
+        sha = self.r.sha
+        record = self.r.run()
+        round_dir = self.r.state / "rounds" / "d3-mini-2026-11-03"
+        reports = json.loads((round_dir / "reports.json").read_text())
+        self.assertEqual(set(reports), {HOTKEYS[uid] for uid in (1, 2, 3, 4)})
+        (seat,) = reports[HOTKEYS[1]]
+        self.assertEqual((seat["body_sha256"], seat["stage"]), (sha["t1"], "seated"))
+        self.assertEqual(seat["solo"]["soup"], 100.0)
+        # Trainer 1 knows reasoning and language only; the soup knows every category.
+        self.assertEqual(seat["categories"]["reasoning"], {"score": 100.0, "soup": 100.0})
+        self.assertLess(seat["categories"]["tools"]["score"], 50)
+        self.assertEqual(seat["categories"]["tools"]["soup"], 100.0)
+        self.assertEqual(
+            reports[HOTKEYS[3]],
+            [{"body_sha256": sha["t1"], "stage": "refused",
+              "reason": "committed_first_by_another"}],
+        )  # fmt: skip
+        (weak,) = reports[HOTKEYS[4]]
+        self.assertEqual((weak["stage"], weak["reason"]), ("not_selected", "no_soup_gain"))
+        self.assertLess(weak["trial"]["gain"], 0)  # adding it made the soup worse
+        self.assertEqual(weak["trial"]["needed"], 0.5)
+        self.assertLess(weak["solo"]["score"], weak["solo"]["soup"])
+        # The report's inputs stay in the private record; the public record is unchanged.
+        self.assertEqual(record["soup_score"], 100.0)
+        self.assertEqual(set(record["solo_categories"]), set(record["pool"]))
+        self.assertFalse({"soup_score", "solo_categories", "soup_categories"} & set(self.public()))
+
     def soft_runner(self, confidence=0.97):
         """runner_for whose answers are FakeRunner's, at `confidence` instead of 1.0. The final soup
         is always right, so at 97% it is underconfident and its fitted temperature is below 1.

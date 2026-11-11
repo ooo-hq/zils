@@ -10,7 +10,8 @@ reinstalls at the stable release, the commit release/stable on main names. `comm
 soup-pool body (a full fine-tune of the pool's Qwen parent in its chassis layout; d3-mini by default,
 --pool for lite, flash or z3) already uploaded to Hugging Face, prints its body hash and `zilsb2` (or
 `zilsb3:<pool>`) commitment and, with --yes, writes it with the hotkey (docs/mining.md,
-"Soup pool"). A hotkey has one commitment slot, shared by `zils1` and `zilsb2`. `announce-serving`
+"Soup pool"). A hotkey has one commitment slot, shared by `zils1` and `zilsb2`. `report` asks one
+validator, by URL, for this hotkey's private soup round report. `announce-serving`
 writes the miner's public endpoint on chain and `serve` answers signed requests for public z3
 checkpoints there, from its own worker or, with --runtime, from the box's adapter runtime
 (docs/serving-miners.md)."""
@@ -487,6 +488,98 @@ def commit_body(args):
         flush=True,
     )
     return after
+
+
+def report(args):
+    """`report`: this hotkey's private soup round report from one validator."""
+    from . import runtime, soup_report  # lazy, like serving below
+
+    config = {"validator": args.validator.rstrip("/"), "validator_hotkey": args.validator_hotkey}
+    message = soup_report.sign(wallet(args).hotkey, args.validator_hotkey)
+    try:
+        reply = runtime.request(config, "/soup/report", message)
+    except urllib.error.HTTPError as error:
+        raise ValueError(
+            f"the validator refused the request (HTTP {error.code}); check --validator-hotkey and"
+            " this machine's clock (a request is valid for two minutes)"
+        ) from None
+    print(report_text(reply), flush=True)
+
+
+# stage -> (mark, its color, label)
+REPORT_STAGES = {
+    "seated": ("✓", "32", "seated"),
+    "seated_unpaid": ("⚠", "1;33", "seated, unpaid"),
+    "deferred": ("⚠", "1;33", "waiting"),
+    "not_selected": ("✗", "1;31", "not selected"),
+    "screened_out": ("✗", "1;31", "not in the pool"),
+    "refused": ("✗", "1;31", "refused"),
+}
+
+
+def report_text(reply):
+    """A validator's report reply as `report` prints it: each body's stage, the reason in a
+    sentence, its numbers next to their bars and the next step."""
+    from . import soup_report
+
+    def row(label, value, note=""):
+        return f"  {label:<13}{value!s:>6}{'   ' + note if note else ''}"
+
+    blocks = []
+    for pool, item in reply["pools"].items():
+        if not item["bodies"]:
+            continue
+        blocks.append([paint("1", f"{pool} · round {item['round_id']}")])
+        for body in item["bodies"]:
+            mark, color, label = REPORT_STAGES[body["stage"]]
+            sentence, step = soup_report.EXPLAIN[body["reason"]]
+            sha = (body["body_sha256"] or "unreadable commitment")[:12]
+            blocks.append(
+                [f"{paint(color, mark)} {paint('1', f'body {sha}')}  {label}", f"  {sentence}"]
+            )
+            numbers = []
+            if "trial" in body:
+                trial = body["trial"]
+                numbers.append(
+                    row("soup gain", f"{trial['gain']:+}", f"needed {trial['needed']:+}")
+                )
+            if "seat" in body:
+                seat = body["seat"]
+                numbers.append(row("contribution", seat["contribution"], f"floor {seat['floor']}"))
+            if "gate" in body:
+                gate = body["gate"]
+                numbers.append(row("base", gate["base"], f"must beat it by {gate['needed']}"))
+            if "solo" in body:
+                numbers.append(row("alone", body["solo"]["score"], f"soup {body['solo']['soup']}"))
+            if "screen" in body:
+                screen = body["screen"]
+                numbers.append(row("screening", screen["score"], f"needed {screen['needed']}"))
+            if body.get("rate", 1.0) != 1.0:
+                numbers.append(row("rate", body["rate"]))
+            if numbers:
+                blocks.append(numbers)
+            categories = body.get("categories")
+            if categories:
+                gaps = {name: pair["soup"] - pair["score"] for name, pair in categories.items()}
+                behind = max(gaps, key=gaps.get)
+                marked = gaps[behind] > 0 and list(gaps.values()).count(gaps[behind]) == 1
+                blocks.append([
+                    row("category", "yours", "soup"),
+                    *(
+                        row(name, pair["score"], str(pair["soup"]))
+                        + ("   ← furthest behind" if name == behind and marked else "")
+                        for name, pair in categories.items()
+                    ),
+                ])  # fmt: skip
+            codes = " / ".join(filter(None, (body["stage"], body["reason"])))
+            where = 'docs/mining.md, "Why a body has no seat"'
+            blocks.append([
+                *([f"  Next: {step}"] if step else []),
+                paint("2", f"  Codes: {codes} ({where})"),
+            ])  # fmt: skip
+    if not blocks:
+        blocks.append(["No body of this hotkey was in the newest round of any pool."])
+    return "\n\n".join("\n".join(block) for block in [[paint("1", "Zils round report")], *blocks])
 
 
 def serving_endpoint(args):
@@ -994,6 +1087,20 @@ def main(argv=None):
     body.add_argument(
         "--yes", action="store_true", help="write the commitment; without it, a dry run"
     )
+    private = commands.add_parser(
+        "report",
+        help="ask a validator why your soup body has or has no seat",
+        description="Fetch this hotkey's private report on the newest soup round of each pool from"
+        " one validator: the stage each body reached, the reason, and its scores next to the"
+        ' soup\'s (docs/mining.md, "Why a body has no seat"). The request is signed by the'
+        " hotkey; a validator answers only for the hotkey that signs.",
+    )
+    private.add_argument("--validator", required=True, help="the validator's URL")
+    private.add_argument(
+        "--validator-hotkey",
+        required=True,
+        help="the validator's hotkey (SS58), to check its reply",
+    )
     announce = commands.add_parser("announce-serving", help="write your public endpoint on chain")
     host = commands.add_parser("serve", help="serve z3 checkpoints to validators")
     for command in (announce, host):
@@ -1033,7 +1140,7 @@ def main(argv=None):
                 choices=models.d3_family(),
                 help="base profile to beat in your tier; saved by setup or read from the candidate",
             )
-    for command in (check, commit, body, announce, host):
+    for command in (check, commit, body, private, announce, host):
         command.add_argument("--wallet-name")
         command.add_argument("--wallet-hotkey", help="hotkey name; the coldkey is never read")
         command.add_argument("--wallet-path")
@@ -1075,8 +1182,9 @@ def main(argv=None):
         args.wallet_path = args.wallet_path or WALLET_PATH
         if args.wallet_name is None or args.wallet_hotkey is None:
             raise ValueError("no wallet configured; run zils-miner setup (or pass --wallet-name)")
-        if args.command in ("commit-body", "announce-serving", "serve"):
-            run = {"commit-body": commit_body, "announce-serving": announce_serving, "serve": serve}
+        if args.command in ("commit-body", "report", "announce-serving", "serve"):
+            run = {"commit-body": commit_body, "report": report,
+                   "announce-serving": announce_serving, "serve": serve}  # fmt: skip
             run[args.command](args)
             return
         args.model = selected_model(args.model, args.candidate)

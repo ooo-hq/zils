@@ -329,6 +329,99 @@ against the validator's private record. Exam items, labels and per-family scores
 are never published. The round bank is private, so outside re-grading of a round
 is not possible yet.
 
+### Why a body has no seat
+
+The public record names only the seated bodies. For your own bodies, a validator
+keeps a private report of each round and gives it only to the hotkey that
+committed them:
+
+```bash
+zils-miner report --validator <validator URL> --validator-hotkey <validator hotkey>
+```
+
+The command signs the request with your hotkey and checks the validator's
+signature on the reply. A validator answers only for the hotkey that signs, so
+nobody else can read your report, and it covers the newest finished round of
+each soup pool. Ask the validator's operator for its URL and hotkey. Each
+validator grades on its own private items, so two validators' reports can differ.
+
+For each body the command prints the stage, the reason in a sentence, the
+numbers next to their bars, and the next step:
+
+```text
+d3-mini · round d3-mini-2026-11-10
+
+✗ body 3f9a1c0b7e2d  not selected
+  Adding your body did not raise the soup's score by the margin needed.
+
+  soup gain      +0.0   needed +0.5
+  alone          59.5   soup 64.0
+  screening      61.0   needed 55.0
+
+  category      yours   soup
+  reasoning      60.0   64.0
+  language       60.0   64.0
+  retrieval      60.0   64.0
+  tools          51.5   64.0   ← furthest behind
+  arts           60.0   64.0
+
+  Next: train where the soup is weak, not where it is already strong.
+  Codes: not_selected / no_soup_gain (docs/mining.md, "Why a body has no seat")
+```
+
+The numbers above are an example. Scores are rounded to half a point, and a score
+that missed its bar is always shown below the bar. The last line gives the stage
+and reason codes of the signed reply, listed below.
+
+| Stage | Meaning |
+|---|---|
+| `refused` | The commitment or the body failed a check. Commit a new revision. |
+| `deferred` | Nothing is wrong with the body yet; the validator tries again in a later round. |
+| `screened_out` | The body was not among the bodies graded in full this round. |
+| `not_selected` | The body was graded alone, but the soup did not take it. |
+| `seated_unpaid` | The body is in the soup, but its seat does not pay. |
+| `seated` | The body is in the soup and its seat pays at its rate. |
+
+| Reason | Stage | What it means and what to do |
+|---|---|---|
+| `bad_commitment` | refused | The commitment text is malformed or names an unknown pool. |
+| `owner_file` | refused | `zils-owner.json` is missing or names another hotkey. |
+| `license` | refused | The model card has no accepted license. |
+| `hash_mismatch` | refused | The downloaded body does not hash to the commitment. |
+| `bad_format` | refused | A tensor is missing, extra, misshapen or of the wrong type. `commit-body --check` shows which. |
+| `not_finite` | refused | A weight is NaN or infinite. |
+| `too_large` | refused | The body is over the pool's size limit. |
+| `change_cap` | refused | The body moved further from the pool's parent than the change bound allows. |
+| `no_change` | refused | The body is the pool's parent, unchanged. |
+| `near_copy` | refused | The body is a near-copy of an earlier body, or mostly built from other miners' bodies. |
+| `house_reupload` | refused | The body is a re-upload of a house ingredient. |
+| `twin` | refused | The body answers almost exactly like a body already in the pool. |
+| `committed_first_by_another` | refused | Another hotkey committed this exact body first. |
+| `rejected_earlier`, `failed_earlier` | refused | This body, or this commitment, already failed in an earlier round. |
+| `check_failed` | refused | Another check failed. Run `zils-miner commit-body --check` on the body. |
+| `round_limit` | deferred | The round's limit on new bodies, claims, downloads or disk was reached first. |
+| `download_failed` | deferred | The validator could not download the repo. Check that it is public. |
+| `backing_off` | deferred | The hotkey's last claim failed, so it sits out a few rounds. |
+| `grade_failed` | deferred | The body could not be graded this round. After three such rounds it is refused. |
+| `below_screen` | screened_out | `screening` shows your score on the screening items and the lowest score that entered the pool. |
+| `pool_full` | screened_out | An earlier body of yours was left out of this round's full pool. |
+| `no_soup_gain` | not_selected | `soup gain` shows what adding your body did to the soup's score and the gain needed. |
+| `soup_full` | not_selected | The soup reached its member limit before your body's turn. Bodies are tried in solo-score order. |
+| `current_soup_kept` | not_selected | Your body was in the new soup, but that soup did not beat the current one by the margin. |
+| `below_floor` | seated_unpaid | `contribution` shows your contribution and the floor. |
+| `fine_tune_gate` | seated_unpaid | Your body is a fine-tune that did not beat its base alone; `base` names the kind of base and the margin. |
+| `unpaid_rate` | seated_unpaid | The body's rate is 0. |
+
+A graded body also shows `alone` (its score alone next to the soup's) and its
+score in each of the five exam categories next to the soup's, both on the
+round's decision items. The categories show where a body is behind
+the soup. Because the soup takes a body only when it makes the soup better, a
+body that is strong where the soup is weak is worth more than one that is a
+little better everywhere.
+
+The report never includes exam items, labels, per-family scores, copy
+measurements or the body a copy matched.
+
 ### Releases
 
 A soup is not served until it is released. Every 14 to 28 days, at a release
