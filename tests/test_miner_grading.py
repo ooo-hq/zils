@@ -393,6 +393,46 @@ class GradingTests(unittest.TestCase):
             "ours",
         )
 
+    def test_open_jobs_rotate_through_miners_and_demote_failing_ones(self):
+        def shipped(name, n, delivered=True, outcome="valid"):
+            return [
+                {
+                    "id": f"{name}-{i}",
+                    "context": CONTEXT,
+                    "outcome": outcome,
+                    "finished_at": NOW.isoformat(),
+                    "total_tokens": 1000,
+                    "delivered": delivered,
+                }
+                for i in range(n)
+            ]
+
+        veteran = worker(
+            "veteran",
+            improvement=0.3,
+            attempts=shipped("veteran", 2),
+            last_assigned_at=NOW.isoformat(),
+        )
+        newcomer = worker("newcomer", improvement=0.1)
+        open_job = job(tier="open")
+        # The miner that waited longest goes first, not the one with more history.
+        self.assertEqual(
+            grading.rank_candidates(open_job, [veteran, newcomer], NOW)["selected_hotkey"],
+            "newcomer",
+        )
+        # Miners whose adapters do not ship, or whose runs fail, drop behind the rest.
+        unshipped = worker("unshipped", attempts=shipped("unshipped", 2, delivered=False))
+        failing = worker("failing", attempts=shipped("failing", 2, outcome="worker_failure"))
+        ranked = grading.rank_candidates(open_job, [unshipped, failing, veteran], NOW)
+        self.assertEqual(ranked["selected_hotkey"], "veteran")
+        # Private jobs keep the plain order.
+        self.assertEqual(
+            grading.rank_candidates(job(tier="private"), [veteran, newcomer], NOW)[
+                "selected_hotkey"
+            ],
+            "veteran",
+        )
+
     def test_deterministic_ties_inputs_immutable_and_hash_stable(self):
         workers = [worker("b"), worker("a")]
         original = copy.deepcopy(workers)

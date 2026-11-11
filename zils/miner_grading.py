@@ -425,11 +425,20 @@ def rank_candidates(job, workers, now, *, max_seconds=MAX_TRAINING_SECONDS):
         candidates.sort(
             key=lambda c: (c["status"] == "qualified", c["last_qualification_at"], c["hotkey"])
         )
-    else:
-        open_job = job.get("tier") == "open"
+    elif job.get("tier") == "open":
+        # Open jobs pay miners, so they rotate: operator workers are fallback, miners whose
+        # adapters mostly fail to ship or whose runs mostly fail go last, then longest wait.
         candidates.sort(
             key=lambda c: (
-                open_job and c["operator"],  # open jobs pay miners; operator workers are fallback
+                c["operator"],
+                c["delivery_rate"] < 0.5 or c["reliability"] < 0.5,
+                c["last_assigned_at"],
+                c["hotkey"],
+            )
+        )
+    else:
+        candidates.sort(
+            key=lambda c: (
                 -c["delivery_rate"],  # results on assigned jobs outrank the fixed benchmark
                 -c["quality_band"],
                 -c["reliability"],
