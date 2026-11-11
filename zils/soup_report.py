@@ -14,6 +14,7 @@ HEX64 = re.compile("[a-f0-9]{64}")
 KIND = "soup-report"
 WINDOW = 120  # seconds a signed request stays valid, and its nonce remembered
 FILE = "reports.json"
+RELAY_PATH = "/v1/network"  # a hosted API passes `<relay>/v1/network/soup/report` to its validator
 DEFERRED = ("round_limit", "download_failed", "backing_off")  # retried without a new commitment
 # The first match names the reason; `check_failed` is any other failed check.
 _REASONS = (
@@ -318,6 +319,18 @@ def read(config, directory, hotkey):
         bodies = found.get(hotkey)
         pools[pool] = {"round_id": round_id, "bodies": bodies if isinstance(bodies, list) else []}
     return pools
+
+
+def relay_validators(relay):
+    """The validator hotkeys the hosted API at ``relay`` passes report requests to."""
+    from . import protocol
+
+    with protocol.opener().open(relay + RELAY_PATH + "/soup/report", timeout=10) as response:
+        listed = json.loads(response.read(64 * 1024))
+    hotkeys = listed.get("validators") if isinstance(listed, dict) else None
+    if not isinstance(hotkeys, list) or not all(isinstance(h, str) for h in hotkeys):
+        raise ValueError("the hosted API did not list its validators")
+    return hotkeys
 
 
 def sign(key, validator_hotkey):

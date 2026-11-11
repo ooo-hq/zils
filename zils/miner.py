@@ -491,14 +491,34 @@ def commit_body(args):
 
 
 def report(args):
-    """`report`: this hotkey's private soup round report from one validator."""
+    """`report`: this hotkey's private soup round report, from a validator or through the hosted API."""
     from . import runtime, soup_report  # lazy, like serving below
 
-    config = {"validator": args.validator.rstrip("/"), "validator_hotkey": args.validator_hotkey}
-    message = soup_report.sign(wallet(args).hotkey, args.validator_hotkey)
+    hotkey = args.validator_hotkey
+    if args.validator:
+        if not hotkey:
+            raise ValueError("--validator needs --validator-hotkey, to check the validator's reply")
+        address = args.validator.rstrip("/")
+    else:
+        relay = args.relay.rstrip("/")
+        address = relay + soup_report.RELAY_PATH
+        if not hotkey:
+            listed = soup_report.relay_validators(relay)
+            if not listed:
+                raise ValueError(f"{relay} names no validator; pass --validator-hotkey")
+            hotkey = listed[0]
+    message = soup_report.sign(wallet(args).hotkey, hotkey)
     try:
-        reply = runtime.request(config, "/soup/report", message)
+        reply = runtime.request(
+            {"validator": address, "validator_hotkey": hotkey}, "/soup/report", message
+        )
     except urllib.error.HTTPError as error:
+        if error.code == 429:
+            raise ValueError("too many report requests; try again in a minute") from None
+        if error.code >= 500:
+            raise ValueError(
+                f"the report is not available right now (HTTP {error.code}); try again later"
+            ) from None
         raise ValueError(
             f"the validator refused the request (HTTP {error.code}); check --validator-hotkey and"
             " this machine's clock (a request is valid for two minutes)"
@@ -1090,16 +1110,22 @@ def main(argv=None):
     private = commands.add_parser(
         "report",
         help="ask a validator why your soup body has or has no seat",
-        description="Fetch this hotkey's private report on the newest soup round of each pool from"
-        " one validator: the stage each body reached, the reason, and its scores next to the"
-        ' soup\'s (docs/mining.md, "Why a body has no seat"). The request is signed by the'
-        " hotkey; a validator answers only for the hotkey that signs.",
+        description="Fetch this hotkey's private report on the newest soup round of each pool:"
+        " the stage each body reached, the reason, and its scores next to the soup's"
+        ' (docs/mining.md, "Why a body has no seat"). The request is signed by the hotkey; a'
+        " validator answers only for the hotkey that signs, and the command checks the"
+        " validator's signature on the answer. By default the hosted API passes the request to"
+        " its validator; --validator asks a validator directly.",
     )
-    private.add_argument("--validator", required=True, help="the validator's URL")
+    private.add_argument(
+        "--relay",
+        default="https://training.zils.ai",
+        help="the hosted API that passes the request to a validator (default: %(default)s)",
+    )
+    private.add_argument("--validator", help="ask this validator URL directly, without the relay")
     private.add_argument(
         "--validator-hotkey",
-        required=True,
-        help="the validator's hotkey (SS58), to check its reply",
+        help="the validator's hotkey (SS58), to check its reply (default: the relay's validator)",
     )
     announce = commands.add_parser("announce-serving", help="write your public endpoint on chain")
     host = commands.add_parser("serve", help="serve z3 checkpoints to validators")

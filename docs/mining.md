@@ -336,14 +336,26 @@ keeps a private report of each round and gives it only to the hotkey that
 committed them:
 
 ```bash
-zils-miner report --validator <validator URL> --validator-hotkey <validator hotkey>
+zils-miner report
 ```
 
 The command signs the request with your hotkey and checks the validator's
 signature on the reply. A validator answers only for the hotkey that signs, so
-nobody else can read your report, and it covers the newest finished round of
-each soup pool. Ask the validator's operator for its URL and hotkey. Each
-validator grades on its own private items, so two validators' reports can differ.
+no other miner can read your report, and it covers the newest finished round of
+each soup pool.
+
+By default the request goes through the hosted API at `https://training.zils.ai`,
+which passes it unchanged to its validator and returns the validator's signed
+answer. The hosted API can read the answer as it passes; it cannot ask for your
+report itself or change the answer. To ask a validator directly, give its URL
+and hotkey, which its operator can tell you:
+
+```bash
+zils-miner report --validator <validator URL> --validator-hotkey <validator hotkey>
+```
+
+Each validator grades on its own private items, so two validators' reports can
+differ.
 
 For each body the command prints the stage, the reason in a sentence, the
 numbers next to their bars, and the next step:

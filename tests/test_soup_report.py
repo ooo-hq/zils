@@ -472,6 +472,90 @@ class CommandTest(unittest.TestCase):
         self.assertEqual(payload["validator"], self.validator.ss58_address)
         self.assertIn("Codes: not_selected / no_soup_gain", out.getvalue())
 
+    def run_report(self, argv, request, validators=None):
+        out, err = io.StringIO(), io.StringIO()
+        listed = [self.validator.ss58_address] if validators is None else validators
+        with (
+            patch.object(miner, "wallet", return_value=SimpleNamespace(hotkey=self.alice)),
+            patch.object(miner, "load_config", return_value={}),
+            patch("zils.runtime.request", request),
+            patch.object(soup_report, "relay_validators", return_value=listed) as asked,
+            redirect_stdout(out),
+            redirect_stderr(err),
+        ):
+            try:
+                miner.main(["report", *argv, "--wallet-name", "w", "--wallet-hotkey", "h"])
+            except SystemExit:
+                pass
+        return out.getvalue(), err.getvalue(), asked
+
+    def test_with_no_validator_named_the_hosted_api_relays_the_request(self):
+        sent = {}
+
+        def request(config, path, message):
+            sent.update(config=config, path=path, message=message)
+            return self.reply
+
+        out, _, asked = self.run_report([], request)
+        asked.assert_called_once_with("https://training.zils.ai")
+        self.assertEqual(
+            (sent["config"], sent["path"]),
+            ({"validator": "https://training.zils.ai/v1/network",
+              "validator_hotkey": self.validator.ss58_address}, "/soup/report"),
+        )  # fmt: skip
+        payload = verified(sent["message"], self.alice.ss58_address)
+        self.assertEqual(payload["validator"], self.validator.ss58_address)
+        self.assertIn("Codes: not_selected / no_soup_gain", out)
+
+    def test_a_named_hotkey_and_relay_are_used_as_given(self):
+        sent = {}
+
+        def request(config, path, message):
+            sent.update(config=config)
+            return self.reply
+
+        other = Keypair.create_from_uri("//Other").ss58_address
+        _, _, asked = self.run_report(
+            ["--relay", "https://api.example/", "--validator-hotkey", other], request
+        )
+        asked.assert_not_called()
+        self.assertEqual(
+            sent["config"],
+            {"validator": "https://api.example/v1/network", "validator_hotkey": other},
+        )
+
+    def test_a_validator_url_needs_its_hotkey(self):
+        _, err, asked = self.run_report(["--validator", "https://validator.example"], None)
+        self.assertIn("--validator needs --validator-hotkey", err)
+        asked.assert_not_called()
+
+    def test_a_relay_that_names_no_validator_is_an_error(self):
+        _, err, _ = self.run_report([], None, validators=[])
+        self.assertIn("names no validator", err)
+
+    def test_busy_and_unavailable_answers_say_to_try_again(self):
+        def refuse(code):
+            def request(config, path, message):
+                raise urllib.error.HTTPError(config["validator"] + path, code, "x", {}, None)
+
+            return request
+
+        self.assertIn("try again in a minute", self.run_report([], refuse(429))[1])
+        self.assertIn("try again later", self.run_report([], refuse(503))[1])
+        self.assertIn("clock", self.run_report([], refuse(401))[1])
+
+    def test_relay_validators_reads_the_hosted_api_list(self):
+        body = io.BytesIO(json.dumps({"validators": ["5A", "5B"]}).encode())
+        opener = SimpleNamespace(open=lambda url, timeout: body)
+        with patch("zils.protocol.opener", return_value=opener):
+            self.assertEqual(soup_report.relay_validators("https://api.example"), ["5A", "5B"])
+        for bad in ({"validators": "5A"}, {"validators": [5]}, [], {}):
+            opener = SimpleNamespace(
+                open=lambda url, timeout, b=bad: io.BytesIO(json.dumps(b).encode())
+            )
+            with patch("zils.protocol.opener", return_value=opener), self.assertRaises(ValueError):
+                soup_report.relay_validators("https://api.example")
+
 
 if __name__ == "__main__":
     unittest.main()
