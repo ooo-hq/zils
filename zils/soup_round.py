@@ -1010,6 +1010,7 @@ def run(
         soup_exam,
         soup_grade,
         soup_rates,
+        soup_report,
     )
 
     if not isinstance(round_id, str) or not _ROUND_ID.fullmatch(round_id):
@@ -1027,12 +1028,14 @@ def run(
         raise ValueError("soup scoring must be one of " + ", ".join(soup_grade.SCORINGS))
     secret = None if scoring == "argmax" else split_secret(config, state_dir, round_id)
     temperatures = {}  # (body or soup, case set) -> fitted temperature
+    categories = {}  # body or "soup" -> its latest category scores, for the miners' reports
 
     def exam_score(cases, rows, key=None):
         """The pool's scoring of one graded model's raw rows (see ``soup_grade.evaluate``)."""
         result = soup_grade.evaluate(cases, rows, scoring=scoring, secret=secret)
         if key is not None:
             temperatures[key] = result["temperature"]
+            categories[key] = {c: 100 * v for c, v in result["metrics"]["categories"].items()}
         return result["score"]
 
     bank_key = bank_sha256(bank)
@@ -1475,6 +1478,8 @@ def run(
         else crown_weight(solo, rate_map, house, soup_score=soup_bar, order_key=order)
     )
 
+    # The final soup on the decision items, for the miners' reports (cached rows, no grading).
+    soup_score = exam_score(decision_cases, soup_rows(members, decision_cases), "soup")
     rows = soup_rows(members, subset)  # published predictions and scores: this round's subset
     scored = soup_grade.evaluate(subset, rows, scoring=scoring, secret=secret)
     metrics, temperature = scored["metrics"], scored["temperature"]
@@ -1531,6 +1536,9 @@ def run(
         "soup_sha256": soup.soup_hash(final),
         "pool": pool,
         "solo": solo,
+        "solo_categories": {sha: categories[sha] for sha in solo},
+        "soup_score": soup_score,
+        "soup_categories": categories["soup"],
         "screen": screen,
         "rates": rate_map,
         "gated": gated,
@@ -1548,6 +1556,9 @@ def run(
         "round_index": state.get("rounds", 0) + 1,
         **({"bank_source": bank_source} if bank_source is not None else {}),
     }
+    owners = {sha: info["hotkey"] for sha, info in known.items() if not info.get("pruned")}
+    reports = soup_report.build(private, soup_report.claims(snapshot), owners)
+    _write_json(round_dir / soup_report.FILE, reports)
     _write_json(round_dir / "private.json", private)
     return _finish(state_dir, round_dir, ledger)
 

@@ -442,6 +442,13 @@ enabled soup pool, its newest 60 public records (newest first, each with a UTC
 `finished_at`) and, for every body those rounds seat or crown, its house name
 and repo when the validator knows them (null otherwise). Private round records,
 exam items and labels are never served.
+A validator also answers `POST /soup/report`: a request signed by a miner's
+hotkey (`zils/soup_report.py`) returns that hotkey's own report on the newest
+finished round of each soup pool, and nothing about any other hotkey. The report
+gives each body's stage, a reason code and half-point scores
+([mining: why a body has no seat](mining.md#why-a-body-has-no-seat)). A request
+is valid for 120 seconds, is bound to the validator's hotkey and is refused when
+replayed.
 
 ### Submitting a body
 
