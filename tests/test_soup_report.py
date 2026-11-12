@@ -544,6 +544,61 @@ class CommandTest(unittest.TestCase):
         self.assertIn("try again later", self.run_report([], refuse(503))[1])
         self.assertIn("clock", self.run_report([], refuse(401))[1])
 
+    def run_dashboard(self, argv, answer, validators=None):
+        """(stdout, stderr, the request posted) for `zils-miner dashboard`; ``answer`` is the
+        hosted API's reply or the HTTP status it refuses with."""
+        out, err, sent = io.StringIO(), io.StringIO(), {}
+
+        def open_(request, timeout):
+            sent.update(url=request.full_url, message=json.loads(request.data))
+            if isinstance(answer, int):
+                raise urllib.error.HTTPError(request.full_url, answer, "x", {}, None)
+            return io.BytesIO(json.dumps(answer).encode())
+
+        listed = [self.validator.ss58_address] if validators is None else validators
+        with (
+            patch.object(miner, "wallet", return_value=SimpleNamespace(hotkey=self.alice)),
+            patch.object(miner, "load_config", return_value={}),
+            patch("zils.protocol.opener", return_value=SimpleNamespace(open=open_)),
+            patch.object(soup_report, "relay_validators", return_value=listed),
+            redirect_stdout(out),
+            redirect_stderr(err),
+        ):
+            try:
+                miner.main(["dashboard", *argv, "--wallet-name", "w", "--wallet-hotkey", "h"])
+            except SystemExit:
+                pass
+        return out.getvalue(), err.getvalue(), sent
+
+    def test_dashboard_posts_a_signed_report_request_and_prints_the_private_link(self):
+        link = "https://zils.ai/miners/dashboard#token"
+        out, _, sent = self.run_dashboard([], {"url": link, "expires_at": "2026-11-13T15:00:00Z"})
+        self.assertEqual(sent["url"], "https://training.zils.ai/v1/network/miner/dashboard")
+        payload = verified(sent["message"], self.alice.ss58_address)
+        self.assertEqual(
+            (payload["kind"], payload["validator"]), ("soup-report", self.validator.ss58_address)
+        )
+        self.assertIn(link, out)
+        self.assertIn("2026-11-13 15:00 UTC", out)
+        self.assertIn("zils-miner dashboard", out)
+
+    def test_dashboard_uses_a_named_relay_and_refuses_a_link_that_is_not_https(self):
+        link = "https://site.example/miners/dashboard#t"
+        answer = {"url": link, "expires_at": "2026-11-13T15:00:00Z"}
+        out, _, sent = self.run_dashboard(["--relay", "https://api.example/"], answer)
+        self.assertEqual(sent["url"], "https://api.example/v1/network/miner/dashboard")
+        self.assertIn(link, out)
+        for bad in ({"url": "javascript:alert(1)"}, {"url": 5}, {}, []):
+            out, err, _ = self.run_dashboard([], bad)
+            self.assertIn("did not return a dashboard link", err)
+            self.assertEqual(out, "")
+
+    def test_dashboard_says_what_to_do_when_refused_or_unavailable(self):
+        self.assertIn("try again in a minute", self.run_dashboard([], 429)[1])
+        self.assertIn("try again later", self.run_dashboard([], 503)[1])
+        self.assertIn("clock", self.run_dashboard([], 401)[1])
+        self.assertIn("names no validator", self.run_dashboard([], {}, validators=[])[1])
+
     def test_relay_validators_reads_the_hosted_api_list(self):
         body = io.BytesIO(json.dumps({"validators": ["5A", "5B"]}).encode())
         opener = SimpleNamespace(open=lambda url, timeout: body)

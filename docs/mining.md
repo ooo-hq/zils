@@ -434,6 +434,24 @@ little better everywhere.
 The report never includes exam items, labels, per-family scores, copy
 measurements or the body a copy matched.
 
+### Dashboard
+
+The same report, with your customer jobs, is available as a private web page:
+
+```bash
+zils-miner dashboard
+```
+
+The command signs a report request with your hotkey, as `zils-miner report`
+does, and sends it to the hosted API at `https://training.zils.ai`. The hosted
+API passes it to its validator, keeps the validator's answer for 24 hours and
+returns a link to a page on the website. The command prints the link.
+
+The page shows the report as it was when the link was made. The hosted API
+cannot ask a validator for your report without a request your hotkey signed, so
+run the command again for a fresh report. Anyone who has the link can read the
+page until it expires; treat it like a password.
+
 ### Releases
 
 A soup is not served until it is released. Every 14 to 28 days, at a release
