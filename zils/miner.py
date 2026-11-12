@@ -11,7 +11,8 @@ soup-pool body (a full fine-tune of the pool's Qwen parent in its chassis layout
 --pool for lite, flash or z3) already uploaded to Hugging Face, prints its body hash and `zilsb2` (or
 `zilsb3:<pool>`) commitment and, with --yes, writes it with the hotkey (docs/mining.md,
 "Soup pool"). A hotkey has one commitment slot, shared by `zils1` and `zilsb2`. `report` asks one
-validator, by URL, for this hotkey's private soup round report. `announce-serving`
+validator, by URL, for this hotkey's private soup round report and `dashboard` prints a private link
+to the same report and the hotkey's customer jobs on the website. `announce-serving`
 writes the miner's public endpoint on chain and `serve` answers signed requests for public z3
 checkpoints there, from its own worker or, with --runtime, from the box's adapter runtime
 (docs/serving-miners.md)."""
@@ -513,17 +514,45 @@ def report(args):
             {"validator": address, "validator_hotkey": hotkey}, "/soup/report", message
         )
     except urllib.error.HTTPError as error:
-        if error.code == 429:
-            raise ValueError("too many report requests; try again in a minute") from None
-        if error.code >= 500:
-            raise ValueError(
-                f"the report is not available right now (HTTP {error.code}); try again later"
-            ) from None
-        raise ValueError(
-            f"the validator refused the request (HTTP {error.code}); check --validator-hotkey and"
-            " this machine's clock (a request is valid for two minutes)"
-        ) from None
+        raise _report_refused(error) from None
     print(report_text(reply), flush=True)
+
+
+def _report_refused(error):
+    if error.code == 429:
+        return ValueError("too many report requests; try again in a minute")
+    if error.code >= 500:
+        return ValueError(
+            f"the report is not available right now (HTTP {error.code}); try again later"
+        )
+    return ValueError(
+        f"the validator refused the request (HTTP {error.code}); check --validator-hotkey and"
+        " this machine's clock (a request is valid for two minutes)"
+    )
+
+
+def dashboard(args):
+    """`dashboard`: a private link to this hotkey's page on the website, opened through the hosted API."""
+    from . import soup_report
+
+    relay, hotkey = args.relay.rstrip("/"), args.validator_hotkey
+    if not hotkey:
+        listed = soup_report.relay_validators(relay)
+        if not listed:
+            raise ValueError(f"{relay} names no validator; pass --validator-hotkey")
+        hotkey = listed[0]
+    message = soup_report.sign(wallet(args).hotkey, hotkey)
+    try:
+        link = soup_report.dashboard_link(relay, message)
+    except urllib.error.HTTPError as error:
+        raise _report_refused(error) from None
+    until = link["expires_at"][:16].replace("T", " ")
+    print(
+        f"Your dashboard: {link['url']}\n\n"
+        f"The link is private to this hotkey; anyone who has it can read your report until"
+        f" {until} UTC.\nScores are as of now. Run zils-miner dashboard again for a fresh link.",
+        flush=True,
+    )
 
 
 # stage -> (mark, its color, label)
@@ -1127,6 +1156,24 @@ def main(argv=None):
         "--validator-hotkey",
         help="the validator's hotkey (SS58), to check its reply (default: the relay's validator)",
     )
+    page = commands.add_parser(
+        "dashboard",
+        help="open a private web page with your round reports and customer jobs",
+        description="Print a private link to this hotkey's page on the website: its soup round"
+        " report and its customer jobs. The command signs a report request with the hotkey; the"
+        " hosted API passes it to its validator, keeps the validator's answer for 24 hours and"
+        " returns the link. The page shows that answer, so run the command again for a fresh"
+        " report. Anyone who has the link can read the page until it expires.",
+    )
+    page.add_argument(
+        "--relay",
+        default="https://training.zils.ai",
+        help="the hosted API that opens the link (default: %(default)s)",
+    )
+    page.add_argument(
+        "--validator-hotkey",
+        help="the validator's hotkey (SS58) to ask (default: the hosted API's validator)",
+    )
     announce = commands.add_parser("announce-serving", help="write your public endpoint on chain")
     host = commands.add_parser("serve", help="serve z3 checkpoints to validators")
     for command in (announce, host):
@@ -1166,7 +1213,7 @@ def main(argv=None):
                 choices=models.d3_family(),
                 help="base profile to beat in your tier; saved by setup or read from the candidate",
             )
-    for command in (check, commit, body, private, announce, host):
+    for command in (check, commit, body, private, page, announce, host):
         command.add_argument("--wallet-name")
         command.add_argument("--wallet-hotkey", help="hotkey name; the coldkey is never read")
         command.add_argument("--wallet-path")
@@ -1208,8 +1255,8 @@ def main(argv=None):
         args.wallet_path = args.wallet_path or WALLET_PATH
         if args.wallet_name is None or args.wallet_hotkey is None:
             raise ValueError("no wallet configured; run zils-miner setup (or pass --wallet-name)")
-        if args.command in ("commit-body", "report", "announce-serving", "serve"):
-            run = {"commit-body": commit_body, "report": report,
+        if args.command in ("commit-body", "report", "dashboard", "announce-serving", "serve"):
+            run = {"commit-body": commit_body, "report": report, "dashboard": dashboard,
                    "announce-serving": announce_serving, "serve": serve}  # fmt: skip
             run[args.command](args)
             return

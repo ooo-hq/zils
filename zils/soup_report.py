@@ -333,6 +333,26 @@ def relay_validators(relay):
     return hotkeys
 
 
+def dashboard_link(relay, message):
+    """{"url", "expires_at"} from the hosted API at ``relay`` for a signed report request: a
+    private page on the website showing the signing hotkey's report and customer jobs."""
+    from urllib.request import Request
+
+    from . import protocol
+
+    request = Request(
+        relay + RELAY_PATH + "/miner/dashboard",
+        json.dumps(message).encode(),
+        {"Content-Type": "application/json"},
+    )
+    with protocol.opener().open(request, timeout=20) as response:
+        link = json.loads(response.read(64 * 1024))
+    url, expires = (link.get("url"), link.get("expires_at")) if isinstance(link, dict) else (0, 0)
+    if not (isinstance(url, str) and url.startswith("https://") and isinstance(expires, str)):
+        raise ValueError("the hosted API did not return a dashboard link")
+    return {"url": url, "expires_at": expires}
+
+
 def sign(key, validator_hotkey):
     """A miner's report request, signed by its hotkey and bound to one validator."""
     from .runtime import signed
