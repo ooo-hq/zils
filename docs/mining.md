@@ -329,6 +329,22 @@ against the validator's private record. Exam items, labels and per-family scores
 are never published. The round bank is private, so outside re-grading of a round
 is not possible yet.
 
+**What the round bank holds.** Each validator builds its own private bank. It
+mixes held-out rows from public labelled decision datasets with written typed
+decisions (yes/no, Choice and Score). A bank should rank models roughly as the
+public decision leaderboards (the Decision Index and JevBench) do, so a
+validator checks a new bank recipe on reference models with known leaderboard
+places before it grades with it. It should avoid splits that public training
+collections commonly include and check its items for overlap with known
+training data. Validators rotate their banks; no seed sets are published for
+soup banks (the `base-exam-seed` sets belong to the [election exam](base-election.md)),
+and the public round seed picks a subset without revealing any items.
+
+When a validator switches or rotates its bank, every body's category scores
+move with it, usually down when the new items are harder. Seats and the crown
+compare bodies on the same items, so compare your body with the soup and the
+other bodies within a round, not with its scores from before the change.
+
 ### Why a body has no seat
 
 The public record names only the seated bodies. For your own bodies, a validator
