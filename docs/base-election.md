@@ -123,7 +123,7 @@ retrieval and tools families (seed v2) and the six `-k3` reasoning and arts fami
 replaced `-k2` families whose held-out sources ran out. On 27 Oct 2026 two `-k5` families replaced
 `language-known-score-k2` (STS-B) and `arts-known-noul-k3` (TweetEval irony) for the same reason:
 `language-known-score-k5` (Crisscrossed Captions) and `arts-known-noul-k5` (Sarcasm Headlines). Their
-public seed must be published, with receipts in the history, before a sealed draw uses them. Install `requirements/exam.txt`, set
+public seed must be published, with receipts in the history, before a sealed draw uses them. These seeds belong to the election exam only; soup round banks publish none ([model pools](model-pools.md#soup-pools)). Install `requirements/exam.txt`, set
 `ANTHROPIC_API_KEY`, keep `--work` private, then (`--batch` uses the Message Batches API at half price
 and resumes the same batch after a restart):
 

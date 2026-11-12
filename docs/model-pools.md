@@ -237,6 +237,16 @@ list or JSONL of exam cases) and `base` (the vendor parent folder the body chang
 is measured against). The chassis is the pool model's pinned parent. Bank items
 longer than the pool's input cap are left out of its rounds.
 
+The bank is the validator's own and never leaves it. Build it from held-out rows
+of public labelled decision datasets mixed with written typed decisions, avoid
+splits that public training collections commonly include, check the items for
+overlap with known training data, and before grading with a new recipe check
+that it ranks reference models roughly as the Decision Index and JevBench do.
+Rotate the bank regularly (weekly works) and keep earlier banks private too:
+the round seed is public, so only the bank keeps a round's items hidden.
+Category scores in the public record move when the bank changes, so compare
+them within a bank, not across a switch.
+
 Each pool reads only the body commitments addressed to it: `zilsb2:…` for
 `d3-mini` and `zilsb3:<pool>:<body sha256>:<revision>:<repo>` for `d3-lite`,
 `d3-flash` and `d3`. Body parents, byte caps and download deadlines per pool are
