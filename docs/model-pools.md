@@ -491,25 +491,31 @@ listed model). The dry run's two real fine-tunes of a house body
 left about 0.07 to 0.12, so a real fine-tune of the soup or release keeps the
 trainer rate.
 
-Fine-tunes at launch. A seat is credited by leave-one-out: the soup with the
-body minus the soup without it. A fine-tune that takes its base's place in the
-soup is therefore credited with the base's contribution as well as its own. Until
-seats are credited relative to a body's base, the validator applies a stopgap. It
-splits each body's change over the allowed bases (non-negative fit on the
-sketches). If at least half of it is allowed bases, the body is a fine-tune, and
-its bases are those explaining at least 10%:
+<a id="fine-tunes"></a>Fine-tunes. A seat is credited by leave-one-out: the
+soup with the body minus the soup without it. A fine-tune that takes its base's
+place in the soup would be credited with the base's contribution as well as its
+own, so a fine-tune is credited against its base instead. The validator splits
+each body's change over the allowed bases (non-negative fit on the sketches). If
+at least half of it is allowed bases, the body is a fine-tune, and its bases are
+those explaining at least 10%:
 
 - If one of its bases is a listed public model, it is paid at the scout rate.
   Listed models are not graded, so a fine-tune can't be compared with them.
-- Otherwise its seat is paid only if its solo score beats the best of its bases
-  by at least 1.2 points on the round's items. A house body's base score is its
-  solo score; the soup's is the score of the soup the body was admitted against
-  (never a soup built from the body itself); the release's is the chassis
-  score. A base that can't be scored this round leaves the seat unpaid.
+- Otherwise its contribution is the soup's score minus the score of the soup
+  with a base in the fine-tune's place, for the base that leaves it least, and
+  never more than leave-one-out. The seat floor applies to that number. A base
+  that is already a member takes no second place, so leave-one-out stands.
+- A house body stands in as itself and the release as the chassis body. The
+  soup base is the soup the body was admitted against (never a soup built from
+  the body itself). The validator keeps a copy of that soup for as long as a
+  body admitted against it is in the pool, built when such a fine-tune enters
+  the pool. If a copy is missing and one of that soup's bodies is no longer on
+  disk, the body is downloaded again at its committed revision and checked
+  against its hash. A copy is not built while free disk is under 60 GiB.
 
-A gated body keeps its place in the soup; its seat share burns, like a house
-ingredient's. The round's private record lists gated bodies under `gated` with
-the reason.
+A fine-tune whose base can't be scored this round keeps its place in the soup;
+its seat share burns, like a house ingredient's. The round's private record
+lists such bodies under `gated` with the reason.
 
 A known public model's re-upload is also paid at the scout rate: a body whose
 weight-change sketch has cosine at least 0.9 to the sketch of a model on the

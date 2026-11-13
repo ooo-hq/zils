@@ -110,6 +110,56 @@ class LeaveOneOutTest(unittest.TestCase):
             soup_round.leave_one_out(("a",), scripted({("a",): 3.0}))
 
 
+class BaseContributionsTest(unittest.TestCase):
+    """ZIL-117: a fine-tune is credited with what it adds over its base, not the base's value."""
+
+    FULL = {("a", "t"): 60.0, ("a",): 55.0}
+
+    def credit(self, scores, bases, members=("a", "t"), **options):
+        score = scripted({**self.FULL, **scores})
+        options = {"base_score": score, **options}
+        return soup_round.base_contributions(members, score, bases, **options)
+
+    def test_a_member_without_bases_keeps_its_leave_one_out_contribution(self):
+        got, unscored = self.credit({("t",): 50.0}, {})
+        self.assertEqual((got, unscored), ({"a": 10.0, "t": 5.0}, set()))
+
+    def test_a_fine_tune_is_credited_with_the_soup_minus_the_soup_with_its_base_in_its_place(self):
+        got, _ = self.credit({("t",): 50.0, ("a", "b"): 58.5}, {"t": ["b"]})
+        self.assertAlmostEqual(got["t"], 1.5)
+        self.assertAlmostEqual(got["a"], 10.0)  # other members are not affected
+
+    def test_a_base_that_would_hurt_the_soup_does_not_raise_the_credit(self):
+        got, _ = self.credit({("t",): 50.0, ("a", "b"): 54.0}, {"t": ["b"]})
+        self.assertAlmostEqual(got["t"], 5.0)  # leave-one-out: the soup would not have taken b
+
+    def test_the_hardest_of_several_bases_counts(self):
+        scores = {("t",): 50.0, ("a", "b"): 58.5, ("a", "release"): 59.5}
+        got, _ = self.credit(scores, {"t": ["b", "release"]})
+        self.assertAlmostEqual(got["t"], 0.5)
+
+    def test_a_base_already_seated_leaves_the_leave_one_out_contribution(self):
+        got, _ = self.credit({("t",): 50.0}, {"t": ["a"]})
+        self.assertAlmostEqual(got["t"], 5.0)
+
+    def test_a_base_that_cannot_be_scored_is_reported(self):
+        got, unscored = self.credit({("t",): 50.0}, {"t": [None]})
+        self.assertEqual(unscored, {"t"})
+        got, unscored = self.credit({("t",): 50.0}, {"t": ["b"]}, base_score=lambda members: None)
+        self.assertEqual(unscored, {"t"})
+
+    def test_a_one_member_soup_of_a_fine_tune_is_compared_with_its_base_alone(self):
+        score = scripted({("t",): 60.0, ("b",): 58.0})
+        got, _ = soup_round.base_contributions(
+            ("t",), score, {"t": ["b"]}, base_score=score, baseline=40.0
+        )
+        self.assertAlmostEqual(got["t"], 2.0)
+
+    def test_bases_of_bodies_outside_the_soup_are_ignored(self):
+        got, unscored = self.credit({("t",): 50.0}, {"z": ["b"]})
+        self.assertEqual((set(got), unscored), ({"a", "t"}, set()))
+
+
 class SeatWeightsTest(unittest.TestCase):
     T, S, H = soup_round.TRAINER_RATE, soup_round.SCOUT_RATE, soup_round.HOUSE_RATE
 
@@ -200,56 +250,34 @@ class CrownWeightTest(unittest.TestCase):
         self.assertEqual(soup_round.crown_weight({"h": 5.0}, {"h": 0.0}, {"h"}, order_key=str), {})
 
 
-class FineTuneGateTest(unittest.TestCase):
-    """Launch stopgap (ZIL-117): a fine-tune is seated only if it beats the base it came from, and a
-    fine-tune of a listed public model is paid as a scout until base-relative credit exists."""
+class FineTuneBasesTest(unittest.TestCase):
+    """ZIL-117: which members are fine-tunes, and of what. A fine-tune of a listed public model is
+    paid as a scout, since listed models are not graded."""
 
-    def gate(self, shares, solo, **kwargs):
-        options = {"house": {"h"}, "soup_scores": {"b": 50.0}, "release_score": 40.0, **kwargs}
-        return soup_round.fine_tune_gates(shares, solo, **options)
+    def bases(self, shares):
+        return soup_round.fine_tune_bases(shares, house={"h"})
 
-    def test_a_fine_tune_must_beat_its_house_base_by_the_margin(self):
-        shares = {"b": {"house:h": 0.9}}
-        gated, scouts = self.gate(shares, {"b": 61.1, "h": 60.0})
-        self.assertIn("house:h", gated["b"])
-        self.assertEqual(scouts, set())
-        gated, _ = self.gate(shares, {"b": 61.2, "h": 60.0})
-        self.assertEqual(gated, {})
+    def test_a_body_mostly_made_of_a_base_names_it(self):
+        self.assertEqual(self.bases({"b": {"house:h": 0.9}}), ({"b": ["house:h"]}, set()))
 
-    def test_a_soup_retune_must_beat_the_current_soup(self):
-        shares = {"b": {"soup": 0.85, "house:h": 0.05}}
-        self.assertIn("soup", self.gate(shares, {"b": 51.1, "h": 10.0})[0]["b"])
-        self.assertEqual(self.gate(shares, {"b": 51.2, "h": 10.0})[0], {})
+    def test_every_base_explaining_enough_is_named(self):
+        shares = {"b": {"soup": 0.4, "house:h": 0.4, "release": 0.05}}
+        self.assertEqual(self.bases(shares), ({"b": ["soup", "house:h"]}, set()))
 
-    def test_the_bar_is_the_best_of_its_bases(self):
-        shares = {"b": {"soup": 0.4, "house:h": 0.4}}
-        self.assertIn("b", self.gate(shares, {"b": 61.1, "h": 60.0})[0])
-        self.assertEqual(self.gate(shares, {"b": 61.3, "h": 60.0})[0], {})
-
-    def test_a_release_tune_must_beat_the_release(self):
-        shares = {"b": {"release": 0.9}}
-        self.assertIn("release", self.gate(shares, {"b": 41.1})[0]["b"])
-        self.assertEqual(self.gate(shares, {"b": 41.2})[0], {})
-
-    def test_a_body_mostly_its_own_is_not_gated(self):
-        self.assertEqual(self.gate({"b": {"house:h": 0.45}}, {"b": 1.0, "h": 60.0}), ({}, set()))
+    def test_a_body_mostly_its_own_has_no_bases(self):
+        self.assertEqual(self.bases({"b": {"house:h": 0.45}}), ({}, set()))
 
     def test_a_fine_tune_of_listed_models_is_a_scout(self):
-        gated, scouts = self.gate({"b": {"public:open/x": 0.6, "house:h": 0.3}}, {"b": 99.0})
-        self.assertEqual((gated, scouts), ({}, {"b"}))
+        self.assertEqual(self.bases({"b": {"public:open/x": 0.6, "house:h": 0.3}}), ({}, {"b"}))
         # A listed model that is only part of the base still makes the body a scout's.
         mixed = {"b": {"house:h": 0.56, "public:open/x": 0.32}}
-        self.assertEqual(self.gate(mixed, {"b": 99.0, "h": 10.0}), ({}, {"b"}))
+        self.assertEqual(self.bases(mixed), ({}, {"b"}))
         # A listed model under BASE_MIN of a mostly-house body does not.
         slight = {"b": {"house:h": 0.85, "public:open/x": 0.05}}
-        self.assertEqual(self.gate(slight, {"b": 99.0, "h": 10.0}), ({}, set()))
+        self.assertEqual(self.bases(slight), ({"b": ["house:h"]}, set()))
 
-    def test_a_base_that_cannot_be_scored_gates_the_body(self):
-        self.assertIn("b", self.gate({"b": {"soup": 0.9}}, {"b": 99.0}, soup_scores={})[0])
-        self.assertIn("b", self.gate({"b": {"house:h": 0.9}}, {"b": 99.0})[0])  # h not graded
-
-    def test_house_bodies_are_never_gated(self):
-        self.assertEqual(self.gate({"h": {"house:h": 1.0}}, {"h": 60.0}), ({}, set()))
+    def test_house_bodies_have_no_bases(self):
+        self.assertEqual(self.bases({"h": {"house:h": 1.0}}), ({}, set()))
 
 
 class KeepCurrentTest(unittest.TestCase):
@@ -284,59 +312,6 @@ class KeepCurrentTest(unittest.TestCase):
         self.assertEqual(self.keep(("retune",), soup_bar=None), (("retune",), None))
         # A member left the pool and was not graded: the current soup cannot be served again.
         self.assertEqual(self.keep(("retune",), current=("gone", "v2")), (("retune",), None))
-
-
-class BaseSoupScoreTest(unittest.TestCase):
-    """ZIL-192: the score a fine-tune's admission soup is compared at. A soup that cannot be rebuilt
-    because a member was not graded this round (pruned once it left the pool) is replaced by the best
-    still-gradable base, so its fine-tunes are not gated for good."""
-
-    def score(self, members, **kwargs):
-        options = {
-            "solo": {"a": 30.0, "b": 32.0, "h": 25.0},
-            "current": ("a", "b"),
-            "soup_bar": 33.0,
-            "evaluate": lambda members: 31.5,
-            "fallback": lambda: 28.0,
-            **kwargs,
-        }
-        return soup_round.base_soup_score(members, **options)
-
-    def test_the_current_soup_is_its_bar(self):
-        self.assertEqual(self.score(("a", "b")), 33.0)
-
-    def test_a_graded_soup_is_rebuilt_and_scored(self):
-        self.assertEqual(self.score(("a", "h")), 31.5)
-
-    def test_a_soup_with_a_pruned_member_falls_back_to_the_best_gradable_base(self):
-        self.assertEqual(self.score(("a", "gone")), 28.0)
-
-    def test_without_any_gradable_base_it_still_cannot_be_scored(self):
-        self.assertIsNone(self.score(("a", "gone"), fallback=lambda: None))
-
-    def test_a_rebuilt_soup_that_fails_to_grade_still_gates(self):
-        def broken(members):
-            raise ValueError("bad body")
-
-        self.assertIsNone(self.score(("a", "h"), evaluate=broken))
-
-    def test_the_fallback_is_only_computed_when_needed(self):
-        calls = []
-        self.score(("a", "h"), fallback=lambda: calls.append(1))
-        self.assertEqual(calls, [])
-
-    def test_a_fine_tune_of_a_pruned_soup_is_seated_when_it_beats_the_fallback(self):
-        bar = self.score(("a", "gone"))
-        gated, _ = soup_round.fine_tune_gates(
-            {"v9": {"soup": 0.9}}, {"v9": 37.2}, house={"h"}, soup_scores={"v9": bar},
-            release_score=None,
-        )  # fmt: skip
-        self.assertEqual(gated, {})
-        gated, _ = soup_round.fine_tune_gates(
-            {"v9": {"soup": 0.9}}, {"v9": 28.5}, house={"h"}, soup_scores={"v9": bar},
-            release_score=None,
-        )  # fmt: skip
-        self.assertIn("soup", gated["v9"])
 
 
 class SoupWeightsTest(unittest.TestCase):

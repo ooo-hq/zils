@@ -494,7 +494,10 @@ Validators run one soup round per day for each open soup pool:
    ([model pools: scoring](model-pools.md#soup-pools)).
 6. **Greedy soup:** starting from the best single body, add the next best only if
    the soup's score rises by at least **0.5** points; stop at **5** members.
-7. **Contribution:** each member's leave-one-out effect on the soup's score.
+7. **Contribution:** each member's leave-one-out effect on the soup's score. A
+   fine-tune is credited with what it adds over its base instead: the soup's
+   score minus the score of the soup with the base in its place (see
+   [fine-tunes](model-pools.md#fine-tunes)).
 
 ### Pay
 
@@ -676,7 +679,7 @@ and reason codes of the signed reply, listed below.
 | `soup_full` | not_selected | The soup reached its member limit before your body's turn. Bodies are tried in solo-score order. |
 | `current_soup_kept` | not_selected | Your body was in the new soup, but that soup did not beat the current one by the margin. |
 | `below_floor` | seated_unpaid | `contribution` shows your contribution and the floor. |
-| `fine_tune_gate` | seated_unpaid | Your body is a fine-tune that did not beat its base alone; `base` names the kind of base and the margin. |
+| `fine_tune_gate` | seated_unpaid | Your body is a fine-tune and its base could not be scored this round. It is tried again next round. |
 | `unpaid_rate` | seated_unpaid | The body's rate is 0. |
 
 A graded body also shows `alone` (its score alone next to the soup's) and its
