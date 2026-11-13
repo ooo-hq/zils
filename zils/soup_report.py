@@ -142,8 +142,8 @@ EXPLAIN = {
         "add more of what the soup lacks.",
     ),
     "fine_tune_gate": (
-        "Your body is a fine-tune that did not beat its base alone by the margin.",
-        "train until your body alone beats what you started from.",
+        "Your body is a fine-tune, and its base could not be scored this round.",
+        "nothing to change; the base is tried again next round.",
     ),
     "unpaid_rate": ("Your body is in the soup at rate 0, which pays nothing.", None),
 }
@@ -205,7 +205,7 @@ def build(private, claims, owners):
     and ``owners`` {body: hotkey} for the pool's known bodies (None for a house body). An entry is
     {"body_sha256", "stage", "reason"} plus, for a graded body, the numbers behind the stage.
     """
-    from .soup_round import BASE_MARGIN, FLOOR, MARGIN
+    from .soup_round import FLOOR, MARGIN
 
     members = {m["body_sha256"]: m for m in private["members"]}
     solo, screen = private["solo"], private.get("screen", {})
@@ -265,10 +265,7 @@ def build(private, claims, owners):
             if member["seat_weight"] > 0:
                 entry(hotkey, sha, "seated", None, **graded(sha), seat=seat)
             elif sha in private.get("gated", {}):
-                base = re.search(r"base (house|soup|release)", private["gated"][sha])
-                gate = {"base": base[1] if base else None, "needed": BASE_MARGIN}
-                entry(hotkey, sha, "seated_unpaid", "fine_tune_gate", **graded(sha), seat=seat,
-                      gate=gate)  # fmt: skip
+                entry(hotkey, sha, "seated_unpaid", "fine_tune_gate", **graded(sha), seat=seat)
             else:
                 reason = "unpaid_rate" if member["rate"] == 0 else "below_floor"
                 entry(hotkey, sha, "seated_unpaid", reason, **graded(sha), seat=seat)

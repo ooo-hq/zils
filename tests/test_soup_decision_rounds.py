@@ -119,7 +119,8 @@ class DecisionRoundsTest(unittest.TestCase):
 
     def test_one_decision_round_is_exactly_todays_behaviour(self):
         """The same four rounds as origin/main before decision_rounds existed (fixture recorded
-        from that code): every decision, score, trace and hash is unchanged."""
+        from that code): every decision, score, trace and hash is unchanged. Since ZIL-117 a
+        fine-tune's contribution is credited against its base, which grades one more soup."""
         expected = json.loads(FIXTURE.read_text())
         for day, want in enumerate(expected):
             if day == 2:

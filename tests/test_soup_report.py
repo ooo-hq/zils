@@ -49,7 +49,7 @@ def private_round():
         "soup_categories": cats(64.24),
         "screen": {TRIED: 0.61, LATE: 0.55, SCREENED: 0.41},
         "rates": {SEATED: 1.0, THIN: 1.0, GATED: 1.0, TRIED: 1.0, LATE: 0.25},
-        "gated": {GATED: "does not beat its base soup by 1.2 points"},
+        "gated": {GATED: "its base could not be scored this round"},
         "trace": [
             {"try": sorted([SEATED, GATED]), "score": 63.0, "best_before": 62.0,
              "accepted": True},
@@ -114,10 +114,10 @@ class BuildTest(unittest.TestCase):
         self.assertEqual((entry["stage"], entry["reason"]), ("seated_unpaid", "below_floor"))
         self.assertEqual(entry["seat"], {"contribution": 0.5, "floor": 0.8})
 
-    def test_a_gated_fine_tune_names_the_kind_of_base_and_the_margin(self):
+    def test_a_fine_tune_whose_base_could_not_be_scored_is_unpaid(self):
         entry = self.one("5Gated")
         self.assertEqual((entry["stage"], entry["reason"]), ("seated_unpaid", "fine_tune_gate"))
-        self.assertEqual(entry["gate"], {"base": "soup", "needed": 1.2})
+        self.assertNotIn("gate", entry)
 
     def test_a_body_tried_in_the_soup_shows_its_gain_short_of_the_margin(self):
         entry = self.one("5Tried")
@@ -406,10 +406,10 @@ class CommandTest(unittest.TestCase):
         self.assertNotIn("Next:", seated)
         self.assertNotIn("furthest behind", seated.replace("← furthest behind", "", 1))
 
-    def test_an_unpaid_seat_names_its_base_and_a_scout_rate_is_shown(self):
+    def test_an_unpaid_seat_says_why_and_a_scout_rate_is_shown(self):
         gated = self.reply_for("5Gated")
         self.assertIn(f"⚠ body {GATED[:12]}  seated, unpaid", gated)
-        self.assertIn("  base           soup   must beat it by 1.2", gated)
+        self.assertIn("its base could not be scored this round", gated)
         self.assertNotIn("rate", gated)  # the trainer rate, 1.0, is not worth a line
         self.assertIn("  rate           0.25", self.reply_for("5Late"))
 

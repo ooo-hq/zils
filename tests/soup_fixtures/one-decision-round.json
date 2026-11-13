@@ -16,7 +16,7 @@
   "members": [
    {
     "body_sha256": "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
-    "contribution": 48.3,
+    "contribution": 45.92728205128205,
     "hotkey": "5Trainer2",
     "rate": 1.0,
     "seat_weight": 0.16
@@ -61,6 +61,7 @@
   "soup_bar": null,
   "soup_keys": [
    "soup-3e87198e53b27168ef5ed656e86e7aae-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-4f409c284569f40992f6177bcaaa6aa7-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
    "soup-877697eb0a80209dd38e5bc0411542f6-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
    "soup-f84383bfa757e6cc2ee3337820838445-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd"
   ],
@@ -109,7 +110,7 @@
   "members": [
    {
     "body_sha256": "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
-    "contribution": 48.3,
+    "contribution": 47.54841025641026,
     "hotkey": "5Trainer2",
     "rate": 1.0,
     "seat_weight": 0.16
@@ -146,6 +147,7 @@
   "soup_bar": 100.0,
   "soup_keys": [
    "soup-3e87198e53b27168ef5ed656e86e7aae-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-4f409c284569f40992f6177bcaaa6aa7-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
    "soup-877697eb0a80209dd38e5bc0411542f6-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
    "soup-f84383bfa757e6cc2ee3337820838445-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd"
   ],
@@ -194,7 +196,7 @@
   "members": [
    {
     "body_sha256": "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
-    "contribution": 48.3,
+    "contribution": 45.41956923076923,
     "hotkey": "5Trainer2",
     "rate": 1.0,
     "seat_weight": 0.16
@@ -238,6 +240,7 @@
   "soup_bar": 100.0,
   "soup_keys": [
    "soup-3e87198e53b27168ef5ed656e86e7aae-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-4f409c284569f40992f6177bcaaa6aa7-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
    "soup-877697eb0a80209dd38e5bc0411542f6-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
    "soup-e93765ee92c4620d2181ed95d35f30e9-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
    "soup-f84383bfa757e6cc2ee3337820838445-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd"
@@ -297,7 +300,7 @@
   "members": [
    {
     "body_sha256": "7f6e73e4e1ddfc1143ba8f32c6c8b05f3b557684fe67075b4acace092aa8a0b9",
-    "contribution": 48.3,
+    "contribution": 47.28441025641026,
     "hotkey": "5Trainer2",
     "rate": 1.0,
     "seat_weight": 0.16
@@ -337,6 +340,7 @@
   "soup_bar": 100.0,
   "soup_keys": [
    "soup-3e87198e53b27168ef5ed656e86e7aae-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
+   "soup-4f409c284569f40992f6177bcaaa6aa7-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
    "soup-877697eb0a80209dd38e5bc0411542f6-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
    "soup-e93765ee92c4620d2181ed95d35f30e9-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd",
    "soup-f84383bfa757e6cc2ee3337820838445-9cf40b653283c0ff-d3-mini-4.5b-v1-f353a45bfcfd"

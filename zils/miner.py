@@ -595,9 +595,6 @@ def report_text(reply):
             if "seat" in body:
                 seat = body["seat"]
                 numbers.append(row("contribution", seat["contribution"], f"floor {seat['floor']}"))
-            if "gate" in body:
-                gate = body["gate"]
-                numbers.append(row("base", gate["base"], f"must beat it by {gate['needed']}"))
             if "solo" in body:
                 numbers.append(row("alone", body["solo"]["score"], f"soup {body['solo']['soup']}"))
             if "screen" in body:
