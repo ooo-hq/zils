@@ -1341,7 +1341,7 @@ class SoupRunTest(unittest.TestCase):
         self.assertIn(sha, record["new"])
         self.assertEqual(record["rates"][sha], 0.25)
 
-    def test_a_house_tune_is_seated_only_if_it_beats_the_house_body(self):
+    def test_a_house_tune_is_paid_for_what_it_adds_over_the_house_body(self):
         # A strong house body and a tune of it (7% its own change) that takes its soup seat.
         BODIES["strong"] = strengths(0.4, 0.4, 0, 0, 0)
         BODIES["strongtune"] = strengths(0.7, 0.4, 0, 0, 0)
@@ -1350,34 +1350,100 @@ class SoupRunTest(unittest.TestCase):
         house = [
             {"name": "strong", "repo": "open/strong", "revision": REVISION, "body_sha256": None}
         ]
-        for margin, paid in ((0.3, True), (1000.0, False)):
-            with self.subTest(margin=margin), patch.object(soup_round, "BASE_MARGIN", margin):
-                r = Round(self.tmp / f"strongtune-{margin}")
-                r.commits = {2: ("t2", 101), 5: ("strongtune", 150)}
-                record = r.run(config=r.config(house=house))
-                sha = r.sha["strongtune"]
-                members = self.by_body(record)
-                self.assertIn(sha, members)
-                self.assertNotIn(r.sha["strong"], members)  # the tune took the house body's place
-                self.assertEqual(record["rates"][sha], 1.0)
-                self.assertEqual(members[sha]["seat_weight"] > 0, paid)
-                self.assertEqual(sha in record["gated"], not paid)
-                self.assertGreater(members[r.sha["t2"]]["seat_weight"], 0)
+        r = Round(self.tmp / "strongtune")
+        r.commits = {2: ("t2", 101), 5: ("strongtune", 150)}
+        record = r.run(config=r.config(house=house))
+        sha = r.sha["strongtune"]
+        members = self.by_body(record)
+        self.assertIn(sha, members)
+        self.assertNotIn(r.sha["strong"], members)  # the tune took the house body's place
+        self.assertEqual(record["rates"][sha], 1.0)
+        # Credited against the soup with the house body in its place. Leave-one-out would compare
+        # with trainer 2's body alone and credit the tune with the house body's value too.
+        alone = record["soup_score"] - record["solo"][r.sha["t2"]]
+        self.assertGreater(members[sha]["contribution"], soup_round.FLOOR)
+        self.assertLess(members[sha]["contribution"], alone - 1.0)
+        self.assertGreater(members[sha]["seat_weight"], 0)
+        self.assertEqual(record["gated"], {})
+        self.assertGreater(members[r.sha["t2"]]["seat_weight"], 0)
 
-    def test_a_soup_retune_that_does_not_beat_the_soup_is_not_paid_a_seat(self):
-        r, record = self.seated_round("souptune", strengths(0.5, 0.5, 0.8125, 0.375, 0.5))
-        sha = r.sha["souptune"]
-        self.assertLess(record["solo"][sha], record["soup_bar"] + soup_round.BASE_MARGIN)
-        self.assertIn(sha, record["gated"])
-        self.assertIn("soup", record["gated"][sha])
-        self.assertEqual(self.by_body(record).get(sha, {}).get("seat_weight", 0.0), 0.0)
-        # The seated trainers are never compared with a soup built from their own bodies.
-        self.assertNotIn(r.sha["t1"], record["gated"])
-        self.assertNotIn(r.sha["t2"], record["gated"])
-        # Later rounds still compare the retune with the soup it started from.
+    def soup_tune_rounds(self, fetch=None):
+        """Trainer 1 holds the soup alone; hotkey 6's tune of that soup takes its place, then the
+        pool shrinks, so trainer 1's body leaves it and its folder is pruned. Returns the fixture,
+        the later rounds' config and three records."""
+        BODIES["t1tune"] = strengths(1, 1, 0.5, 0, 0)
+        self.addCleanup(BODIES.pop, "t1tune", None)
+        r = Round(self.tmp / "t1tune")
+        r.commits = {1: ("t1", 100)}
         house = [{"name": "weak", "repo": "open/weak", "revision": REVISION, "body_sha256": None}]
-        later = r.run(round_id="d3-mini-2026-11-05", config=r.config(house=house))
-        self.assertIn(sha, later["gated"])
+        config = r.config(house=house)
+        records = [r.run(config=config)]
+        r.commits[6] = ("t1tune", 150)
+        records.append(r.run(round_id="d3-mini-2026-11-04", config=config))
+        config = r.config(house=house, max_pool=2)
+        records.append(r.run(round_id="d3-mini-2026-11-05", config=config))
+        return r, config, records
+
+    def test_a_soup_tune_is_credited_against_a_kept_copy_of_the_soup_it_started_from(self):
+        r, config, records = self.soup_tune_rounds()
+        sha, base = r.sha["t1tune"], r.sha["t1"]
+        copies = r.state / "admission"
+        # Leave-one-out would credit the tune with the whole soup over the stock model; against
+        # the soup it started from it adds one category of five.
+        expected = records[1]["solo"][sha] - records[1]["solo"][base]
+        self.assertLess(expected, 25.0)
+        for record in records[1:]:
+            member = self.by_body(record)[sha]
+            self.assertEqual(set(self.by_body(record)), {sha})
+            self.assertAlmostEqual(member["contribution"], expected)
+            self.assertGreater(member["seat_weight"], 0)
+        self.assertNotIn(base, records[2]["solo"])
+        # Trainer 1's body left the pool and was pruned; the copy of the soup it made stays.
+        self.assertFalse((r.state / "bodies" / base).exists())
+        self.assertEqual(len(list(copies.iterdir())), 1)
+        self.assertEqual(r.fetched.count(base), 1)
+        later = r.run(round_id="d3-mini-2026-11-06", config=config)
+        self.assertAlmostEqual(self.by_body(later)[sha]["contribution"], expected)
+        self.assertEqual(r.fetched.count(base), 1)  # scored from the copy, not fetched again
+
+    def test_a_lost_copy_is_rebuilt_from_the_committed_revisions(self):
+        r, config, _ = self.soup_tune_rounds()
+        sha, base = r.sha["t1tune"], r.sha["t1"]
+        shutil.rmtree(r.state / "admission")  # a fine-tune admitted before copies were kept
+        record = r.run(round_id="d3-mini-2026-11-06", config=config)
+        self.assertEqual(r.fetched.count(base), 2)
+        self.assertEqual(len(list((r.state / "admission").iterdir())), 1)
+        self.assertFalse((r.state / "bodies" / base).exists())  # only the copy is kept
+        member = self.by_body(record)[sha]
+        self.assertLess(member["contribution"], 25.0)
+        self.assertGreater(member["seat_weight"], 0)
+
+    def test_a_base_that_cannot_be_rebuilt_leaves_the_seat_unpaid(self):
+        r, config, _ = self.soup_tune_rounds()
+        sha = r.sha["t1tune"]
+        shutil.rmtree(r.state / "admission")
+
+        def gone(claim, dest):
+            if claim["repo"] == "miner/t1":
+                raise ValueError("the repository was deleted")
+            return r.fetch(claim, dest)
+
+        record = r.run(round_id="d3-mini-2026-11-06", config=config, fetch_body=gone)
+        self.assertIn("could not be scored", record["gated"][sha])
+        self.assertEqual(self.by_body(record)[sha]["seat_weight"], 0.0)
+
+    def test_a_copy_no_pool_body_needs_is_deleted(self):
+        BODIES["big"] = strengths(1, 1, 1, 1, 1)
+        self.addCleanup(BODIES.pop, "big", None)
+        r, config, _ = self.soup_tune_rounds()
+        r.commits[2] = ("big", 160)
+        record = r.run(round_id="d3-mini-2026-11-06", config={**config, "max_pool": 20})
+        self.assertEqual(set(self.by_body(record)), {r.sha["big"]})
+        # The tune lost its seat but is still in the pool, so its base is kept.
+        (copy,) = (r.state / "admission").iterdir()
+        r.run(round_id="d3-mini-2026-11-07", config=config)  # the pool shrinks; the tune leaves
+        self.assertFalse((r.state / "bodies" / r.sha["t1tune"]).exists())
+        self.assertFalse(copy.exists())
 
     def test_a_re_weighted_mix_of_the_seated_bodies_is_refused(self):
         r, record = self.seated_round("reweight", strengths(0.75, 0.75, 0.25, 0.25, 0.25))
@@ -1577,8 +1643,8 @@ class SoupRunTest(unittest.TestCase):
             "near": strengths(0.5, 0, 0.5, 0, 0.0625),  # cosine 0.99 to the public model
             "far": strengths(0.5, -0.5, 0.5, -0.5, 0),  # cosine 0.71: a fine-tune that moved far
         }
-        # "far" still has half its change from the listed model: under the launch stopgap
-        # (ZIL-117) a fine-tune mostly made of listed models is paid as a scout.
+        # "far" still has half its change from the listed model: a fine-tune mostly made of
+        # listed models is paid as a scout, since listed models are not graded.
         for name, rate in (("near", 0.25), ("far", 0.25)):
             with self.subTest(body=name):
                 r = self.known_round(name, **bodies_)
@@ -1600,7 +1666,7 @@ class SoupRunTest(unittest.TestCase):
         sha = r.sha
         self.assertEqual(record["rates"][sha["cousin"]], 0.25)
         self.assertIn(sha["far"], record["pool"])  # admitted, not a copy
-        self.assertEqual(record["rates"][sha["far"]], 0.25)  # launch stopgap (ZIL-117)
+        self.assertEqual(record["rates"][sha["far"]], 0.25)  # listed models are not graded
         self.assertNotIn(sha["near"], record["pool"])
         self.assertIn("explained by earlier", record["refused"]["6"])
         self.assertNotIn(sha["near"], record["rejected"])  # never a hash ban
