@@ -24,15 +24,16 @@ import time
 import traceback
 from pathlib import Path
 
-# The three bars are about 2.5 standard errors of the score differences they test, measured on
-# the 31 Oct 2026 dry run by resampling items (ZIL-131) and scaled to the ~7,500 pooled decision
-# items of a three-round window: a greedy step ~0.23, a leave-one-out contribution ~0.34, a solo
-# score against another solo score ~0.5.
+# The margin and the crown margin are about 2.5 standard errors of the score differences they test,
+# measured on the 31 Oct 2026 dry run by resampling items (ZIL-131) and scaled to the ~7,500 pooled
+# decision items of a three-round window: a greedy step ~0.23, a leave-one-out contribution ~0.34,
+# a solo score against another solo score ~0.5. The seat floor is the margin a body needs to join:
+# about 1.5 standard errors of a contribution, so more seats are paid and more of them by chance.
 MARGIN = 0.5  # minimum soup score gain (points) for greedy to add a body
 MAX_MEMBERS = 5
 SEAT_SHARE = 0.8
 CROWN_SHARE = 0.2
-FLOOR = 0.8  # minimum contribution (points) for a paid seat
+FLOOR = 0.5  # minimum contribution (points) for a paid seat
 CROWN_MARGIN = 1.2  # the crown's solo score over every house body's and the current soup's
 HOUSE_RATE = 0.0  # open models known at launch: seated but unpaid
 SCOUT_RATE = 0.25  # open models released after launch, submitted by a scout

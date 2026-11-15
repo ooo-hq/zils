@@ -37,7 +37,7 @@ class GreedyTest(unittest.TestCase):
         self.assertEqual(soup_round.MAX_MEMBERS, 5)
         self.assertEqual(soup_round.SEAT_SHARE, 0.8)
         self.assertEqual(soup_round.CROWN_SHARE, 0.2)
-        self.assertEqual(soup_round.FLOOR, 0.8)
+        self.assertEqual(soup_round.FLOOR, 0.5)
         self.assertEqual(soup_round.CROWN_MARGIN, 1.2)
         self.assertEqual(
             (soup_round.HOUSE_RATE, soup_round.SCOUT_RATE, soup_round.TRAINER_RATE),
@@ -167,7 +167,7 @@ class SeatWeightsTest(unittest.TestCase):
         # A seat pays SEAT_SHARE / MAX_MEMBERS whoever else is seated; unfilled seats burn.
         got = soup_round.seat_weights(
             ("a", "b", "c"),
-            {"a": 1.0, "b": 0.8, "c": 0.79},
+            {"a": 1.0, "b": 0.5, "c": 0.49},
             {"a": self.T, "b": self.T, "c": self.T},
         )
         self.assertEqual(set(got), {"a", "b"})
@@ -196,7 +196,7 @@ class SeatWeightsTest(unittest.TestCase):
         self.assertAlmostEqual(got["a"], 0.16)
 
     def test_nobody_above_the_floor_pays_nothing(self):
-        got = soup_round.seat_weights(("a", "b"), {"a": 0.7, "b": -1.0}, {"a": self.T, "b": self.T})
+        got = soup_round.seat_weights(("a", "b"), {"a": 0.4, "b": -1.0}, {"a": self.T, "b": self.T})
         self.assertEqual(got, {})
 
     def test_rejects_an_unknown_rate(self):
