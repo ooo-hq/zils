@@ -250,7 +250,7 @@ Each pool's emission share pays **five seats of 16% each** (80% in all) and
 grow when fewer members are seated. Seats are re-earned every round; a displaced
 member stops earning at once.
 
-- **Seats:** each member whose contribution is at least **0.8** points earns one
+- **Seats:** each member whose contribution is at least **0.5** points earns one
   seat, 16% of the pool's share multiplied by its rate. Empty seats, house seats
   and seats below the floor burn.
 - **Fine-tunes (launch rule):** if at least half of your body's change comes from
@@ -482,10 +482,12 @@ z3 version. Members are paid through seats, not as kings.
 
 The member cap (5), pool sizes, change bound (0.15), seat/crown split (80/20), rates
 (1.0 / 0.25 / 0) and release cadence are policy choices made for the launch, not
-tuned results. The greedy margin (0.5), seat floor (0.8) and the crown and
-fine-tune bars (1.2) are about 2.5 standard errors of the differences they test,
-measured by resampling the items of a 3,000-item dry run and scaled to the pooled
-three-round window; a smaller real gain is not paid until the pool has more items.
+tuned results. The greedy margin (0.5) and the crown and fine-tune bars (1.2) are
+about 2.5 standard errors of the differences they test, measured by resampling the
+items of a 3,000-item dry run and scaled to the pooled three-round window; a smaller
+real gain is not paid until the pool has more items. The seat floor (0.5) equals the
+greedy margin. It is about 1.5 standard errors of a contribution, so a seat can be
+paid one round and missed the next on the same body.
 
 ## Customer jobs
 

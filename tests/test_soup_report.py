@@ -34,7 +34,7 @@ def private_round():
         "members": [
             {"hotkey": "5Seated", "body_sha256": SEATED, "rate": 1.0, "contribution": 3.26,
              "seat_weight": 0.16},
-            {"hotkey": "5Thin", "body_sha256": THIN, "rate": 1.0, "contribution": 0.74,
+            {"hotkey": "5Thin", "body_sha256": THIN, "rate": 1.0, "contribution": 0.44,
              "seat_weight": 0.0},
             {"hotkey": "5Gated", "body_sha256": GATED, "rate": 1.0, "contribution": 2.0,
              "seat_weight": 0.0},
@@ -105,14 +105,14 @@ class BuildTest(unittest.TestCase):
         entry = self.one("5Seated")
         self.assertEqual((entry["stage"], entry["reason"]), ("seated", None))
         self.assertEqual(entry["body_sha256"], SEATED)
-        self.assertEqual(entry["seat"], {"contribution": 3.5, "floor": 0.8})
+        self.assertEqual(entry["seat"], {"contribution": 3.5, "floor": 0.5})
         self.assertEqual(entry["solo"], {"score": 62.0, "soup": 64.0})
         self.assertEqual(entry["rate"], 1.0)
 
     def test_a_seat_below_the_floor_is_unpaid_and_never_rounds_up_to_the_floor(self):
         entry = self.one("5Thin")
         self.assertEqual((entry["stage"], entry["reason"]), ("seated_unpaid", "below_floor"))
-        self.assertEqual(entry["seat"], {"contribution": 0.5, "floor": 0.8})
+        self.assertEqual(entry["seat"], {"contribution": 0.0, "floor": 0.5})
 
     def test_a_fine_tune_whose_base_could_not_be_scored_is_unpaid(self):
         entry = self.one("5Gated")
@@ -402,7 +402,7 @@ class CommandTest(unittest.TestCase):
         self.assertIn(f"⚠ body {'8' * 12}  waiting", self.reply_for("5Waiting"))
         seated = self.reply_for("5Seated")
         self.assertIn(f"✓ body {SEATED[:12]}  seated", seated)
-        self.assertIn("  contribution    3.5   floor 0.8", seated)
+        self.assertIn("  contribution    3.5   floor 0.5", seated)
         self.assertNotIn("Next:", seated)
         self.assertNotIn("furthest behind", seated.replace("← furthest behind", "", 1))
 
