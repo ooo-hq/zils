@@ -1186,7 +1186,7 @@ def validator(config, directory, args):
                     args,
                     pools,
                 )
-            from . import soup_pool
+            from . import soup_pool, soup_week
 
             if (
                 chain_state is not None
@@ -1222,6 +1222,10 @@ def validator(config, directory, args):
                     soup_summary = {"error": f"{type(error).__name__}: {error}"[:400]}
                 print(f"validator: soup pools {soup_summary}", flush=True)
                 wire.write_json(work / "soup-pools.json", soup_summary)
+                # The weekly judge (soup_week) is started detached the same way, after Monday's round.
+                weeks = soup_week.epoch(settings_for_round, directory, start=soup_week.background())
+                if weeks:
+                    print(f"validator: soup weeks {weeks}", flush=True)
             report = attach_base_pools(settings_for_round, directory, work, report)
             if features and not (work / "feature-tracks.json").exists():
                 feature_round.epoch(

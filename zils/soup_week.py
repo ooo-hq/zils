@@ -7,6 +7,7 @@ without, and compares the result with the current weekly soup. Every score here 
 night's items does not carry over.
 """
 
+import datetime
 import hashlib
 import hmac
 import json
@@ -17,7 +18,14 @@ import sys
 import time
 from pathlib import Path
 
-from zils.soup_round import _EPS, MARGIN, MAX_MEMBERS, leave_one_out, seat_weights
+from zils.soup_round import (
+    _EPS,
+    HOUSE_RATE,
+    MARGIN,
+    MAX_MEMBERS,
+    base_contributions,
+    seat_weights,
+)
 
 JOIN = MARGIN  # a left-out body joins if it lifts the soup by this much, as at night
 DROP = MARGIN  # a member goes if the soup is this much better without it
@@ -25,6 +33,8 @@ TRIES = 2  # left-out bodies tried each week
 SEAT_BAR = 0.5  # minimum contribution (points) on the sealed set for a weekly seat
 CHUNK = 5000  # sealed items graded per hold of the GPU lock, so customer grading takes turns
 CAPACITY_TRIES = 120  # GPU-busy retries (one poll apart) before the judge gives up on a chunk
+JUDGE_WEEKDAY = 0  # the judge takes the nightly round whose day is a Monday
+MAX_STARTS = 5  # starts of one week's judge before the week is skipped (it may give way and resume)
 
 
 def add_left_out(members, left_out, evaluate, *, margin=JOIN, tries=TRIES, max_members=MAX_MEMBERS):
@@ -116,7 +126,7 @@ class Missing(Exception):
 def soup_key(members, scope):
     """The prediction-cache key of a soup of ``members``, as ``soup_round.run`` names it."""
     members = tuple(sorted(members))
-    if len(members) == 1:
+    if len(members) == 1 and not members[0].startswith("admission-"):
         return f"{members[0][:32]}-{scope}"
     return f"soup-{hashlib.sha256('+'.join(members).encode()).hexdigest()[:32]}-{scope}"
 
@@ -147,9 +157,11 @@ def decide(
     pool's {body: {"hotkey"}}, ``weekly`` last week's record (None before the first weekly soup).
 
     A candidate that passes (``judge``) is the new weekly soup: each member's contribution is the
-    soup's sealed score minus the score without it (``soup_round.leave_one_out``), and a
-    contribution of at least ``floor`` holds a seat. Otherwise last week's soup and seats carry
-    over unchanged ("kept_from"); with no weekly soup yet, nobody is seated.
+    soup's sealed score minus the score without it, or for a fine-tune (the round's
+    ``fine_tunes``) minus the score with its base in its place (``soup_round.base_contributions``),
+    and a contribution of at least ``floor`` holds a seat. A fine-tune whose base the round could
+    not build is "gated" and holds none. Otherwise last week's soup and seats carry over unchanged
+    ("kept_from"); with no weekly soup yet, nobody is seated.
     """
     candidate = tuple(sorted(m["body_sha256"] for m in private["members"]))
     current = tuple(m["body_sha256"] for m in weekly["members"]) if weekly else None
@@ -167,11 +179,18 @@ def decide(
         "trace": result["trace"],
     }
     if not result["passed"]:
-        kept = {"kept_from": weekly.get("kept_from", weekly["week_id"])} if weekly else {}
-        return {**record, "members": weekly["members"] if weekly else [], **kept}
+        if not weekly:
+            return {**record, "members": []}
+        kept = {k: weekly[k] for k in ("soup_sha256", "temperature") if k in weekly}
+        kept["kept_from"] = weekly.get("kept_from", weekly["week_id"])
+        return {**record, "members": weekly["members"], **kept}
     members, rates = result["members"], private["rates"]
-    contributions = leave_one_out(members, evaluate, baseline=stock)
-    seats = seat_weights(members, contributions, {m: rates[m] for m in members}, floor=floor)
+    contributions, unscored = base_contributions(
+        members, evaluate, private.get("fine_tunes", {}), base_score=evaluate, baseline=stock
+    )
+    paid = {**{m: rates[m] for m in members}, **dict.fromkeys(unscored, HOUSE_RATE)}
+    seats = seat_weights(members, contributions, paid, floor=floor)
+    record["gated"] = dict.fromkeys(sorted(unscored), "its base could not be scored")
     record["members"] = [
         {
             "hotkey": known[m]["hotkey"],
@@ -183,6 +202,14 @@ def decide(
         for m in members
     ]
     return record
+
+
+def soup_folder(root, record):
+    """Where the files of ``record``'s soup are kept under the pool's ``weeks`` folder: the week
+    that made it saved it (``_child`` "keep"). None when the week has no soup."""
+    if not record["members"]:
+        return None
+    return Path(root) / record.get("kept_from", record["week_id"]) / "soup"
 
 
 RELEASE = "release"  # the pool's served model as a judge "member": its score is the stock score
@@ -210,13 +237,29 @@ def run_week(week_id, private, known, weekly, cases, cache, *, scope, score, bar
     return None
 
 
+class Reread:
+    """The prediction cache under ``root``, read from disk on every ``get``: the grading child
+    writes it in another process, and a ``PredictionCache`` keeps what it first read."""
+
+    def __init__(self, root):
+        self.root = root
+
+    def get(self, key, ids):
+        from . import soup_grade
+
+        return soup_grade.PredictionCache(self.root).get(key, ids)
+
+
 def sources(members, state_dir, chassis, *, rename):
-    """``soup.build`` sources for a judge soup: each body's folder under the pool's state with its
-    tensor rename, and the chassis itself for the release."""
+    """``soup.build`` sources for a judge soup, as the round's: each body's folder under the pool's
+    state with its tensor rename, the chassis itself for the release, and the kept copy of an
+    admission soup a fine-tune is credited against."""
     out = []
     for member in members:
         if member == RELEASE:
             out.append((Path(chassis), None))
+        elif member.startswith("admission-"):
+            out.append((Path(state_dir) / "admission" / member.removeprefix("admission-"), None))
         else:
             folder = Path(state_dir) / "bodies" / member
             out.append((folder, rename(folder)))
@@ -251,8 +294,8 @@ def _child(request, root, step, *names):
     """One step of the judge in the GPU runtime (no launcher imports torch): ``cases`` fits the
     sealed set to the pool's token cap and names the cache scope, ``build`` writes a soup's
     checkpoint, ``grade`` answers its next ``CHUNK`` ungraded items and removes the checkpoint
-    once none are left."""
-    from . import d3, soup, soup_grade, soup_pool, soup_round
+    once none are left, ``keep`` saves the week's soup at its fitted temperature."""
+    from . import d3, models, soup, soup_grade, soup_pool, soup_round
 
     model, state_dir = request["config"]["model"]["id"], Path(request["state_dir"])
     if step == "cases":
@@ -267,12 +310,24 @@ def _child(request, root, step, *names):
         )
         _write(root / "scope.json", {"scope": scope, "sealed_sha256": key, "items": len(cases)})
         return
+    chassis = d3.pinned_base_path(model=model)
+    if step == "keep":  # WEEK_ID TEMPERATURE MEMBER...: the soup as served, like a round's
+        final, partial = root / names[0] / "soup", root / "tmp" / f"keep-{names[0]}"
+        if not final.exists():
+            shutil.rmtree(partial, ignore_errors=True)
+            partial.parent.mkdir(parents=True, exist_ok=True)
+            bodies = sources(names[2:], state_dir, chassis, rename=soup_round._rename)
+            soup.build(partial, chassis, bodies, model=model, temperature=float(names[1]))
+            final.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(partial, final)
+        kept = {"soup_sha256": soup.soup_hash(final), "temperature": models.temperature(final)}
+        _write(root / names[0] / "soup.json", kept)
+        return
     key, checkpoint = names[0], root / "tmp" / names[0]
     if step == "build":
         partial = checkpoint.with_name(checkpoint.name + ".partial")
         shutil.rmtree(partial, ignore_errors=True)
         partial.parent.mkdir(parents=True, exist_ok=True)
-        chassis = d3.pinned_base_path(model=model)
         soup.build(partial, chassis, sources(names[1:], state_dir, chassis, rename=soup_round._rename), model=model)  # fmt: skip
         os.replace(partial, checkpoint)
         return
@@ -304,7 +359,8 @@ def _round_running(directory):
 def run(path, stop=None):
     """The weekly judge for the request at ``path`` (validator python). Grades on the sealed set
     under the shared compute lock, a chunk at a time, and writes ``weeks/<week_id>/record.json``
-    and ``weeks/week.json`` under the pool's state. It gives way, to be started again later, when a
+    and ``weeks/week.json`` under the pool's state, with a new weekly soup's files beside the
+    record (``soup_folder``). It gives way, to be started again later, when a
     nightly round runs or the UTC time ``stop`` is reached. Nothing here sets weights: the record
     is read by whoever pays on it."""
     from . import runtime, soup_grade, soup_round
@@ -347,15 +403,14 @@ def run(path, stop=None):
                 time.sleep(max(1, runner["poll"]))
         raise RuntimeError("the weekly judge found no GPU capacity")
 
-    decision = json.loads((state_dir / "decision.json").read_text())
-    weekly = root / "week.json"
+    weekly, cache = root / "week.json", Reread(root / "cache")
     record = run_week(
         week_id,
-        json.loads((state_dir / "rounds" / decision["round_id"] / "private.json").read_text()),
+        json.loads((state_dir / "rounds" / request["round_id"] / "private.json").read_text()),
         json.loads((state_dir / "pool.json").read_text())["bodies"],
         json.loads(weekly.read_text()) if weekly.exists() else None,
         cases,
-        soup_grade.PredictionCache(root / "cache"),
+        cache,
         scope=scope["scope"],
         score=lambda cases, rows: soup_grade.score(cases, rows, scoring=scoring, secret=secret),
         bar=request["bar"],
@@ -365,6 +420,13 @@ def run(path, stop=None):
     if record is None:
         print("soup week: stopped to give way; start it again to resume", flush=True)
         return None
+    if record["passed"]:  # save the new soup, served at the temperature its sealed answers fit
+        ids = [c["id"] for c in cases]
+        rows = cache.get(soup_key(record["candidate"], scope["scope"]), ids)
+        fitted = soup_grade.evaluate(cases, [rows[i] for i in ids], scoring=scoring, secret=secret)
+        with log.open("ab") as output:
+            subprocess.run(child("keep", week_id, repr(fitted["temperature"]), *record["candidate"]), stdout=output, stderr=subprocess.STDOUT, check=True)  # fmt: skip
+        record.update(json.loads((root / week_id / "soup.json").read_text()))
     record = {**record, "pool_id": config["pool_id"], **scope}
     _write(done, record)
     _write(weekly, record)
@@ -378,6 +440,144 @@ def run(path, stop=None):
     return record
 
 
+def week_of(day):
+    """(week id, judge day) for a nightly round's ``day`` (an ISO date): a week is named after the
+    judge weekday at or before that day."""
+    date = datetime.date.fromisoformat(day)
+    judged = date - datetime.timedelta(days=(date.weekday() - JUDGE_WEEKDAY) % 7)
+    year, week, _ = judged.isocalendar()
+    return f"{year}-w{week:02d}", judged.isoformat()
+
+
+def weeks(config, directory):
+    """The validator's local ``soup_weeks`` setting, {pool: {"sealed": the sealed set's path,
+    resolved against the validator ``directory``, "bar": points a new soup must gain on the current
+    weekly soup}}. Without it no pool has a weekly judge."""
+    value = config.get("soup_weeks", {})
+    if not isinstance(value, dict):
+        raise ValueError("soup_weeks must map pools to their sealed set and bar")
+    out = {}
+    for pool, entry in value.items():
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"sealed", "bar"}
+            or not isinstance(entry["sealed"], str)
+            or not entry["sealed"]
+            or type(entry["bar"]) not in (int, float)
+            or entry["bar"] < 0
+        ):
+            raise ValueError("a soup_weeks entry needs sealed (a path) and bar (0 or more)")
+        sealed = str((Path(directory) / entry["sealed"]).resolve())
+        out[pool] = {"sealed": sealed, "bar": float(entry["bar"])}
+    return out
+
+
+def new_request(nightly, sealed, week_id, bar):
+    """The judge's request for the nightly round whose request is ``nightly``: that round's pool
+    config, state and runner, pinned to its ``round_id``."""
+    return {
+        "config": nightly["config"],
+        "state_dir": nightly["state_dir"],
+        "runner": nightly["runner"],
+        "round_id": nightly["round_id"],
+        "sealed": str(Path(sealed).resolve()),
+        "week_id": week_id,
+        "bar": float(bar),
+    }
+
+
+def _judge_running(directory):
+    """The pool whose weekly judge is running now under the validator ``directory``, or None."""
+    from . import soup_pool
+
+    for path in sorted(Path(directory, "base-pools").glob("*/soup/weeks/job.json")):
+        try:
+            job = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if soup_pool._alive(job.get("pid"), job.get("pid_started")):
+            return path.parent.parent.parent.name
+    return None
+
+
+def epoch(config, directory, *, start):
+    """Start each ``soup_weeks`` pool's weekly judge when it is due; never waits for one. Returns
+    {pool: summary}.
+
+    The judge is due once the pool's latest finished nightly round is a Monday's and that week has
+    no record. ``start(pool, request path)`` starts it and returns its process id (or None). It runs
+    one pool at a time and never beside a nightly round; one that gave way or died is started again
+    on a later pass, up to ``MAX_STARTS`` times. If a later round finishes first the week is missed
+    and the current weekly soup stays, as it does after any failure reported here."""
+    from . import soup_pool
+
+    try:
+        pools = weeks(config, directory)
+    except ValueError as error:
+        return {"error": f"{type(error).__name__}: {error}"[:400]}
+    summary = {}
+    for pool, entry in pools.items():
+        try:
+            latest = soup_pool.decision(directory, pool)
+            if latest is None:
+                continue
+            round_id, state = latest["round_id"], soup_pool.state_dir(directory, pool)
+            week_id, day = week_of(round_id.removeprefix(f"{pool}-"))
+            summary[pool], root = {"week_id": week_id}, state / "weeks"
+            if (root / week_id / "record.json").exists():
+                summary[pool]["recorded"] = True
+                continue
+            job = (
+                json.loads((root / "job.json").read_text()) if (root / "job.json").exists() else {}
+            )
+            starts = job.get("starts", 0) if job.get("week_id") == week_id else 0
+            if starts and soup_pool._alive(job.get("pid"), job.get("pid_started")):
+                summary[pool]["running"] = True
+            elif round_id != f"{pool}-{day}":
+                summary[pool]["missed"] = "a later round finished before the judge did"
+            elif not soup_pool.recorded(directory, pool, round_id):
+                summary[pool]["waiting"] = "the round is not recorded yet"
+            elif starts >= MAX_STARTS:
+                raise RuntimeError(f"week skipped after {starts} starts")
+            elif _round_running(directory):
+                summary[pool]["waiting"] = "a nightly round is running"
+            elif other := _judge_running(directory):
+                summary[pool]["waiting"] = f"the {other} judge is running"
+            else:
+                nightly = json.loads((state / f"request-{round_id}.json").read_text())
+                path = root / f"request-{week_id}.json"
+                _write(path, new_request(nightly, entry["sealed"], week_id, entry["bar"]))
+                job = {"week_id": week_id, "starts": starts + 1}
+                _write(root / "job.json", {**job, "pid": None})  # a start counts even if it fails
+                pid = start(pool, path)
+                started = soup_pool._started(pid) if pid else None
+                _write(root / "job.json", {**job, "pid": pid, "pid_started": started})
+                summary[pool]["started"] = True
+        except Exception as error:  # one pool's judge must never stop the validator's weights
+            summary.setdefault(pool, {})["error"] = f"{type(error).__name__}: {error}"[:400]
+    return summary
+
+
+def background():
+    """A ``start`` for the validator loop: a detached ``python -m zils.soup_week --run <request>``
+    (``run``), its output in the pool's ``weeks/week.log``. Returns its pid."""
+    from . import ROOT
+
+    def start(pool, path):
+        with (Path(path).parent / "week.log").open("ab") as output:
+            process = subprocess.Popen(
+                [sys.executable, "-m", "zils.soup_week", "--run", str(path)],
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                cwd=ROOT,
+            )
+        return process.pid
+
+    return start
+
+
 def main(argv=None):
     """``--new NIGHTLY_REQUEST SEALED WEEK_ID BAR`` writes a judge request beside the pool's weeks;
     ``--run REQUEST [HH:MM]`` runs the judge until done or the UTC stop time; ``REQUEST STEP ...``
@@ -385,16 +585,8 @@ def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv[0] == "--new":
         nightly = json.loads(Path(argv[1]).read_text())
-        request = {
-            "config": nightly["config"],
-            "state_dir": nightly["state_dir"],
-            "runner": nightly["runner"],
-            "sealed": str(Path(argv[2]).resolve()),
-            "week_id": argv[3],
-            "bar": float(argv[4]),
-        }
         path = Path(nightly["state_dir"]) / "weeks" / f"request-{argv[3]}.json"
-        _write(path, request)
+        _write(path, new_request(nightly, *argv[2:5]))
         print(path)
     elif argv[0] == "--run":
         run(argv[1], argv[2] if len(argv) > 2 else None)
