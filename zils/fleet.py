@@ -226,10 +226,11 @@ def main(argv=None):
 
             if "chain" not in config:
                 raise ValueError("model pools require a chain fleet config")
-            from . import soup_pool
+            from . import soup_pool, soup_week
 
             model_pools.validate(config["base_pools"])
             soup_pool.grading(config)  # the validator's local soup_grading setting
+            soup_week.weeks(config, ".")  # and its local soup_weeks setting
         if "feature_tracks" in config:
             from . import feature_tracks
 

@@ -1366,6 +1366,8 @@ class SoupRunTest(unittest.TestCase):
         self.assertGreater(members[sha]["seat_weight"], 0)
         self.assertEqual(record["gated"], {})
         self.assertGreater(members[r.sha["t2"]]["seat_weight"], 0)
+        # Recorded for the weekly judge, which credits the tune the same way on its own items.
+        self.assertEqual(record["fine_tunes"], {sha: [r.sha["strong"]]})
 
     def soup_tune_rounds(self, fetch=None):
         """Trainer 1 holds the soup alone; hotkey 6's tune of that soup takes its place, then the
@@ -1398,6 +1400,10 @@ class SoupRunTest(unittest.TestCase):
             self.assertAlmostEqual(member["contribution"], expected)
             self.assertGreater(member["seat_weight"], 0)
         self.assertNotIn(base, records[2]["solo"])
+        self.assertEqual(records[0]["fine_tunes"], {})
+        self.assertEqual(records[1]["fine_tunes"], {sha: [base]})
+        copy = "admission-" + soup_round.admission_key((base,))
+        self.assertEqual(records[2]["fine_tunes"], {sha: [copy]})
         # Trainer 1's body left the pool and was pruned; the copy of the soup it made stays.
         self.assertFalse((r.state / "bodies" / base).exists())
         self.assertEqual(len(list(copies.iterdir())), 1)

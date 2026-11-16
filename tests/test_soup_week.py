@@ -1,9 +1,13 @@
 """Weekly soup judge: which soup becomes the week's soup (pure functions, ZIL-204)."""
 
 import hashlib
+import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
 
-from zils import soup_round, soup_week
+from zils import soup_grade, soup_pool, soup_round, soup_week
 
 
 def scripted(scores, seen=None):
@@ -201,6 +205,33 @@ class DecideTest(unittest.TestCase):
         self.assertAlmostEqual(b["contribution"], 0.4)
         self.assertEqual(b["seat_weight"], 0.0)  # under the 0.5 bar
 
+    def test_a_fine_tune_is_credited_against_the_soup_with_its_base_in_its_place(self):
+        # a is a tune of h (the round's record says so): leave-one-out would credit it 2.0
+        record = private(["a", "b"], {"a": 40.0, "b": 39.0, "h": 40.0})
+        record["fine_tunes"] = {"a": ["h"]}
+        scores = {("a", "b"): 41.0, ("a",): 40.6, ("b",): 39.0, ("b", "h"): 40.7,
+                  ("a", "b", "h"): 41.0}  # fmt: skip
+        week = soup_week.decide(
+            "2026-w48", record, KNOWN, None, scripted(scores), bar=0.5, stock=30.0
+        )
+        a, b = week["members"]
+        self.assertAlmostEqual(a["contribution"], 0.3)
+        self.assertEqual(a["seat_weight"], 0.0)
+        self.assertAlmostEqual(b["contribution"], 0.4)
+        self.assertEqual(week["gated"], {})
+
+    def test_a_fine_tune_whose_base_the_round_could_not_build_holds_no_seat(self):
+        record = private(["a", "b"], {"a": 40.0, "b": 39.0})
+        record["fine_tunes"] = {"a": [None]}
+        scores = {("a", "b"): 41.0, ("a",): 40.6, ("b",): 39.0}
+        week = soup_week.decide(
+            "2026-w48", record, KNOWN, None, scripted(scores), bar=0.5, stock=30.0
+        )
+        a, _ = week["members"]
+        self.assertAlmostEqual(a["contribution"], 2.0)
+        self.assertEqual(a["seat_weight"], 0.0)
+        self.assertEqual(week["gated"], {"a": "its base could not be scored"})
+
     def test_a_one_member_soup_is_credited_against_stock(self):
         record = soup_week.decide(
             "2026-w48", private(["a"], {"a": 40.0}), KNOWN, None, scripted({("a",): 40.0}),
@@ -213,6 +244,8 @@ class DecideTest(unittest.TestCase):
             "week_id": "2026-w47",
             "members": [{"hotkey": "hk-x", "body_sha256": "x", "rate": 1.0, "contribution": 0.9,
                          "seat_weight": 0.16}],
+            "soup_sha256": "f" * 64,
+            "temperature": 1.25,
         }  # fmt: skip
         scores = {("a", "b"): 40.2, ("a",): 40.0, ("b",): 39.0, ("x",): 40.0}
         record = soup_week.decide(
@@ -223,6 +256,9 @@ class DecideTest(unittest.TestCase):
         self.assertEqual(record["members"], last["members"])
         self.assertEqual(record["kept_from"], "2026-w47")
         self.assertEqual(record["candidate"], ["a", "b"])
+        # the kept soup's files stay where the week that made them saved them
+        self.assertEqual((record["soup_sha256"], record["temperature"]), ("f" * 64, 1.25))
+        self.assertEqual(str(soup_week.soup_folder("/w", record)), "/w/2026-w47/soup")
 
     def test_no_weekly_soup_yet_and_a_failing_candidate_seats_nobody(self):
         scores = {("a", "b"): 30.2, ("a",): 30.0, ("b",): 29.0}
@@ -231,6 +267,14 @@ class DecideTest(unittest.TestCase):
             bar=0.5, stock=30.0,
         )  # fmt: skip
         self.assertEqual((record["passed"], record["members"]), (False, []))
+        self.assertIsNone(soup_week.soup_folder("/w", record))
+
+    def test_a_passing_weeks_soup_is_saved_under_its_own_week(self):
+        record = soup_week.decide(
+            "2026-w48", private(["a"], {"a": 40.0}), KNOWN, None, scripted({("a",): 40.0}),
+            bar=0.5, stock=30.0,
+        )  # fmt: skip
+        self.assertEqual(str(soup_week.soup_folder("/w", record)), "/w/2026-w48/soup")
 
 
 class FakeCache:
@@ -293,6 +337,16 @@ class RunWeekTest(unittest.TestCase):
             self.run_week(chunk=0)
 
 
+class BaseKeyTest(unittest.TestCase):
+    def test_a_kept_copy_of_an_admission_soup_has_its_own_key_and_folder(self):
+        copy = "admission-" + "c" * 32
+        other = "admission-" + "c" * 31 + "d"
+        self.assertNotEqual(soup_week.soup_key((copy,), "s"), soup_week.soup_key((other,), "s"))
+        self.assertTrue(soup_week.soup_key((copy,), "s").startswith("soup-"))
+        got = soup_week.sources((copy,), "/state", "/chassis", rename=lambda folder: "r")
+        self.assertEqual([(str(f), r) for f, r in got], [("/state/admission/" + "c" * 32, None)])
+
+
 class SourcesTest(unittest.TestCase):
     def test_the_release_is_the_chassis_and_a_body_is_its_folder_with_its_rename(self):
         got = soup_week.sources(
@@ -309,6 +363,159 @@ class WindowTest(unittest.TestCase):
         self.assertTrue(soup_week.past("23:30", now=(23, 30)))
         self.assertFalse(soup_week.past("23:30", now=(9, 5)))
         self.assertFalse(soup_week.past(None, now=(23, 59)))
+
+
+class WeekOfTest(unittest.TestCase):
+    def test_the_week_is_named_after_its_monday_round(self):
+        self.assertEqual(soup_week.week_of("2026-11-16"), ("2026-w47", "2026-11-16"))
+        self.assertEqual(soup_week.week_of("2026-11-22"), ("2026-w47", "2026-11-16"))
+        self.assertEqual(soup_week.week_of("2026-11-23"), ("2026-w48", "2026-11-23"))
+        self.assertEqual(soup_week.week_of("2027-01-01"), ("2026-w53", "2026-12-28"))
+
+
+class WeeksSettingTest(unittest.TestCase):
+    def test_no_setting_means_no_weekly_judge(self):
+        self.assertEqual(soup_week.weeks({}, "/v"), {})
+
+    def test_a_pool_names_its_sealed_set_and_pass_bar(self):
+        config = {"soup_weeks": {"d3-mini": {"sealed": "sealed/set.jsonl", "bar": 0.5}}}
+        self.assertEqual(
+            soup_week.weeks(config, "/v"),
+            {"d3-mini": {"sealed": str(Path("/v/sealed/set.jsonl").resolve()), "bar": 0.5}},
+        )
+
+    def test_anything_else_is_refused(self):
+        for value in (
+            [],
+            {"d3-mini": {"sealed": "s.jsonl"}},
+            {"d3-mini": {"sealed": "s.jsonl", "bar": -1}},
+            {"d3-mini": {"sealed": "", "bar": 0.5}},
+            {"d3-mini": {"sealed": "s.jsonl", "bar": 0.5, "weekday": 2}},
+        ):
+            with self.assertRaises(ValueError):
+                soup_week.weeks({"soup_weeks": value}, "/v")
+
+
+class EpochTest(unittest.TestCase):
+    """The validator's pass starts Monday's judge once the Monday round is in, and only then."""
+
+    POOL, MONDAY = "d3-mini", "d3-mini-2026-11-16"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.directory = Path(tmp.name)
+        self.config = {"soup_weeks": {self.POOL: {"sealed": "sealed.jsonl", "bar": 0.5}}}
+        self.started = []
+        self.finish(self.POOL, self.MONDAY)
+
+    def state(self, pool):
+        return self.directory / "base-pools" / pool / "soup"
+
+    def finish(self, pool, round_id):
+        """A finished nightly round: its request, the pool's decision and the ledger line."""
+        state = self.state(pool)
+        state.mkdir(parents=True, exist_ok=True)
+        nightly = {"round_id": round_id, "config": {"pool_id": pool}, "state_dir": str(state),
+                   "runner": {"device": "cpu", "poll": 1, "runtime_python": "python"}}  # fmt: skip
+        (state / f"request-{round_id}.json").write_text(json.dumps(nightly))
+        (state / "decision.json").write_text(json.dumps({"round_id": round_id}))
+        with (state / "uses.jsonl").open("a") as ledger:
+            ledger.write(json.dumps({"round": round_id}) + "\n")
+
+    def job(self, path, **job):
+        me = os.getpid()  # a process that is certainly running: this one
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"pid": me, "pid_started": soup_pool._started(me), **job}))
+
+    def epoch(self, start=None):
+        def record(pool, path):
+            self.started.append((pool, path))
+            return None
+
+        return soup_week.epoch(self.config, self.directory, start=start or record)
+
+    def test_the_judge_starts_on_the_monday_round_with_a_request_pinned_to_it(self):
+        summary = self.epoch()
+        self.assertEqual(summary, {self.POOL: {"week_id": "2026-w47", "started": True}})
+        ((pool, path),) = self.started
+        self.assertEqual(pool, self.POOL)
+        self.assertEqual(path, self.state(self.POOL) / "weeks" / "request-2026-w47.json")
+        request = json.loads(path.read_text())
+        self.assertEqual(
+            (request["week_id"], request["round_id"], request["bar"]),
+            ("2026-w47", self.MONDAY, 0.5),
+        )
+        self.assertEqual(request["sealed"], str((self.directory / "sealed.jsonl").resolve()))
+        self.assertEqual(request["runner"]["runtime_python"], "python")
+        job = json.loads((self.state(self.POOL) / "weeks" / "job.json").read_text())
+        self.assertEqual((job["week_id"], job["starts"]), ("2026-w47", 1))
+
+    def test_a_recorded_week_is_not_judged_again(self):
+        record = self.state(self.POOL) / "weeks" / "2026-w47" / "record.json"
+        record.parent.mkdir(parents=True)
+        record.write_text("{}")
+        self.assertEqual(self.epoch(), {self.POOL: {"week_id": "2026-w47", "recorded": True}})
+        self.assertEqual(self.started, [])
+
+    def test_no_setting_starts_nothing(self):
+        self.config = {}
+        self.assertEqual(self.epoch(), {})
+        self.assertEqual(self.started, [])
+
+    def test_a_later_round_means_the_week_was_missed_and_last_weeks_soup_stays(self):
+        self.finish(self.POOL, "d3-mini-2026-11-17")
+        summary = self.epoch()
+        self.assertIn("missed", summary[self.POOL])
+        self.assertEqual(self.started, [])
+
+    def test_a_round_whose_ledger_line_is_not_written_yet_is_not_judged(self):
+        (self.state(self.POOL) / "uses.jsonl").write_text("")
+        self.assertIn("waiting", self.epoch()[self.POOL])
+        self.assertEqual(self.started, [])
+
+    def test_a_running_judge_is_only_reported(self):
+        self.job(self.state(self.POOL) / "weeks" / "job.json", week_id="2026-w47", starts=1)
+        self.assertEqual(self.epoch()[self.POOL], {"week_id": "2026-w47", "running": True})
+        self.assertEqual(self.started, [])
+
+    def test_the_judge_waits_while_a_nightly_round_runs(self):
+        self.job(self.state("d3-lite") / "job.json", round_id="d3-lite-2026-11-17")
+        self.assertIn("waiting", self.epoch()[self.POOL])
+        self.assertEqual(self.started, [])
+
+    def test_the_judge_waits_for_another_pools_judge(self):
+        self.job(self.state("d3-lite") / "weeks" / "job.json", week_id="2026-w47", starts=1)
+        self.assertIn("waiting", self.epoch()[self.POOL])
+        self.assertEqual(self.started, [])
+
+    def test_a_judge_that_gave_way_is_started_again_up_to_a_limit(self):
+        for starts in range(1, soup_week.MAX_STARTS + 1):
+            self.epoch()
+            self.assertEqual(len(self.started), starts)
+        summary = self.epoch()
+        self.assertIn("skipped", summary[self.POOL]["error"])
+        self.assertEqual(len(self.started), soup_week.MAX_STARTS)
+
+    def test_a_failure_is_reported_and_never_raised(self):
+        def broken(pool, path):
+            raise OSError("no such python")
+
+        self.assertIn("OSError", self.epoch(start=broken)[self.POOL]["error"])
+        self.config = {"soup_weeks": {self.POOL: {"sealed": "s.jsonl"}}}
+        self.assertIn("ValueError", self.epoch()["error"])
+
+
+class RereadTest(unittest.TestCase):
+    def test_answers_written_by_another_process_are_seen_on_the_next_read(self):
+        # the grading child appends to the cache files; a PredictionCache held open would not see it
+        with tempfile.TemporaryDirectory() as root:
+            cache = soup_week.Reread(root)
+            self.assertEqual(cache.get("k", ["i1", "i2"]), {})
+            soup_grade.PredictionCache(root).put("k", [{"id": "i1"}])
+            self.assertEqual(cache.get("k", ["i1", "i2"]), {"i1": {"id": "i1"}})
+            soup_grade.PredictionCache(root).put("k", [{"id": "i2"}])
+            self.assertEqual(sorted(cache.get("k", ["i1", "i2"])), ["i1", "i2"])
 
 
 if __name__ == "__main__":
