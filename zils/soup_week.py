@@ -7,7 +7,9 @@ without, and compares the result with the current weekly soup. Every score here 
 night's items does not carry over.
 """
 
-from zils.soup_round import _EPS, MARGIN, MAX_MEMBERS
+import hashlib
+
+from zils.soup_round import _EPS, MARGIN, MAX_MEMBERS, leave_one_out, seat_weights
 
 JOIN = MARGIN  # a left-out body joins if it lifts the soup by this much, as at night
 DROP = MARGIN  # a member goes if the soup is this much better without it
@@ -82,3 +84,92 @@ def judge(candidate, left_out, evaluate, *, current, bar, stock=None, **settings
         "passed": passed,
         "trace": trace + dropped,
     }
+
+
+def left_out(private):
+    """The bodies the judge may try: in the last nightly round's pool, outside its soup, and paid
+    (a house body is never added by the judge). Best solo score first, ties by hash."""
+    members = {m["body_sha256"] for m in private["members"]}
+    solo, rates = private["solo"], private["rates"]
+    bodies = [b for b in private["pool"] if b not in members and b in solo and rates.get(b, 0) > 0]
+    return sorted(bodies, key=lambda b: (-solo[b], b))
+
+
+class Missing(Exception):
+    """A soup the judge needs has sealed items with no cached answer yet."""
+
+    def __init__(self, key, members):
+        super().__init__(key)
+        self.key, self.members = key, members
+
+
+def soup_key(members, scope):
+    """The prediction-cache key of a soup of ``members``, as ``soup_round.run`` names it."""
+    members = tuple(sorted(members))
+    if len(members) == 1:
+        return f"{members[0][:32]}-{scope}"
+    return f"soup-{hashlib.sha256('+'.join(members).encode()).hexdigest()[:32]}-{scope}"
+
+
+def cached_scores(cases, cache, *, scope, score):
+    """``evaluate(members)`` for the judge, from cached answers only: ``score(cases, rows)`` of the
+    soup's rows on the sealed ``cases``, or ``Missing`` when any case is not graded yet. The caller
+    grades what is missing and asks again, so the GPU is held one model at a time."""
+    ids, scores = [c["id"] for c in cases], {}
+
+    def evaluate(members):
+        members = tuple(sorted(members))
+        if members not in scores:
+            key = soup_key(members, scope)
+            rows = cache.get(key, ids)
+            if len(rows) < len(ids):
+                raise Missing(key, members)
+            scores[members] = score(cases, [rows[i] for i in ids])
+        return scores[members]
+
+    return evaluate
+
+
+def decide(
+    week_id, private, known, weekly, evaluate, *, bar, stock=None, floor=SEAT_BAR, **settings
+):
+    """The week's record. ``private`` is the last nightly round's private record, ``known`` the
+    pool's {body: {"hotkey"}}, ``weekly`` last week's record (None before the first weekly soup).
+
+    A candidate that passes (``judge``) is the new weekly soup: each member's contribution is the
+    soup's sealed score minus the score without it (``soup_round.leave_one_out``), and a
+    contribution of at least ``floor`` holds a seat. Otherwise last week's soup and seats carry
+    over unchanged ("kept_from"); with no weekly soup yet, nobody is seated.
+    """
+    candidate = tuple(sorted(m["body_sha256"] for m in private["members"]))
+    current = tuple(m["body_sha256"] for m in weekly["members"]) if weekly else None
+    result = judge(
+        candidate, left_out(private), evaluate, current=current or None, bar=bar, stock=stock,
+        **settings,
+    )  # fmt: skip
+    record = {
+        "week_id": week_id,
+        "round_id": private["round_id"],
+        "passed": result["passed"],
+        "candidate": list(result["candidate"]),
+        "score": result["score"],
+        "current_score": result["current_score"],
+        "trace": result["trace"],
+    }
+    if not result["passed"]:
+        kept = {"kept_from": weekly.get("kept_from", weekly["week_id"])} if weekly else {}
+        return {**record, "members": weekly["members"] if weekly else [], **kept}
+    members, rates = result["members"], private["rates"]
+    contributions = leave_one_out(members, evaluate, baseline=stock)
+    seats = seat_weights(members, contributions, {m: rates[m] for m in members}, floor=floor)
+    record["members"] = [
+        {
+            "hotkey": known[m]["hotkey"],
+            "body_sha256": m,
+            "rate": rates[m],
+            "contribution": contributions[m],
+            "seat_weight": seats.get(m, 0.0),
+        }
+        for m in members
+    ]
+    return record
