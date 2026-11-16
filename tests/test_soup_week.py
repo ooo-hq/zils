@@ -1,5 +1,6 @@
 """Weekly soup judge: which soup becomes the week's soup (pure functions, ZIL-204)."""
 
+import hashlib
 import unittest
 
 from zils import soup_round, soup_week
@@ -123,6 +124,113 @@ class JudgeTest(unittest.TestCase):
         )
         self.assertEqual(result["members"], ("b", "x"))
         self.assertEqual([t["accepted"] for t in result["trace"]], [True, True, False])
+
+
+def private(members, solo, rates=None):
+    return {
+        "round_id": "d3-mini-2026-11-22",
+        "members": [{"body_sha256": m} for m in members],
+        "pool": sorted(solo),
+        "solo": solo,
+        "rates": rates or dict.fromkeys(solo, 1.0),
+    }
+
+
+KNOWN = {name: {"hotkey": f"hk-{name}"} for name in "abxyh"}
+
+
+class LeftOutTest(unittest.TestCase):
+    def test_pool_bodies_outside_the_soup_best_solo_first(self):
+        record = private(["a", "b"], {"a": 40.0, "b": 39.0, "x": 41.0, "y": 41.5})
+        self.assertEqual(soup_week.left_out(record), ["y", "x"])
+
+    def test_unpaid_bodies_are_never_tried(self):
+        record = private(["a"], {"a": 40.0, "h": 45.0, "x": 39.0}, {"a": 1.0, "h": 0.0, "x": 0.25})
+        self.assertEqual(soup_week.left_out(record), ["x"])
+
+
+class CachedScoresTest(unittest.TestCase):
+    def setUp(self):
+        self.cases = [{"id": "i1"}, {"id": "i2"}]
+        self.rows = {}
+        self.cache = type("Cache", (), {"get": lambda _, key, ids: self.rows.get(key, {})})()
+        self.evaluate = soup_week.cached_scores(
+            self.cases, self.cache, scope="s", score=lambda cases, rows: float(len(rows))
+        )
+
+    def test_a_graded_soup_is_scored_from_its_cached_rows_in_case_order(self):
+        key = soup_week.soup_key(("a", "b"), "s")
+        self.rows[key] = {"i2": {"id": "i2"}, "i1": {"id": "i1"}}
+        self.assertEqual(self.evaluate(("b", "a")), 2.0)
+
+    def test_a_soup_with_ungraded_items_is_reported_missing(self):
+        self.rows[soup_week.soup_key(("a",), "s")] = {"i1": {"id": "i1"}}
+        with self.assertRaises(soup_week.Missing) as caught:
+            self.evaluate(("a",))
+        self.assertEqual(caught.exception.key, soup_week.soup_key(("a",), "s"))
+        self.assertEqual(caught.exception.members, ("a",))
+
+    def test_keys_match_the_nightly_rounds(self):
+        # soup_round.run: a body is "<sha[:32]>-<scope>", a soup "soup-<sha256 of a+b...>[:32]-<scope>".
+        self.assertEqual(soup_week.soup_key(("a" * 64,), "s"), "a" * 32 + "-s")
+        digest = hashlib.sha256(b"a+b").hexdigest()[:32]
+        self.assertEqual(soup_week.soup_key(("b", "a"), "s"), f"soup-{digest}-s")
+
+
+class DecideTest(unittest.TestCase):
+    def test_a_passing_candidate_is_recorded_with_seats_for_members_over_the_bar(self):
+        scores = {("a", "b"): 41.0, ("a",): 40.6, ("b",): 39.0, ("a", "b", "x"): 41.1}
+        record = soup_week.decide(
+            "2026-w48",
+            private(["a", "b"], {"a": 40.0, "b": 39.0, "x": 38.0}),
+            KNOWN,
+            None,
+            scripted(scores),
+            bar=0.5,
+            stock=30.0,
+        )
+        self.assertEqual(
+            (record["week_id"], record["round_id"]), ("2026-w48", "d3-mini-2026-11-22")
+        )
+        self.assertTrue(record["passed"])
+        self.assertEqual((record["score"], record["current_score"]), (41.0, 30.0))
+        a, b = record["members"]
+        self.assertEqual((a["hotkey"], a["body_sha256"], a["rate"]), ("hk-a", "a", 1.0))
+        self.assertAlmostEqual(a["contribution"], 2.0)  # 41.0 - the soup without a (39.0)
+        self.assertAlmostEqual(a["seat_weight"], 0.16)
+        self.assertAlmostEqual(b["contribution"], 0.4)
+        self.assertEqual(b["seat_weight"], 0.0)  # under the 0.5 bar
+
+    def test_a_one_member_soup_is_credited_against_stock(self):
+        record = soup_week.decide(
+            "2026-w48", private(["a"], {"a": 40.0}), KNOWN, None, scripted({("a",): 40.0}),
+            bar=0.5, stock=30.0,
+        )  # fmt: skip
+        self.assertAlmostEqual(record["members"][0]["contribution"], 10.0)
+
+    def test_when_the_candidate_fails_last_weeks_soup_and_seats_carry_over(self):
+        last = {
+            "week_id": "2026-w47",
+            "members": [{"hotkey": "hk-x", "body_sha256": "x", "rate": 1.0, "contribution": 0.9,
+                         "seat_weight": 0.16}],
+        }  # fmt: skip
+        scores = {("a", "b"): 40.2, ("a",): 40.0, ("b",): 39.0, ("x",): 40.0}
+        record = soup_week.decide(
+            "2026-w48", private(["a", "b"], {"a": 40.0, "b": 39.0}), KNOWN, last, scripted(scores),
+            bar=0.5,
+        )  # fmt: skip
+        self.assertFalse(record["passed"])
+        self.assertEqual(record["members"], last["members"])
+        self.assertEqual(record["kept_from"], "2026-w47")
+        self.assertEqual(record["candidate"], ["a", "b"])
+
+    def test_no_weekly_soup_yet_and_a_failing_candidate_seats_nobody(self):
+        scores = {("a", "b"): 30.2, ("a",): 30.0, ("b",): 29.0}
+        record = soup_week.decide(
+            "2026-w48", private(["a", "b"], {"a": 30.0, "b": 29.0}), KNOWN, None, scripted(scores),
+            bar=0.5, stock=30.0,
+        )  # fmt: skip
+        self.assertEqual((record["passed"], record["members"]), (False, []))
 
 
 if __name__ == "__main__":
