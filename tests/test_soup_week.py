@@ -304,5 +304,12 @@ class SourcesTest(unittest.TestCase):
         )
 
 
+class WindowTest(unittest.TestCase):
+    def test_the_judge_gives_way_at_its_utc_stop_time(self):
+        self.assertTrue(soup_week.past("23:30", now=(23, 30)))
+        self.assertFalse(soup_week.past("23:30", now=(9, 5)))
+        self.assertFalse(soup_week.past(None, now=(23, 59)))
+
+
 if __name__ == "__main__":
     unittest.main()
