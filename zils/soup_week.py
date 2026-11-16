@@ -8,6 +8,13 @@ night's items does not carry over.
 """
 
 import hashlib
+import hmac
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
 from pathlib import Path
 
 from zils.soup_round import _EPS, MARGIN, MAX_MEMBERS, leave_one_out, seat_weights
@@ -16,6 +23,8 @@ JOIN = MARGIN  # a left-out body joins if it lifts the soup by this much, as at 
 DROP = MARGIN  # a member goes if the soup is this much better without it
 TRIES = 2  # left-out bodies tried each week
 SEAT_BAR = 0.5  # minimum contribution (points) on the sealed set for a weekly seat
+CHUNK = 5000  # sealed items graded per hold of the GPU lock, so customer grading takes turns
+CAPACITY_TRIES = 120  # GPU-busy retries (one poll apart) before the judge gives up on a chunk
 
 
 def add_left_out(members, left_out, evaluate, *, margin=JOIN, tries=TRIES, max_members=MAX_MEMBERS):
@@ -212,3 +221,187 @@ def sources(members, state_dir, chassis, *, rename):
             folder = Path(state_dir) / "bodies" / member
             out.append((folder, rename(folder)))
     return out
+
+
+def past(stop, now=None):
+    """Whether the UTC clock time ``stop`` ("HH:MM", None for no limit) has been reached today."""
+    if not stop:
+        return False
+    hour, minute = map(int, stop.split(":"))
+    return (now or time.gmtime()[3:5]) >= (hour, minute)
+
+
+def _write(path, value, mode=None):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + ".partial")
+    partial.write_text(
+        value if isinstance(value, str) else json.dumps(value, sort_keys=True) + "\n"
+    )
+    if mode is not None:
+        os.chmod(partial, mode)
+    os.replace(partial, path)
+
+
+def _lines(path):
+    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+
+
+def _child(request, root, step, *names):
+    """One step of the judge in the GPU runtime (no launcher imports torch): ``cases`` fits the
+    sealed set to the pool's token cap and names the cache scope, ``build`` writes a soup's
+    checkpoint, ``grade`` answers its next ``CHUNK`` ungraded items and removes the checkpoint
+    once none are left."""
+    from . import d3, soup, soup_grade, soup_pool, soup_round
+
+    model, state_dir = request["config"]["model"]["id"], Path(request["state_dir"])
+    if step == "cases":
+        sealed = soup_pool._bank(request["sealed"])
+        cases = soup_pool.fit_bank(sealed, model)
+        key = soup_round.bank_sha256(sealed)
+        scope = f"{key[:16]}-{model}-{d3.pins(model)['files'][soup.READOUT][:12]}"
+        _write(
+            root / "cases.jsonl",
+            "".join(json.dumps(c, sort_keys=True) + "\n" for c in cases),
+            0o600,
+        )
+        _write(root / "scope.json", {"scope": scope, "sealed_sha256": key, "items": len(cases)})
+        return
+    key, checkpoint = names[0], root / "tmp" / names[0]
+    if step == "build":
+        partial = checkpoint.with_name(checkpoint.name + ".partial")
+        shutil.rmtree(partial, ignore_errors=True)
+        partial.parent.mkdir(parents=True, exist_ok=True)
+        chassis = d3.pinned_base_path(model=model)
+        soup.build(partial, chassis, sources(names[1:], state_dir, chassis, rename=soup_round._rename), model=model)  # fmt: skip
+        os.replace(partial, checkpoint)
+        return
+    cases, cache = _lines(root / "cases.jsonl"), soup_grade.PredictionCache(root / "cache")
+    have = cache.get(key, [c["id"] for c in cases])
+    todo = [c for c in cases if c["id"] not in have]
+    soup_grade.grade(key, todo[:CHUNK], cache, soup_grade.production_runner(checkpoint, request["runner"]["device"]))  # fmt: skip
+    if len(todo) <= CHUNK:
+        shutil.rmtree(checkpoint, ignore_errors=True)
+
+
+def _round_running(directory):
+    """A nightly soup round of any pool under the validator ``directory`` is running now."""
+    from . import soup_pool
+
+    for path in Path(directory, "base-pools").glob("*/soup/job.json"):
+        try:
+            job = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        pool = path.parent.parent.name
+        if soup_pool._alive(job.get("pid"), job.get("pid_started")) and not soup_pool.recorded(
+            directory, pool, job.get("round_id")
+        ):
+            return True
+    return False
+
+
+def run(path, stop=None):
+    """The weekly judge for the request at ``path`` (validator python). Grades on the sealed set
+    under the shared compute lock, a chunk at a time, and writes ``weeks/<week_id>/record.json``
+    and ``weeks/week.json`` under the pool's state. It gives way, to be started again later, when a
+    nightly round runs or the UTC time ``stop`` is reached. Nothing here sets weights: the record
+    is read by whoever pays on it."""
+    from . import runtime, soup_grade, soup_round
+
+    request = json.loads(Path(path).read_text())
+    config, state_dir, runner = request["config"], Path(request["state_dir"]), request["runner"]
+    root, week_id = state_dir / "weeks", request["week_id"]
+    done = root / week_id / "record.json"
+    if done.exists():
+        return json.loads(done.read_text())
+    log = root / "week.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+
+    def child(*step):
+        return [runner["runtime_python"], "-m", "zils.soup_week", str(path), *step]
+
+    with log.open("ab") as output:
+        subprocess.run(child("cases"), stdout=output, stderr=subprocess.STDOUT, check=True)
+    scope = json.loads((root / "scope.json").read_text())
+    cases = _lines(root / "cases.jsonl")
+    secret = hmac.new(
+        soup_round.sketch_seed(config, state_dir),
+        b"weekly-split:" + scope["sealed_sha256"].encode(),
+        hashlib.sha256,
+    ).digest()  # one split per sealed set, so every week is scored on the same items
+    scoring = config.get("scoring", soup_grade.DEFAULT_SCORING)
+    directory = state_dir.parent.parent.parent  # <validator>/base-pools/<pool>/soup
+
+    def grade(key, members):
+        if not (root / "tmp" / key).exists():
+            with log.open("ab") as output:
+                subprocess.run(child("build", key, *members), stdout=output, stderr=subprocess.STDOUT, check=True)  # fmt: skip
+        for _ in range(CAPACITY_TRIES):
+            try:
+                started = time.time()
+                runtime.run_child(child("grade", key), log, runner["device"], timeout=3600, model=config["model"]["id"])  # fmt: skip
+                print(f"soup week: graded a chunk of {key} in {time.time() - started:.0f} s", flush=True)  # fmt: skip
+                return
+            except runtime.CapacityUnavailable:
+                time.sleep(max(1, runner["poll"]))
+        raise RuntimeError("the weekly judge found no GPU capacity")
+
+    decision = json.loads((state_dir / "decision.json").read_text())
+    weekly = root / "week.json"
+    record = run_week(
+        week_id,
+        json.loads((state_dir / "rounds" / decision["round_id"] / "private.json").read_text()),
+        json.loads((state_dir / "pool.json").read_text())["bodies"],
+        json.loads(weekly.read_text()) if weekly.exists() else None,
+        cases,
+        soup_grade.PredictionCache(root / "cache"),
+        scope=scope["scope"],
+        score=lambda cases, rows: soup_grade.score(cases, rows, scoring=scoring, secret=secret),
+        bar=request["bar"],
+        grade=grade,
+        stop=lambda: past(stop) or _round_running(directory),
+    )
+    if record is None:
+        print("soup week: stopped to give way; start it again to resume", flush=True)
+        return None
+    record = {**record, "pool_id": config["pool_id"], **scope}
+    _write(done, record)
+    _write(weekly, record)
+    seated = sum(1 for m in record["members"] if m["seat_weight"] > 0)
+    print(
+        f"soup week {week_id}: {'passed' if record['passed'] else 'kept the current soup'}, "
+        f"{record['score']:.2f} against {record['current_score']:.2f}, "
+        f"{len(record['members'])} members, {seated} seated",
+        flush=True,
+    )
+    return record
+
+
+def main(argv=None):
+    """``--new NIGHTLY_REQUEST SEALED WEEK_ID BAR`` writes a judge request beside the pool's weeks;
+    ``--run REQUEST [HH:MM]`` runs the judge until done or the UTC stop time; ``REQUEST STEP ...``
+    is a GPU-runtime step (``_child``)."""
+    argv = sys.argv[1:] if argv is None else argv
+    if argv[0] == "--new":
+        nightly = json.loads(Path(argv[1]).read_text())
+        request = {
+            "config": nightly["config"],
+            "state_dir": nightly["state_dir"],
+            "runner": nightly["runner"],
+            "sealed": str(Path(argv[2]).resolve()),
+            "week_id": argv[3],
+            "bar": float(argv[4]),
+        }
+        path = Path(nightly["state_dir"]) / "weeks" / f"request-{argv[3]}.json"
+        _write(path, request)
+        print(path)
+    elif argv[0] == "--run":
+        run(argv[1], argv[2] if len(argv) > 2 else None)
+    else:
+        request = json.loads(Path(argv[0]).read_text())
+        _child(request, Path(request["state_dir"]) / "weeks", *argv[1:])
+
+
+if __name__ == "__main__":
+    main()
