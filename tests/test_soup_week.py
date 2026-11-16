@@ -233,5 +233,76 @@ class DecideTest(unittest.TestCase):
         self.assertEqual((record["passed"], record["members"]), (False, []))
 
 
+class FakeCache:
+    def __init__(self):
+        self.rows = {}
+
+    def get(self, key, ids):
+        return {i: self.rows[key][i] for i in ids if i in self.rows.get(key, {})}
+
+
+class RunWeekTest(unittest.TestCase):
+    """The judge grades one missing model at a time and decides once everything is cached."""
+
+    SCORES = {("release",): 30.0, ("a", "b"): 41.0, ("a",): 40.0, ("b",): 39.0}
+
+    def run_week(self, *, chunk=2, stop=lambda: False, known_keys=None):
+        cases = [{"id": f"i{n}"} for n in range(3)]
+        cache, graded = FakeCache(), []
+        by_key = {soup_week.soup_key(m, "s"): v for m, v in self.SCORES.items()}
+
+        def grade(key, members):  # a chunk of the items the model has no answer for yet
+            graded.append((key, members))
+            have = cache.rows.setdefault(key, {})
+            for case in [c for c in cases if c["id"] not in have][:chunk]:
+                have[case["id"]] = {"id": case["id"], "key": key}
+
+        record = soup_week.run_week(
+            "2026-w48",
+            private(["a", "b"], {"a": 40.0, "b": 39.0}),
+            KNOWN,
+            None,
+            cases,
+            cache,
+            scope="s",
+            score=lambda cases, rows: by_key[rows[0]["key"]],
+            bar=0.5,
+            grade=grade,
+            stop=stop,
+        )
+        return record, graded
+
+    def test_every_needed_model_is_graded_in_chunks_then_the_week_is_decided(self):
+        record, graded = self.run_week()
+        self.assertTrue(record["passed"])
+        self.assertEqual([m["body_sha256"] for m in record["members"]], ["a", "b"])
+        self.assertEqual(record["current_score"], 30.0)
+        order = [members for _, members in graded]
+        self.assertEqual(order[:2], [("release",), ("release",)])  # 3 items in chunks of 2
+        self.assertEqual(sorted(set(order)), [("a",), ("a", "b"), ("b",), ("release",)])
+        self.assertEqual(len(order), 8)
+
+    def test_it_stops_between_models_when_asked_and_decides_nothing(self):
+        calls = iter([False, False, True])
+        record, graded = self.run_week(stop=lambda: next(calls))
+        self.assertIsNone(record)
+        self.assertEqual(len(graded), 2)
+
+    def test_a_grading_that_makes_no_progress_is_an_error_not_a_loop(self):
+        with self.assertRaises(RuntimeError):
+            self.run_week(chunk=0)
+
+
+class SourcesTest(unittest.TestCase):
+    def test_the_release_is_the_chassis_and_a_body_is_its_folder_with_its_rename(self):
+        got = soup_week.sources(
+            ("b1", "release"), "/state", "/chassis", rename=lambda folder: f"r:{folder.name}"
+        )
+        self.assertEqual(
+            [(str(folder), rename) for folder, rename in got],
+            [("/state/bodies/b1", "r:b1"), ("/chassis", None)],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
