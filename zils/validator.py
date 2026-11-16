@@ -357,7 +357,7 @@ def attach_base_pools(config, directory, work, report):
                 current = directory / "base-pools" / pool / "base-tier" / "decision.json"
                 if entry["enabled"] and not model_pools.is_soup(entry) and current.exists():
                     decisions[pool] = json.loads(current.read_text())
-        from . import soup_pool
+        from . import soup_pool, soup_week
 
         block = None
         if model_pools.scheduled(normalized):
@@ -372,7 +372,8 @@ def attach_base_pools(config, directory, work, report):
             # pools not yet open at the block, have no decision and burn.
             soup = soup_pool.fresh_decision(directory, pool, entry, now=time.time())
             if soup is not None:
-                decisions[pool] = soup
+                # With a weekly soup the week's seats replace the nightly seats (ZIL-205).
+                decisions[pool] = soup_week.attach(config, directory, pool, soup, now=time.time())
         record = {"config": normalized, "decisions": decisions}
         wire.write_json(frozen, record if block is None else {**record, "block": block})
     saved = json.loads(frozen.read_text())

@@ -581,7 +581,9 @@ def report_text(reply):
         blocks.append([paint("1", f"{pool} · round {item['round_id']}")])
         for body in item["bodies"]:
             mark, color, label = REPORT_STAGES[body["stage"]]
-            sentence, step = soup_report.EXPLAIN[body["reason"]]
+            sentence, step = soup_report.EXPLAIN.get(
+                body["reason"], (f"Reason code: {body['reason']}.", None)
+            )
             sha = (body["body_sha256"] or "unreadable commitment")[:12]
             blocks.append(
                 [f"{paint(color, mark)} {paint('1', f'body {sha}')}  {label}", f"  {sentence}"]
@@ -595,6 +597,13 @@ def report_text(reply):
             if "seat" in body:
                 seat = body["seat"]
                 numbers.append(row("contribution", seat["contribution"], f"floor {seat['floor']}"))
+            if "week" in body:
+                week = body["week"]
+                note = f"floor {week['floor']} (week {week['week_id']})"
+                numbers.append(row("week seat", week["contribution"], note))
+            if "joined" in body:
+                share = f"{100 * body['joined']['weight']:.1f}%"
+                numbers.append(row("joined", share, "of the pool, paid once"))
             if "solo" in body:
                 numbers.append(row("alone", body["solo"]["score"], f"soup {body['solo']['soup']}"))
             if "screen" in body:

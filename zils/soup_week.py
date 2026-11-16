@@ -35,6 +35,7 @@ CHUNK = 5000  # sealed items graded per hold of the GPU lock, so customer gradin
 CAPACITY_TRIES = 120  # GPU-busy retries (one poll apart) before the judge gives up on a chunk
 JUDGE_WEEKDAY = 0  # the judge takes the nightly round whose day is a Monday
 MAX_STARTS = 5  # starts of one week's judge before the week is skipped (it may give way and resume)
+MAX_WEEK_DAYS = 14  # a week's seats are paid this long after its round; then they burn
 
 
 def add_left_out(members, left_out, evaluate, *, margin=JOIN, tries=TRIES, max_members=MAX_MEMBERS):
@@ -470,6 +471,69 @@ def weeks(config, directory):
         sealed = str((Path(directory) / entry["sealed"]).resolve())
         out[pool] = {"sealed": sealed, "bar": float(entry["bar"])}
     return out
+
+
+def public_week(record):
+    """The week's public part, which pay reads: its soup and seats, contributions to the nearest
+    half point as in a round's public record. Sealed-set scores and the trace stay private."""
+    from .soup_publish import _half_point
+
+    return {
+        "week_id": record["week_id"],
+        "round_id": record["round_id"],
+        "soup_sha256": record.get("soup_sha256"),
+        "kept_from": record.get("kept_from"),
+        "members": [
+            {
+                **{k: m[k] for k in ("hotkey", "body_sha256", "rate", "seat_weight")},
+                "contribution": _half_point(m["contribution"]),
+            }
+            for m in record["members"]
+        ],
+    }
+
+
+def closed_seats(week, bodies, listed, before):
+    """The week's paid seats whose body is no longer public (ZIL-205): {"week_id", "bodies"}.
+
+    ``bodies`` is the pool's {body: {"repo", "revision"}}, ``listed(repo, revision)`` lists the
+    committed revision (``commitments.revision_files``), and ``before`` is the last night's result.
+    A revision that is private (401, 403), gone (404) or no longer that repo's commit closes the seat
+    for the rest of the week; a network failure leaves it open. A new week starts with none closed."""
+    import urllib.error
+
+    week_id = week["week_id"]
+    closed = set(before["bodies"]) if before and before.get("week_id") == week_id else set()
+    for member in week["members"]:
+        body, info = member["body_sha256"], bodies.get(member["body_sha256"])
+        if member["seat_weight"] <= 0 or body in closed or info is None:
+            continue
+        try:
+            listed(info["repo"], info["revision"])
+        except urllib.error.HTTPError as error:
+            if error.code in (401, 403, 404):
+                closed.add(body)
+        except ValueError:
+            closed.add(body)
+        except OSError:
+            pass
+    return {"week_id": week_id, "bodies": sorted(closed)}
+
+
+def attach(config, directory, pool, decision, *, now):
+    """``decision`` (the pool's nightly public record) with the current week's public part added as
+    "week", for ``soup_round.soup_weights``. Unchanged for a pool without a weekly judge or before
+    its first week. A week whose round is more than ``MAX_WEEK_DAYS`` old seats nobody."""
+    if pool not in weeks(config, directory):
+        return decision
+    path = Path(directory) / "base-pools" / pool / "soup" / "weeks" / "week.json"
+    if not path.exists():
+        return decision
+    week = public_week(json.loads(path.read_text()))
+    day = datetime.datetime.fromisoformat(week["round_id"][-10:]).replace(tzinfo=datetime.UTC)
+    if now - day.timestamp() > MAX_WEEK_DAYS * 86400:
+        week["members"] = []
+    return {**decision, "week": week}
 
 
 def new_request(nightly, sealed, week_id, bar):

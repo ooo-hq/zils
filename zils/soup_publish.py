@@ -10,6 +10,7 @@ from .base_metrics import CATEGORY_WEIGHTS
 HEX64 = re.compile("[a-f0-9]{64}")
 MEMBER_FIELDS = ("hotkey", "body_sha256", "rate", "seat_weight")
 CROWN_FIELDS = ("hotkey", "body_sha256", "rate", "weight")
+JOIN_FIELDS = ("hotkey", "body_sha256", "rate", "weight")
 
 
 def canonical_json(value):
@@ -55,6 +56,10 @@ def public_record(private_round):
     if "temperature" in r:  # the released soup's fitted temperature, which serving applies
         record["scoring"] = r["scoring"]
         record["temperature"] = r["temperature"]
+    if "joins" in r:  # the bodies this night's soup took in, paid once a weekly soup exists
+        record["joins"] = [{k: j[k] for k in JOIN_FIELDS} for j in r["joins"]]
+    if "closed" in r:  # the week's seats that stopped because their body went private
+        record["closed"] = r["closed"]
     if "decision" in r:  # the rounds whose items the seats and crown were scored on
         record["decision"] = {k: r["decision"][k] for k in ("rounds", "items")}
     return record
@@ -246,7 +251,8 @@ def intake(state, max_new):
 
 def feed(config, directory, *, limit=FEED_ROUNDS):
     """The payload of the validator's ``GET /soup``: each enabled soup pool's newest public round
-    records and, for every body those rounds seat or crown, its house name and repo when known.
+    records, its weekly soup when it has one, and, for every body those seat or crown, its house
+    name and repo when known.
 
     House names and repos come from the pool's house registry (by pinned hash, or by the hash this
     validator resolved an unpinned entry to) and repos otherwise from the intake record in
@@ -254,7 +260,7 @@ def feed(config, directory, *, limit=FEED_ROUNDS):
     """
     from pathlib import Path
 
-    from . import model_pools, soup_pool, soup_rates
+    from . import model_pools, soup_pool, soup_rates, soup_week
 
     pools = {}
     if "base_pools" not in config:
@@ -277,8 +283,10 @@ def feed(config, directory, *, limit=FEED_ROUNDS):
             sha = item["body_sha256"] or resolved.get(f"{item['repo']}@{item['revision']}")
             if isinstance(sha, str):
                 by_sha.setdefault(sha, item)
+        week = _read_object(state / "weeks" / "week.json")
+        week = soup_week.public_week(week) if week else None
         bodies = {}
-        for record in rounds:
+        for record in [*rounds, *([week] if week else [])]:
             for sha in _round_bodies(record):
                 if sha in bodies:
                     continue
@@ -294,6 +302,8 @@ def feed(config, directory, *, limit=FEED_ROUNDS):
             "rounds": rounds,
             "intake": intake(state, entry["max_new_per_round"]),
         }
+        if week:  # the pool's weekly soup and its seats (ZIL-205)
+            pools[pool]["week"] = week
         if (now := live(state)) is not None:  # only while a round is in progress
             pools[pool]["live"] = now
     return {"kind": "soup", "pools": pools}

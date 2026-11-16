@@ -35,6 +35,7 @@ SEAT_SHARE = 0.8
 CROWN_SHARE = 0.2
 FLOOR = 0.5  # minimum contribution (points) for a paid seat
 CROWN_MARGIN = 1.2  # the crown's solo score over every house body's and the current soup's
+NIGHT_SHARE = 0.2  # with a weekly soup: split over the bodies a night's soup takes in (ZIL-205)
 HOUSE_RATE = 0.0  # open models known at launch: seated but unpaid
 SCOUT_RATE = 0.25  # open models released after launch, submitted by a scout
 TRAINER_RATE = 1.0
@@ -191,6 +192,15 @@ def seat_weights(members, contributions, rates, *, share=SEAT_SHARE, floor=FLOOR
     return {m: share / MAX_MEMBERS * _check_rate(rates[m]) for m in paid}
 
 
+def join_weights(members, *, previous, paid, rates, share=NIGHT_SHARE):
+    """Nightly pay for the bodies this night's soup took in (ZIL-205): members not in the
+    ``previous`` soup and never ``paid`` for joining before split ``share`` equally, each part times
+    the body's rate. A house body takes its part unpaid; the rest burns, as does a night with no
+    new member. Returns {body: weight}."""
+    new = [m for m in sorted(members) if m not in set(previous) and m not in set(paid)]
+    return {m: share / len(new) * _check_rate(rates[m]) for m in new}
+
+
 def crown_weight(
     solo, rates, house, *, share=CROWN_SHARE, margin=CROWN_MARGIN, soup_score=None, order_key
 ):
@@ -227,13 +237,26 @@ def soup_weights(decision, members):
     {uid: {"hotkey": ...}}. Seat and crown weights are summed per hotkey; hotkeys no longer registered
     are dropped, so their share burns. Weights are fractions of the pool's share and total at most one;
     the caller burns the remainder.
+
+    With a weekly soup (``decision["week"]``, attached by ``soup_week.attach``) the week's seats and
+    the night's ``joins`` are paid instead of the nightly seats and the crown (ZIL-205).
     """
     if not isinstance(decision, dict) or not isinstance(decision.get("members"), list):
         raise ValueError("soup decision needs a members list")
-    rows = [(row["hotkey"], _weight(row["seat_weight"])) for row in decision["members"]]
-    crown = decision.get("crown")
-    if crown is not None:
-        rows.append((crown["hotkey"], _weight(crown["weight"])))
+    if "week" in decision:
+        week, closed = decision["week"], decision.get("closed") or {}
+        shut = set(closed.get("bodies", ())) if closed.get("week_id") == week.get("week_id") else ()
+        rows = [
+            (row["hotkey"], _weight(row["seat_weight"]))
+            for row in week["members"]
+            if row["body_sha256"] not in shut
+        ]
+        rows += [(row["hotkey"], _weight(row["weight"])) for row in decision.get("joins", [])]
+    else:
+        rows = [(row["hotkey"], _weight(row["seat_weight"])) for row in decision["members"]]
+        crown = decision.get("crown")
+        if crown is not None:
+            rows.append((crown["hotkey"], _weight(crown["weight"])))
     if sum(w for _, w in rows) > 1 + _EPS:
         raise ValueError("soup decision pays more than the pool's share")
     uid_by_hotkey = {item["hotkey"]: int(uid) for uid, item in members.items()}
@@ -955,6 +978,7 @@ def run(
     bases=None,
     bank_source=None,
     deadline=None,
+    listed=None,
     clock=time.time,
 ):
     """One soup round for one pool. Returns the private round record (also written to disk).
@@ -990,6 +1014,9 @@ def run(
     ``decision_rounds`` - 1 earlier rounds (``_decision_plan``); ``deadline`` (a ``clock()`` time,
     None for none) lowers that number when the grading would not fit. The use ledger counts only
     this round's own subset.
+
+    With a weekly soup (``weeks/week.json``), ``listed(repo, revision)`` checks each paid seat's body
+    is still public (``soup_week.closed_seats``; default ``commitments.revision_files``).
 
     State lives under ``state_dir``: ``pool.json`` (known bodies, rejections, members), ``bodies/``,
     ``sketches/``, ``rounds/<round_id>/`` (subset, intake, private and public records, the final
@@ -1518,7 +1545,29 @@ def run(
         )
         gated = dict.fromkeys(unscored, "its base could not be scored this round")
     # A gated member keeps its place in the soup; its seat burns, like a house ingredient's.
-    seats = seat_weights(members, contributions, {**rate_map, **dict.fromkeys(gated, HOUSE_RATE)})
+    paid_rates = {**rate_map, **dict.fromkeys(gated, HOUSE_RATE)}
+    seats = seat_weights(members, contributions, paid_rates)
+    week_path, week, closed, joins = state_dir / "weeks" / "week.json", None, None, None
+    if week_path.exists():  # a seated body must stay public for its week (ZIL-205)
+        from . import commitments, soup_week
+
+        week = json.loads(week_path.read_text())
+        fields = ("hotkey", "body_sha256", "rate", "contribution", "seat_weight")
+        week = {
+            "week_id": week["week_id"],
+            "round_id": week["round_id"],
+            "members": [{k: m[k] for k in fields} for m in week["members"]],
+        }  # the miners' reports read it
+        closed = soup_week.closed_seats(
+            week,
+            state["bodies"],
+            listed or commitments.revision_files,
+            state.get("closed"),
+        )
+        # Only with a weekly soup: a body that joined before then was paid by its nightly seat.
+        joins = join_weights(
+            members, previous=state["members"], paid=state.get("joined", []), rates=paid_rates
+        )
     crown = (
         {}
         if bar_missing
@@ -1566,6 +1615,21 @@ def run(
             }
             for s in members
         ],
+        **(
+            {}
+            if joins is None
+            else {
+                "joins": [
+                    {
+                        "hotkey": known[s]["hotkey"],
+                        "body_sha256": s,
+                        "rate": paid_rates[s],
+                        "weight": w,
+                    }
+                    for s, w in joins.items()
+                ]
+            }
+        ),  # fmt: skip
         "crown": None
         if crown_body is None
         else {
@@ -1602,6 +1666,7 @@ def run(
         "new": sorted(intake["new"]),
         "soup_keys": sorted(soup_keys),
         "round_index": state.get("rounds", 0) + 1,
+        **({"week": week, "closed": closed} if week is not None else {}),
         **({"bank_source": bank_source} if bank_source is not None else {}),
     }
     owners = {sha: info["hotkey"] for sha, info in known.items() if not info.get("pruned")}
@@ -1622,6 +1687,10 @@ def _finish(state_dir, round_dir, ledger):
         state_dir / "pool.json", {"bodies": {}, "rejected": {}, "members": [], "soup": None}
     )
     state["members"] = [m["body_sha256"] for m in private["members"]]
+    joined = {j["body_sha256"] for j in private.get("joins", [])}
+    if "closed" in private:
+        state["closed"] = private["closed"]
+    state["joined"] = sorted(set(state.get("joined", [])) | joined)  # each body paid once
     for sha, score in private["solo"].items():
         state["bodies"][sha]["solo"] = score
     new = set(private["new"])

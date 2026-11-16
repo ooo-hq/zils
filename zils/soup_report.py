@@ -50,6 +50,8 @@ REASONS = (
     "below_floor",
     "fine_tune_gate",
     "unpaid_rate",
+    "weekly_judge",
+    "went_private",
 )
 
 
@@ -146,6 +148,14 @@ EXPLAIN = {
         "nothing to change; the base is tried again next round.",
     ),
     "unpaid_rate": ("Your body is in the soup at rate 0, which pays nothing.", None),
+    "weekly_judge": (
+        "Your body is in tonight's soup. Seats are paid weekly, to members of the weekly soup.",
+        "nothing to do; the weekly judge measures it after Monday's round.",
+    ),
+    "went_private": (
+        "Your body's repo is no longer public, so its weekly seat stopped for the rest of the week.",
+        "keep the committed revision public while it holds a seat.",
+    ),
 }
 
 
@@ -206,6 +216,7 @@ def build(private, claims, owners):
     {"body_sha256", "stage", "reason"} plus, for a graded body, the numbers behind the stage.
     """
     from .soup_round import FLOOR, MARGIN
+    from .soup_week import SEAT_BAR
 
     members = {m["body_sha256"]: m for m in private["members"]}
     solo, screen = private["solo"], private.get("screen", {})
@@ -214,9 +225,18 @@ def build(private, claims, owners):
     pooled = [score for sha, score in screen.items() if sha in solo]
     screen_bar = 100 * min(pooled) if pooled else None
     soup_categories = private.get("soup_categories", {})
+    week = private.get("week")  # with a weekly soup its seats are paid, not tonight's (ZIL-205)
+    seats = {m["body_sha256"]: m for m in week["members"]} if week else {}
+    closed = private.get("closed") or {}
+    shut = (
+        set(closed.get("bodies", ())) if week and closed.get("week_id") == week["week_id"] else ()
+    )
+    joins = {j["body_sha256"]: j for j in private.get("joins", [])}
     reports = {}
 
     def entry(hotkey, sha, stage, reason, **numbers):
+        if week and sha in joins:
+            numbers["joined"] = {"weight": joins[sha]["weight"]}
         reports.setdefault(hotkey, []).append(
             {"body_sha256": sha, "stage": stage, "reason": reason, **numbers}
         )
@@ -259,7 +279,20 @@ def build(private, claims, owners):
     for sha, hotkey in bodies.items():
         if hotkey is None or (hotkey, sha) in refused:
             continue
-        if sha in members:
+        if sha in seats:
+            member, seat = seats[sha], None
+            seat = {"week_id": week["week_id"], "contribution": _short(member["contribution"], SEAT_BAR),
+                    "floor": SEAT_BAR}  # fmt: skip
+            if sha in shut:
+                entry(hotkey, sha, "seated_unpaid", "went_private", **graded(sha), week=seat)
+            elif member["seat_weight"] > 0:
+                entry(hotkey, sha, "seated", None, **graded(sha), week=seat)
+            else:
+                reason = "unpaid_rate" if member["rate"] == 0 else "below_floor"
+                entry(hotkey, sha, "seated_unpaid", reason, **graded(sha), week=seat)
+        elif week and sha in members:
+            entry(hotkey, sha, "seated_unpaid", "weekly_judge", **graded(sha))
+        elif sha in members:
             member = members[sha]
             seat = {"contribution": _short(member["contribution"], FLOOR), "floor": FLOOR}
             if member["seat_weight"] > 0:
