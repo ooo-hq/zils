@@ -313,6 +313,33 @@ zils-miner commit-body --pool <pool> --path ./found-body --check
 Every unearned part burns to the subnet owner's uid, as in every track. Until
 miners submit new bodies, most of the pool's share burns.
 
+### Weekly soup
+
+A validator can also run a **weekly judge** for a pool (its `soup_weeks`
+setting). The judge grades on a private sealed set that no nightly round draws
+from, so a body that was lucky on one night's items is not paid for a week. Once
+the judge has picked a pool's first weekly soup, that validator pays the pool
+this way instead of the seats and crown above:
+
+- **The judge** runs after the Monday round. It starts from that round's soup,
+  tries adding the two best pool bodies left out of it (each joins if it lifts
+  the soup by at least **0.5** points on the sealed set), drops a member the soup
+  is at least 0.5 points better without, and replaces the current weekly soup
+  only if the result beats it by the validator's bar. Otherwise the current weekly
+  soup and its seats carry over.
+- **Weekly seats (80%):** each member of the weekly soup whose contribution on the
+  sealed set is at least **0.5** points holds one seat, 16% of the pool's share
+  times its rate, for the week. A fine-tune is credited with what it adds over its
+  base, as in a nightly round. Empty and unpaid seats burn.
+- **Nightly joins (20%):** each night, the bodies the night's soup takes in for
+  the first time share the 20% equally, each part times its rate. A body is paid
+  for joining once. A night with no new member burns its 20%.
+- **Stay public:** each nightly round checks that the seated bodies' committed
+  revisions are still public. A seat whose revision is private or gone stops for
+  the rest of the week; a network failure does not stop it.
+- A weekly soup whose round is more than 14 days old seats nobody, so a judge that
+  stopped running does not pay old seats.
+
 **Pool shares.** The launch configuration (`zils/data/base-pools-launch.json`)
 gives the base pools 80% of all emissions and the adapter track the other 20%.
 Lite and mini get 25% of all emissions each, so a trainer's seat there is 4% and
@@ -442,6 +469,12 @@ and reason codes of the signed reply, listed below.
 | `below_floor` | seated_unpaid | `contribution` shows your contribution and the floor. |
 | `fine_tune_gate` | seated_unpaid | Your body is a fine-tune and its base could not be scored this round. It is tried again next round. |
 | `unpaid_rate` | seated_unpaid | The body's rate is 0. |
+| `weekly_judge` | seated_unpaid | With a weekly soup: your body is in tonight's soup, and seats are paid on the weekly soup. |
+| `went_private` | seated_unpaid | Your body's committed revision is no longer public, so its weekly seat stopped for the rest of the week. |
+
+With a weekly soup, `week seat` shows your contribution on the sealed set next to
+the floor, and `joined` shows the share of the pool paid for joining tonight's
+soup.
 
 A graded body also shows `alone` (its score alone next to the soup's) and its
 score in each of the five exam categories next to the soup's, both on the
