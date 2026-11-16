@@ -8,6 +8,7 @@ night's items does not carry over.
 """
 
 import hashlib
+from pathlib import Path
 
 from zils.soup_round import _EPS, MARGIN, MAX_MEMBERS, leave_one_out, seat_weights
 
@@ -173,3 +174,41 @@ def decide(
         for m in members
     ]
     return record
+
+
+RELEASE = "release"  # the pool's served model as a judge "member": its score is the stock score
+
+
+def run_week(week_id, private, known, weekly, cases, cache, *, scope, score, bar, grade, stop, **settings):  # fmt: skip
+    """Decide the week, grading what the judge still needs one model at a time. Returns the record
+    (``decide``), or None when ``stop()`` says to give way (a nightly round, the end of the window);
+    a later call resumes from the cache.
+
+    ``grade(key, members)`` grades a chunk of the sealed items ``members``' soup has no answer for
+    and stores them in ``cache`` under ``key``. It is called until the soup is complete, with
+    ``stop`` checked before each call, so the GPU is never held for more than a chunk."""
+    ids = [c["id"] for c in cases]
+    evaluate = cached_scores(cases, cache, scope=scope, score=score)
+    while not stop():
+        try:
+            stock = evaluate((RELEASE,))
+            return decide(week_id, private, known, weekly, evaluate, bar=bar, stock=stock, **settings)  # fmt: skip
+        except Missing as missing:
+            before = len(cache.get(missing.key, ids))
+            grade(missing.key, missing.members)
+            if len(cache.get(missing.key, ids)) <= before:
+                raise RuntimeError(f"grading {missing.key} made no progress") from None
+    return None
+
+
+def sources(members, state_dir, chassis, *, rename):
+    """``soup.build`` sources for a judge soup: each body's folder under the pool's state with its
+    tensor rename, and the chassis itself for the release."""
+    out = []
+    for member in members:
+        if member == RELEASE:
+            out.append((Path(chassis), None))
+        else:
+            folder = Path(state_dir) / "bodies" / member
+            out.append((folder, rename(folder)))
+    return out
