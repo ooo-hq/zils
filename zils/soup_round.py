@@ -1421,7 +1421,7 @@ def run(
 
     baseline = chassis_score() if len(members) == 1 else None
     rate_map = {sha: rates(sha, known[sha], house) for sha in pool}
-    gated = {}
+    gated, stand_ins = {}, {}
     if bases is None:
         contributions = leave_one_out(members, evaluate, baseline=baseline)
     else:
@@ -1589,6 +1589,7 @@ def run(
         "screen": screen,
         "rates": rate_map,
         "gated": gated,
+        "fine_tunes": stand_ins,
         "trace": trace,
         "soup_bar": soup_bar,
         "rejected": rejected,
