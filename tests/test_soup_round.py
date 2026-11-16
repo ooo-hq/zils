@@ -314,6 +314,32 @@ class KeepCurrentTest(unittest.TestCase):
         self.assertEqual(self.keep(("retune",), current=("gone", "v2")), (("retune",), None))
 
 
+class JoinWeightsTest(unittest.TestCase):
+    """Nightly pay (ZIL-205): the night's share split equally over the bodies the soup took in."""
+
+    RATES = {"a": 1.0, "b": 1.0, "c": 0.25, "h": 0.0}
+
+    def test_new_members_split_the_nights_share_equally_times_their_rate(self):
+        got = soup_round.join_weights(("a", "b", "c"), previous=("a",), paid=(), rates=self.RATES)
+        self.assertEqual(sorted(got), ["b", "c"])
+        self.assertAlmostEqual(got["b"], 0.1)
+        self.assertAlmostEqual(got["c"], 0.025)  # a public mix's quarter; the rest burns
+
+    def test_a_house_body_takes_its_part_unpaid(self):
+        got = soup_round.join_weights(("a", "h"), previous=(), paid=(), rates=self.RATES)
+        self.assertEqual(got, {"a": 0.1, "h": 0.0})
+
+    def test_no_new_member_pays_nothing(self):
+        self.assertEqual(
+            soup_round.join_weights(("a",), previous=("a",), paid=(), rates=self.RATES), {}
+        )
+
+    def test_each_body_is_paid_once(self):
+        # b joined, left and is back: it was paid the first time
+        got = soup_round.join_weights(("a", "b"), previous=("a",), paid=("b",), rates=self.RATES)
+        self.assertEqual(got, {})
+
+
 class SoupWeightsTest(unittest.TestCase):
     ROSTER = {"3": {"hotkey": "hk-a"}, "7": {"hotkey": "hk-b"}, "9": {"hotkey": "hk-c"}}
 
@@ -366,6 +392,46 @@ class SoupWeightsTest(unittest.TestCase):
         )
         self.assertEqual(got, {3: 0.4})
         self.assertLessEqual(sum(got.values()), 1.0)
+
+    def week(self, members, joins=()):
+        decision = self.decision(
+            [("hk-a", "1" * 64, 1.0, 2.0, 0.16)],
+            {"hotkey": "hk-a", "body_sha256": "1" * 64, "rate": 1.0, "weight": 0.2},
+        )
+        decision["joins"] = [{"hotkey": hk, "body_sha256": sha, "rate": 1.0, "weight": w}
+                             for hk, sha, w in joins]  # fmt: skip
+        decision["week"] = {"members": [{"hotkey": hk, "body_sha256": sha, "rate": 1.0,
+                                         "seat_weight": w} for hk, sha, w in members]}  # fmt: skip
+        return decision
+
+    def test_with_a_weekly_soup_the_week_seats_and_the_nights_joins_are_paid(self):
+        # the nightly seats and the crown are not paid once a weekly soup exists
+        got = soup_round.soup_weights(
+            self.week([("hk-b", "2" * 64, 0.16), ("hk-c", "3" * 64, 0.16)],
+                      joins=[("hk-c", "4" * 64, 0.2)]),
+            self.ROSTER,
+        )  # fmt: skip
+        self.assertEqual(set(got), {7, 9})
+        self.assertAlmostEqual(got[7], 0.16)
+        self.assertAlmostEqual(got[9], 0.36)
+
+    def test_a_closed_seat_of_this_week_is_not_paid(self):
+        decision = self.week([("hk-b", "2" * 64, 0.16), ("hk-c", "3" * 64, 0.16)])
+        decision["week"]["week_id"] = "2026-w47"
+        decision["closed"] = {"week_id": "2026-w47", "bodies": ["2" * 64]}
+        self.assertEqual(soup_round.soup_weights(decision, self.ROSTER), {9: 0.16})
+        decision["closed"]["week_id"] = "2026-w46"  # last week's check: this week's seat is paid
+        self.assertEqual(set(soup_round.soup_weights(decision, self.ROSTER)), {7, 9})
+
+    def test_a_week_without_seats_pays_only_the_nights_joins(self):
+        got = soup_round.soup_weights(self.week([], joins=[("hk-b", "2" * 64, 0.2)]), self.ROSTER)
+        self.assertEqual(got, {7: 0.2})
+        self.assertEqual(soup_round.soup_weights(self.week([]), self.ROSTER), {})
+
+    def test_a_week_paying_more_than_the_pool_is_refused(self):
+        seats = [(f"hk-{n}", str(n) * 64, 0.2) for n in range(5)]
+        with self.assertRaises(ValueError):
+            soup_round.soup_weights(self.week(seats, joins=[("hk-a", "9" * 64, 0.2)]), self.ROSTER)
 
     def test_empty_decision_pays_nobody(self):
         self.assertEqual(soup_round.soup_weights(self.decision([]), self.ROSTER), {})

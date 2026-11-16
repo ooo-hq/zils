@@ -93,6 +93,67 @@ CLAIMS = {
 }
 
 
+def weekly_round():
+    """The same round once the pool has a weekly soup (ZIL-205): PAST and SEATED hold the week's
+    seats, THIN's is unpaid, and TRIED's repo went private. SEATED joined tonight's soup."""
+    private = private_round()
+    private["week"] = {
+        "week_id": "2026-w46", "round_id": "d3-mini-2026-11-09", "soup_sha256": "e" * 64,
+        "kept_from": None,
+        "members": [
+            {"hotkey": "5Past", "body_sha256": PAST, "rate": 1.0, "seat_weight": 0.16,
+             "contribution": 1.5},
+            {"hotkey": "5Seated", "body_sha256": SEATED, "rate": 1.0, "seat_weight": 0.16,
+             "contribution": 0.5},
+            {"hotkey": "5Thin", "body_sha256": THIN, "rate": 1.0, "seat_weight": 0.0,
+             "contribution": 0.0},
+            {"hotkey": "5Tried", "body_sha256": TRIED, "rate": 1.0, "seat_weight": 0.16,
+             "contribution": 2.0},
+        ],
+    }  # fmt: skip
+    private["closed"] = {"week_id": "2026-w46", "bodies": [TRIED]}
+    private["joins"] = [{"hotkey": "5Seated", "body_sha256": SEATED, "rate": 1.0, "weight": 0.2}]
+    return private
+
+
+class WeeklyBuildTest(unittest.TestCase):
+    def setUp(self):
+        self.reports = soup_report.build(weekly_round(), CLAIMS, OWNERS)
+
+    def one(self, hotkey):
+        (entry,) = self.reports[hotkey]
+        return entry
+
+    def test_a_weekly_seat_pays_even_when_the_body_left_tonights_soup(self):
+        entry = self.one("5Past")
+        self.assertEqual((entry["stage"], entry["reason"]), ("seated", None))
+        self.assertEqual(entry["week"], {"week_id": "2026-w46", "contribution": 1.5, "floor": 0.5})
+
+    def test_a_join_tonight_is_shown_with_its_pay(self):
+        entry = self.one("5Seated")
+        self.assertEqual((entry["stage"], entry["reason"]), ("seated", None))
+        self.assertEqual(entry["joined"], {"weight": 0.2})
+
+    def test_a_weekly_member_under_the_floor_is_unpaid(self):
+        entry = self.one("5Thin")
+        self.assertEqual((entry["stage"], entry["reason"]), ("seated_unpaid", "below_floor"))
+        self.assertEqual(entry["week"]["contribution"], 0.0)
+
+    def test_in_tonights_soup_only_waits_for_the_weekly_judge(self):
+        entry = self.one("5Gated")
+        self.assertEqual((entry["stage"], entry["reason"]), ("seated_unpaid", "weekly_judge"))
+        self.assertNotIn("week", entry)
+
+    def test_a_seat_whose_repo_went_private_stops(self):
+        entry = self.one("5Tried")
+        self.assertEqual((entry["stage"], entry["reason"]), ("seated_unpaid", "went_private"))
+
+    def test_every_reason_has_its_sentence(self):
+        for code in ("weekly_judge", "went_private"):
+            self.assertIn(code, soup_report.REASONS)
+            self.assertIn(code, soup_report.EXPLAIN)
+
+
 class BuildTest(unittest.TestCase):
     def setUp(self):
         self.reports = soup_report.build(private_round(), CLAIMS, OWNERS)
@@ -412,6 +473,20 @@ class CommandTest(unittest.TestCase):
         self.assertIn("its base could not be scored this round", gated)
         self.assertNotIn("rate", gated)  # the trainer rate, 1.0, is not worth a line
         self.assertIn("  rate           0.25", self.reply_for("5Late"))
+
+    def test_a_weekly_seat_and_a_join_are_printed(self):
+        self.reply["pools"]["d3-mini"]["bodies"] = soup_report.build(
+            weekly_round(), CLAIMS, OWNERS
+        )["5Seated"]
+        text = miner.report_text(self.reply)
+        self.assertIn("  week seat       0.5   floor 0.5 (week 2026-w46)", text)
+        self.assertIn("  joined        20.0%   of the pool, paid once", text)
+
+    def test_a_reason_this_cli_does_not_know_is_shown_as_its_code(self):
+        self.reply["pools"]["d3-mini"]["bodies"] = [
+            {"body_sha256": SEATED, "stage": "seated_unpaid", "reason": "some_new_code"}
+        ]
+        self.assertIn("Reason code: some_new_code.", miner.report_text(self.reply))
 
     def test_pools_without_a_body_of_this_hotkey_are_left_out(self):
         self.assertNotIn("d3-lite", miner.report_text(self.reply))

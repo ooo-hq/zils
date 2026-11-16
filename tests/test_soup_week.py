@@ -1,10 +1,12 @@
 """Weekly soup judge: which soup becomes the week's soup (pure functions, ZIL-204)."""
 
+import datetime
 import hashlib
 import json
 import os
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 
 from zils import soup_grade, soup_pool, soup_round, soup_week
@@ -504,6 +506,110 @@ class EpochTest(unittest.TestCase):
         self.assertIn("OSError", self.epoch(start=broken)[self.POOL]["error"])
         self.config = {"soup_weeks": {self.POOL: {"sealed": "s.jsonl"}}}
         self.assertIn("ValueError", self.epoch()["error"])
+
+
+class PublicWeekTest(unittest.TestCase):
+    RECORD = {
+        "week_id": "2026-w47", "round_id": "d3-mini-2026-11-16", "passed": True,
+        "candidate": ["a"], "score": 58.05, "current_score": 46.6, "trace": [{"try": ["a"]}],
+        "members": [{"hotkey": "hk-a", "body_sha256": "a", "rate": 1.0, "contribution": 0.66,
+                     "seat_weight": 0.16}],
+        "soup_sha256": "f" * 64, "temperature": 1.17, "gated": {}, "scope": "secret-scope",
+        "sealed_sha256": "s" * 64, "items": 25008, "pool_id": "d3-mini",
+    }  # fmt: skip
+
+    def test_only_the_soup_and_its_seats_are_public(self):
+        public = soup_week.public_week(self.RECORD)
+        self.assertEqual(
+            public,
+            {"week_id": "2026-w47", "round_id": "d3-mini-2026-11-16", "soup_sha256": "f" * 64,
+             "kept_from": None,
+             "members": [{"hotkey": "hk-a", "body_sha256": "a", "rate": 1.0, "seat_weight": 0.16,
+                          "contribution": 0.5}]},
+        )  # fmt: skip
+
+    def attach(self, record, now):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "base-pools" / "d3-mini" / "soup" / "weeks"
+            if record is not None:
+                root.mkdir(parents=True)
+                (root / "week.json").write_text(json.dumps(record))
+            config = {"soup_weeks": {"d3-mini": {"sealed": "s.jsonl", "bar": 0.5}}}
+            return soup_week.attach(config, tmp, "d3-mini", {"pool_id": "d3-mini"}, now=now)
+
+    def test_the_current_week_is_attached_to_the_nightly_decision_for_pay(self):
+        monday = datetime.datetime(2026, 11, 16, 18, tzinfo=datetime.UTC).timestamp()
+        got = self.attach(self.RECORD, monday + 6 * 86400)
+        self.assertEqual(got["week"], soup_week.public_week(self.RECORD))
+
+    def test_before_the_first_week_the_nightly_rules_stand(self):
+        self.assertEqual(self.attach(None, 0), {"pool_id": "d3-mini"})
+
+    def test_a_week_left_too_long_seats_nobody(self):
+        monday = datetime.datetime(2026, 11, 16, tzinfo=datetime.UTC).timestamp()
+        got = self.attach(self.RECORD, monday + (soup_week.MAX_WEEK_DAYS + 1) * 86400)
+        self.assertEqual(got["week"]["members"], [])
+
+    def test_a_pool_without_a_weekly_judge_is_untouched(self):
+        decision = {"pool_id": "d3-lite"}
+        self.assertIs(soup_week.attach({}, "/v", "d3-lite", decision, now=0), decision)
+
+
+class ClosedSeatsTest(unittest.TestCase):
+    """A seated body must stay public for its week (ZIL-205): each nightly round checks."""
+
+    WEEK = {"week_id": "2026-w47", "members": [
+        {"hotkey": "hk-a", "body_sha256": "a", "seat_weight": 0.16},
+        {"hotkey": "hk-b", "body_sha256": "b", "seat_weight": 0.16},
+        {"hotkey": "hk-h", "body_sha256": "h", "seat_weight": 0.0},
+    ]}  # fmt: skip
+    BODIES = {m: {"repo": f"miner/{m}", "revision": "r" * 40} for m in "abh"}
+
+    def listed(self, gone=(), error=None):
+        asked = []
+
+        def check(repo, revision):
+            asked.append(repo)
+            name = repo.split("/")[1]
+            if name in gone:
+                raise error or urllib.error.HTTPError(repo, 404, "Not Found", None, None)
+            return {}
+
+        return check, asked
+
+    def test_a_seated_body_that_cannot_be_listed_loses_its_seat(self):
+        check, asked = self.listed(gone="a")
+        got = soup_week.closed_seats(self.WEEK, self.BODIES, check, None)
+        self.assertEqual(got, {"week_id": "2026-w47", "bodies": ["a"]})
+        self.assertEqual(asked, ["miner/a", "miner/b"])  # an unpaid seat is not checked
+
+    def test_private_or_gone_both_count(self):
+        for error in (
+            urllib.error.HTTPError("u", 401, "Unauthorized", None, None),
+            ValueError("revision is not a commit of this repo"),
+        ):
+            check, _ = self.listed(gone="b", error=error)
+            got = soup_week.closed_seats(self.WEEK, self.BODIES, check, None)
+            self.assertEqual(got["bodies"], ["b"])
+
+    def test_a_network_failure_keeps_the_seat(self):
+        for error in (
+            urllib.error.URLError("timed out"),
+            urllib.error.HTTPError("u", 503, "Unavailable", None, None),
+        ):
+            check, _ = self.listed(gone="a", error=error)
+            got = soup_week.closed_seats(self.WEEK, self.BODIES, check, None)
+            self.assertEqual(got["bodies"], [])
+
+    def test_a_closed_seat_stays_closed_for_the_week_and_a_new_week_starts_clean(self):
+        check, asked = self.listed()
+        before = {"week_id": "2026-w47", "bodies": ["a"]}
+        self.assertEqual(
+            soup_week.closed_seats(self.WEEK, self.BODIES, check, before)["bodies"], ["a"]
+        )
+        self.assertEqual(asked, ["miner/b"])
+        old = {"week_id": "2026-w46", "bodies": ["a"]}
+        self.assertEqual(soup_week.closed_seats(self.WEEK, self.BODIES, check, old)["bodies"], [])
 
 
 class RereadTest(unittest.TestCase):

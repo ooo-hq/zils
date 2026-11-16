@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
-from zils import models, soup_publish
+from zils import models, soup_publish, soup_week
 
 SECRET_IDS = ["zz-secret-item-alpha", "zz-secret-item-beta", "zz-secret-item-gamma"]
 SECRET_LABELS = ["zz-label-approve-xyz", "zz-label-deny-xyz"]
@@ -120,6 +120,20 @@ class SoupPublishTest(unittest.TestCase):
         self.assertEqual(
             soup_publish.public_record({**private_round(), "crown": None})["crown"], None
         )
+
+    def test_the_nights_joins_are_published_and_verified(self):
+        joins = [{"hotkey": "5Hot2", "body_sha256": "b" * 64, "rate": 0.25, "weight": 0.05}]
+        record = {**private_round(), "joins": joins}
+        public = soup_publish.public_record(record)
+        self.assertEqual(public["joins"], joins)
+        soup_publish.verify_public(public, record)
+        self.assertNotIn("joins", soup_publish.public_record(private_round()))  # older rounds
+
+    def test_closed_seats_are_published(self):
+        closed = {"week_id": "2026-w47", "bodies": ["b" * 64]}
+        record = {**private_round(), "closed": closed}
+        self.assertEqual(soup_publish.public_record(record)["closed"], closed)
+        self.assertNotIn("closed", soup_publish.public_record(private_round()))
 
     def test_half_point_rounds_up(self):
         record = private_round()
@@ -290,6 +304,23 @@ class SoupFeedTest(unittest.TestCase):
                 "d3-lite": {"bodies": {}, "rounds": [], "intake": empty},
             },
         )
+
+    def test_a_pools_weekly_soup_is_in_the_feed_public_part_only(self):
+        record = {
+            "week_id": "2026-w47", "round_id": "d3-mini-2026-11-16", "soup_sha256": "f" * 64,
+            "score": 58.05, "trace": [], "scope": "secret", "members": [
+                {"hotkey": "5Ha", "body_sha256": "a" * 64, "rate": 1.0, "contribution": 0.66,
+                 "seat_weight": 0.16}],
+        }  # fmt: skip
+        (self.state / "weeks").mkdir(parents=True)
+        (self.state / "weeks" / "week.json").write_text(json.dumps(record))
+        sha = "a" * 64
+        self.write_pool({sha: {"repo": "miner/a"}})
+        feed = soup_publish.feed(feed_config({"d3-mini": soup_entry()}), self.directory)
+        week = feed["pools"]["d3-mini"]["week"]
+        self.assertEqual(week, soup_week.public_week(record))
+        self.assertEqual(feed["pools"]["d3-mini"]["bodies"][sha]["repo"], "miner/a")
+        self.assertNotIn("score", week)
 
     def test_no_base_pools_is_an_empty_feed(self):
         self.assertEqual(soup_publish.feed({}, self.directory), {"kind": "soup", "pools": {}})

@@ -10,6 +10,7 @@ import sys
 import tempfile
 import time
 import unittest
+import urllib.error
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -253,6 +254,59 @@ class SoupRunTest(unittest.TestCase):
         round_dir = self.r.state / "rounds" / "d3-mini-2026-11-03"
         self.assertTrue((round_dir / "soup" / "readout.safetensors").exists())
         self.assertEqual(list((self.r.state / "tmp").iterdir()), [])
+
+    def test_the_nights_joins_are_recorded_and_each_body_is_paid_once(self):
+        sha = self.r.sha
+        self.assertNotIn("joins", self.r.run(round_id="d3-mini-2026-11-02"))  # no weekly soup yet
+        shutil.rmtree(self.r.state)  # start the pool again, now with a weekly soup
+        (self.r.state / "weeks").mkdir(parents=True)
+        week = {"week_id": "2026-w45", "round_id": "d3-mini-2026-11-02", "members": []}
+        (self.r.state / "weeks" / "week.json").write_text(json.dumps(week))
+        self.r.ledger = soup_exam.UseLedger(self.r.state / "uses.jsonl")
+        first = self.r.run()
+        joins = {j["body_sha256"]: j for j in first["joins"]}
+        self.assertEqual(set(joins), {sha["t1"], sha["t2"]})  # the first soup: every member is new
+        for join in joins.values():
+            self.assertAlmostEqual(join["weight"], 0.1)
+        self.assertEqual(json.loads((self.r.state / "decision.json").read_text())["joins"],
+                         first["joins"])  # fmt: skip
+        state = json.loads((self.r.state / "pool.json").read_text())
+        self.assertEqual(sorted(state["joined"]), sorted([sha["t1"], sha["t2"]]))
+        second = self.r.run(round_id="d3-mini-2026-11-04")
+        self.assertEqual(second["joins"], [])
+
+    def test_the_round_checks_that_the_weeks_seated_bodies_are_still_public(self):
+        sha = self.r.sha
+        self.r.run()
+        week = {"week_id": "2026-w45", "round_id": "d3-mini-2026-11-03", "members": [
+            {"hotkey": HOTKEYS[1], "body_sha256": sha["t1"], "rate": 1.0, "contribution": 2.0,
+             "seat_weight": 0.16},
+            {"hotkey": HOTKEYS[2], "body_sha256": sha["t2"], "rate": 1.0, "contribution": 1.0,
+             "seat_weight": 0.16},
+        ]}  # fmt: skip
+        (self.r.state / "weeks").mkdir()
+        (self.r.state / "weeks" / "week.json").write_text(json.dumps(week))
+
+        def listed(repo, revision):
+            if repo == "miner/t2":
+                raise urllib.error.HTTPError(repo, 404, "Not Found", None, None)
+            return {}
+
+        record = self.r.run(round_id="d3-mini-2026-11-04", listed=listed)
+        closed = {"week_id": "2026-w45", "bodies": [sha["t2"]]}
+        self.assertEqual(record["closed"], closed)
+        self.assertEqual(self.public("d3-mini-2026-11-04")["closed"], closed)
+        self.assertEqual(json.loads((self.r.state / "pool.json").read_text())["closed"], closed)
+        self.assertEqual(record["week"], week)  # for the miners' reports; not published
+        self.assertNotIn("week", self.public("d3-mini-2026-11-04"))
+        reports = json.loads(
+            (self.r.state / "rounds" / "d3-mini-2026-11-04" / "reports.json").read_text()
+        )
+        (entry,) = [e for e in reports[HOTKEYS[2]] if e["body_sha256"] == sha["t2"]]
+        self.assertEqual(entry["reason"], "went_private")
+        # The next night t2 is listed again: its seat stays closed for the week.
+        record = self.r.run(round_id="d3-mini-2026-11-05", listed=lambda repo, revision: {})
+        self.assertEqual(record["closed"], closed)
 
     def test_each_miner_gets_a_private_report_of_its_own_bodies(self):
         sha = self.r.sha
