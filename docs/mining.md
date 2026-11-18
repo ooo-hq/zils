@@ -253,11 +253,11 @@ member stops earning at once.
 - **Seats:** each member whose contribution is at least **0.5** points earns one
   seat, 16% of the pool's share multiplied by its rate. Empty seats, house seats
   and seats below the floor burn.
-- **Fine-tunes (launch rule):** if at least half of your body's change comes from
-  house ingredients, the soup or the release, your seat is paid only if your
-  body alone beats the best of those bases by at least **1.2** points. If part
-  of it (10% or more) comes from a listed public model, it is paid at the scout
-  rate. Train enough to beat what you started from.
+- **Fine-tunes:** if at least half of your body's change comes from house
+  ingredients, the soup or the release, your body is a fine-tune and its seat is
+  credited with what it adds over its base (step 7), not with its base's own
+  contribution. If part of it (10% or more) comes from a listed public model, it
+  is paid at the scout rate. Train enough to add to what you started from.
 - **Crown:** the round's best single body that is not a house ingredient takes the
   20%, multiplied by its rate, only if it beats every house ingredient alone and
   the current soup by at least **1.2** points on the pooled items; otherwise the
@@ -300,7 +300,7 @@ listed model (sketch cosine under 0.9), pays the trainer rate even though you di
 not train it: the pool cannot tell a find from a fine-tune and does not need to,
 because every body earns its seat the same way, by making the soup better on the
 round's items. If the find is itself a fine-tune of a house ingredient, the soup
-or the release, its seat pays only if it beats that base by 1.2 points, like any
+or the release, its seat is credited with what it adds over that base, like any
 other fine-tune. Hunting Hugging Face for strong open decision models of the
 pool's size, adding the Qwen vision tower when the export is text-only, and
 committing them first is real work the pool pays for. Check a candidate before
@@ -517,7 +517,7 @@ z3 version. Members are paid through seats, not as kings.
 
 The member cap (5), pool sizes, change bound (0.15), seat/crown split (80/20), rates
 (1.0 / 0.25 / 0) and release cadence are policy choices made for the launch, not
-tuned results. The greedy margin (0.5) and the crown and fine-tune bars (1.2) are
+tuned results. The greedy margin (0.5) and the crown bar (1.2) are
 about 2.5 standard errors of the differences they test, measured by resampling the
 items of a 3,000-item dry run and scaled to the pooled three-round window; a smaller
 real gain is not paid until the pool has more items. The seat floor (0.5) equals the
