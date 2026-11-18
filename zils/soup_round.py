@@ -192,12 +192,16 @@ def seat_weights(members, contributions, rates, *, share=SEAT_SHARE, floor=FLOOR
     return {m: share / MAX_MEMBERS * _check_rate(rates[m]) for m in paid}
 
 
-def join_weights(members, *, previous, paid, rates, share=NIGHT_SHARE):
+def join_weights(members, *, previous, paid, rates, contributions, share=NIGHT_SHARE, floor=FLOOR):
     """Nightly pay for the bodies this night's soup took in (ZIL-205): members not in the
-    ``previous`` soup and never ``paid`` for joining before split ``share`` equally, each part times
-    the body's rate. A house body takes its part unpaid; the rest burns, as does a night with no
-    new member. Returns {body: weight}."""
-    new = [m for m in sorted(members) if m not in set(previous) and m not in set(paid)]
+    ``previous`` soup, never ``paid`` for joining before, and whose contribution clears the seat
+    ``floor`` split ``share`` equally, each part times the body's rate. A house body takes its part
+    unpaid; the rest burns, as does a night with no such member. Returns {body: weight}."""
+    new = [
+        m
+        for m in sorted(members)
+        if m not in set(previous) and m not in set(paid) and contributions[m] >= floor - _EPS
+    ]
     return {m: share / len(new) * _check_rate(rates[m]) for m in new}
 
 
@@ -1566,7 +1570,11 @@ def run(
         )
         # Only with a weekly soup: a body that joined before then was paid by its nightly seat.
         joins = join_weights(
-            members, previous=state["members"], paid=state.get("joined", []), rates=paid_rates
+            members,
+            previous=state["members"],
+            paid=state.get("joined", []),
+            rates=paid_rates,
+            contributions=contributions,
         )
     crown = (
         {}

@@ -318,26 +318,40 @@ class JoinWeightsTest(unittest.TestCase):
     """Nightly pay (ZIL-205): the night's share split equally over the bodies the soup took in."""
 
     RATES = {"a": 1.0, "b": 1.0, "c": 0.25, "h": 0.0}
+    ADDS = dict.fromkeys("abch", 1.0)  # every member adds a point
+
+    def join(self, members, *, previous=(), paid=(), contributions=ADDS):
+        return soup_round.join_weights(
+            members, previous=previous, paid=paid, rates=self.RATES, contributions=contributions
+        )
 
     def test_new_members_split_the_nights_share_equally_times_their_rate(self):
-        got = soup_round.join_weights(("a", "b", "c"), previous=("a",), paid=(), rates=self.RATES)
+        got = self.join(("a", "b", "c"), previous=("a",))
         self.assertEqual(sorted(got), ["b", "c"])
         self.assertAlmostEqual(got["b"], 0.1)
         self.assertAlmostEqual(got["c"], 0.025)  # a public mix's quarter; the rest burns
 
     def test_a_house_body_takes_its_part_unpaid(self):
-        got = soup_round.join_weights(("a", "h"), previous=(), paid=(), rates=self.RATES)
-        self.assertEqual(got, {"a": 0.1, "h": 0.0})
+        self.assertEqual(self.join(("a", "h")), {"a": 0.1, "h": 0.0})
 
     def test_no_new_member_pays_nothing(self):
-        self.assertEqual(
-            soup_round.join_weights(("a",), previous=("a",), paid=(), rates=self.RATES), {}
-        )
+        self.assertEqual(self.join(("a",), previous=("a",)), {})
 
     def test_each_body_is_paid_once(self):
         # b joined, left and is back: it was paid the first time
-        got = soup_round.join_weights(("a", "b"), previous=("a",), paid=("b",), rates=self.RATES)
-        self.assertEqual(got, {})
+        self.assertEqual(self.join(("a", "b"), previous=("a",), paid=("b",)), {})
+
+    def test_a_newcomer_under_the_seat_floor_is_not_paid(self):
+        # 17 Nov 2026 lite: c76fec29 joined on one night's items but its leave-one-out is -0.23
+        got = self.join(("a", "b"), contributions={"a": 1.6, "b": -0.23})
+        self.assertEqual(got, {"a": 0.2})  # the newcomers that clear the floor share the 20%
+
+    def test_the_floor_is_the_seat_floor_inclusive(self):
+        got = self.join(("a", "b"), contributions={"a": soup_round.FLOOR, "b": 0.49})
+        self.assertEqual(got, {"a": 0.2})
+
+    def test_no_newcomer_clearing_the_floor_pays_nothing(self):
+        self.assertEqual(self.join(("a",), contributions={"a": 0.0}), {})
 
 
 class SoupWeightsTest(unittest.TestCase):
