@@ -332,8 +332,10 @@ this way instead of the seats and crown above:
   times its rate, for the week. A fine-tune is credited with what it adds over its
   base, as in a nightly round. Empty and unpaid seats burn.
 - **Nightly joins (20%):** each night, the bodies the night's soup takes in for
-  the first time share the 20% equally, each part times its rate. A body is paid
-  for joining once. A night with no new member burns its 20%.
+  the first time and whose contribution is at least **0.5** points (the seat
+  floor, measured as for a nightly seat) share the 20% equally, each part times
+  its rate. A body is paid for joining once. A night with no such member burns
+  its 20%.
 - **Stay public:** each nightly round checks that the seated bodies' committed
   revisions are still public. A seat whose revision is private or gone stops for
   the rest of the week; a network failure does not stop it.
