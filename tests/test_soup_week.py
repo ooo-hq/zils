@@ -528,6 +528,11 @@ class PublicWeekTest(unittest.TestCase):
                           "contribution": 0.5}]},
         )  # fmt: skip
 
+    def test_a_contribution_under_the_seat_bar_never_shows_at_the_bar(self):
+        member = {**self.RECORD["members"][0], "contribution": 0.3876, "seat_weight": 0.0}
+        public = soup_week.public_week({**self.RECORD, "members": [member]})
+        self.assertEqual(public["members"][0]["contribution"], 0.0)
+
     def attach(self, record, now):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "base-pools" / "d3-mini" / "soup" / "weeks"

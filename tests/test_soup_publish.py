@@ -137,10 +137,18 @@ class SoupPublishTest(unittest.TestCase):
 
     def test_half_point_rounds_up(self):
         record = private_round()
-        record["members"][0]["contribution"] = 0.25
+        record["members"][0]["contribution"] = 1.25
         record["members"][1]["contribution"] = 0.75
         public = soup_publish.public_record(record)
-        self.assertEqual([m["contribution"] for m in public["members"]], [0.5, 1.0])
+        self.assertEqual([m["contribution"] for m in public["members"]], [1.5, 1.0])
+
+    def test_a_contribution_under_the_floor_never_shows_at_the_floor(self):
+        record = private_round()
+        record["members"][0]["contribution"] = 0.3876  # 19 Nov mini: unpaid, was published as 0.5
+        record["members"][1]["contribution"] = 0.5
+        public = soup_publish.public_record(record)
+        self.assertEqual([m["contribution"] for m in public["members"]], [0.0, 0.5])
+        soup_publish.verify_public(public, record)
 
     def test_unknown_category_rejected(self):
         record = private_round()
