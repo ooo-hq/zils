@@ -486,7 +486,7 @@ def public_week(record):
         "members": [
             {
                 **{k: m[k] for k in ("hotkey", "body_sha256", "rate", "seat_weight")},
-                "contribution": _half_point(m["contribution"]),
+                "contribution": _half_point(m["contribution"], SEAT_BAR),
             }
             for m in record["members"]
         ],
