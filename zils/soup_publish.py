@@ -22,16 +22,24 @@ def _sha256(value):
     return hashlib.sha256(canonical_json(value)).hexdigest()
 
 
-def _half_point(value):
-    return math.floor(float(value) * 2 + 0.5) / 2
+def _half_point(value, bar):
+    """``value`` to the nearest 0.5 point (halves round up), kept below a seat ``bar`` it missed:
+    0.39 against a 0.5 floor shows 0.0, not 0.5, so an unpaid seat never shows a passing score."""
+    from .soup_round import _EPS
+
+    shown = math.floor(float(value) * 2 + 0.5) / 2
+    return shown if value >= bar - _EPS or shown < bar else math.ceil(bar * 2 - 1) / 2
 
 
 def public_record(private_round):
     """Build the publishable round record from the validator's private round record.
 
     Category scores are on the 0-100 point scale and published to 0.1 point; member
-    contributions are published to the nearest 0.5 point (halves round up).
+    contributions are published to the nearest 0.5 point (halves round up), below the seat
+    floor when they missed it.
     """
+    from .soup_round import FLOOR
+
     r = private_round
     categories = r["category_scores"]
     unknown = set(categories) - set(CATEGORY_WEIGHTS)
@@ -44,7 +52,10 @@ def public_record(private_round):
         "pool_id": r["pool_id"],
         "seed": seed.hex() if isinstance(seed, bytes) else seed,
         "members": [
-            {**{k: m[k] for k in MEMBER_FIELDS}, "contribution": _half_point(m["contribution"])}
+            {
+                **{k: m[k] for k in MEMBER_FIELDS},
+                "contribution": _half_point(m["contribution"], FLOOR),
+            }
             for m in r["members"]
         ],
         "crown": None if crown is None else {k: crown[k] for k in CROWN_FIELDS if k in crown},
