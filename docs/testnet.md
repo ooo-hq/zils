@@ -8,7 +8,7 @@ The fleet has an optional Bittensor path for testnet.
 The subnet ID is configured explicitly; mainnet is rejected. It uses registered
 wallet hotkeys for signed submissions, checks UID ↔
 hotkey registrations before each round and before publication, and submits
-weights through `bittensor==11.1.0`. A closed fleet keeps the private LAN artifact
+weights through `bittensor==11.3.6`. A closed fleet keeps the private LAN artifact
 transport and a static roster. A validator can instead open the base tier to
 every hotkey registered on the subnet ([open admission](validators.md#open-admission-base-tier)):
 miners commit candidates on chain and the validator scores them in its sandboxed

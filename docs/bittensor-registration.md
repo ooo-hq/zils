@@ -31,11 +31,11 @@ clone, create a separate environment for wallet administration:
 git clone https://github.com/ooo-hq/zils.git
 cd zils
 python3.13 -m venv .venv-btcli
-.venv-btcli/bin/python -m pip install 'bittensor==11.1.0' 'typer==0.16.0'
+.venv-btcli/bin/python -m pip install 'bittensor==11.3.6' 'typer==0.16.0'
 .venv-btcli/bin/btcli --version
 ```
 
-The version must be `11.1.0`, matching Zils' chain SDK. The Typer pin keeps this
+The version must be `11.3.6`, matching Zils' chain SDK. The Typer pin keeps this
 CLI's help and exit handling compatible. Bittensor v11 includes `btcli`; these
 commands use its [v11 CLI flags](https://www.bittensor.com/docs/cli).
 
