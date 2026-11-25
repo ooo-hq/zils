@@ -1,2 +1,2 @@
 # Optional SDK for registered testnet identities and weight publication.
-bittensor==11.1.0
+bittensor==11.3.6

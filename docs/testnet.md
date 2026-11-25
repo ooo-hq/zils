@@ -6,7 +6,7 @@ private LAN artifact transport of the [development fleet](mining.md#closed-devel
 The network (`test` or `finney`) and subnet ID are always named explicitly in
 the config; mainnet is never a default. The fleet uses registered wallet hotkeys
 for signed submissions, checks UID ↔ hotkey registrations before each round and
-before publication, and submits weights through `bittensor==11.1.0`.
+before publication, and submits weights through `bittensor==11.3.6`.
 
 This is not how outside miners join subnet 127: they commit soup bodies or take
 customer jobs ([mining](mining.md)). A chain fleet is for rehearsals. The
