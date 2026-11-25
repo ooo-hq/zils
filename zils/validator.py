@@ -1218,6 +1218,7 @@ def validator(config, directory, args):
                             block_info=sub.block_info,
                             commitments_at=commitments_at,
                             run_round=soup_pool.background_round(args),
+                            head=sub.block,
                         )
                 except Exception as error:  # the chain or a pool config, never the weights
                     soup_summary = {"error": f"{type(error).__name__}: {error}"[:400]}
