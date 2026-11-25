@@ -260,7 +260,7 @@ def _running_elsewhere(directory, pool):
     return None
 
 
-def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round):
+def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round, head=None):
     """Start each enabled soup pool's due round once; never waits for one. Returns {pool: summary}.
 
     `run_round(pool, request)` starts the round and returns its process id (or None). A started
@@ -270,8 +270,13 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
 
     `commitments_at(block)` returns the roster's commitments ({uid: {"block", "data"}}) as of
     `block`; the round reads them at its seed block, so every validator sees the same set however
-    late it runs (the live snapshot only holds each hotkey's latest commitment)."""
+    late it runs (the live snapshot only holds each hotkey's latest commitment).
+
+    `head` is the chain head read in this pass (default: the snapshot's block). The snapshot is
+    frozen when the weight round starts, so judging the deadline by it can miss a deadline that
+    passed since and start the round a pass late."""
     summary = {}
+    head = int(snapshot["block"] if head is None else head)
     if "base_pools" in config:
         validated = model_pools.validate(config["base_pools"])["pools"]
         for pool, reason in not_graded(config, validated).items():
@@ -282,7 +287,6 @@ def epoch(config, directory, snapshot, *, block_info, commitments_at, run_round)
                     summary[pool] = {"closed": reason}
     for pool, entry in soup_pools(config, int(snapshot["block"])).items():
         try:
-            head = int(snapshot["block"])
             day, deadline = due(entry["schedule"], _time(block_info(head)), _wait(entry))
             round_id = f"{pool}-{day}"
             summary[pool] = {"round_id": round_id}

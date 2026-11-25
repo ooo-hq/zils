@@ -2245,6 +2245,25 @@ class SoupEpochTest(unittest.TestCase):
         self.assertEqual([r["round_id"] for _, r in self.calls][-1], "d3-mini-2026-11-04")
         self.assertEqual(soup_pool.decision(self.directory, "d3-mini")["pool_id"], "d3-mini")
 
+    def test_a_fresh_head_starts_the_round_the_frozen_snapshot_predates(self):
+        # The snapshot was frozen before the deadline (block 300 = 00:00); the chain head is past it.
+        self.snapshot["block"] = 250
+        summary = soup_pool.epoch(
+            self.config,
+            self.directory,
+            self.snapshot,
+            block_info=self.chain,
+            commitments_at=self.commitments_at,
+            run_round=self.run_round,
+            head=400,
+        )
+        [(_, request)] = self.calls
+        self.assertTrue(summary["d3-mini"]["started"])
+        self.assertEqual(request["round_id"], "d3-mini-2026-11-03")
+        # The round's contents still come from the seed block, not from the head.
+        self.assertEqual(request["seed_block"], 301)
+        self.assertEqual(set(request["snapshot"]["commitments"]), {"1"})
+
     def test_a_waiting_pool_runs_its_round_wait_days_after_the_deadline(self):
         exam = {"source": "current", "current_bank": "current", "wait_days": 1}
         self.config["base_pools"] = pools(soup_entry(exam=exam))
