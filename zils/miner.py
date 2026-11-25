@@ -36,7 +36,7 @@ from . import bodies, commitments, models, testnet
 
 NETUID = 579
 REQUIRED_MODULES = ("bittensor", "bittensor_wallet", "huggingface_hub", "kev", "torch")
-PINNED_BITTENSOR = "11.1.0"
+PINNED_BITTENSOR = "11.3.6"
 WALLET_PATH = "~/.bittensor/wallets"
 SAVED = ("wallet_name", "wallet_hotkey", "wallet_path", "model", "candidate", "repo", "revision")
 RUNTIME_TOKEN_ENV = "ZILS_RUNTIME_TOKEN"

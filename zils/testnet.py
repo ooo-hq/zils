@@ -57,8 +57,8 @@ def connect(config, *, raw_calls=False):
     """`raw_calls` admits the one raw extrinsic Zils sends, `Commitments.set_commitment`."""
     netuid = check_config(config)
     network = config["chain"]["network"]
-    if version("bittensor") != "11.1.0":
-        raise ValueError("install requirements/testnet.txt (bittensor 11.1.0)")
+    if version("bittensor") != "11.3.6":
+        raise ValueError("install requirements/testnet.txt (bittensor 11.3.6)")
     import bittensor as bt
 
     with bt.Subtensor(
