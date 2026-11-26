@@ -83,9 +83,12 @@ def _description(value, nullable=False):
 
 
 def validate_request(body):
+    """The request with unknown keys dropped, as TypeSafe does; raises DecisionError."""
     _tree(body)
-    if not isinstance(body, dict) or set(body) != {"state", "model", "questions"}:
+    if not isinstance(body, dict) or not {"state", "model", "questions"} <= set(body):
         raise invalid(["body"])
+    if "assets" in body:  # TypeSafe's image field: refuse it rather than answer without the image
+        raise invalid(["body", "assets"])
     if not _description(body["state"]):
         raise invalid(["body", "state"])
     if not isinstance(body["model"], str) or not 1 <= len(body["model"]) <= 128:
@@ -95,7 +98,7 @@ def validate_request(body):
         raise invalid(["body", "questions"])
     for qid, q in questions.items():
         loc = ["body", "questions", qid]
-        if not qid or not isinstance(q, dict) or set(q) - {"type", "instructions", "criteria"}:
+        if not qid or not isinstance(q, dict):
             raise invalid(loc)
         if not _description(q.get("instructions"), nullable=True):
             raise invalid([*loc, "instructions"])
@@ -110,14 +113,14 @@ def validate_request(body):
         elif kind == "choice":
             if (
                 not isinstance(criteria, dict)
-                or not 2 <= len(criteria) <= 255
+                or not 1 <= len(criteria) <= 255
                 or any(not k or not _description(v, True) for k, v in criteria.items())
             ):
                 raise invalid([*loc, "criteria"])
         elif kind == "score":
             if (
                 not isinstance(criteria, list)
-                or not 2 <= len(criteria) <= 10
+                or not 1 <= len(criteria) <= 10
                 or not all(_description(v) for v in criteria)
             ):
                 raise invalid([*loc, "criteria"])
@@ -129,7 +132,23 @@ def validate_request(body):
         raise invalid() from None
     if size > MAX_BODY:
         raise DecisionError(413, "body_too_large", "Request exceeds the body limit.")
-    return body
+    keep = ("type", "instructions", "criteria")
+    return {
+        "state": body["state"],
+        "model": body["model"],
+        "questions": {qid: {k: q[k] for k in keep if k in q} for qid, q in questions.items()},
+    }
+
+
+def fixed_predictions(body):
+    """Predictions for questions with one option, which need no model: that option, certain."""
+    return {
+        qid: {"probabilities": {key: 1.0}, "input_tokens": 0}
+        for qid, question in body["questions"].items()
+        for keys in [list(option_descriptions(question))]
+        if len(keys) == 1
+        for key in keys
+    }
 
 
 def option_descriptions(question):
@@ -187,14 +206,14 @@ def make_response(release_id, body, predictions):
             answer["probabilities"] = dict(zip(keys, values, strict=True))
             if kind == "choice":
                 answer["choice"] = keys[mode]
-                confidence = (values[mode] - 1 / n) / (1 - 1 / n)
+                confidence = 1.0 if n == 1 else (values[mode] - 1 / n) / (1 - 1 / n)
             else:
                 answer["score"] = sum(i * p for i, p in enumerate(values))
                 answer["legend"] = dict(enumerate(question["criteria"]))
                 answer["legend"] = {str(k): v for k, v in answer["legend"].items()}
                 spread = sum(p * abs(i - mode) for i, p in enumerate(values))
                 uniform = sum(abs(i - (n - 1) / 2) for i in range(n)) / n
-                confidence = 1 - spread / uniform
+                confidence = 1.0 if n == 1 else 1 - spread / uniform
             answer["confidence"] = max(0.0, min(1.0, confidence))
         answers[qid] = answer
         tokens += count

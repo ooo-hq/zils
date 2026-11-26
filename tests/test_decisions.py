@@ -129,6 +129,58 @@ class DecisionTest(unittest.TestCase):
         self.assertEqual(d.render({"key": "value"}), '{"key":"value"}')
         self.assertEqual(d.decode_body(json.dumps(request()).encode()), request())
 
+    def test_unknown_fields_are_dropped_like_typesafe(self):
+        # TypeSafe's schema leaves additionalProperties unset; Jev clients send extra keys.
+        d = self.module()
+        body = request()
+        body["worldId"] = "w1"
+        body["questions"]["n"]["id"] = "n"
+        clean = d.validate_request(body)
+        self.assertEqual(clean, request())
+        self.assertIn("worldId", body)  # the caller's object is left alone
+
+    def test_typesafe_image_assets_are_refused_not_ignored(self):
+        d = self.module()
+        body = request()
+        body["assets"] = {"photo": {"type": "image"}}
+        with self.assertRaises(d.DecisionError) as err:
+            d.validate_request(body)
+        self.assertEqual(err.exception.status, 422)
+        self.assertEqual(err.exception.field, ["body", "assets"])
+
+    def test_one_option_questions_are_answered_without_a_model(self):
+        d = self.module()
+        body = {
+            "state": "s",
+            "model": "m",
+            "questions": {
+                "only": {"type": "choice", "criteria": {"x": "the one tool"}},
+                "level": {"type": "score", "criteria": ["fine"]},
+                "n": {"type": "noul"},
+            },
+        }
+        body = d.validate_request(body)
+        fixed = d.fixed_predictions(body)
+        self.assertEqual(set(fixed), {"only", "level"})
+        response = d.make_response(
+            "m",
+            body,
+            {**fixed, "n": {"probabilities": {"true": 0.7, "false": 0.3}, "input_tokens": 4}},
+        )
+        self.assertEqual(
+            response["answers"]["only"],
+            {"type": "choice", "choice": "x", "probabilities": {"x": 1.0}, "confidence": 1.0},
+        )
+        self.assertEqual(response["answers"]["level"]["score"], 0)
+        self.assertEqual(response["answers"]["level"]["confidence"], 1.0)
+        self.assertEqual(response["usage"]["input_tokens"], 4)
+        for criteria in ({}, []):
+            bad = {"state": "s", "model": "m", "questions": {"q": {"type": "choice"}}}
+            bad["questions"]["q"]["criteria"] = criteria
+            bad["questions"]["q"]["type"] = "choice" if criteria == {} else "score"
+            with self.subTest(criteria=criteria), self.assertRaises(d.DecisionError):
+                d.validate_request(bad)
+
 
 if __name__ == "__main__":
     unittest.main()
